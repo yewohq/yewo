@@ -10,7 +10,7 @@ which of the two it came from.
 from enum import Enum
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from yewo.agent.actuation.actions import CapabilityKind
 from yewo.agent.run.outcomes import RunStatus
@@ -127,20 +127,78 @@ the other refuses.
 """
 
 
+class IssueKind(str, Enum):
+    """What kind of thing a finding is.
+
+    Closed, because a reader is shown one row per defect. Rows gather only
+    by a value that means the same thing twice. Asked for free text, one
+    auditor gave a single debug ribbon four names across four screens.
+    Nothing could tell they were one defect.
+    """
+
+    LAYOUT_OVERFLOW = "layout_overflow"
+    TEXT_CLIPPING = "text_clipping"
+    OVERLAPPING_ELEMENTS = "overlapping_elements"
+    DEBUG_ARTIFACT = "debug_artifact"
+    CRASH_SCREEN = "crash_screen"
+    EMPTY_STATE_ERROR = "empty_state_error"
+    SENSITIVE_DATA_EXPOSURE = "sensitive_data_exposure"
+    UNMASKED_INPUT = "unmasked_input"
+    INSECURE_CONNECTION = "insecure_connection"
+    BROKEN_NAVIGATION = "broken_navigation"
+    ACCESSIBILITY_VIOLATION = "accessibility_violation"
+    PERFORMANCE_HANG = "performance_hang"
+    OTHER = "other"
+
+
 class QAIssue(BaseModel):
     """Represents a visual, security, or logical issue found during testing."""
-    issue_type: str = Field(
+    issue_type: IssueKind = Field(
         ...,
         description=(
-            "Category of the issue. Prefer: render_overflow, text_clipping, overlapping_elements, "
-            "empty_image_error, crash_screen, sensitive_data_exposure, unmasked_input, "
-            "insecure_connection, broken_navigation, accessibility_violation, performance_hang."
+            "Which kind of issue this is. Pick the closest one. Use 'other' "
+            "only where none of them describes what you saw."
         ),
     )
+
+    @field_validator("issue_type", mode="before")
+    @classmethod
+    def _fold_the_spelling(cls, value):
+        """Reads a kind however it was cased, or files it as other.
+
+        Case, spaces and hyphens only. Synonyms are not mapped here. Which
+        words one model reaches for is a fact about that model and that
+        app. A list of them would be a list of one app's accidents. The
+        set is closed in the schema, so a model is asked to pick from it
+        rather than to describe.
+
+        A kind that still does not match is `other` rather than refused. A
+        finding is evidence, and dropping one because its label was wrong
+        loses the defect with the word. `other` filling up is the signal
+        that the set or the prompt needs work.
+        """
+        if isinstance(value, IssueKind):
+            return value
+        if not isinstance(value, str):
+            return IssueKind.OTHER
+        said = value.strip().lower().replace(" ", "_").replace("-", "_")
+        try:
+            return IssueKind(said)
+        except ValueError:
+            return IssueKind.OTHER
     description: str
     bounding_box: Optional[BoundingBox] = None
     severity: Literal["low", "medium", "high", "critical"]
     current_screen: Optional[str] = None
+    step: Optional[int] = Field(
+        default=None,
+        description=(
+            "Which step the screen was audited after. Stamped by the run "
+            "and not answered: an auditor is shown one screen and does not "
+            "know where in a walk it sits. It is what lets a report link a "
+            "finding to the screenshot that shows it."
+        ),
+    )
 
 
 STATUS_SPELLINGS = {

@@ -100,6 +100,7 @@ def _manifest(session, agent, goal: str, platform: Platform, device_control):
             kind="goal",
             id=hashlib.sha256(goal.encode("utf-8")).hexdigest()[:16],
             name=agent.scrubber.scrub(goal),
+            description=agent.scrubber.scrub(goal),
         ),
         scenarios=(),
         environment=RunEnvironment(

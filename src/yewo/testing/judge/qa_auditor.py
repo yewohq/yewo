@@ -25,7 +25,7 @@ from yewo.agent.perception import elements
 from yewo.llm.llm_client import LLMClient
 from yewo.llm.messages import MultiPartMessage
 from yewo.testing.judge import rules
-from yewo.testing.models import QAIssue, RuleVerification, SensitiveFinding
+from yewo.testing.models import IssueKind, QAIssue, RuleVerification, SensitiveFinding
 from functools import partial
 
 from yewo.utils.redactor import safe_text
@@ -84,7 +84,7 @@ class Assessment(BaseModel):
                 continue
             if "description" not in issue and "issue" in issue:
                 issue["description"] = issue.pop("issue")
-            issue.setdefault("issue_type", "qa_issue")
+            issue.setdefault("issue_type", IssueKind.OTHER.value)
         return normalized
 
 

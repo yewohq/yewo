@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "yewo_version": "0.0.2",
+  "entries": [
+    {
+      "scenario_uuid": "fd46dd2d-0b20-4c7a-bbef-f7c5e1ce52ad",
+      "workflow": "delivery_checkout",
+      "journey": "delivery_checkout_01",
+      "cell": "functional.happy_path.0",
+      "test_id": "TS_functional_happy_path_0",
+      "category": "functional",
+      "scenario_type": "happy_path",
+      "priority": "P0",
+      "contract_sha256": "1291194426389796be0e07ef8168f375968a04a6f1024c545d792eb50227db89",
+      "scenario_name": "Functional happy path \u2014 place an order and reach CONFIRMING status",
+      "setup": "clear_data",
+      "steps": [
+        {
+          "kind": "action",
+          "instruction": "launch the app"
+        },
+        {
+          "kind": "enter",
+          "field": "Email Address field",
+          "value": "email"
+        },
+        {
+          "kind": "enter",
+          "field": "Password field",
+          "value": "password"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Login button"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Grant Location Permission button"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Menu button on the Burger Palace card"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Add button for Classic Burger"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Cart floating action button"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Proceed to Checkout button"
+        },
+        {
+          "kind": "action",
+          "instruction": "select the Credit / Debit Card option"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Continue button"
+        },
+        {
+          "kind": "enter",
+          "field": "delivery address field",
+          "value": "address"
+        },
+        {
+          "kind": "enter",
+          "field": "Card Number field",
+          "value": "card_number"
+        },
+        {
+          "kind": "enter",
+          "field": "CVV field",
+          "value": "cvv"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap the Place Order button"
+        }
+      ],
+      "expected_outcomes": [
+        {
+          "statement": "current_screen: true \u2014 sign-in screen is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 location access screen is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 home screen is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 Burger Palace menu is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 My Cart screen is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 Select Payment screen is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 Checkout Details screen is visible",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "current_screen: true \u2014 order status screen is visible",
+          "scope": "current_screen"
+        }
+      ]
+    }
+  ]
+}

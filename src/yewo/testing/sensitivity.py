@@ -89,7 +89,7 @@ ARTIFACTS: tuple[ArtifactClass, ...] = (
         Sensitivity.SCRUBBED,
         Retention.KEEP,
         True,
-        "Markdown and JUnit, scrubbed. Read by people who were not there.",
+        "Markdown, JUnit and the page, scrubbed. Read by people who were not there.",
     ),
     ArtifactClass(
         "prompts",

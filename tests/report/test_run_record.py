@@ -213,7 +213,7 @@ class EverythingReachesTheRecordTests(unittest.TestCase):
         from fakes import suite_run
 
         with tempfile.TemporaryDirectory() as directory, patch(
-            "yewo.testing.runner.save_junit_report",
+            "yewo.testing.report.writing.save_junit_report",
             side_effect=ArtifactWriteFailed("the disk is full"),
         ):
             report, data = suite_run([scenario(1)], directory)

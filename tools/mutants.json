@@ -10,8 +10,8 @@
     "name": "settled-reads-failed-instead-of-passed",
     "owner": "judge",
     "path": "src/yewo/testing/judge/verdicts.py",
-    "find": "        if verification.status == \"passed\"\n    }\n\n\ndef _violated_security_rule",
-    "replace": "        if verification.status == \"failed\"\n    }\n\n\ndef _violated_security_rule"
+    "find": "        for (rule_id, _), verification in _per_screen(verifications).items()\n        if verification.status == \"passed\"\n    }",
+    "replace": "        for (rule_id, _), verification in _per_screen(verifications).items()\n        if verification.status == \"failed\"\n    }"
   },
   {
     "name": "per-screen-collapses-the-screen",

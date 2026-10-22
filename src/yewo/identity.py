@@ -65,6 +65,22 @@ class GitIdentity(BaseModel):
     sha: Optional[str] = None
     branch: Optional[str] = None
     pull_request: Optional[str] = None
+    dirty: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Whether the checkout held changes the commit does not. A run "
+            "of edited files is not evidence about the commit it names. "
+            "None where no repository could be read."
+        ),
+    )
+    diff_sha256: Optional[str] = Field(
+        default=None,
+        description=(
+            "The uncommitted diff, hashed. Two dirty runs of the same "
+            "commit are the same run only if this matches. Absent on a "
+            "clean checkout."
+        ),
+    )
 
 
 class CiIdentity(BaseModel):
@@ -126,17 +142,68 @@ def git_identity(directory: Optional[Path] = None) -> GitIdentity:
     test. Most builds leave a detached checkout. Such a checkout reports its
     branch as `HEAD` to git, and by name to the environment.
     """
+    where = str((directory or Path.cwd()).resolve())
     environment = _ci_git()
     if environment.sha:
-        return environment
+        # The build names the commit. Whether the checkout still matches it
+        # is a different question, and a job that writes a file before
+        # running is as unreproducible as a laptop that did.
+        return environment.model_copy(update=_changes(where))
 
-    where = str((directory or Path.cwd()).resolve())
     branch = _read("git", "-C", where, "rev-parse", "--abbrev-ref", "HEAD")
+    sha = _read("git", "-C", where, "rev-parse", "HEAD")
     return GitIdentity(
-        sha=_read("git", "-C", where, "rev-parse", "HEAD"),
+        sha=sha,
         branch=None if branch == "HEAD" else branch,
         pull_request=None,
+        **(_changes(where) if sha else {}),
     )
+
+
+def _changes(where: str) -> dict:
+    """Whether the checkout holds what its commit does not, and which.
+
+    None for both where no repository answered. A run outside a checkout
+    has no commit to be dirty against, and saying `False` would claim it
+    was clean.
+    """
+    changed = _diff(where)
+    if changed is None:
+        return {"dirty": None, "diff_sha256": None}
+    return {
+        "dirty": bool(changed),
+        "diff_sha256": (
+            hashlib.sha256(changed.encode("utf-8")).hexdigest() if changed else None
+        ),
+    }
+
+
+def _diff(where: str) -> Optional[str]:
+    """Everything the checkout holds that its commit does not.
+
+    Tracked changes, and untracked files by name and by content. A name
+    alone gives two different versions of one new file the same hash. The
+    hash exists to tell two dirty runs apart.
+
+    What this returns is hashed and discarded. It is the working tree, and
+    a run's artifacts are not the place to keep a copy of it.
+    """
+    tracked = _read("git", "-C", where, "diff", "HEAD")
+    listed = _read("git", "-C", where, "ls-files", "--others", "--exclude-standard")
+    if tracked is None and listed is None:
+        return None
+    return f"{tracked or ''}\n{_untracked(where, listed)}".strip()
+
+
+def _untracked(where: str, listed: Optional[str]) -> str:
+    """Each untracked file, as its path and the hash of what is in it."""
+    named = []
+    for name in (listed or "").splitlines():
+        if not name.strip():
+            continue
+        digest = artifact_sha256(Path(where) / name) or "unreadable"
+        named.append(f"{name} {digest}")
+    return "\n".join(named)
 
 
 def _ci_git() -> GitIdentity:

@@ -1,0 +1,482 @@
+{
+  "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+  "replicates": 3,
+  "audits": [
+    {
+      "fixture": "cart-one-burger",
+      "digest": "da070eda950cb4ca",
+      "replicate": 0,
+      "assessment": {
+        "screen_name": "My Cart",
+        "rule_verifications": [
+          {
+            "rule": "[expected:0] The cart subtotal is $9.99",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The subtotal at the bottom right of the screen is clearly displayed as $9.99.",
+            "screen_name": null
+          },
+          {
+            "rule": "[expected:1] The cart subtotal is $19.98",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The subtotal displayed is $9.99, which contradicts the expected $19.98.",
+            "screen_name": null
+          },
+          {
+            "rule": "[expected:2] The cart holds one Classic Burger",
+            "rule_id": "expected:2",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The item list shows 'Classic Burger' with a quantity of 1.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [
+          {
+            "issue_type": "overlay",
+            "description": "A 'DEBUG' banner is present diagonally in the top right corner, overlapping the status bar area.",
+            "bounding_box": null,
+            "severity": "low",
+            "current_screen": null
+          }
+        ],
+        "sensitive_findings": []
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "a75b62d6974bc3511f639dfdb528e127fbb4475206064c68f4da4423009ae0ea",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.0026481
+    },
+    {
+      "fixture": "cart-one-burger",
+      "digest": "da070eda950cb4ca",
+      "replicate": 1,
+      "assessment": {
+        "screen_name": "My Cart",
+        "rule_verifications": [
+          {
+            "rule": "[expected:0]",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The subtotal is explicitly displayed as $9.99 at the bottom of the screen.",
+            "screen_name": null
+          },
+          {
+            "rule": "[expected:1]",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The screen displays the subtotal as $9.99, not $19.98.",
+            "screen_name": null
+          },
+          {
+            "rule": "[expected:2]",
+            "rule_id": "expected:2",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The cart contains one item, identified as 'Classic Burger', with a quantity of 1.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": [
+          {
+            "field": "Subtotal",
+            "rendering": "value",
+            "quoted": "$9.99",
+            "screen_name": "My Cart"
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "a75b62d6974bc3511f639dfdb528e127fbb4475206064c68f4da4423009ae0ea",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.002475348
+    },
+    {
+      "fixture": "cart-one-burger",
+      "digest": "da070eda950cb4ca",
+      "replicate": 2,
+      "assessment": {
+        "screen_name": "My Cart",
+        "rule_verifications": [
+          {
+            "rule": "The cart subtotal is $9.99",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The bottom of the screen displays 'Subtotal: $9.99'.",
+            "screen_name": null
+          },
+          {
+            "rule": "The cart subtotal is $19.98",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The subtotal displayed is $9.99, matching the first rule but failing this one.",
+            "screen_name": null
+          },
+          {
+            "rule": "The cart holds one Classic Burger",
+            "rule_id": "expected:2",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The cart list shows 'Classic Burger' with a quantity of '1'.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": []
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "a75b62d6974bc3511f639dfdb528e127fbb4475206064c68f4da4423009ae0ea",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.002498148
+    },
+    {
+      "fixture": "checkout-card-masked",
+      "digest": "8aef116084b7a1e5",
+      "replicate": 0,
+      "assessment": {
+        "screen_name": "Checkout Details",
+        "rule_verifications": [
+          {
+            "rule": "The checkout screen has a delivery address field and a Place Order button",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The screen clearly displays a 'Delivery Address' text field and a green 'Place Order' button at the bottom.",
+            "screen_name": null
+          },
+          {
+            "rule": "The number 4242 4242 4242 4242 is printed on the payment card",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The orange payment card graphic displays masked dots (\u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022) instead of the specific number 4242 4242 4242 4242.",
+            "screen_name": null
+          },
+          {
+            "rule": "The full card number is never legible on this screen",
+            "rule_id": "security:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The visible payment card graphic shows only dots for the card number, and the actual 'Card Number' input field is empty.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": [
+          {
+            "field": "Payment Card Number Graphic",
+            "rendering": "masked",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          },
+          {
+            "field": "Card Number Input Field",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          },
+          {
+            "field": "CVV Input Field",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "f0e58879cff016ebb6c2966dac91edff313ce6c2b5c3b1af806a373e08f91cf4",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.002633844
+    },
+    {
+      "fixture": "checkout-card-masked",
+      "digest": "8aef116084b7a1e5",
+      "replicate": 1,
+      "assessment": {
+        "screen_name": "Checkout Details",
+        "rule_verifications": [
+          {
+            "rule": "The checkout screen has a delivery address field and a Place Order button",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The screen displays a 'Delivery Address' text input area and a green 'Place Order' button at the bottom.",
+            "screen_name": null
+          },
+          {
+            "rule": "The number 4242 4242 4242 4242 is printed on the payment card",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The orange payment card graphic shows masked dots ('\u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022') instead of the specific number 4242 4242 4242 4242.",
+            "screen_name": null
+          },
+          {
+            "rule": "The full card number is never legible on this screen",
+            "rule_id": "security:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The card number on the orange payment card graphic is masked with dots, and the 'Card Number' input field below it is empty.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": [
+          {
+            "field": "Card Number",
+            "rendering": "masked",
+            "quoted": "\u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022",
+            "screen_name": "Checkout Details"
+          },
+          {
+            "field": "CVV on Payment Card",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          },
+          {
+            "field": "Card Number Input Field",
+            "rendering": "absent",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "f0e58879cff016ebb6c2966dac91edff313ce6c2b5c3b1af806a373e08f91cf4",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.002579316
+    },
+    {
+      "fixture": "checkout-card-masked",
+      "digest": "8aef116084b7a1e5",
+      "replicate": 2,
+      "assessment": {
+        "screen_name": "Checkout Details",
+        "rule_verifications": [
+          {
+            "rule": "[expected:0] The checkout screen has a delivery address field and a Place Order button",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The screen clearly displays a 'Delivery Address' text input field and a green 'Place Order' button at the bottom.",
+            "screen_name": null
+          },
+          {
+            "rule": "[expected:1] The number 4242 4242 4242 4242 is printed on the payment card",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The payment card graphic displays dots (\u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022 \u2022\u2022\u2022\u2022) instead of the specific number 4242 4242 4242 4242.",
+            "screen_name": null
+          },
+          {
+            "rule": "[security:0] The full card number is never legible on this screen",
+            "rule_id": "security:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The payment card graphic shows dots in place of the card number, and the input field is empty with only a placeholder, keeping the number masked.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": [
+          {
+            "field": "card number",
+            "rendering": "masked",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          },
+          {
+            "field": "card number",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          },
+          {
+            "field": "CVV",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": "Checkout Details"
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "f0e58879cff016ebb6c2966dac91edff313ce6c2b5c3b1af806a373e08f91cf4",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.002166516
+    },
+    {
+      "fixture": "sign-in-empty",
+      "digest": "cb74528347de594b",
+      "replicate": 0,
+      "assessment": {
+        "screen_name": "Yewo Fast Food Delivery Sign In",
+        "rule_verifications": [
+          {
+            "rule": "A sign-in form with an Email Address field and a Password field is on screen",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The screen visibly contains two input fields: one with the placeholder 'Email Address' and an envelope icon, and another with the placeholder 'Password' and a lock icon.",
+            "screen_name": null
+          },
+          {
+            "rule": "A list of restaurants fills the screen and there is no sign-in form",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The screen displays a sign-in form and does not show any list of restaurants.",
+            "screen_name": null
+          },
+          {
+            "rule": "No readable password characters are on this screen",
+            "rule_id": "security:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The password field is empty and only shows the label 'Password'. There are no dots, asterisks, or readable characters present in the field.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": [
+          {
+            "field": "Password",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": "Yewo Fast Food Delivery Sign In"
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "4a783f2d5e2ab34f301881a8cfbba1aa06b901d7ca9dd6cc110465e2dfc6bbd3",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.0029739
+    },
+    {
+      "fixture": "sign-in-empty",
+      "digest": "cb74528347de594b",
+      "replicate": 1,
+      "assessment": {
+        "screen_name": "Sign-in Screen",
+        "rule_verifications": [
+          {
+            "rule": "[expected:0] A sign-in form with an Email Address field and a Password field is on screen",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The screen clearly shows an 'Email Address' input field, a 'Password' input field, and a 'Login' button.",
+            "screen_name": null
+          },
+          {
+            "rule": "[expected:1] A list of restaurants fills the screen and there is no sign-in form",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The screen displays a sign-in form instead of a list of restaurants, violating the condition that there should be no sign-in form.",
+            "screen_name": null
+          },
+          {
+            "rule": "[security:0] No readable password characters are on this screen",
+            "rule_id": "security:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The password field only contains the label/placeholder text 'Password'. No readable password characters are visible.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [
+          {
+            "issue_type": "overlapping_element",
+            "description": "A 'Font Scale' debug overlay with a slider and reset button is rendered at the top of the screen, overlapping the status bar area.",
+            "bounding_box": null,
+            "severity": "low",
+            "current_screen": null
+          }
+        ],
+        "sensitive_findings": [
+          {
+            "field": "password",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": null
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "4a783f2d5e2ab34f301881a8cfbba1aa06b901d7ca9dd6cc110465e2dfc6bbd3",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.003519516
+    },
+    {
+      "fixture": "sign-in-empty",
+      "digest": "cb74528347de594b",
+      "replicate": 2,
+      "assessment": {
+        "screen_name": "Login",
+        "rule_verifications": [
+          {
+            "rule": "A sign-in form with an Email Address field and a Password field is on screen",
+            "rule_id": "expected:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The screen clearly displays an Email Address field, a Password field, and a Login button.",
+            "screen_name": null
+          },
+          {
+            "rule": "A list of restaurants fills the screen and there is no sign-in form",
+            "rule_id": "expected:1",
+            "status": "failed",
+            "applicable": true,
+            "reasoning": "The screen is a sign-in form. It does not contain a list of restaurants.",
+            "screen_name": null
+          },
+          {
+            "rule": "No readable password characters are on this screen",
+            "rule_id": "security:0",
+            "status": "passed",
+            "applicable": true,
+            "reasoning": "The password field is empty, displaying only the label 'Password'. No readable characters are visible.",
+            "screen_name": null
+          }
+        ],
+        "detected_issues": [],
+        "sensitive_findings": [
+          {
+            "field": "Email Address",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": null
+          },
+          {
+            "field": "Password",
+            "rendering": "label_only",
+            "quoted": "",
+            "screen_name": null
+          }
+        ]
+      },
+      "requested_model": "openrouter/deepseek/deepseek-v4.1-flash",
+      "served_model": "deepseek/deepseek-v4.1-flash",
+      "prompt_sha256": "4a783f2d5e2ab34f301881a8cfbba1aa06b901d7ca9dd6cc110465e2dfc6bbd3",
+      "schema_sha256": "aa1087c50a9c37c1ad9ba9f9efc4f3ae0317bcb6ca525d275f28a149e39afb69",
+      "cost": 0.003357516
+    }
+  ]
+}

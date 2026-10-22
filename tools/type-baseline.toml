@@ -13,5 +13,5 @@
 "src/yewo/llm/llm_client.py" = 5
 "src/yewo/setup/steps.py" = 4
 "src/yewo/testing/qa_agent.py" = 1
-"src/yewo/testing/runner.py" = 4
+"src/yewo/testing/runner.py" = 2
 "src/yewo/utils/platform_checks.py" = 1

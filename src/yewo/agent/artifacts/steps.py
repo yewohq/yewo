@@ -98,12 +98,19 @@ class StepArtifacts:
 
     def save_action(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot, action
-    ) -> str:
+    ) -> Optional[str]:
+        """Where the action was aimed, when there was somewhere to draw.
+
+        None where nothing was written. An action with no point on screen
+        has no annotation to make. A wait and a key event are both such
+        actions. Naming a file that does not exist puts a broken image in
+        every report that lists the step's artifacts.
+        """
         click_path = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_action.png"
-        self.images.save_redacted_action_annotation(
+        drawn = self.images.save_redacted_action_annotation(
             snapshot.annotated_img, snapshot.gui_elements, action, click_path
         )
-        return click_path.name
+        return click_path.name if drawn else None
 
 
 def save_unmatched_screen(images: RedactedImages, path: Path, snapshot) -> None:

@@ -12,7 +12,7 @@ from yewo.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
 from yewo.agent.perception.blind import for_grounding
 from yewo.agent.plan.planner import GROUNDING_COORDINATES
 from yewo.agent.memory.replay import ReplayLedger
-from yewo.errors import ArtifactWriteFailed, ProviderUnavailable
+from yewo.errors import ProviderUnavailable
 from yewo.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
 from . import lock, locking
@@ -30,7 +30,7 @@ from .models import (
 from .qa_agent import QAAgent
 from .report.usage_tracker import LLMUsageTracker
 from yewo.utils.secrets import SecretScrubber
-from .report.reports import save_junit_report, save_markdown_report
+from .report import writing
 
 logger = logging.getLogger(__name__)
 
@@ -119,16 +119,24 @@ class YewoTestRunner:
         self.record_session = record_session
         self._app: Optional[identity.AppIdentity] = None
         self._device = identity.DeviceIdentity()
+        self._git: Optional[identity.GitIdentity] = None
 
     def _environment(self) -> RunEnvironment:
         """What was in play for this run, so a reader can explain a difference.
 
-        The app is read once and kept: hashing a build costs seconds, and a
-        checkpoint is written after every scenario.
+        The app and the commit are read once and kept. Hashing a build costs
+        seconds, and a checkpoint is written after every scenario. The commit
+        is kept for a second reason. A checkout that changes mid-run would
+        give the record one answer and the report another, and the two are
+        one page.
         """
         if self._app is None:
             self._app = identity.app_identity(
                 self.app_path, installed=not self.reuse_app
+            )
+        if self._git is None:
+            self._git = identity.git_identity(
+                self.journey_file.parent if self.journey_file else None
             )
         return RunEnvironment(
             yewo_version=__version__,
@@ -139,9 +147,7 @@ class YewoTestRunner:
             detector=f"{YOLO_REPO_ID}@{YOLO_REVISION}",
             app=self._app,
             device=self._device,
-            git=identity.git_identity(
-                self.journey_file.parent if self.journey_file else None
-            ),
+            git=self._git,
             ci=identity.ci_identity(),
         )
 
@@ -282,6 +288,7 @@ class YewoTestRunner:
                     kind="journey",
                     id=journey.id,
                     name=artifact_scrubber.scrub(journey.name),
+                    description=artifact_scrubber.scrub(journey.description),
                 ),
                 scenarios,
                 environment=self._environment(),
@@ -456,46 +463,17 @@ class YewoTestRunner:
                 unevidenced_security_rules=unevidenced,
                 environment=self._environment(),
             )
-            self._persist(
-                report, session, artifact_scrubber, manifest, unevidenced,
+            writing.persist(
+                report,
+                self.assets_dir,
+                session,
+                artifact_scrubber,
+                manifest,
+                unevidenced,
                 usage_tracker.summary(),
             )
 
         return report
-
-    def _persist(
-        self,
-        report: JourneyReport,
-        session,
-        scrubber: SecretScrubber,
-        manifest,
-        unevidenced: List[str],
-        usage: dict,
-    ) -> None:
-        """Writes every report, then closes the record that names them.
-
-        A report that could not be written fails the run. A suite that
-        produced verdicts and no record of them is not a passing suite.
-        Nothing downstream could tell it from one that never ran.
-        """
-        for name, write in (
-            ("markdown_report", self._save_markdown_report),
-            ("junit_report", self._save_junit_report),
-        ):
-            try:
-                write(report, session=session, scrubber=scrubber)
-            except ArtifactWriteFailed as failure:
-                logger.error("Failed to save %s: %s", name, failure)
-                infrastructure.write_failure(report, name, failure)
-                if manifest is not None:
-                    manifest.add(report.scenarios[-1])
-
-        if manifest is None:
-            return
-        # Last, so the record carries whichever reports failed to write.
-        manifest.finish(report.status, unevidenced=unevidenced, usage=usage)
-        if manifest.unwritten is not None:
-            infrastructure.write_failure(report, "run_manifest", manifest.unwritten)
 
     def _save_checkpoint(
         self,
@@ -520,30 +498,4 @@ class YewoTestRunner:
             skipped_count=skipped,
             environment=self._environment(),
         )
-        try:
-            save_markdown_report(
-                checkpoint, session.telemetry_dir, session, scrubber, label="partial"
-            )
-            save_junit_report(
-                checkpoint, session.telemetry_dir, scrubber, label="partial"
-            )
-        except ArtifactWriteFailed as exc:
-            logger.error("Failed to checkpoint partial reports: %s", exc)
-
-    def _save_markdown_report(
-        self,
-        report: JourneyReport,
-        session: DeviceSession = None,
-        scrubber: SecretScrubber | None = None,
-    ):
-        output_dir = session.telemetry_dir if session is not None else self.assets_dir
-        return save_markdown_report(report, output_dir, session, scrubber)
-
-    def _save_junit_report(
-        self,
-        report: JourneyReport,
-        session: DeviceSession = None,
-        scrubber: SecretScrubber | None = None,
-    ):
-        output_dir = session.telemetry_dir if session is not None else self.assets_dir
-        return save_junit_report(report, output_dir, scrubber)
+        writing.checkpoint(checkpoint, self.assets_dir, session, scrubber)

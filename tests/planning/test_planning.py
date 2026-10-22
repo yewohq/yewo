@@ -37,6 +37,7 @@ class ProviderNormalizationTests(unittest.TestCase):
 
     def test_the_auditor_accepts_a_compact_rule_mapping(self):
         from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.models import IssueKind
 
         assessment = Assessment.model_validate(
             {
@@ -47,7 +48,7 @@ class ProviderNormalizationTests(unittest.TestCase):
         )
 
         self.assertEqual(assessment.rule_verifications[0].status, "passed")
-        self.assertEqual(assessment.detected_issues[0].issue_type, "qa_issue")
+        self.assertEqual(assessment.detected_issues[0].issue_type, IssueKind.OTHER)
         self.assertEqual(assessment.detected_issues[0].description, "Debug banner")
 
 

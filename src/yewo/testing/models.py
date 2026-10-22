@@ -25,6 +25,7 @@ from yewo.testing.evidence import (  # noqa: F401
     AssertionScope,
     BoundingBox,
     ExpectedOutcome,
+    IssueKind,
     JourneyReport,
     QAIssue,
     ReceiptRecord,

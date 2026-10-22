@@ -135,6 +135,44 @@ def _settled(verifications: List[RuleVerification]) -> set:
     }
 
 
+def per_rule(verifications: List[RuleVerification]) -> dict:
+    """How each rule settled, as one answer per rule id.
+
+    The auditor is put to every screen, and answers every rule on each of
+    them. So a scenario holds many answers per rule, and most say "not
+    here". A reader wants the answer that decided the rule. It is the one
+    the verdict was taken from.
+
+    The two kinds settle differently, and this follows the verdict rather
+    than averaging them. An expected outcome holds where it is claimed, so
+    a pass anywhere settles it. A security rule describes what must never
+    happen, so a failure anywhere stands and no later screen takes it back.
+    Reading a security rule the other way would show a violation as passed
+    on a run the judge failed for it.
+
+    A rule nothing could answer is absent. It was never decided, and
+    reporting it either way would invent an answer.
+    """
+    violated = {
+        verification.rule_id: verification
+        for verification in verifications
+        if verification.status == "failed"
+        and rules.is_kind(verification.rule_id, rules.SECURITY)
+    }
+    latest = _per_screen(verifications)
+    settled = _settled(verifications)
+    decided = dict(violated)
+    for (rule_id, _), verification in latest.items():
+        if rule_id in violated:
+            continue
+        if rule_id in settled:
+            if verification.status == "passed":
+                decided[rule_id] = verification
+        elif rule_id not in decided and verification.status == "failed":
+            decided[rule_id] = verification
+    return decided
+
+
 def _violated_security_rule(verifications: List[RuleVerification]):
     """A security rule failing anywhere is a violation, however the run ended.
 

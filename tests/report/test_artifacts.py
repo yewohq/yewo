@@ -28,7 +28,7 @@ class ArtifactSafetyTests(unittest.TestCase):
 
     def test_junit_distinguishes_errors_from_assertion_failures(self):
         from yewo.testing.models import JourneyReport, ScenarioReport
-        from yewo.testing.runner import YewoTestRunner
+        from yewo.testing.report.reports import save_junit_report
 
         report = JourneyReport(
             journey_id="j",
@@ -54,9 +54,7 @@ class ArtifactSafetyTests(unittest.TestCase):
             failed_count=2,
         )
         with tempfile.TemporaryDirectory() as directory:
-            runner = YewoTestRunner.__new__(YewoTestRunner)
-            runner.assets_dir = Path(directory)
-            runner._save_junit_report(report)
+            save_junit_report(report, Path(directory))
             path = next(Path(directory).glob("junit_*.xml"))
             root = ET.parse(path).getroot()
 
@@ -365,6 +363,54 @@ class StepFileNameTests(unittest.TestCase):
         self.assertTrue(
             all(name.startswith("step001_20261017_041552") for name in names), names
         )
+
+    def test_an_action_with_nothing_to_draw_names_no_file(self):
+        """A wait and a key event have no point on screen to annotate.
+
+        Naming a file that was never written puts a broken image in every
+        report that lists what a step left.
+        """
+        from yewo.agent.artifacts.steps import StepArtifacts
+
+        class DrewNothing:
+            def save_redacted_action_annotation(self, annotated, elements, action, path):
+                return False
+
+        artifacts = StepArtifacts(DrewNothing(), SecretScrubber())
+        snapshot = SimpleNamespace(
+            timestamp="20261017_041552", annotated_img=None, gui_elements=[]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            named = artifacts.save_action(Path(directory), 0, snapshot, object())
+
+        self.assertIsNone(named)
+
+    def test_an_action_that_was_drawn_names_its_file(self):
+        from yewo.agent.artifacts.steps import StepArtifacts
+
+        class DrewIt:
+            def save_redacted_action_annotation(self, annotated, elements, action, path):
+                return True
+
+        artifacts = StepArtifacts(DrewIt(), SecretScrubber())
+        snapshot = SimpleNamespace(
+            timestamp="20261017_041552", annotated_img=None, gui_elements=[]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            named = artifacts.save_action(Path(directory), 0, snapshot, object())
+
+        self.assertEqual(named, "step001_20261017_041552_action.png")
+
+    def test_a_step_never_records_a_file_that_is_not_there(self):
+        """The record is what the page reads, so the filter belongs in it too."""
+        from yewo.agent.run.record import StepLog
+
+        log = StepLog()
+        log.open(1)
+        log.files({"action": None, "raw": "step001_raw.png"})
+
+        self.assertIsNotNone(log.current)
+        self.assertEqual(log.current.screenshots, {"raw": "step001_raw.png"})
 
     def test_a_listing_puts_step_two_before_step_ten(self):
         names = self._names([1, 9])

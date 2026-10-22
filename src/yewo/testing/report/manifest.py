@@ -118,6 +118,13 @@ class Subject(BaseModel):
     kind: Literal["journey", "goal"]
     id: str
     name: str
+    description: str = Field(
+        default="",
+        description=(
+            "The journey in the words it was written in. The record holds it "
+            "so a reader of the file alone can tell what was asked for."
+        ),
+    )
 
 
 class Inputs(BaseModel):
@@ -165,6 +172,7 @@ class RunManifest:
         self.started_at = datetime.now()
         self.status = "RUNNING"
         self.unevidenced_security_rules: List[str] = []
+        self.duration: Optional[float] = None
         self.usage: Optional[dict] = None
         self.steps: List[StepRecord] = []
         """A goal run has no scenarios, so its steps sit at the top level."""
@@ -288,11 +296,16 @@ class RunManifest:
         """Takes the calls nothing in the run owns, such as generation."""
         self.calls = list(calls)
 
+    def _elapsed(self) -> float:
+        """How long the run took, by this file's own clock."""
+        return round((datetime.now() - self.started_at).total_seconds(), 2)
+
     def finish(
         self,
         status: str,
         unevidenced: Optional[List[str]] = None,
         usage: Optional[dict] = None,
+        duration: Optional[float] = None,
     ) -> None:
         """Closes the record, so a reader can tell a finished run from a killed one.
 
@@ -305,6 +318,9 @@ class RunManifest:
             self.status = status
         self.unevidenced_security_rules = list(unevidenced or [])
         self.usage = usage
+        # The suite already timed itself. Its number is the one the reports
+        # show, so the record states that rather than a second measurement.
+        self.duration = duration if duration is not None else self._elapsed()
         self.write(final=True)
 
     def record_goal(self, result, usage: Optional[dict] = None) -> None:
@@ -315,6 +331,7 @@ class RunManifest:
         """
         self.steps = list(result.steps)
         self.usage = usage
+        self.duration = self._elapsed()
         if self.status != ABORTED:
             self.status = "PASSED" if result.status == "goal_reached" else "FAILED"
         self.write(final=True)
@@ -362,6 +379,7 @@ class RunManifest:
             "mode": self.mode,
             "status": self.status,
             "started_at": self.started_at.isoformat(timespec="seconds"),
+            "duration_seconds": self.duration,
             "updated_at": _now(),
             "ended_at": _now() if final else None,
             "subject": self.subject.model_dump(),

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from yewo.errors import ArtifactWriteFailed
 from yewo.testing.models import JourneyReport, ScenarioReport
+from yewo.testing.judge import verdicts
 from yewo.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ def _scrub(scrubber: SecretScrubber | None, value: str | None) -> str:
     return scrubber.scrub(value) if scrubber else value or ""
 
 
-def _write_atomic(path: Path, content: str | bytes) -> None:
+def write_atomic(path: Path, content: str | bytes) -> None:
     """Writes via a temporary file, so a half-written report never appears."""
     temporary = path.with_suffix(path.suffix + ".tmp")
     try:
@@ -95,7 +96,7 @@ def save_markdown_report(
     lines.extend(
         [
             "",
-            "## Journey Description",
+            "## Test Flow",
             _scrub(scrubber, report.description),
             "",
             "---",
@@ -107,13 +108,15 @@ def save_markdown_report(
 
     if report.unevidenced_security_rules:
         lines.append("")
-        lines.append("## Security Rules Not Evidenced")
+        lines.append("## Security Rules Not Evaluated")
         lines.append("")
-        lines.append("No scenario reached a screen where these could be checked:")
+        lines.append(
+            "No scenario reached a screen where Yewo could evaluate these rules:"
+        )
         for rule in report.unevidenced_security_rules:
             lines.append(f"* ⚠️ {_scrub(scrubber, rule)}")
 
-    _write_atomic(filepath, "\n".join(lines))
+    write_atomic(filepath, "\n".join(lines))
     logger.info("Markdown test report successfully written to %s", filepath)
     return filepath
 
@@ -141,10 +144,10 @@ def _append_scenario(
         lines.append(
             f"* ❌ **Failure Reason**: `{_scrub(scrubber, scenario.failure_reason)}`"
         )
-    actionable = [v for v in scenario.rule_verifications if v.status != "untested"]
-    if actionable:
-        lines.append("### Verifications:")
-        for rule in actionable:
+    settled = verdicts.per_rule(list(scenario.rule_verifications))
+    if settled:
+        lines.append("### Verification Results:")
+        for rule in settled.values():
             status = "[x] Passed" if rule.status == "passed" else "[ ] Failed"
             screen = f" on `{_scrub(scrubber, rule.screen_name)}`" if rule.screen_name else ""
             lines.append(
@@ -153,10 +156,10 @@ def _append_scenario(
             )
         lines.append("")
     if scenario.detected_issues:
-        lines.append("### Detected Issues:")
+        lines.append("### Observed Issues:")
         for issue in scenario.detected_issues:
             lines.append(
-                f"  * ⚠️ **{issue.severity.upper()} ({issue.issue_type})**: "
+                f"  * ⚠️ **{issue.severity.upper()} ({issue.issue_type.value})**: "
                 f"{_scrub(scrubber, issue.description)} on screen "
                 f"`{_scrub(scrubber, issue.current_screen)}`"
             )
@@ -200,7 +203,7 @@ def save_junit_report(
         _append_junit_case(suite, report, scenario, scrubber)
 
     content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-    _write_atomic(filepath, content)
+    write_atomic(filepath, content)
     logger.info("JUnit XML test report successfully written to %s", filepath)
     return filepath
 
@@ -228,7 +231,7 @@ def _append_junit_case(
             {"message": message, "type": _junit_type(scenario)},
         )
         details = [
-            f"[{issue.severity.upper()}] {issue.issue_type}: "
+            f"[{issue.severity.upper()}] {issue.issue_type.value}: "
             f"{_scrub(scrubber, issue.description)} on "
             f"{_scrub(scrubber, issue.current_screen)}"
             for issue in scenario.detected_issues

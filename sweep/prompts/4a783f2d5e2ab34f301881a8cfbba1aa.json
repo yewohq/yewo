@@ -1,0 +1,22 @@
+{
+  "sha256": "4a783f2d5e2ab34f301881a8cfbba1aa06b901d7ca9dd6cc110465e2dfc6bbd3",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "The screen to audit:"
+        },
+        {
+          "type": "image_url",
+          "image_sha256": "d2f5d82446a527535323e0230ef5c7e053d05670db55b0085409e8591ccf7a85"
+        },
+        {
+          "type": "text",
+          "text": "You are auditing one screenshot of a mobile app.\n\nYou are not driving the app and you do not know what it was asked to do. Judge\nonly what this screen shows.\n\n### Rules to audit\n- [expected:0] A sign-in form with an Email Address field and a Password field is on screen\n- [expected:1] A list of restaurants fills the screen and there is no sign-in form\n- [security:0] No readable password characters are on this screen\n\n### How to answer\n1. `screen_name`: what this screen is, from what is on it.\n2. `rule_verifications`: one entry per rule above, copying its bracketed id into\n   `rule_id`.\n   - \"passed\" means you can see this screen satisfying the rule, now.\n   - \"failed\" means you can see this screen breaking it, now. A rule is not\n     failed because a field could show something once it is filled, because a\n     label suggests a value might appear beside it, or because the layout\n     could expose something under other conditions. Report what is rendered,\n     not what the design permits. If the violating content is not on the\n     screen in front of you, the rule is not failed.\n   - \"untested\" means this screen does not show you either way. A rule about a\n     screen you are not looking at is \"untested\", never \"failed\".\n   - `applicable` is false when this screen holds nothing the rule could apply\n     to, such as a rule about a field this screen does not have. Pair it with\n     \"untested\". Never mark a rule passed because its subject is absent, and\n     never from what you expect a field to do once it is filled. Judge the\n     pixels in front of you.\n   - `reasoning`: what you saw, not what you infer.\n3. `detected_issues`: visual defects on this screen \u2014 clipped or overlapping\n   text, layout overflow stripes, or a blank or crashed screen. Each needs a\n   `severity`.\n4. `sensitive_findings`: one entry for every place a value the rules above\n   treat as sensitive could be on this screen. Say what is there, not what\n   could be there:\n   - \"value\" only when you can read the real characters. Copy them into\n     `quoted`.\n   - \"masked\" when dots, bullets or asterisks stand in for them.\n   - \"label_only\" when there is a caption and nothing beside it.\n   - \"absent\" when the screen holds no such field at all.\n   A caption is not a value. An empty field is not a value.\n"
+        }
+      ]
+    }
+  ]
+}

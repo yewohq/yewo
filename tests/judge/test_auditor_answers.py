@@ -173,3 +173,37 @@ class AskingAgainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhereAnIssueWasSeenTests(unittest.TestCase):
+    """A report can only link a finding to evidence the run recorded."""
+
+    def _assessment(self, *issues):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(detected_issues=list(issues))
+
+    def _issue(self, **extra):
+        from yewo.testing.models import QAIssue
+
+        fields = {"issue_type": "layout_overflow", "severity": "low",
+                  "description": "Something overflows."}
+        fields.update(extra)
+        return QAIssue(**fields)
+
+    def test_an_issue_is_stamped_with_the_step_it_was_found_after(self):
+        from yewo.testing.qa_agent import _seen_at
+
+        issue = self._issue()
+        _seen_at([self._assessment(issue)], 4)
+
+        self.assertEqual(issue.step, 4)
+
+    def test_an_issue_already_stamped_keeps_its_step(self):
+        """The closing look repeats what an earlier look returned."""
+        from yewo.testing.qa_agent import _seen_at
+
+        issue = self._issue(step=2)
+        _seen_at([self._assessment(issue)], 9)
+
+        self.assertEqual(issue.step, 2)

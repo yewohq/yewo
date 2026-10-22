@@ -112,6 +112,23 @@ def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
     return deferred
 
 
+def _seen_at(assessments, step: int) -> None:
+    """Records which step each issue was found after.
+
+    An auditor is shown one screen and does not know where in a walk it
+    sits, so the run stamps it. Without this a report can only match on
+    the screen name. That finds the first visit to a screen rather than
+    the visit that saw the defect.
+
+    An issue already stamped keeps its step. A closing look repeats what
+    an earlier look returned, and the earlier step is the true one.
+    """
+    for assessment in assessments:
+        for issue in assessment.detected_issues:
+            if issue.step is None:
+                issue.step = step
+
+
 class QAAgent:
     """Runs one QA scenario, and keeps the clients a journey shares.
 
@@ -196,6 +213,7 @@ class QAAgent:
                 assessment.screen_name = (
                     assessment.screen_name or step_response.current_screen
                 )
+            _seen_at(fresh, len(qa_outputs))
             assessments.extend(fresh)
 
             if fresh and _defer_first_look(
@@ -301,7 +319,9 @@ class QAAgent:
             self._device_agent.replay_ledger = replay
 
         # Nothing ever leaves the screen a scenario ended on, so it is read here.
-        assessments.extend(watch.close())
+        last = watch.close()
+        _seen_at(last, len(qa_outputs))
+        assessments.extend(last)
 
         return self._build_report(
             test_case=test_case,

@@ -16,7 +16,7 @@ whoever writes it down.
 """
 
 from enum import Enum
-from typing import Callable, List, Literal, Optional
+from typing import Callable, List, Literal, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -40,22 +40,52 @@ class DecisionRecord(BaseModel):
     goal_evidence: str = ""
 
 
+class PlannedAction(Protocol):
+    """What every action the planner can return declares.
+
+    A protocol rather than `getattr`. Each action model names its own
+    `reason` as a required field, so reading one is a typed contract and
+    not a guess about what arrived.
+    """
+
+    @property
+    def type(self) -> object: ...
+
+    @property
+    def reason(self) -> str: ...
+
+
 class ActionRecord(BaseModel):
     """What the step did to the device, after the target was resolved."""
 
     type: str
     described: str = Field(description="The action in words, already redacted.")
+    intent: Optional[str] = Field(
+        default=None,
+        description=(
+            "Why the planner chose this action, in its own words. Kept "
+            "apart from the description so a reader can be shown what a "
+            "step was for without the coordinates it was done at."
+        ),
+    )
     target_label: Optional[str] = Field(
         default=None, description="What the element said, where one was matched."
     )
 
     @classmethod
-    def of(cls, action, described: str, target: Optional[str] = None) -> "ActionRecord":
+    def of(
+        cls,
+        action: PlannedAction,
+        described: str,
+        target: Optional[str] = None,
+        intent: Optional[str] = None,
+    ) -> "ActionRecord":
         """The record for one action, read off the action itself."""
         kind = action.type
         return cls(
             type=kind.value if isinstance(kind, Enum) else str(kind),
             described=described,
+            intent=intent or None,
             target_label=target,
         )
 
@@ -259,7 +289,13 @@ class StepLog:
                 unmatched=decision.unmatched,
             )
 
-    def acted(self, action, described: str, result, target: Optional[str]) -> None:
+    def acted(
+        self,
+        action: PlannedAction,
+        described: str,
+        result,
+        target: Optional[str],
+    ) -> None:
         """What the step did, and what the device said about it.
 
         The target label is what the element said, which is app content. A
@@ -269,7 +305,10 @@ class StepLog:
         if step is None:
             return
         step.action = ActionRecord.of(
-            action, self._scrub(described), self._scrub(target) or None
+            action,
+            self._scrub(described),
+            self._scrub(target) or None,
+            self._scrub(action.reason) or None,
         )
         step.outcome = OutcomeRecord(
             success=result.success,
@@ -279,7 +318,7 @@ class StepLog:
 
     def blocked(
         self,
-        action,
+        action: PlannedAction,
         described: str,
         observation: Optional[str],
         target: Optional[str] = None,
@@ -294,7 +333,10 @@ class StepLog:
         if step is None:
             return
         step.action = ActionRecord.of(
-            action, self._scrub(described), self._scrub(target) or None
+            action,
+            self._scrub(described),
+            self._scrub(target) or None,
+            self._scrub(action.reason) or None,
         )
         step.outcome = OutcomeRecord(
             success=False,

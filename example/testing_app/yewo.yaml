@@ -39,7 +39,7 @@ workflows:
       # needs six characters, so the value below the floor is declared.
       rejected_password:
         value: abc
-        handling: reject
+        refused: true
       card_number:
         value: '4111222233334444'
         secret: true

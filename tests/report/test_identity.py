@@ -242,12 +242,45 @@ class BuildContextTests(unittest.TestCase):
     def test_a_detached_checkout_reports_no_branch_rather_than_head(self):
         """Which is what git says, and `HEAD` is not a branch name."""
         with patch.dict("os.environ", {}, clear=True), patch(
-            "yewo.identity._read", side_effect=["HEAD", "abc123"]
+            "yewo.identity._read", side_effect=["HEAD", "abc123", "", ""]
         ):
             commit = git_identity(Path("/anywhere"))
 
         self.assertIsNone(commit.branch)
         self.assertEqual(commit.sha, "abc123")
+
+    def test_a_clean_checkout_is_recorded_as_clean(self):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "yewo.identity._read", side_effect=["main", "abc123", "", ""]
+        ):
+            commit = git_identity(Path("/anywhere"))
+
+        self.assertFalse(commit.dirty)
+        self.assertIsNone(commit.diff_sha256)
+
+    def test_an_edited_checkout_says_so_and_names_what_changed(self):
+        """A run of edited files is not evidence about the commit beside it."""
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "yewo.identity._read",
+            side_effect=["main", "abc123", "diff --git a/x b/x", "new.py"],
+        ):
+            commit = git_identity(Path("/anywhere"))
+
+        self.assertTrue(commit.dirty)
+        self.assertEqual(len(commit.diff_sha256 or ""), 64)
+
+    def test_two_different_edits_of_one_commit_are_told_apart(self):
+        def read(*args):
+            return {"rev-parse": "abc123"}.get(args[3], "main")
+
+        shas = []
+        for change in ("one change", "another change"):
+            with patch.dict("os.environ", {}, clear=True), patch(
+                "yewo.identity._read", side_effect=["main", "abc123", change, ""]
+            ):
+                shas.append(git_identity(Path("/anywhere")).diff_sha256)
+
+        self.assertNotEqual(shas[0], shas[1])
 
 
 class TargetTests(unittest.TestCase):
