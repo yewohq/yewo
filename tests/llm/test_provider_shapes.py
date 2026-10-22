@@ -19,9 +19,9 @@ class ProviderShapeTests(unittest.TestCase):
     """
 
     def _parse(self, **body):
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
 
-        return Assessment.model_validate(body)
+        return ScreenAssessment.model_validate(body)
 
     def _verdicts(self, *verdicts):
         return self._parse(screen_name="Checkout", rule_verifications=list(verdicts))

@@ -61,7 +61,7 @@ class SensitiveFinding(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_the_names_a_finding_arrives_under(cls, value):
+    def _normalize_finding_fields(cls, value):
         """Reads a finding under the names its two fields arrive with.
 
         How a value was rendered comes back as `rendering`, `state`, `status`
@@ -110,21 +110,53 @@ class SensitiveFinding(BaseModel):
         return self.rendering is Rendering.VALUE
 
 
-Status = Literal[
-    "PASSED",
-    "FAILED",
-    "SKIPPED",
-    "ERROR",
-    "ABORTED",
-    "UNVERIFIED",
-    "UNSUPPORTED",
-]
-"""The words a scenario can end on.
+class ReportStatus(str, Enum):
+    """Every status persisted in a run record or shown in a report."""
 
-Named because two places hold one of them: the judge that decides it, and the
-report that carries it. A second copy of the list would let one grow a word
-the other refuses.
-"""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    ERROR = "ERROR"
+    ABORTED = "ABORTED"
+    UNVERIFIED = "UNVERIFIED"
+    UNSUPPORTED = "UNSUPPORTED"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @property
+    def in_progress(self) -> bool:
+        """Whether the scenario has not produced a result yet."""
+        return self in (ReportStatus.PENDING, ReportStatus.RUNNING)
+
+
+ScenarioStatus = Literal[
+    ReportStatus.PASSED,
+    ReportStatus.FAILED,
+    ReportStatus.SKIPPED,
+    ReportStatus.ERROR,
+    ReportStatus.ABORTED,
+    ReportStatus.UNVERIFIED,
+    ReportStatus.UNSUPPORTED,
+]
+"""A status a finished scenario can report."""
+
+JourneyStatus = Literal[
+    ReportStatus.PASSED,
+    ReportStatus.FAILED,
+    ReportStatus.RUNNING,
+]
+"""A status an aggregated journey report can carry."""
+
+REPORT_STATUS_ALIASES = {
+    "pass": ReportStatus.PASSED,
+    "passed": ReportStatus.PASSED,
+    "fail": ReportStatus.FAILED,
+    "failed": ReportStatus.FAILED,
+}
+"""Accepted non-canonical spellings in a stored record."""
 
 
 class IssueKind(str, Enum):
@@ -163,7 +195,7 @@ class QAIssue(BaseModel):
 
     @field_validator("issue_type", mode="before")
     @classmethod
-    def _fold_the_spelling(cls, value):
+    def _normalize_issue_kind(cls, value):
         """Reads a kind however it was cased, or files it as other.
 
         Case, spaces and hyphens only. Synonyms are not mapped here. Which
@@ -181,9 +213,9 @@ class QAIssue(BaseModel):
             return value
         if not isinstance(value, str):
             return IssueKind.OTHER
-        said = value.strip().lower().replace(" ", "_").replace("-", "_")
+        normalized_kind = value.strip().lower().replace(" ", "_").replace("-", "_")
         try:
-            return IssueKind(said)
+            return IssueKind(normalized_kind)
         except ValueError:
             return IssueKind.OTHER
     description: str
@@ -250,7 +282,7 @@ class ExpectedOutcome(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_a_bare_statement(cls, value):
+    def _normalize_expected_outcome(cls, value):
         """A plain string is a claim about one screen, which is the common case."""
         if isinstance(value, str):
             return {"statement": value}
@@ -273,7 +305,7 @@ class RuleVerification(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _accept_the_shapes_a_verdict_arrives_in(cls, value):
+    def _normalize_rule_verification(cls, value):
         """Reads a verdict however the model chose to write it.
 
         One rejected verdict takes the whole assessment with it, and the
@@ -383,7 +415,7 @@ class ScenarioReport(BaseModel):
             "'infrastructure'."
         )
     )
-    status: Status
+    status: ScenarioStatus
     cause: Optional[str] = Field(
         default=None,
         description=(
@@ -438,7 +470,7 @@ class JourneyReport(BaseModel):
     journey_id: str
     journey_name: str
     description: str
-    status: Literal["PASSED", "FAILED", "RUNNING"]
+    status: JourneyStatus
     total_duration: float = 0.0
     scenarios: List[ScenarioReport] = Field(default_factory=list)
     unevidenced_security_rules: List[str] = Field(

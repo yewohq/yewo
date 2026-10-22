@@ -61,7 +61,7 @@ class RejudgingTests(unittest.TestCase):
         for entry in entries:
             try:
                 decided.append(rejudge.verdict_of(entry, written))
-            except rejudge.Unreadable as refused:
+            except rejudge.UnreadableRunRecord as refused:
                 decided.append(refused)
         return decided
 
@@ -143,13 +143,13 @@ class RejudgingTests(unittest.TestCase):
         """Half of what the judge was given reaches a verdict that is not one."""
         refused = self._verdicts([_scenario()], schema=1)[0]
 
-        self.assertIsInstance(refused, rejudge.Unreadable)
+        self.assertIsInstance(refused, rejudge.UnreadableRunRecord)
         self.assertIn("schema 1", str(refused))
 
     def test_a_scenario_that_never_reached_a_judge_is_refused(self):
         refused = self._verdicts([_scenario(verdict_inputs=None, status="ERROR")])[0]
 
-        self.assertIsInstance(refused, rejudge.Unreadable)
+        self.assertIsInstance(refused, rejudge.UnreadableRunRecord)
 
     def test_a_file_that_is_not_a_record_is_refused(self):
         with TemporaryDirectory() as directory:
@@ -205,10 +205,10 @@ class WhatTheReportCarriesTests(unittest.TestCase):
         )
 
     def _assessment(self, findings=(), issues=()):
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
         from yewo.testing.models import RuleVerification
 
-        return Assessment(
+        return ScreenAssessment(
             screen_name="Payment",
             rule_verifications=[
                 RuleVerification(

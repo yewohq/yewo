@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, List, Optional, Sequence
 from yewo.agent.run.outcomes import DeviceRunResult
 from yewo.errors import Cause
 from yewo.testing.judge import rules
-from yewo.testing.models import ExpectedOutcome, QAIssue, RuleVerification, Status
+from yewo.testing.models import (
+    ExpectedOutcome,
+    QAIssue,
+    ReportStatus,
+    RuleVerification,
+    ScenarioStatus,
+)
 
 if TYPE_CHECKING:
     from yewo.testing.judge.decide import Feasibility
@@ -26,24 +32,24 @@ def _terminal_outcome(
     issues: List[QAIssue],
     outputs: Sequence["Feasibility"],
     findings: Optional[List] = None,
-) -> Optional[tuple[Status, Optional[str], Optional[Cause]]]:
+) -> Optional[tuple[ScenarioStatus, Optional[str], Optional[Cause]]]:
     """Classify outcomes that cannot become a successful verification."""
 
     # Ranked first: a crash is something the app did, and the rest are
     # statements about the run. A scenario that crashed the app has found a
     # defect, whatever else the planner concluded about being able to proceed.
     if any(issue.issue_type == "crash_screen" for issue in issues):
-        return "FAILED", "App crashed: crash screen detected.", None
+        return ReportStatus.FAILED, "App crashed: crash screen detected.", None
     if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
-        return "SKIPPED", stop_reason, Cause.SCENARIO
+        return ReportStatus.SKIPPED, stop_reason, Cause.SCENARIO
     if run_result.status == "exception":
         return (
-            "ERROR",
+            ReportStatus.ERROR,
             run_result.failure_reason or "Execution exception",
             run_result.cause or Cause.UNKNOWN,
         )
     if run_result.status in ("loop_detected", "step_limit"):
-        return "UNVERIFIED", run_result.failure_reason, Cause.AGENT
+        return ReportStatus.UNVERIFIED, run_result.failure_reason, Cause.AGENT
     critical = next(
         (
             issue
@@ -54,27 +60,27 @@ def _terminal_outcome(
         None,
     )
     if critical:
-        return "FAILED", f"Critical QA issue: {critical.description}", None
+        return ReportStatus.FAILED, f"Critical QA issue: {critical.description}", None
     violated = _violated_security_rule(verifications)
     if violated:
-        return "FAILED", f"Security rule violated: {violated.rule}", None
+        return ReportStatus.FAILED, f"Security rule violated: {violated.rule}", None
     # Security rules never reach this. _violated_security_rule above fails on
     # one anywhere, so what is left here is an expected outcome, which is a
     # claim about the screen it names and not about any other.
-    settled = _settled(verifications)
+    passed_rule_ids = _passed_rule_ids(verifications)
     failed = next(
         (
             verification
             for (rule_id, _), verification in _per_screen(verifications).items()
-            if verification.status == "failed" and rule_id not in settled
+            if verification.status == "failed" and rule_id not in passed_rule_ids
         ),
         None,
     )
     if failed:
-        return "FAILED", f"Rule validation failed: {failed.rule}", None
+        return ReportStatus.FAILED, f"Rule validation failed: {failed.rule}", None
     if outputs and not outputs[-1].is_scenario_feasible:
         return (
-            "SKIPPED",
+            ReportStatus.SKIPPED,
             outputs[-1].infeasibility_reason or "Scenario infeasible",
             Cause.SCENARIO,
         )
@@ -97,8 +103,10 @@ def _unsupported_exposure(issue, findings) -> bool:
     """
     if issue.issue_type != EXPOSURE:
         return False
-    here = [finding for finding in (findings or []) if finding.screen_name == issue.current_screen]
-    return bool(here) and not any(finding.is_exposure() for finding in here)
+    screen_findings = [
+        finding for finding in (findings or []) if finding.screen_name == issue.current_screen
+    ]
+    return bool(screen_findings) and not any(finding.is_exposure() for finding in screen_findings)
 
 
 def _per_screen(verifications: List[RuleVerification]) -> dict:
@@ -120,7 +128,7 @@ def _per_screen(verifications: List[RuleVerification]) -> dict:
     return latest
 
 
-def _settled(verifications: List[RuleVerification]) -> set:
+def _passed_rule_ids(verifications: List[RuleVerification]) -> set:
     """The rules some screen ended on a pass.
 
     A screen that saw an outcome hold is evidence of it, and a later answer
@@ -160,12 +168,12 @@ def per_rule(verifications: List[RuleVerification]) -> dict:
         and rules.is_kind(verification.rule_id, rules.SECURITY)
     }
     latest = _per_screen(verifications)
-    settled = _settled(verifications)
+    passed_rule_ids = _passed_rule_ids(verifications)
     decided = dict(violated)
     for (rule_id, _), verification in latest.items():
         if rule_id in violated:
             continue
-        if rule_id in settled:
+        if rule_id in passed_rule_ids:
             if verification.status == "passed":
                 decided[rule_id] = verification
         elif rule_id not in decided and verification.status == "failed":
@@ -226,6 +234,6 @@ def _missing_required_ids(
         and verification.applicable
         and verification.status == "passed"
     }
-    settled = _settled(verifications) & expected_ids
+    passed_expected_ids = _passed_rule_ids(verifications) & expected_ids
     required_ids = expected_ids | (security_ids & applicable)
-    return sorted(required_ids - settled - (evidenced & security_ids))
+    return sorted(required_ids - passed_expected_ids - (evidenced & security_ids))

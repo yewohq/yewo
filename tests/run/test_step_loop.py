@@ -293,7 +293,7 @@ class FailedActionTests(unittest.TestCase):
     def test_the_screen_is_marked_as_going_nowhere(self):
         ctx = self._dispatched(RuntimeError("no"))
 
-        self.assertTrue(ctx.stall.stuck)
+        self.assertTrue(ctx.stall.is_blocked)
         self.assertEqual(ctx.stall.count, 1)
 
     def test_a_target_that_took_nothing_is_recorded_the_same_way(self):

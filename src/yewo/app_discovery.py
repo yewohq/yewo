@@ -212,15 +212,15 @@ def find_journey_files(directory: Path) -> list[Path]:
     return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
-def resolve_journey_file(given: Optional[str]) -> Path:
+def resolve_journey_file(journey_path: Optional[str]) -> Path:
     """The journey file to run, looking in the working directory when none is named.
 
     Raises:
         UsageError: If the directory holds no journey file, or several, because
             Yewo cannot choose between them on the user's behalf.
     """
-    if given:
-        return Path(given)
+    if journey_path:
+        return Path(journey_path)
 
     candidates = find_journey_files(Path.cwd())
     if len(candidates) == 1:

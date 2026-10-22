@@ -23,7 +23,7 @@ reading it did not help.
 """
 
 
-SPENT = "Nothing on this screen accepted an action after repeated attempts."
+STALL_LIMIT_MESSAGE = "Nothing on this screen accepted an action after repeated attempts."
 
 
 @dataclass
@@ -54,12 +54,12 @@ class Stall:
         self.count += 1
 
     @property
-    def stuck(self) -> bool:
+    def is_blocked(self) -> bool:
         """Whether the last step on this screen failed to reach the device."""
         return self.count > 0
 
     @property
-    def spent(self) -> bool:
+    def is_exhausted(self) -> bool:
         """Whether this screen has used up its attempts."""
         return self.count >= STALL_LIMIT
 

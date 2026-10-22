@@ -246,7 +246,7 @@ class DecisionModelTests(unittest.TestCase):
 
     def _asked(self, *results):
         self.calls = mock.Mock(side_effect=list(results))
-        return failures.answered(
+        return failures.call_with_retry(
             self.calls, "The decision model", wait=self.waited.append
         )
 

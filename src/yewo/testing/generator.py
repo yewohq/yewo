@@ -33,6 +33,7 @@ from yewo.testing.journey_env import substitute
 from yewo.testing.models import (
     ExpectedOutcome,
     GeneratedTestCase,
+    ReportStatus,
     ScenarioDraft,
     UserJourney,
 )
@@ -43,7 +44,7 @@ from yewo.testing.taxonomy import (
     CoverageCell,
     ScenarioType,
     describe,
-    ordered,
+    sort_cells_by_priority,
 )
 from yewo.utils.secrets import SecretScrubber
 
@@ -156,7 +157,7 @@ def _requirements(cell: CoverageCell, journey: UserJourney) -> dict:
 
 
 @dataclass(frozen=True)
-class Uncovered:
+class UncoveredCell:
     """A cell that produced no scenario, and whose problem that is.
 
     A missing declaration is the scenario's limit. A provider that refused
@@ -165,7 +166,7 @@ class Uncovered:
     """
 
     cell: CoverageCell
-    status: Literal["UNSUPPORTED", "ERROR"]
+    status: Literal[ReportStatus.UNSUPPORTED, ReportStatus.ERROR]
     cause: Cause
     reason: str
 
@@ -177,7 +178,7 @@ class GeneratedSuite:
     scenarios: list[GeneratedTestCase] = field(default_factory=list)
     """What runs: every declared value substituted into the walk."""
 
-    uncovered: list[Uncovered] = field(default_factory=list)
+    uncovered: list[UncoveredCell] = field(default_factory=list)
 
     locked: list[GeneratedTestCase] = field(default_factory=list)
     """What a lock stores: the same scenarios, with the names still in them.
@@ -205,12 +206,12 @@ def _value_lines(journey: UserJourney) -> str:
     lines = []
     for name in sorted(journey.values):
         if name in journey.refused:
-            says = "this app refuses this value"
+            value_note = "this app refuses this value"
         elif name.startswith("actors."):
-            says = f"belongs to the account '{name.split('.')[1]}'"
+            value_note = f"belongs to the account '{name.split('.')[1]}'"
         else:
-            says = "a value that is meant to work"
-        lines.append(f"- {name} — {says}")
+            value_note = "a value that is meant to work"
+        lines.append(f"- {name} — {value_note}")
     return "\n".join(lines) or "- none declared"
 
 
@@ -282,7 +283,7 @@ class ScenarioGenerator:
                 so a run pays for the cells it is missing and no others.
         """
         suite = GeneratedSuite()
-        for cell in ordered(list(cells if cells is not None else journey.coverage)):
+        for cell in sort_cells_by_priority(list(cells if cells is not None else journey.coverage)):
             missing = self._missing_declaration(journey, cell)
             if missing:
                 logger.warning("Cell %s not covered. %s", cell.key, missing.reason)
@@ -297,11 +298,11 @@ class ScenarioGenerator:
                     self._failed(cell, Cause.PROVIDER, f"schema never matched: {mismatch}")
                 )
                 continue
-            except ProviderUnavailable as spent:
+            except ProviderUnavailable as exc:
                 # The service may answer the next cell, and a cell nobody
                 # covered is recorded rather than lost.
                 suite.uncovered.append(
-                    self._failed(cell, Cause.PROVIDER, reportable(spent))
+                    self._failed(cell, Cause.PROVIDER, reportable(exc))
                 )
                 continue
             except Exception as failure:
@@ -329,20 +330,20 @@ class ScenarioGenerator:
     @staticmethod
     def _missing_declaration(
         journey: UserJourney, cell: CoverageCell
-    ) -> Uncovered | None:
+    ) -> UncoveredCell | None:
         """What this cell needs that the file did not declare, if anything."""
         if cell.category not in SUPPORTED_CATEGORIES:
-            return Uncovered(
+            return UncoveredCell(
                 cell,
-                "UNSUPPORTED",
+                ReportStatus.UNSUPPORTED,
                 Cause.SCENARIO,
                 f"Nothing in a run can settle a {cell.category.value} cell yet. "
                 f"Remove it from 'coverage' until it can.",
             )
         if cell.scenario_type in TYPES_NEEDING_ANOTHER_ACTOR and not journey.actors:
-            return Uncovered(
+            return UncoveredCell(
                 cell,
-                "UNSUPPORTED",
+                ReportStatus.UNSUPPORTED,
                 Cause.SCENARIO,
                 "A role scenario needs a second account. Declare one under "
                 "'actors'.",
@@ -350,11 +351,11 @@ class ScenarioGenerator:
         return None
 
     @staticmethod
-    def _failed(cell: CoverageCell, cause: Cause, detail: str) -> Uncovered:
+    def _failed(cell: CoverageCell, cause: Cause, detail: str) -> UncoveredCell:
         """Records a cell the generator could not write, and whose fault that is."""
         reason = f"The generator could not write this cell: {detail}"
         logger.error("Cell %s not covered (%s). %s", cell.key, cause.value, reason)
-        return Uncovered(cell, "ERROR", cause, reason)
+        return UncoveredCell(cell, ReportStatus.ERROR, cause, reason)
 
     def _draft(self, journey: UserJourney, cell: CoverageCell) -> ScenarioDraft:
         """One model call for one cell.

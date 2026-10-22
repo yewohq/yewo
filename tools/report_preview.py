@@ -40,7 +40,7 @@ def step(n, title, ok=True, screen="Basket", why="", observed="", error=None,
             goal_satisfied=ok,
             goal_evidence="An order number is shown." if ok and n > 4 else "",
         ),
-        action=ActionRecord(type="tap", described=title, target_label="Pay £24.99"),
+        action=ActionRecord(type="tap", description=title, target_label="Pay £24.99"),
         grounding=GroundingRecord(mode="marks", resolved=refusal is None, answer=7,
                                   refusal=refusal, unmatched=bool(refusal)),
         outcome=OutcomeRecord(

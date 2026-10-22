@@ -21,7 +21,11 @@ from typing import Any, Optional
 import yaml
 from pydantic import ValidationError
 
-from yewo.schema import YewoFile as YewoFileSpec, Settings as SettingsSpec, explain
+from yewo.schema import (
+    Settings as SettingsSpec,
+    YewoFile as YewoFileSpec,
+    format_validation_errors,
+)
 from yewo.defaults import (
     DEFAULT_APP_PATH,
     DEFAULT_DEVICE,
@@ -136,7 +140,7 @@ def coerce(name: str, raw: Any) -> Any:
     try:
         return SettingsSpec.model_validate({name: raw}).model_dump()[name]
     except ValidationError as exc:
-        reason = "; ".join(explain(exc))
+        reason = "; ".join(format_validation_errors(exc))
         raise ConfigError(f"Invalid value for '{name}': {raw!r} ({reason})") from None
 
 

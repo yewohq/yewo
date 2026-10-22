@@ -36,10 +36,10 @@ class ProviderNormalizationTests(unittest.TestCase):
         self.assertEqual(response.action.coordinates.x, 10)
 
     def test_the_auditor_accepts_a_compact_rule_mapping(self):
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
         from yewo.testing.models import IssueKind
 
-        assessment = Assessment.model_validate(
+        assessment = ScreenAssessment.model_validate(
             {
                 "screen_name": "Login",
                 "rule_verifications": {"Login is visible": "passed"},

@@ -70,6 +70,48 @@ one owner for shared validation or conversion logic. Do not add abstraction
 layers without an actual interchangeable boundary or data owner. Preserve
 public names unless their callers are migrated.
 
+### Name code by domain meaning
+
+Review every new or changed module, class, field, function, parameter, local
+variable, constant, and CSS selector before finishing a production change.
+
+- Name stored values with noun phrases that describe their contents.
+- Name operations with active verb phrases. Prefer established prefixes such
+  as `build_`, `format_`, `normalize_`, `parse_`, `record_`, `resolve_`,
+  `select_`, and `validate_` when they accurately describe the operation.
+- Name predicates with `is_`, `has_`, `can_`, or `should_`.
+- Include useful structure in collection names, such as `_count`, `_ids`,
+  `_by_rule_id`, `_path`, or `_duration_ms`.
+- Treat conversational, literary, sentence-shaped, and context-dependent names
+  as review warnings. Examples include `said`, `asked`, `given`, `written`,
+  `settled`, `held`, `seen`, `named`, `spelled`, `one`, `here`, `where`,
+  `what`, `why`, and `took`. Replace them when the name does not identify the
+  represented domain concept.
+- Do not use single-letter production identifiers or CSS classes unless they
+  are conventional mathematical coordinates or tightly scoped indices.
+- Name validators `_validate_<invariant>`, normalizers `_normalize_<value>`,
+  formatters `_format_<output>`, and constructors `_build_<result>` when those
+  descriptions are accurate.
+
+Name modules for the responsibility they own and classes for the domain entity
+or role they represent. Avoid unqualified names such as `data`, `facts`,
+`common`, `helpers`, `utils`, `manager`, `handler`, `result`, or `status` when
+the package and name together still do not identify a specific responsibility.
+
+Before defining a closed set of strings, search for its existing owner. Keep
+the values, aliases, parsing, validation, and display mappings behind one enum
+or typed model when they represent the same domain concept. Do not duplicate
+the vocabulary across modules.
+
+When renaming, update callers, tests, markup, styles, fixtures, and
+documentation directly. Do not retain compatibility aliases unless the user
+explicitly requires backward compatibility.
+
+Before finishing, inspect the added identifiers in the diff and search the
+changed subsystem for duplicated domain literals. Confirm that every name says
+what the value contains or what the operation produces, not how it reads in an
+English sentence.
+
 Use controlled language for prompts, error messages, tool descriptions, and
 safety text. Write short active sentences. State one instruction or condition
 per sentence. Use one name for one thing. Preserve conditions and uncertainty;

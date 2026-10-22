@@ -17,29 +17,29 @@ class AuditorOwnershipTests(unittest.TestCase):
         self.assertNotIn("detected_issues", fields)
 
     def test_the_auditor_is_asked_for_them(self):
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
 
-        fields = Assessment.model_fields
+        fields = ScreenAssessment.model_fields
 
         self.assertIn("rule_verifications", fields)
         self.assertIn("detected_issues", fields)
 
     def test_completion_stays_with_the_planner(self):
         """Only the planner is told the goal, so only it can say the goal is met."""
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
         from yewo.testing.qa_planner import QAStepResponse
 
         self.assertIn("goal_satisfied", QAStepResponse.model_fields)
-        self.assertNotIn("goal_satisfied", Assessment.model_fields)
-        self.assertNotIn("goal_evidence", Assessment.model_fields)
+        self.assertNotIn("goal_satisfied", ScreenAssessment.model_fields)
+        self.assertNotIn("goal_evidence", ScreenAssessment.model_fields)
 
     def test_feasibility_stays_with_the_planner(self):
         """Whether the agent can proceed is not a statement about the app."""
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
         from yewo.testing.qa_planner import QAStepResponse
 
         self.assertIn("is_scenario_feasible", QAStepResponse.model_fields)
-        self.assertNotIn("is_scenario_feasible", Assessment.model_fields)
+        self.assertNotIn("is_scenario_feasible", ScreenAssessment.model_fields)
 
 
 class CrashRankingTests(unittest.TestCase):

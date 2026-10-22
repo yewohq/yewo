@@ -30,7 +30,9 @@ from yewo.agent.run.record import CallRow, StepRecord
 from yewo.identity import new_uuid
 from yewo.testing.models import (
     GeneratedTestCase,
+    JourneyStatus,
     QAIssue,
+    ReportStatus,
     RuleVerification,
     RunEnvironment,
     ScenarioReport,
@@ -48,10 +50,10 @@ verdict and the auditor's answers alone. Nothing can reach its verdict again
 from one.
 """
 
-ABORTED = "ABORTED"
+ABORTED = ReportStatus.ABORTED
 """A run that was interrupted. It never reached a verdict of its own."""
 
-UNCOVERED = ("UNSUPPORTED", "ERROR")
+UNCOVERED = (ReportStatus.UNSUPPORTED, ReportStatus.ERROR)
 """Statuses that mean no verdict was reached about the app."""
 
 
@@ -84,7 +86,7 @@ class ScenarioEntry(BaseModel):
         default_factory=list,
         description="One per expected outcome, in the same order.",
     )
-    status: str = "pending"
+    status: ReportStatus = ReportStatus.PENDING
     cause: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
@@ -112,7 +114,7 @@ class ScenarioEntry(BaseModel):
     )
 
 
-class Subject(BaseModel):
+class RunSubject(BaseModel):
     """What the run was about: a journey, or one plain-English goal."""
 
     kind: Literal["journey", "goal"]
@@ -127,7 +129,7 @@ class Subject(BaseModel):
     )
 
 
-class Inputs(BaseModel):
+class RunInputs(BaseModel):
     """What this run was given, as hashes, so two runs can be told apart."""
 
     subject: str
@@ -138,7 +140,7 @@ class Inputs(BaseModel):
     scenarios_generated: int = 0
 
 
-class FirstFailure(BaseModel):
+class FailureSummary(BaseModel):
     """Where to look first, so a reader does not scroll a passing run."""
 
     scenario_uuid: str
@@ -153,10 +155,10 @@ class RunManifest:
     def __init__(
         self,
         path,
-        subject: Subject,
+        subject: RunSubject,
         scenarios: Sequence[GeneratedTestCase],
         environment: RunEnvironment,
-        inputs: Inputs,
+        inputs: RunInputs,
         scrubber: Optional[SecretScrubber] = None,
         mode: str = "test",
         artifacts: tuple = (),
@@ -170,7 +172,7 @@ class RunManifest:
         self.artifacts = tuple(artifacts)
         self.run_uuid = new_uuid()
         self.started_at = datetime.now()
-        self.status = "RUNNING"
+        self.status = ReportStatus.RUNNING
         self.unevidenced_security_rules: List[str] = []
         self.duration: Optional[float] = None
         self.usage: Optional[dict] = None
@@ -222,7 +224,7 @@ class RunManifest:
     def start(self, test_id: str) -> None:
         entry = self.entries.get(test_id)
         if entry is not None:
-            entry.status = "running"
+            entry.status = ReportStatus.RUNNING
             entry.started_at = _now()
         self.write()
 
@@ -292,7 +294,7 @@ class RunManifest:
             finding.field = self._scrub(finding.field) or ""
         return kept
 
-    def spent(self, calls: List[CallRow]) -> None:
+    def record_unattached_calls(self, calls: List[CallRow]) -> None:
         """Takes the calls nothing in the run owns, such as generation."""
         self.calls = list(calls)
 
@@ -302,7 +304,7 @@ class RunManifest:
 
     def finish(
         self,
-        status: str,
+        status: JourneyStatus,
         unevidenced: Optional[List[str]] = None,
         usage: Optional[dict] = None,
         duration: Optional[float] = None,
@@ -333,22 +335,26 @@ class RunManifest:
         self.usage = usage
         self.duration = self._elapsed()
         if self.status != ABORTED:
-            self.status = "PASSED" if result.status == "goal_reached" else "FAILED"
+            self.status = (
+                ReportStatus.PASSED
+                if result.status == "goal_reached"
+                else ReportStatus.FAILED
+            )
         self.write(final=True)
 
     def abort(self, reason: str) -> None:
         """Marks everything unfinished as aborted, so a crash leaves no 'running' row."""
         for entry in self.entries.values():
-            if entry.status in ("pending", "running"):
-                entry.status = "ABORTED"
+            if entry.status.in_progress:
+                entry.status = ReportStatus.ABORTED
                 entry.failure_reason = self._scrub(reason)
                 entry.finished_at = _now()
         self.status = ABORTED
         self.write(final=True)
 
-    def _first_failure(self, entries: List[ScenarioEntry]) -> Optional[FirstFailure]:
+    def _first_failure(self, entries: List[ScenarioEntry]) -> Optional[FailureSummary]:
         for entry in entries:
-            if entry.status not in ("FAILED", "ERROR"):
+            if entry.status not in (ReportStatus.FAILED, ReportStatus.ERROR):
                 continue
             failed = next(
                 (
@@ -358,7 +364,7 @@ class RunManifest:
                 ),
                 None,
             )
-            return FirstFailure(
+            return FailureSummary(
                 scenario_uuid=entry.scenario_uuid,
                 test_id=entry.test_id,
                 rule_id=failed,
@@ -369,7 +375,7 @@ class RunManifest:
     def payload(self, final: bool = False) -> dict:
         """The record as it stands, which is what gets written."""
         entries = sorted(self.entries.values(), key=lambda entry: entry.position)
-        counts: dict[str, int] = {}
+        counts: dict[ReportStatus, int] = {}
         for entry in entries:
             counts[entry.status] = counts.get(entry.status, 0) + 1
 

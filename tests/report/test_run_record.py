@@ -137,9 +137,9 @@ class LockedRunnerTests(unittest.TestCase):
         """So two runs can be told apart by the test and not only the result."""
         with tempfile.TemporaryDirectory() as directory:
             _, data, lock_path = self._run(directory)
-            from yewo.testing import lock as lockfile
+            from yewo.testing import lock_file
 
-            held = lockfile.read(lock_path)
+            held = lock_file.read(lock_path)
 
         self.assertEqual(data["inputs"]["lock_sha256"], held.sha256())
 
@@ -164,10 +164,10 @@ class EverythingReachesTheRecordTests(unittest.TestCase):
 
     def _gap(self):
         from yewo.errors import Cause
-        from yewo.testing.generator import Uncovered
+        from yewo.testing.generator import UncoveredCell
         from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
 
-        return Uncovered(
+        return UncoveredCell(
             CoverageCell(Category.SECURITY, ScenarioType.ROLE, Priority.P0),
             "UNSUPPORTED",
             Cause.SCENARIO,

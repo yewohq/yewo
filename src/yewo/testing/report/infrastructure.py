@@ -18,7 +18,12 @@ from typing import List, Optional
 
 from yewo.errors import Cause, cause_of
 from yewo.llm.failures import reportable
-from yewo.testing.models import GeneratedTestCase, JourneyReport, ScenarioReport
+from yewo.testing.models import (
+    GeneratedTestCase,
+    JourneyReport,
+    ReportStatus,
+    ScenarioReport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +37,14 @@ def write_failure(
     no record of them, and nothing downstream can tell that from a run that
     was never started.
     """
-    report.status = "FAILED"
+    report.status = ReportStatus.FAILED
     report.failed_count += 1
     report.scenarios.append(
         ScenarioReport(
             test_id=artifact_name,
             scenario_name=artifact_name.replace("_", " ").title(),
             cell="infrastructure",
-            status="ERROR",
+            status=ReportStatus.ERROR,
             failure_reason=f"Failed to write {artifact_name}: {error}",
         )
     )
@@ -63,7 +68,7 @@ def record_aborted(
                 test_id="scenario_generation",
                 scenario_name="Scenario generation",
                 cell="infrastructure",
-                status="ERROR",
+                status=ReportStatus.ERROR,
                 # Generation is a model call, so its failure is usually the
                 # provider's, and a reader should not look in the app.
                 cause=cause_of(error).value,
@@ -82,7 +87,7 @@ def record_aborted(
                 test_id=scenario.test_id,
                 scenario_name=scenario.scenario_name,
                 cell=scenario.cell,
-                status="ABORTED",
+                status=ReportStatus.ABORTED,
                 cause=cause_of(error).value,
                 failure_reason=reason,
             )
@@ -107,7 +112,7 @@ def provider_error(
         test_id=scenario.test_id,
         scenario_name=scenario.scenario_name,
         cell=scenario.cell,
-        status="ERROR",
+        status=ReportStatus.ERROR,
         cause=Cause.PROVIDER.value,
         failure_reason=reason,
     )
@@ -135,7 +140,7 @@ def usage_failure(error: Exception) -> ScenarioReport:
         test_id="usage_report",
         scenario_name="LLM usage report",
         cell="infrastructure",
-        status="ERROR",
+        status=ReportStatus.ERROR,
         failure_reason=f"Failed to serialize LLM usage: {error}",
     )
 

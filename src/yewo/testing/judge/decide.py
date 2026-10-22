@@ -24,9 +24,10 @@ from yewo.testing.judge.verdicts import _missing_required_ids, _terminal_outcome
 from yewo.testing.models import (
     ExpectedOutcome,
     QAIssue,
+    ReportStatus,
     RuleVerification,
     SensitiveFinding,
-    Status,
+    ScenarioStatus,
 )
 
 class Feasibility(Protocol):
@@ -51,7 +52,7 @@ class Verdict(NamedTuple):
     values. The names are for the callers that came after.
     """
 
-    status: Status
+    status: ScenarioStatus
     reason: Optional[str]
     cause: Optional[Cause]
 
@@ -98,7 +99,7 @@ def determine_status(
 
     if run_result.status != "goal_reached" or not assessments:
         return Verdict(
-            "UNVERIFIED",
+            ReportStatus.UNVERIFIED,
             "The scenario did not produce verified completion evidence.",
             Cause.AGENT,
         )
@@ -113,7 +114,7 @@ def determine_status(
     unprovable = rules.unprovable(required_outcomes)
     if unprovable:
         return Verdict(
-            "UNVERIFIED",
+            ReportStatus.UNVERIFIED,
             "Nothing recorded during a run can settle these outcomes: "
             + ", ".join(unprovable)
             + ". They ask how the app performed, and Yewo measures no part of that.",
@@ -129,7 +130,7 @@ def determine_status(
     )
     if unconfirmed:
         return Verdict(
-            "UNVERIFIED",
+            ReportStatus.UNVERIFIED,
             "The scenario declared device states it never had confirmed: "
             + ", ".join(unconfirmed),
             Cause.EVIDENCE,
@@ -138,7 +139,7 @@ def determine_status(
     missing = _missing_required_ids(all_verifications, required_outcomes, security_rules)
     if missing:
         return Verdict(
-            "UNVERIFIED",
+            ReportStatus.UNVERIFIED,
             "Required verification evidence is missing or untested: " + ", ".join(missing),
             Cause.EVIDENCE,
         )
@@ -146,10 +147,10 @@ def determine_status(
     # Named last so a specific gap is reported in preference to this.
     if not required_outcomes:
         return Verdict(
-            "UNVERIFIED",
+            ReportStatus.UNVERIFIED,
             "The scenario declared no expected outcome, so reaching the goal "
             "rests on the planner's own word.",
             Cause.SCENARIO,
         )
 
-    return Verdict("PASSED", None, None)
+    return Verdict(ReportStatus.PASSED, None, None)

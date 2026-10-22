@@ -33,7 +33,7 @@ from yewo.utils.redactor import safe_text
 logger = logging.getLogger(__name__)
 
 
-class Assessment(BaseModel):
+class ScreenAssessment(BaseModel):
     """What one look at one screen says about the rules."""
 
     screen_name: str = Field(
@@ -141,7 +141,7 @@ screen does not.
 """
 
 
-class ScreenWatch:
+class ScreenAuditSession:
     """Decides when a screen is worth auditing, rather than auditing each step.
 
     Twice per screen: once on arrival, and once on the state it is left in.
@@ -163,7 +163,7 @@ class ScreenWatch:
         self._visit: set = set()
         self._forced = False
 
-    def look_again(self) -> None:
+    def request_repeat_audit(self) -> None:
         """Audits the next step whatever the screen reports.
 
         A verdict withdrawn as too early is promised a second look. The screen
@@ -172,34 +172,34 @@ class ScreenWatch:
         """
         self._forced = True
 
-    def look(self, snapshot) -> List[Assessment]:
+    def audit_snapshot(self, snapshot) -> List[ScreenAssessment]:
         """Assessments to act on now. Empty while a screen is merely worked."""
         reason = snapshot.scan_info.reason if snapshot.scan_info else "navigation"
-        fresh: List[Assessment] = []
+        fresh: List[ScreenAssessment] = []
 
         if self._forced:
             self._forced = False
             self._visit.discard(snapshot.current_phash)
-            fresh.extend(self._once(snapshot.raw_img_bytes, snapshot.current_phash))
+            fresh.extend(self._audit_once(snapshot.raw_img_bytes, snapshot.current_phash))
         elif reason in ENTERING:
             if self._pending is not None:
-                fresh.extend(self._once(*self._pending))
+                fresh.extend(self._audit_once(*self._pending))
             # A visit ends here. Coming back to this screen later is a new one,
             # and gets judged again rather than being answered from memory.
             self._visit = set()
-            fresh.extend(self._once(snapshot.raw_img_bytes, snapshot.current_phash))
+            fresh.extend(self._audit_once(snapshot.raw_img_bytes, snapshot.current_phash))
 
         self._pending = (snapshot.raw_img_bytes, snapshot.current_phash)
         return fresh
 
-    def close(self) -> List[Assessment]:
+    def finalize_audit(self) -> List[ScreenAssessment]:
         """The screen the scenario ended on, which nothing else will leave."""
         if self._pending is None:
             return []
         last, self._pending = self._pending, None
-        return self._once(*last)
+        return self._audit_once(*last)
 
-    def _once(self, screenshot: bytes, screen_id: Optional[str]) -> List[Assessment]:
+    def _audit_once(self, screenshot: bytes, screen_id: Optional[str]) -> List[ScreenAssessment]:
         """One assessment per screen state, per visit to that screen.
 
         A screen left exactly as it was found is read twice, on arrival and on
@@ -227,14 +227,16 @@ class QAAuditor:
         # rule it answers even though only some of them are asked about.
         on_screen = rules.on_screen_only(expected_outcomes)
         self._rules = rules.every_rule(on_screen, security_rules)
-        self._asked = rules.listed_ids(on_screen, rules.EXPECTED) | rules.listed_ids(
-            security_rules, rules.SECURITY
+        self._audited_rule_ids = rules.listed_ids(
+            on_screen, rules.EXPECTED
+        ) | rules.listed_ids(security_rules, rules.SECURITY)
+        self._rule_ids_by_statement = rules.map_statements_to_rule_ids(
+            on_screen, security_rules
         )
-        self._by_statement = rules.by_statement(on_screen, security_rules)
         self._scrubber = scrubber
-        self._by_screen: dict[str, Assessment] = {}
+        self._by_screen: dict[str, ScreenAssessment] = {}
 
-    def audit(self, screenshot: bytes, screen_id: Optional[str]) -> Assessment:
+    def audit(self, screenshot: bytes, screen_id: Optional[str]) -> ScreenAssessment:
         """What this screen shows. Asks once per distinct screen.
 
         A screen that did not change cannot give a different answer, so an
@@ -247,7 +249,7 @@ class QAAuditor:
         """
         if screen_id and screen_id in self._by_screen:
             logger.debug("Screen %s was audited already. Reusing it.", screen_id[:12])
-            return self._kept(self._by_screen[screen_id])
+            return self._copy_assessment(self._by_screen[screen_id])
 
         message = MultiPartMessage()
         message.add_text("The screen to audit:")
@@ -255,26 +257,26 @@ class QAAuditor:
         message.add_text(PROMPT.format(rules=self._rules))
 
         logger.info("Auditing the current screen against the rules...")
-        assessment = self._answered(message)
-        if self._asked and not self._any_listed(assessment):
+        assessment = self._audit_screen_and_normalize(message)
+        if self._audited_rule_ids and not self._any_listed(assessment):
             # Every rule on this screen would otherwise report unevidenced,
             # and the scenario would fail on evidence the app had given.
             logger.warning("The audit named none of the rules it was given. Asking again.")
-            assessment = self._answered(message)
-        self._clean(assessment)
+            assessment = self._audit_screen_and_normalize(message)
+        self._scrub_assessment(assessment)
 
         if screen_id:
             self._by_screen[screen_id] = assessment
-        return self._kept(assessment)
+        return self._copy_assessment(assessment)
 
-    def _answered(self, message: MultiPartMessage) -> Assessment:
+    def _audit_screen_and_normalize(self, message: MultiPartMessage) -> ScreenAssessment:
         """One answer, with each verdict matched to the rule it is about."""
-        assessment: Assessment = self._llm.generate_response([message], Assessment)
-        self._name_the_rule_answered(assessment)
-        self._only_what_was_asked(assessment)
+        assessment: ScreenAssessment = self._llm.generate_response([message], ScreenAssessment)
+        self._resolve_rule_ids_from_statements(assessment)
+        self._filter_unlisted_verifications(assessment)
         return assessment
 
-    def _name_the_rule_answered(self, assessment: Assessment) -> None:
+    def _resolve_rule_ids_from_statements(self, assessment: ScreenAssessment) -> None:
         """Fills the id for a verdict that quoted its rule and left the id out.
 
         Observed on a working model: every rule answered correctly, each one
@@ -286,18 +288,20 @@ class QAAuditor:
         for verification in assessment.rule_verifications:
             if verification.rule_id:
                 continue
-            found = self._by_statement.get((verification.rule or "").strip())
-            if found:
-                verification.rule_id = found
+            rule_id = self._rule_ids_by_statement.get(
+                (verification.rule or "").strip()
+            )
+            if rule_id:
+                verification.rule_id = rule_id
 
-    def _any_listed(self, assessment: Assessment) -> bool:
+    def _any_listed(self, assessment: ScreenAssessment) -> bool:
         """Whether any verdict names a rule this screen was shown."""
         return any(
-            verification.rule_id in self._asked
+            verification.rule_id in self._audited_rule_ids
             for verification in assessment.rule_verifications
         )
 
-    def _only_what_was_asked(self, assessment: Assessment) -> None:
+    def _filter_unlisted_verifications(self, assessment: ScreenAssessment) -> None:
         """Drops verdicts naming a rule this screen was never shown.
 
         A verdict carrying an id that was not listed is not evidence about
@@ -310,7 +314,7 @@ class QAAuditor:
         kept = [
             verify
             for verify in assessment.rule_verifications
-            if verify.rule_id is None or verify.rule_id in self._asked
+            if verify.rule_id is None or verify.rule_id in self._audited_rule_ids
         ]
         dropped = len(assessment.rule_verifications) - len(kept)
         if dropped:
@@ -318,7 +322,7 @@ class QAAuditor:
         assessment.rule_verifications = kept
 
     @staticmethod
-    def _kept(assessment: Assessment) -> Assessment:
+    def _copy_assessment(assessment: ScreenAssessment) -> ScreenAssessment:
         """A copy, because a caller withdraws findings from what it receives.
 
         The step loop drops a crash reported on the first look, then checks the
@@ -328,7 +332,7 @@ class QAAuditor:
         """
         return assessment.model_copy(deep=True)
 
-    def _clean(self, assessment: Assessment) -> None:
+    def _scrub_assessment(self, assessment: ScreenAssessment) -> None:
         """Masks declared secrets in what the auditor wrote, before anything keeps it."""
         if self._scrubber is None:
             return

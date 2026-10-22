@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from yewo.errors import ArtifactWriteFailed
-from yewo.testing.models import JourneyReport, ScenarioReport
+from yewo.testing.models import JourneyReport, ReportStatus, ScenarioReport
 from yewo.testing.judge import verdicts
 from yewo.utils.secrets import SecretScrubber
 
@@ -71,9 +71,9 @@ def save_markdown_report(
         f"report_{safe_artifact_stem(report.journey_id)}_{stamp}.md"
     )
     report_status = {
-        "PASSED": "🟢 PASSED",
-        "FAILED": "🔴 FAILED",
-        "RUNNING": "🟠 RUNNING (checkpoint)",
+        ReportStatus.PASSED: "🟢 PASSED",
+        ReportStatus.FAILED: "🔴 FAILED",
+        ReportStatus.RUNNING: "🟠 RUNNING (checkpoint)",
     }[report.status]
     lines = [
         f"# Yewo QA Test Report: {_scrub(scrubber, report.journey_name)}",
@@ -127,7 +127,13 @@ def _append_scenario(
     scenario: ScenarioReport,
     scrubber: SecretScrubber | None,
 ) -> None:
-    icon = "🟢" if scenario.status == "PASSED" else "🟡" if scenario.status == "SKIPPED" else "🔴"
+    icon = (
+        "🟢"
+        if scenario.status == ReportStatus.PASSED
+        else "🟡"
+        if scenario.status == ReportStatus.SKIPPED
+        else "🔴"
+    )
     lines.extend(
         [
             f"## Scenario {index}: {_scrub(scrubber, scenario.scenario_name)} "
@@ -144,15 +150,19 @@ def _append_scenario(
         lines.append(
             f"* ❌ **Failure Reason**: `{_scrub(scrubber, scenario.failure_reason)}`"
         )
-    settled = verdicts.per_rule(list(scenario.rule_verifications))
-    if settled:
+    rule_verdicts = verdicts.per_rule(list(scenario.rule_verifications))
+    if rule_verdicts:
         lines.append("### Verification Results:")
-        for rule in settled.values():
-            status = "[x] Passed" if rule.status == "passed" else "[ ] Failed"
-            screen = f" on `{_scrub(scrubber, rule.screen_name)}`" if rule.screen_name else ""
+        for verification in rule_verdicts.values():
+            status = "[x] Passed" if verification.status == "passed" else "[ ] Failed"
+            screen = (
+                f" on `{_scrub(scrubber, verification.screen_name)}`"
+                if verification.screen_name
+                else ""
+            )
             lines.append(
-                f"  * {status}: {_scrub(scrubber, rule.rule)}{screen} "
-                f"(Reasoning: {_scrub(scrubber, rule.reasoning)})"
+                f"  * {status}: {_scrub(scrubber, verification.rule)}{screen} "
+                f"(Reasoning: {_scrub(scrubber, verification.reasoning)})"
             )
         lines.append("")
     if scenario.detected_issues:
@@ -177,9 +187,13 @@ def save_junit_report(
     filepath = output_dir / (
         f"junit_{safe_artifact_stem(report.journey_id)}_{stamp}.xml"
     )
-    errors = sum(s.status in ("ERROR", "ABORTED") for s in report.scenarios)
+    errors = sum(
+        s.status in (ReportStatus.ERROR, ReportStatus.ABORTED)
+        for s in report.scenarios
+    )
     failures = sum(
-        s.status in ("FAILED", "UNVERIFIED", "UNSUPPORTED")
+        s.status
+        in (ReportStatus.FAILED, ReportStatus.UNVERIFIED, ReportStatus.UNSUPPORTED)
         for s in report.scenarios
     )
     attributes = {
@@ -224,7 +238,11 @@ def _append_junit_case(
         },
     )
     message = _scrub(scrubber, scenario.failure_reason) or "Verification failed"
-    if scenario.status in ("FAILED", "UNVERIFIED", "UNSUPPORTED"):
+    if scenario.status in (
+        ReportStatus.FAILED,
+        ReportStatus.UNVERIFIED,
+        ReportStatus.UNSUPPORTED,
+    ):
         element = ET.SubElement(
             testcase,
             "failure",
@@ -237,12 +255,12 @@ def _append_junit_case(
             for issue in scenario.detected_issues
         ]
         element.text = "\n".join(details) or message
-    elif scenario.status in ("ERROR", "ABORTED"):
+    elif scenario.status in (ReportStatus.ERROR, ReportStatus.ABORTED):
         element = ET.SubElement(
             testcase,
             "error",
             {"message": message, "type": _junit_type(scenario)},
         )
         element.text = message
-    elif scenario.status == "SKIPPED":
+    elif scenario.status == ReportStatus.SKIPPED:
         ET.SubElement(testcase, "skipped", {"message": message})

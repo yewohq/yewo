@@ -1,6 +1,6 @@
-"""Which scenarios a run takes from the lock, and which it pays for.
+"""How a run resolves locked scenarios and scenarios it must generate.
 
-`test_lock.py` holds the file and the contract hash. These hold the policy:
+`test_lock_file.py` holds the file and contract hash. These hold the policy:
 what is reused, what is regenerated, what is refused, and what a run does
 when the replacement for a stale cell never arrives.
 """
@@ -15,10 +15,10 @@ from unittest.mock import Mock
 from fakes import walk
 
 from yewo.errors import UsageError
-from yewo.testing import lock as locking_file
+from yewo.testing import lock_file
 from yewo.testing.generator import ScenarioGenerator
-from yewo.testing.lock import contract_sha256
-from yewo.testing.locking import staleness, suite_for
+from yewo.testing.lock_file import contract_sha256
+from yewo.testing.lock_resolution import staleness, suite_for
 from yewo.testing.models import ScenarioDraft, UserJourney
 from yewo.testing.steps import EnterStep
 from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
@@ -68,9 +68,9 @@ class ResolutionTests(unittest.TestCase):
             path = Path(directory) / "yewo.lock"
             resolution, client = self._suite(path, [draft()])
 
-            self.assertEqual(resolution.generated, 1)
-            self.assertEqual(resolution.reused, 0)
-            self.assertTrue(resolution.wrote)
+            self.assertEqual(resolution.generated_count, 1)
+            self.assertEqual(resolution.reused_count, 0)
+            self.assertTrue(resolution.lock_written)
             self.assertTrue(path.is_file())
             self.assertEqual(client.generate_response.call_count, 1)
 
@@ -80,9 +80,9 @@ class ResolutionTests(unittest.TestCase):
             first, _ = self._suite(path, [draft()])
             second, client = self._suite(path)
 
-            self.assertEqual(second.reused, 1)
-            self.assertEqual(second.generated, 0)
-            self.assertFalse(second.wrote)
+            self.assertEqual(second.reused_count, 1)
+            self.assertEqual(second.generated_count, 0)
+            self.assertFalse(second.lock_written)
             self.assertEqual(client.generate_response.call_count, 0)
             self.assertEqual(
                 second.scenarios[0].scenario_uuid,
@@ -105,8 +105,8 @@ class ResolutionTests(unittest.TestCase):
                 changed, lambda j, cells: again.generate_suite(j, cells), path=path
             )
 
-            self.assertEqual(resolution.reused, 1)
-            self.assertEqual(resolution.generated, 1)
+            self.assertEqual(resolution.reused_count, 1)
+            self.assertEqual(resolution.generated_count, 1)
             self.assertEqual(client.generate_response.call_count, 1)
 
     def test_values_are_substituted_whether_or_not_the_lock_answered(self):
@@ -141,7 +141,7 @@ class ResolutionTests(unittest.TestCase):
             mine, _ = generator(draft())
             suite_for(journey(), lambda j, c: mine.generate_suite(j, c), path=path)
 
-            held = locking_file.read(path)
+            held = lock_file.read(path)
 
         self.assertEqual(sorted(e.journey for e in held.entries), ["j", "other"])
 
@@ -161,7 +161,7 @@ class ResolutionTests(unittest.TestCase):
             journey_now.description = "A user signs in."
             suite_for(journey_now, lambda j, c: fewer.generate_suite(j, c), path=path)
 
-            held = locking_file.read(path)
+            held = lock_file.read(path)
 
         self.assertEqual([entry.cell for entry in held.entries], ["security.negative.0"])
 
@@ -223,8 +223,8 @@ class LockedRunTests(unittest.TestCase):
                 locked=True,
             )
 
-        self.assertEqual(resolution.reused, 1)
-        self.assertFalse(resolution.wrote)
+        self.assertEqual(resolution.reused_count, 1)
+        self.assertFalse(resolution.lock_written)
         self.assertEqual(client.generate_response.call_count, 0)
 
     def test_staleness_names_the_two_problems_apart(self):
@@ -232,7 +232,7 @@ class LockedRunTests(unittest.TestCase):
             path = Path(directory) / "yewo.lock"
             made, _ = generator(draft())
             suite_for(journey(), lambda j, c: made.generate_suite(j, c), path=path)
-            held = locking_file.read(path)
+            held = lock_file.read(path)
 
         self.assertEqual(staleness(held, journey(), ""), {})
         self.assertEqual(
@@ -277,7 +277,7 @@ class StableFileTests(unittest.TestCase):
 
             for journey_id in ("a", "b"):
                 resolution, client = self._lock_one(path, journey_id, responses=())
-                self.assertFalse(resolution.wrote, journey_id)
+                self.assertFalse(resolution.lock_written, journey_id)
                 self.assertEqual(client.generate_response.call_count, 0)
 
             self.assertEqual(before, path.read_text())
@@ -359,8 +359,8 @@ class StaleAndUnregenerableTests(unittest.TestCase):
             resolution, _ = self._changed(path, mismatch)
 
         self.assertEqual(resolution.scenarios, [])
-        self.assertEqual(resolution.reused, 0)
-        self.assertEqual(resolution.generated, 0)
+        self.assertEqual(resolution.reused_count, 0)
+        self.assertEqual(resolution.generated_count, 0)
 
     def test_the_cell_is_reported_as_uncovered_with_its_cause(self):
         from pydantic import ValidationError
@@ -390,9 +390,9 @@ class StaleAndUnregenerableTests(unittest.TestCase):
             before = path.read_text() if path.exists() else None
             resolution, _ = self._changed(path, mismatch)
             after = path.read_text()
-            held = locking_file.read(path)
+            held = lock_file.read(path)
 
-        self.assertFalse(resolution.wrote)
+        self.assertFalse(resolution.lock_written)
         self.assertEqual(len(held.entries), 1)
         self.assertEqual(held.entries[0].scenario_name, "Original")
         self.assertNotEqual(before, after)
@@ -407,7 +407,7 @@ class StaleAndUnregenerableTests(unittest.TestCase):
             again, _ = self._changed(path, mismatch)
 
         self.assertEqual(again.scenarios, [])
-        self.assertEqual(again.reused, 0)
+        self.assertEqual(again.reused_count, 0)
 
     def test_a_provider_that_would_not_answer_is_the_same_refusal(self):
         from yewo.errors import ProviderUnavailable
@@ -437,8 +437,8 @@ class StaleAndUnregenerableTests(unittest.TestCase):
             broken, _ = generator(mismatch)
             resolution = suite_for(altered, broken.generate_suite, path=path)
 
-        self.assertEqual(resolution.reused, 1)
-        self.assertEqual(resolution.generated, 0)
+        self.assertEqual(resolution.reused_count, 1)
+        self.assertEqual(resolution.generated_count, 0)
         self.assertEqual(
             [s.cell for s in resolution.scenarios], ["functional.happy_path.0"]
         )
@@ -473,7 +473,7 @@ class PartialRegenerationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
             self._half_failed(path)
-            held = locking_file.read(path)
+            held = lock_file.read(path)
 
         self.assertEqual(
             sorted(entry.cell for entry in held.entries),
@@ -485,7 +485,7 @@ class PartialRegenerationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
             _, altered = self._half_failed(path)
-            held = locking_file.read(path)
+            held = lock_file.read(path)
             stale = next(e for e in held.entries if e.cell == "security.negative.0")
             now = staleness(held, altered, "")
 
@@ -499,7 +499,7 @@ class PartialRegenerationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
             _, altered = self._half_failed(path)
-            held = locking_file.read(path)
+            held = lock_file.read(path)
 
             self.assertNotIn("functional.happy_path.0", staleness(held, altered, ""))
 
@@ -511,8 +511,8 @@ class PartialRegenerationTests(unittest.TestCase):
         self.assertEqual(
             [s.cell for s in resolution.scenarios], ["functional.happy_path.0"]
         )
-        self.assertEqual(resolution.generated, 1)
-        self.assertEqual(resolution.reused, 0)
+        self.assertEqual(resolution.generated_count, 1)
+        self.assertEqual(resolution.reused_count, 0)
 
     def test_the_stale_cell_is_still_refused_on_the_next_run(self):
         from pydantic import ValidationError
@@ -528,4 +528,4 @@ class PartialRegenerationTests(unittest.TestCase):
         self.assertEqual(
             [s.cell for s in second.scenarios], ["functional.happy_path.0"]
         )
-        self.assertEqual(second.reused, 1)
+        self.assertEqual(second.reused_count, 1)

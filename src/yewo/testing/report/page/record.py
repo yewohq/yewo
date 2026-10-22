@@ -23,9 +23,10 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, Valid
 
 from yewo.agent.run.record import StepRecord
 from yewo.errors import UsageError
-from yewo.testing.evidence import STATUS_SPELLINGS
 from yewo.testing.models import (
     QAIssue,
+    REPORT_STATUS_ALIASES,
+    ReportStatus,
     RuleVerification,
     RunEnvironment,
     VerdictInputs,
@@ -34,11 +35,8 @@ from yewo.testing.report.manifest import SCHEMA
 
 from .view import RUN_FILES, ReportView, page_of
 
-NAMED = 3
+MAX_DISPLAYED_ERRORS = 3
 """How many of a record's errors are named. The first is usually the one."""
-
-UNFINISHED = ("pending", "running")
-"""What the record calls a scenario before it ends. Neither is a verdict."""
 
 Number = Union[StrictFloat, StrictInt]
 """A JSON number, and not a string that looks like one.
@@ -49,7 +47,7 @@ be guessing at what it meant.
 """
 
 
-class _Subject(BaseModel):
+class _RecordedSubject(BaseModel):
     """What the run was about, as the record holds it."""
 
     model_config = ConfigDict(extra="ignore")
@@ -60,7 +58,7 @@ class _Subject(BaseModel):
     description: str = ""
 
 
-class _Entry(BaseModel):
+class _RecordedScenarioEntry(BaseModel):
     """One scenario of a record, read rather than coerced.
 
     `extra="ignore"` on purpose. The record carries more per scenario than a
@@ -84,7 +82,7 @@ class _Entry(BaseModel):
     verdict_inputs: Optional[VerdictInputs] = None
 
 
-class _Usage(BaseModel):
+class _RecordedUsage(BaseModel):
     """What the run spent. Only the fields the band reads."""
 
     model_config = ConfigDict(extra="ignore")
@@ -94,7 +92,7 @@ class _Usage(BaseModel):
     cost_unknown_calls: StrictInt = 0
 
 
-class _Record(BaseModel):
+class _RunRecordPayload(BaseModel):
     """`run.json`, as much of it as a page reads.
 
     `counts` is not read. The scenarios are in the file, so counting them
@@ -106,13 +104,13 @@ class _Record(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     schema_version: StrictInt = Field(alias="schema")
-    subject: _Subject = Field(default_factory=_Subject)
+    subject: _RecordedSubject = Field(default_factory=_RecordedSubject)
     status: str = ""
     duration_seconds: Optional[Number] = None
-    scenarios: List[_Entry]
+    scenarios: List[_RecordedScenarioEntry]
     unevidenced_security_rules: List[str] = Field(default_factory=list)
     identity: Optional[RunEnvironment] = None
-    usage: Optional[_Usage] = None
+    usage: Optional[_RecordedUsage] = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +120,7 @@ class RecordedScenario:
     test_id: str
     scenario_name: str
     cell: str
-    status: str
+    status: ReportStatus
     cause: Optional[str]
     duration: float
     steps_executed: int
@@ -140,7 +138,7 @@ class RecordedRun:
     journey_id: str
     journey_name: str
     description: str
-    status: str
+    status: ReportStatus
     total_duration: float
     passed_count: int
     skipped_count: int
@@ -149,39 +147,42 @@ class RecordedRun:
     environment: Optional[RunEnvironment] = None
 
 
-def _named(exc: ValidationError) -> str:
+def _format_validation_errors(exc: ValidationError) -> str:
     """A validation report, as the fields it is about and what was wrong."""
     return "; ".join(
         f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-        for error in exc.errors()[:NAMED]
+        for error in exc.errors()[:MAX_DISPLAYED_ERRORS]
     )
 
 
-def _word(status: str, where: str) -> str:
+def _normalize_status(status: str, field_context: str) -> ReportStatus:
     """A status the rest of the page can act on, or a refusal.
 
     An unrecognised word would reach the page as a verdict. The renderer
     titles whatever it is given, and colours what it does not know amber. A
     reader would then be told a scenario was "Teleported".
     """
-    said = (status or "").strip()
-    if said.lower() in UNFINISHED:
-        return said.upper()
-    spelled = STATUS_SPELLINGS.get(said.lower())
-    if spelled:
-        return spelled.upper()
-    if said.upper() in ("PASSED", "FAILED", "SKIPPED", "ERROR", "ABORTED",
-                        "UNVERIFIED", "UNSUPPORTED", "RUNNING"):
-        return said.upper()
-    raise UsageError(f"The record's {where} is not a status Yewo writes: {said!r}")
+    raw_status = (status or "").strip()
+    aliased_status = REPORT_STATUS_ALIASES.get(raw_status.lower())
+    if aliased_status is not None:
+        return aliased_status
+    try:
+        return ReportStatus(raw_status.upper())
+    except ValueError:
+        raise UsageError(
+            f"The record's {field_context} is not a status Yewo writes: "
+            f"{raw_status!r}"
+        ) from None
 
 
-def _scenario(entry: _Entry) -> RecordedScenario:
+def _scenario(entry: _RecordedScenarioEntry) -> RecordedScenario:
     return RecordedScenario(
         test_id=entry.test_id,
         scenario_name=entry.name,
         cell=entry.cell,
-        status=_word(entry.status, f"status for {entry.test_id or 'a scenario'}"),
+        status=_normalize_status(
+            entry.status, f"status for {entry.test_id or 'a scenario'}"
+        ),
         cause=entry.cause,
         duration=entry.duration_seconds or 0.0,
         steps_executed=entry.steps_executed,
@@ -203,9 +204,11 @@ def run_of(payload: Mapping[str, Any]) -> RecordedRun:
     if not isinstance(payload, Mapping) or "scenarios" not in payload:
         raise UsageError("That file does not hold a run record.")
     try:
-        read = _Record.model_validate(dict(payload))
+        read = _RunRecordPayload.model_validate(dict(payload))
     except ValidationError as exc:
-        raise UsageError(f"That run record is not readable: {_named(exc)}") from exc
+        raise UsageError(
+            f"That run record is not readable: {_format_validation_errors(exc)}"
+        ) from exc
     if read.subject.kind != "journey":
         raise UsageError(
             f"That record is a {read.subject.kind} run, and this page reports "
@@ -222,10 +225,14 @@ def run_of(payload: Mapping[str, Any]) -> RecordedRun:
         journey_id=read.subject.id,
         journey_name=read.subject.name,
         description=read.subject.description,
-        status=_word(read.status, "run status"),
+        status=_normalize_status(read.status, "run status"),
         total_duration=read.duration_seconds or 0.0,
-        passed_count=sum(1 for one in scenarios if one.status == "PASSED"),
-        skipped_count=sum(1 for one in scenarios if one.status == "SKIPPED"),
+        passed_count=sum(
+            1 for scenario in scenarios if scenario.status == ReportStatus.PASSED
+        ),
+        skipped_count=sum(
+            1 for scenario in scenarios if scenario.status == ReportStatus.SKIPPED
+        ),
         scenarios=scenarios,
         unevidenced_security_rules=tuple(read.unevidenced_security_rules),
         environment=read.identity,
@@ -253,12 +260,12 @@ def page_of_record(
     report an absence as a result.
     """
     run = run_of(payload)
-    spent = _Record.model_validate(dict(payload)).usage
+    usage_summary = _RunRecordPayload.model_validate(dict(payload)).usage
     return page_of(
         run,
         generated=generated,
         version=run.environment.yewo_version if run.environment else "",
-        usage=spent.model_dump() if spent else None,
+        usage=usage_summary.model_dump() if usage_summary else None,
         screenshots_href=screenshots_href,
         artifacts=RUN_FILES,
     )

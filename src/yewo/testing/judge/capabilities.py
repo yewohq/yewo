@@ -22,7 +22,7 @@ from yewo.testing.judge.support import (
     CAPABILITY_SUPPORT,
     HOST_TOOLS,
     VARIANT_SUPPORT,
-    Support,
+    CapabilitySupport,
 )
 from yewo.testing.models import GeneratedTestCase
 from yewo.testing.steps import capabilities_in
@@ -50,7 +50,7 @@ _UNSUPPORTED_REQUIREMENTS = {
 
 
 @dataclass(frozen=True)
-class Target:
+class CapabilityTarget:
     """The device a scenario would run on, as far as support is concerned.
 
     Every field but the platform is optional, because a caller may not know
@@ -105,7 +105,7 @@ def _version(platform: Platform, release: tuple[int, ...]) -> str:
     return f"API {spelled}" if platform == Platform.ANDROID else f"iOS {spelled}"
 
 
-def _below(target: Target, floor: tuple[int, ...]) -> bool:
+def _below(target: CapabilityTarget, floor: tuple[int, ...]) -> bool:
     """Whether this target's release is under a floor.
 
     A release nothing read is under nothing. A missing read must not refuse
@@ -114,7 +114,9 @@ def _below(target: Target, floor: tuple[int, ...]) -> bool:
     return target.release is not None and target.release < floor
 
 
-def _refusal(name: str, support: Support, target: Target) -> Optional[str]:
+def _refusal(
+    name: str, support: CapabilitySupport, target: CapabilityTarget
+) -> Optional[str]:
     """Why this target fails one support rule, or None when it meets them all.
 
     The kind table and the variant table are read through here, so a refusal
@@ -155,7 +157,9 @@ def _refusal(name: str, support: Support, target: Target) -> Optional[str]:
     return None
 
 
-def unsupported_capability(kind: CapabilityKind, target: Target) -> Optional[str]:
+def unsupported_capability(
+    kind: CapabilityKind, target: CapabilityTarget
+) -> Optional[str]:
     """Why this target cannot apply this capability, or None when it can.
 
     Reads the kind and not the variant, so a caller holding the capability
@@ -167,7 +171,9 @@ def unsupported_capability(kind: CapabilityKind, target: Target) -> Optional[str
     return _refusal(kind.value, support, target)
 
 
-def _variant_refusal(capability: Capability, target: Target) -> Optional[str]:
+def _variant_refusal(
+    capability: Capability, target: CapabilityTarget
+) -> Optional[str]:
     """Why this target cannot apply this variant of the capability.
 
     A variant with no row is governed by its kind. Absence here refuses
@@ -183,7 +189,9 @@ def _variant_refusal(capability: Capability, target: Target) -> Optional[str]:
     return _refusal(f"{capability.kind.value} '{variant}'", support, target)
 
 
-def unsupported_for(capability: Capability, target: Target) -> Optional[str]:
+def unsupported_for(
+    capability: Capability, target: CapabilityTarget
+) -> Optional[str]:
     """Why this target cannot apply this capability, variant included.
 
     The kind is read first. A kind this target cannot apply at all refuses
@@ -195,7 +203,7 @@ def unsupported_for(capability: Capability, target: Target) -> Optional[str]:
 
 
 def unsupported_reason(
-    test_case: GeneratedTestCase, target: Optional[Target] = None
+    test_case: GeneratedTestCase, target: Optional[CapabilityTarget] = None
 ) -> str | None:
     """Why a scenario cannot be evidenced here, or None when it can.
 
@@ -267,7 +275,7 @@ class SupportedDevice(Protocol):
     os_version: Optional[str]
 
 
-def target_of(device_control: SupportedDevice) -> Target:
+def target_of(device_control: SupportedDevice) -> CapabilityTarget:
     """The device in front of us, as far as capability support is concerned.
 
     Reads are best-effort. A property that cannot be established stays None,
@@ -287,7 +295,7 @@ def target_of(device_control: SupportedDevice) -> Target:
         # reading as either, the same way an unread release does.
         from yewo.agent.device.simctl_control import SimctlControl
 
-        target = Target(
+        target = CapabilityTarget(
             platform=platform,
             emulator=SimctlControl.is_simulator(serial) if serial else None,
             release=release,
@@ -297,13 +305,13 @@ def target_of(device_control: SupportedDevice) -> Target:
         return target
 
     if not serial:
-        return Target(platform=platform, release=release)
+        return CapabilityTarget(platform=platform, release=release)
 
     # The API level decides support, and the release the user would name does
     # not. Android 13 is API 33, and no capability is keyed on "13".
     api = AdbControl.ask(serial, "getprop", "ro.build.version.sdk")
     packages = AdbControl.installed_packages(serial)
-    target = Target(
+    target = CapabilityTarget(
         platform=platform,
         emulator=bool(AdbControl.avd_name(serial)),
         release=_release(api),

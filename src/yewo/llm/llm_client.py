@@ -202,7 +202,9 @@ class LLMClient:
 
         # Recorded before the call, so a question that was never answered is
         # still a question this run can be shown to have asked.
-        asked = self.prompt_store.keep(messages) if self.prompt_store else None
+        asked = (
+            self.prompt_store.store_messages(messages) if self.prompt_store else None
+        )
 
         response = litellm.completion(**kwargs)
 

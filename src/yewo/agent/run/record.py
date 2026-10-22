@@ -59,7 +59,7 @@ class ActionRecord(BaseModel):
     """What the step did to the device, after the target was resolved."""
 
     type: str
-    described: str = Field(description="The action in words, already redacted.")
+    description: str = Field(description="The action in words, already redacted.")
     intent: Optional[str] = Field(
         default=None,
         description=(
@@ -76,7 +76,7 @@ class ActionRecord(BaseModel):
     def of(
         cls,
         action: PlannedAction,
-        described: str,
+        description: str,
         target: Optional[str] = None,
         intent: Optional[str] = None,
     ) -> "ActionRecord":
@@ -84,7 +84,7 @@ class ActionRecord(BaseModel):
         kind = action.type
         return cls(
             type=kind.value if isinstance(kind, Enum) else str(kind),
-            described=described,
+            description=description,
             intent=intent or None,
             target_label=target,
         )
@@ -95,7 +95,7 @@ class GroundingRecord(BaseModel):
 
     mode: str
     resolved: bool
-    answer: Optional[int] = Field(
+    mark_id: Optional[int] = Field(
         default=None,
         description=(
             "The badge the planner answered with, in marks mode. Read from "
@@ -233,20 +233,20 @@ class StepLog:
 
     def open(self, n: int) -> StepRecord:
         """Starts the record for step `n`, counted from one."""
-        written = StepRecord(n=n)
-        self.records.append(written)
-        return written
+        step_record = StepRecord(n=n)
+        self.records.append(step_record)
+        return step_record
 
     @property
     def current(self) -> Optional[StepRecord]:
         return self.records[-1] if self.records else None
 
-    def files(self, written: dict) -> None:
+    def files(self, screenshot_files: dict) -> None:
         """Notes the files a step wrote, skipping the ones it did not write."""
         step = self.current
         if step is not None:
             step.screenshots.update(
-                {name: value for name, value in written.items() if value}
+                {name: value for name, value in screenshot_files.items() if value}
             )
 
     def observed(self, phash: Optional[str], took_ms: float) -> None:
@@ -266,10 +266,10 @@ class StepLog:
         if step is None:
             return
         step.plan_ms = took_ms
-        named = self._scrub(response.current_screen)
-        step.screen_name = named
+        screen_name = self._scrub(response.current_screen)
+        step.screen_name = screen_name
         step.decision = DecisionRecord(
-            current_screen=named,
+            current_screen=screen_name,
             evaluation_previous_goal=self._scrub(response.evaluation_previous_goal),
             observation=self._scrub(response.observation),
             reasoning=self._scrub(response.reasoning),
@@ -277,22 +277,22 @@ class StepLog:
             goal_evidence=self._scrub(response.goal_evidence),
         )
 
-    def grounded(self, mode: str, decision, requested) -> None:
+    def record_grounding(self, mode: str, decision, requested) -> None:
         """What the planner asked for, and whether the screen could place it."""
         step = self.current
         if step is not None:
             step.grounding = GroundingRecord(
                 mode=mode,
                 resolved=decision.ok,
-                answer=requested.model_dump().get("mark"),
+                mark_id=requested.model_dump().get("mark"),
                 refusal=None if decision.ok else self._scrub(decision.observation),
                 unmatched=decision.unmatched,
             )
 
-    def acted(
+    def record_action(
         self,
         action: PlannedAction,
-        described: str,
+        description: str,
         result,
         target: Optional[str],
     ) -> None:
@@ -306,7 +306,7 @@ class StepLog:
             return
         step.action = ActionRecord.of(
             action,
-            self._scrub(described),
+            self._scrub(description),
             self._scrub(target) or None,
             self._scrub(action.reason) or None,
         )
@@ -316,10 +316,10 @@ class StepLog:
             error=self._scrub(result.error) or None,
         )
 
-    def blocked(
+    def record_blocked_action(
         self,
         action: PlannedAction,
-        described: str,
+        description: str,
         observation: Optional[str],
         target: Optional[str] = None,
     ) -> None:
@@ -334,7 +334,7 @@ class StepLog:
             return
         step.action = ActionRecord.of(
             action,
-            self._scrub(described),
+            self._scrub(description),
             self._scrub(target) or None,
             self._scrub(action.reason) or None,
         )
@@ -344,7 +344,7 @@ class StepLog:
             error=self._scrub(observation) or None,
         )
 
-    def took(self, took_ms: float) -> None:
+    def record_action_duration(self, duration_ms: float) -> None:
         step = self.current
         if step is not None:
-            step.act_ms = took_ms
+            step.act_ms = duration_ms

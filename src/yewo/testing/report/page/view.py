@@ -15,22 +15,22 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from yewo.testing.judge import rules, verdicts
-from yewo.testing.models import QAIssue
+from yewo.testing.models import QAIssue, ReportStatus
 
-from .facts import Tile, seconds, tiles_of
-from .walk import StepView, anchor_of, failed_at, step_views
+from .scenario_steps import StepView, anchor_of, failed_at, step_views
 from .source import RunSource, ScenarioSource
+from .summary_tiles import SummaryTile, seconds, tiles_of
 
-TONES: Dict[str, str] = {
-    "PASSED": "pass",
-    "FAILED": "fail",
-    "UNVERIFIED": "warn",
-    "UNSUPPORTED": "warn",
-    "ERROR": "warn",
-    "ABORTED": "warn",
-    "SKIPPED": "muted",
-    "PENDING": "muted",
-    "RUNNING": "muted",
+TONES: Dict[ReportStatus, str] = {
+    ReportStatus.PASSED: "pass",
+    ReportStatus.FAILED: "fail",
+    ReportStatus.UNVERIFIED: "warn",
+    ReportStatus.UNSUPPORTED: "warn",
+    ReportStatus.ERROR: "warn",
+    ReportStatus.ABORTED: "warn",
+    ReportStatus.SKIPPED: "muted",
+    ReportStatus.PENDING: "muted",
+    ReportStatus.RUNNING: "muted",
 }
 """How each verdict is coloured.
 
@@ -39,15 +39,15 @@ device or missing evidence is amber. Nothing was learned about the app. A
 reader of a red build must not go looking in it.
 """
 
-VERBS: Dict[str, str] = {
-    "FAILED": "failed",
-    "UNVERIFIED": "reached no verdict",
-    "UNSUPPORTED": "could not be run here",
-    "ERROR": "could not run",
-    "ABORTED": "was interrupted",
-    "SKIPPED": "was skipped",
-    "PENDING": "has not started",
-    "RUNNING": "is still running",
+VERBS: Dict[ReportStatus, str] = {
+    ReportStatus.FAILED: "failed",
+    ReportStatus.UNVERIFIED: "reached no verdict",
+    ReportStatus.UNSUPPORTED: "could not be run here",
+    ReportStatus.ERROR: "could not run",
+    ReportStatus.ABORTED: "was interrupted",
+    ReportStatus.SKIPPED: "was skipped",
+    ReportStatus.PENDING: "has not started",
+    ReportStatus.RUNNING: "is still running",
 }
 """What the headline says a scenario did, in the reader's words."""
 
@@ -96,9 +96,9 @@ class CheckView:
     tone: str
     status: str
     reasoning: str
-    named: str = ""
+    display_label: str = ""
     screen: str = ""
-    asked: int = 0
+    observation_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -114,8 +114,8 @@ class FindingView:
     tone: str
     kind: str
     description: str
-    where: str
-    seen: int = 1
+    scenario_scope: str
+    occurrence_count: int = 1
     screens: Tuple[str, ...] = ()
     anchor: str = ""
 
@@ -158,7 +158,7 @@ class ReportView:
     generated: str
     version: str
     verdict: VerdictView
-    tiles: Tuple[Tile, ...]
+    tiles: Tuple[SummaryTile, ...]
     description: str
     secrets: int
     scenarios: Tuple[ScenarioView, ...]
@@ -168,30 +168,30 @@ class ReportView:
     replayable: int = 0
 
 
-def _declared(scenario: ScenarioSource) -> Dict[str, str]:
+def _declared_rules_by_id(scenario: ScenarioSource) -> Dict[str, str]:
     """The rules as the journey wrote them, by id.
 
     A verification holds the rule as the auditor echoed it, and an auditor
     echoes differently each time. The journey's own words are the same on
     every row.
     """
-    given = scenario.verdict_inputs
-    if given is None:
+    verdict_inputs = scenario.verdict_inputs
+    if verdict_inputs is None:
         return {}
-    written = {
+    declared_rules_by_id = {
         rules.rule_id(rules.EXPECTED, index): SCOPE_WRITTEN_IN.sub("", outcome.statement)
-        for index, outcome in enumerate(given.expected_outcomes)
+        for index, outcome in enumerate(verdict_inputs.expected_outcomes)
     }
-    written.update(
+    declared_rules_by_id.update(
         {
             rules.rule_id(rules.SECURITY, index): rule
-            for index, rule in enumerate(given.security_rules)
+            for index, rule in enumerate(verdict_inputs.security_rules)
         }
     )
-    return written
+    return declared_rules_by_id
 
 
-def _named(rule_id: str) -> str:
+def _format_rule_display_name(rule_id: str) -> str:
     """What a reader calls the rule, from the id the prompt gave it.
 
     Counted from one. The id is stored from zero because it indexes a
@@ -199,33 +199,35 @@ def _named(rule_id: str) -> str:
     an array offset.
     """
     kind, _, index = rule_id.partition(":")
-    spelled = {rules.EXPECTED: "Expected outcome", rules.SECURITY: "Security rule"}
+    rule_type_names = {rules.EXPECTED: "Expected outcome", rules.SECURITY: "Security rule"}
     if not index.isdigit():
         return rule_id
-    return f"{spelled.get(kind, kind.capitalize())} {int(index) + 1}"
+    return f"{rule_type_names.get(kind, kind.capitalize())} {int(index) + 1}"
 
 
 def _checks(scenario: ScenarioSource) -> Tuple[CheckView, ...]:
     """The rules this scenario was judged on, failures first."""
     verifications = list(scenario.rule_verifications)
-    declared = _declared(scenario)
-    asked: Dict[str, int] = {}
+    declared_rules = _declared_rules_by_id(scenario)
+    evaluation_counts: Dict[str, int] = {}
     for verification in verifications:
         if verification.rule_id:
-            asked[verification.rule_id] = asked.get(verification.rule_id, 0) + 1
-    settled = [
+            evaluation_counts[verification.rule_id] = (
+                evaluation_counts.get(verification.rule_id, 0) + 1
+            )
+    check_views = [
         CheckView(
-            rule=declared.get(rule_id) or verification.rule,
+            rule=declared_rules.get(rule_id) or verification.rule,
             tone="pass" if verification.status == "passed" else "fail",
             status="Passed" if verification.status == "passed" else "Failed",
             reasoning=verification.reasoning,
-            named=_named(rule_id),
+            display_label=_format_rule_display_name(rule_id),
             screen=verification.screen_name or "",
-            asked=asked.get(rule_id, 0),
+            observation_count=evaluation_counts.get(rule_id, 0),
         )
         for rule_id, verification in verdicts.per_rule(verifications).items()
     ]
-    return tuple(sorted(settled, key=lambda check: check.tone == "pass"))
+    return tuple(sorted(check_views, key=lambda check: check.tone == "pass"))
 
 
 def _summary(scenario: ScenarioSource) -> str:
@@ -301,46 +303,47 @@ def _where_seen(scenario: ScenarioSource, issue: QAIssue) -> str:
 
 def _findings(report: RunSource) -> Tuple[FindingView, ...]:
     """Every issue a run saw, worst first, with exact repeats gathered."""
-    seen: Dict[Tuple[str, str, str, str], List[Tuple[QAIssue, str]]] = {}
+    issues_by_type: Dict[Tuple[str, str, str, str], List[Tuple[QAIssue, str]]] = {}
     toward: Dict[Tuple[str, str, str, str], str] = {}
     for scenario in report.scenarios:
         for issue in scenario.detected_issues:
             key = _same_issue(issue, scenario.scenario_name)
-            seen.setdefault(key, []).append((issue, scenario.scenario_name))
+            issues_by_type.setdefault(key, []).append((issue, scenario.scenario_name))
             toward.setdefault(key, _where_seen(scenario, issue))
     one_scenario = len(report.scenarios) < 2
-    found = [
-        _gathered(rows, one_scenario, toward[key]) for key, rows in seen.items()
+    finding_views = [
+        _build_finding_view(rows, one_scenario, toward[key])
+        for key, rows in issues_by_type.items()
     ]
-    return tuple(sorted(found, key=lambda one: SEVERITY.get(one.severity.lower(), 9)))
+    return tuple(
+        sorted(finding_views, key=lambda finding: SEVERITY.get(finding.severity.lower(), 9))
+    )
 
 
-def _gathered(
+def _build_finding_view(
     rows: List[Tuple[QAIssue, str]], one_scenario: bool, anchor: str = ""
 ) -> FindingView:
     """One defect, however many times it was reported in the same words."""
     issue = rows[0][0]
     screens = tuple(
-        dict.fromkeys(one.current_screen for one, _ in rows if one.current_screen)
+        dict.fromkeys(item.current_screen for item, _ in rows if item.current_screen)
     )
-    named = "" if one_scenario else " · ".join(dict.fromkeys(name for _, name in rows))
+    scenario_scope = (
+        "" if one_scenario else " · ".join(dict.fromkeys(name for _, name in rows))
+    )
     return FindingView(
         severity=issue.severity.title(),
         tone=SEVERITY_TONES.get(issue.severity, "warn"),
         kind=issue.issue_type.value.replace("_", " ").title(),
         description=issue.description,
-        where=named,
-        seen=len(rows),
+        scenario_scope=scenario_scope,
+        occurrence_count=len(rows),
         screens=screens,
         anchor=anchor,
     )
 
 
-UNFINISHED = ("PENDING", "RUNNING")
-"""What a scenario is called before it reports anything."""
-
-
-def _observed(findings: int, unevidenced: int) -> str:
+def _format_observed_notes(findings: int, unevidenced: int) -> str:
     """What a passing run still has to say about what it saw.
 
     A run can reach every outcome it was given and still have watched the
@@ -368,7 +371,7 @@ def _every_scenario_passed(report: RunSource) -> bool:
     that disagrees with itself. The rows are the evidence.
     """
     return bool(report.scenarios) and all(
-        one.status == "PASSED" for one in report.scenarios
+        scenario.status == ReportStatus.PASSED for scenario in report.scenarios
     )
 
 
@@ -381,13 +384,13 @@ def _verdict(
     """What the page leads with, which is the first thing that went wrong."""
     total = len(report.scenarios)
     counts = f"{report.passed_count} of {total} scenarios passed"
-    if report.status == "PASSED" and _every_scenario_passed(report):
+    if report.status == ReportStatus.PASSED and _every_scenario_passed(report):
         return VerdictView(
             tone="pass",
             badge="Passed",
             counts=counts,
             headline=f"Every scenario in {report.journey_name} passed.",
-            detail=_observed(findings, unevidenced),
+            detail=_format_observed_notes(findings, unevidenced),
             anchor="findings" if findings else "",
             toward="View issues" if findings else "",
         )
@@ -398,10 +401,10 @@ def _verdict(
         # A record is written before the first scenario starts and updated
         # as each one ends, so a reader can open it while the run is going.
         # Nothing has gone wrong there. Nothing has happened yet.
-        if report.status == "RUNNING":
+        if report.status == ReportStatus.RUNNING:
             # By status, not by tone: a skipped scenario is finished and muted.
             done = sum(
-                1 for one in report.scenarios if one.status not in UNFINISHED
+                1 for scenario in report.scenarios if not scenario.status.in_progress
             )
             return VerdictView(
                 tone="muted",
@@ -410,13 +413,13 @@ def _verdict(
                 headline=f"{report.journey_name} is still running.",
                 detail=f"{done} of {total} scenarios have finished.",
             )
-        if report.status == "PASSED":
+        if report.status == ReportStatus.PASSED:
             return VerdictView(
                 tone="warn",
                 badge="Passed",
                 counts=counts,
                 headline=f"{report.journey_name} reported no failure.",
-                detail=_observed(findings, unevidenced),
+                detail=_format_observed_notes(findings, unevidenced),
                 anchor="findings" if findings else "",
                 toward="View issues" if findings else "",
             )
@@ -430,16 +433,24 @@ def _verdict(
     failed_at = next(
         (step for step in unsuccessful.steps if step.tone == "fail"), None
     )
-    where = f" at step {int(failed_at.number)}" if failed_at else ""
+    step_location = f" at step {int(failed_at.number)}" if failed_at else ""
     status = next(
-        (one.status for one in report.scenarios if one.test_id == unsuccessful.test_id),
-        "FAILED",
+        (
+            scenario.status
+            for scenario in report.scenarios
+            if scenario.test_id == unsuccessful.test_id
+        ),
+        ReportStatus.FAILED,
     )
     return VerdictView(
         tone=unsuccessful.tone,
-        badge="Running" if report.status == "RUNNING" else unsuccessful.status,
+        badge=(
+            "Running"
+            if report.status == ReportStatus.RUNNING
+            else unsuccessful.status
+        ),
         counts=counts,
-        headline=f"“{unsuccessful.name}” {VERBS.get(status, 'failed')}{where}.",
+        headline=f"“{unsuccessful.name}” {VERBS.get(status, 'failed')}{step_location}.",
         detail=unsuccessful.failure_reason or "The run recorded no reason.",
         anchor=failed_at.anchor if failed_at else unsuccessful.anchor,
         toward="Jump to the failure",
@@ -456,8 +467,10 @@ def _secrets(report: RunSource, scenarios: Sequence[ScenarioView]) -> int:
             texts.extend(note.body for note in step.notes)
         texts.extend(check.reasoning for check in view.checks)
         texts.extend(check.rule for check in view.checks)
-    found = {name for text in texts for name in SECRET.findall(text or "")}
-    return len(found)
+    matched_secret_names = {
+        name for text in texts for name in SECRET.findall(text or "")
+    }
+    return len(matched_secret_names)
 
 
 def _replayable(report: RunSource) -> int:
@@ -480,19 +493,19 @@ def page_of(
 ) -> ReportView:
     """The whole page for one journey report, as values the renderer writes out."""
     scenarios = _scenarios(report, screenshots_href.rstrip("/"))
-    found = _findings(report)
+    finding_views = _findings(report)
     unevidenced = tuple(report.unevidenced_security_rules)
     return ReportView(
         title=report.journey_name,
         subject=report.journey_id,
         generated=generated,
         version=version,
-        verdict=_verdict(report, scenarios, len(found), len(unevidenced)),
+        verdict=_verdict(report, scenarios, len(finding_views), len(unevidenced)),
         tiles=tiles_of(report, usage),
         description=report.description,
         secrets=_secrets(report, scenarios),
         scenarios=scenarios,
-        findings=found,
+        findings=finding_views,
         unevidenced=unevidenced,
         artifacts=tuple(artifacts),
         replayable=_replayable(report),

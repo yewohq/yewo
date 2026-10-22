@@ -30,7 +30,7 @@ from yewo.agent.step import narration
 from yewo.agent.memory.loop_detector import RollingLoopDetector
 from yewo.agent.run.context import RunContext
 from yewo.agent.memory import stall
-from yewo.agent.memory.stall import SPENT
+from yewo.agent.memory.stall import STALL_LIMIT_MESSAGE
 from yewo.agent.memory.replay import ReplayLedger, replay_known_path, target_label
 from yewo.agent.step import targeting
 from yewo.utils.secrets import SecretScrubber
@@ -46,7 +46,7 @@ from yewo.llm.llm_client import LLMClient
 logger = logging.getLogger(__name__)
 
 
-def _since(started: float) -> float:
+def _elapsed_ms(started: float) -> float:
     """Milliseconds, so a reader of one step sees where its time went."""
     return round((time.perf_counter() - started) * 1000, 1)
 
@@ -282,7 +282,7 @@ class DeviceAgent:
         started = time.perf_counter()
         snapshot = self._observe(step, device_control, perception, session_dir,
                                  session_trail, ctx)
-        ctx.steps.observed(snapshot.current_phash, _since(started))
+        ctx.steps.observed(snapshot.current_phash, _elapsed_ms(started))
 
         ending = outcomes.page_stagnation(ctx, session_trail, snapshot.current_phash)
         if ending is not None:
@@ -291,7 +291,7 @@ class DeviceAgent:
         started = time.perf_counter()
         step_response = self._plan(step, goal, planner, snapshot, session_dir,
                                    session_trail, ctx)
-        ctx.steps.planned(step_response, _since(started))
+        ctx.steps.planned(step_response, _elapsed_ms(started))
 
         ending = self._ending_after_planning(
             step_response, snapshot, session_trail, step_hook, ctx
@@ -303,7 +303,7 @@ class DeviceAgent:
             step_response.action, snapshot, device_control, self.grounding,
             self.grounder,
         )
-        ctx.steps.grounded(self.grounding, decision, step_response.action)
+        ctx.steps.record_grounding(self.grounding, decision, step_response.action)
         if not decision.ok:
             return self._blocked(step, step_response.action, decision, snapshot,
                                  device_control, session_dir, session_trail, ctx)
@@ -397,13 +397,13 @@ class DeviceAgent:
         session_dir, session_trail, ctx
     ) -> Optional[DeviceRunResult]:
         """An action that never reached the device, and what that costs the screen."""
-        described = narration.describe(action)
+        action_description = narration.describe(action)
         targeting.record_unexecuted(
-            ctx.history, step, described, decision.observation
+            ctx.history, step, action_description, decision.observation
         )
-        ctx.steps.blocked(
+        ctx.steps.record_blocked_action(
             action,
-            described,
+            action_description,
             decision.observation,
             target_label(action, snapshot.gui_elements),
         )
@@ -417,7 +417,7 @@ class DeviceAgent:
         if stall.reveal_behind_keyboard(device_control, snapshot, ctx):
             return None
         ctx.stall.record_blocked(snapshot.current_phash)
-        if ctx.stall.spent:
+        if ctx.stall.is_exhausted:
             return outcomes.loop_detected(
                 ctx, session_trail, snapshot.current_phash,
                 targeting.stalled_reason(decision),
@@ -438,17 +438,17 @@ class DeviceAgent:
             device_control=device_control, snapshot=snapshot,
             session_trail=session_trail, ctx=ctx,
         )
-        ctx.steps.took(_since(started))
-        if ctx.stall.stuck and stall.reveal_behind_keyboard(
+        ctx.steps.record_action_duration(_elapsed_ms(started))
+        if ctx.stall.is_blocked and stall.reveal_behind_keyboard(
             device_control, snapshot, ctx
         ):
             return None
         # An action that runs and fails stalls a screen as surely as one refused
         # before dispatch. Burning a mark pushes the planner to try a different
         # one, so a fresh target each time is still a screen going nowhere.
-        if ctx.stall.spent:
+        if ctx.stall.is_exhausted:
             return outcomes.loop_detected(
-                ctx, session_trail, snapshot.current_phash, SPENT
+                ctx, session_trail, snapshot.current_phash, STALL_LIMIT_MESSAGE
             )
         ctx.prev_phash = snapshot.current_phash
         return None

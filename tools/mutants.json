@@ -3,7 +3,7 @@
     "name": "crash-ranked-after-the-infeasible-stop",
     "owner": "judge",
     "path": "src/yewo/testing/judge/verdicts.py",
-    "find": "    if any(issue.issue_type == \"crash_screen\" for issue in issues):\n        return \"FAILED\", \"App crashed: crash screen detected.\", None\n",
+    "find": "    if any(issue.issue_type == \"crash_screen\" for issue in issues):\n        return ReportStatus.FAILED, \"App crashed: crash screen detected.\", None\n",
     "replace": ""
   },
   {
@@ -38,21 +38,21 @@
     "name": "missing-required-ids-reports-none",
     "owner": "judge",
     "path": "src/yewo/testing/judge/verdicts.py",
-    "find": "    return sorted(required_ids - settled - (evidenced & security_ids))",
-    "replace": "    _ = required_ids, settled, evidenced, security_ids\n    return []"
+    "find": "    return sorted(required_ids - passed_expected_ids - (evidenced & security_ids))",
+    "replace": "    _ = required_ids, passed_expected_ids, evidenced, security_ids\n    return []"
   },
   {
     "name": "an-exposure-claim-always-stands",
     "owner": "judge",
     "path": "src/yewo/testing/judge/verdicts.py",
-    "find": "    here = [finding for finding in (findings or []) if finding.screen_name == issue.current_screen]\n    return bool(here) and not any(finding.is_exposure() for finding in here)",
+    "find": "    screen_findings = [\n        finding for finding in (findings or []) if finding.screen_name == issue.current_screen\n    ]\n    return bool(screen_findings) and not any(finding.is_exposure() for finding in screen_findings)",
     "replace": "    _ = findings\n    return False"
   },
   {
     "name": "a-scenario-with-no-outcome-passes",
     "owner": "judge",
     "path": "src/yewo/testing/judge/decide.py",
-    "find": "    if not required_outcomes:\n        return Verdict(\n            \"UNVERIFIED\",\n            \"The scenario declared no expected outcome, so reaching the goal \"\n            \"rests on the planner's own word.\",\n            Cause.SCENARIO,\n        )\n",
+    "find": "    if not required_outcomes:\n        return Verdict(\n            ReportStatus.UNVERIFIED,\n            \"The scenario declared no expected outcome, so reaching the goal \"\n            \"rests on the planner's own word.\",\n            Cause.SCENARIO,\n        )\n",
     "replace": ""
   },
   {
@@ -73,8 +73,8 @@
     "name": "a-critical-issue-no-longer-fails",
     "owner": "judge",
     "path": "src/yewo/testing/judge/verdicts.py",
-    "find": "    if critical:\n        return \"FAILED\", f\"Critical QA issue: {critical.description}\", None",
-    "replace": "    if critical and False:\n        return \"FAILED\", f\"Critical QA issue: {critical.description}\", None"
+    "find": "    if critical:\n        return ReportStatus.FAILED, f\"Critical QA issue: {critical.description}\", None",
+    "replace": "    if critical and False:\n        return ReportStatus.FAILED, f\"Critical QA issue: {critical.description}\", None"
   },
   {
     "name": "a-security-violation-reads-as-any-failed-rule",
@@ -304,15 +304,15 @@
     "name": "a-quoted-rule-is-never-matched",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "            found = self._by_statement.get((verification.rule or \"\").strip())\n            if found:\n                verification.rule_id = found",
+    "find": "            rule_id = self._rule_ids_by_statement.get(\n                (verification.rule or \"\").strip()\n            )\n            if rule_id:\n                verification.rule_id = rule_id",
     "replace": "            pass"
   },
   {
     "name": "two-rules-reading-alike-are-resolved-anyway",
     "owner": "gate",
     "path": "src/yewo/testing/judge/rules.py",
-    "find": "    for text in twice:\n        found.pop(text, None)",
-    "replace": "    twice.clear()"
+    "find": "    for text in duplicate_statements:\n        rule_ids_by_statement.pop(text, None)",
+    "replace": "    duplicate_statements.clear()"
   },
   {
     "name": "a-rules-words-map-to-the-wrong-kind",
@@ -332,22 +332,22 @@
     "name": "an-audit-naming-nothing-is-not-asked-again",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "        if self._asked and not self._any_listed(assessment):",
+    "find": "        if self._audited_rule_ids and not self._any_listed(assessment):",
     "replace": "        if False:"
   },
   {
     "name": "an-audit-is-asked-again-without-end",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "            assessment = self._answered(message)\n        self._clean(assessment)",
-    "replace": "            while not self._any_listed(assessment):\n                assessment = self._answered(message)\n        self._clean(assessment)"
+    "find": "            assessment = self._audit_screen_and_normalize(message)\n        self._scrub_assessment(assessment)",
+    "replace": "            while not self._any_listed(assessment):\n                assessment = self._audit_screen_and_normalize(message)\n        self._scrub_assessment(assessment)"
   },
   {
     "name": "an-audit-that-answered-is-asked-again",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "        if self._asked and not self._any_listed(assessment):",
-    "replace": "        if self._asked:"
+    "find": "        if self._audited_rule_ids and not self._any_listed(assessment):",
+    "replace": "        if self._audited_rule_ids:"
   },
   {
     "name": "the-findings-never-reach-the-judge",

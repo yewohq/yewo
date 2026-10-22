@@ -36,7 +36,7 @@ FALLBACK_INPUT_COST = 0.042 / 1_000_000
 
 
 @dataclass(frozen=True)
-class Frame:
+class PreparedImage:
     """A screenshot as the decision model will see it."""
 
     png: bytes
@@ -67,7 +67,7 @@ def device_size(png: bytes) -> tuple[int, int]:
         return image.size
 
 
-def prepare(png: bytes) -> Frame:
+def prepare_image(png: bytes) -> PreparedImage:
     """Shrinks a screenshot to the largest size the API accepts."""
     from PIL import Image
 
@@ -83,7 +83,7 @@ def prepare(png: bytes) -> Frame:
 
     buffer = BytesIO()
     image.resize(sent, Image.Resampling.LANCZOS).save(buffer, format="PNG")
-    return Frame(png=buffer.getvalue(), original=(width, height), sent=sent)
+    return PreparedImage(png=buffer.getvalue(), original=(width, height), sent=sent)
 
 
 def input_price(model: str) -> float:
@@ -135,7 +135,7 @@ class JevClient:
         """The vendor client, built on first use so construction stays cheap.
 
         Built with its own retries off. The SDK retries twice by default and
-        `failures.answered` retries three times around it. One rate limit
+        `failures.call_with_retry` retries three times around it. One rate limit
         then became nine requests, and three backoff budgets, while a device
         waited. One owner for the policy, and it is ours.
         """
@@ -168,12 +168,12 @@ class JevClient:
             from typesafe_sdk import Image
 
             state = f"`{ASSET}`"
-            assets = {ASSET: Image(prepare(screenshot).png)}
+            assets = {ASSET: Image(prepare_image(screenshot).png)}
 
-        asked = self._asked(state, questions, screenshot)
+        prompt_reference = self._store_prompt(state, questions, screenshot)
 
         started = time.perf_counter()
-        response = failures.answered(
+        response = failures.call_with_retry(
             lambda: self.client.system_one(
                 state=state,
                 questions=dict(questions),
@@ -192,12 +192,12 @@ class JevClient:
                     self._model,
                     latency_ms,
                     None if tokens is None else tokens * self._price,
-                    asked=asked,
+                    asked=prompt_reference,
                 )
             )
         return response
 
-    def _asked(
+    def _store_prompt(
         self, state: str, questions: Mapping[str, Any], screenshot: Optional[bytes]
     ) -> Optional[tuple]:
         """What this call asked, recorded before it is made.
@@ -209,11 +209,12 @@ class JevClient:
             return None
         import hashlib
 
-        return self.prompt_store.keep_payload(
+        return self.prompt_store.store_payload(
             {
                 "state": state,
                 "questions": {
-                    name: _readable(question) for name, question in questions.items()
+                    name: _serialize_question(question)
+                    for name, question in questions.items()
                 },
                 "image_sha256": (
                     hashlib.sha256(screenshot).hexdigest() if screenshot else None
@@ -228,7 +229,7 @@ class JevClient:
             self._client = None
 
 
-def _readable(question) -> object:
+def _serialize_question(question) -> object:
     """One question, in a form a record can hold.
 
     The vendor's question objects are models. Anything else is kept as it

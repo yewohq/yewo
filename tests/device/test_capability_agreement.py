@@ -28,7 +28,7 @@ from yewo.agent.device import capability_controller
 from yewo.agent.device.platform import Platform
 from yewo.errors import ActionRejected
 from yewo.testing.judge.capabilities import (
-    Target,
+    CapabilityTarget,
     unsupported_capability,
     unsupported_for,
 )
@@ -82,7 +82,7 @@ class TableAgreementTests(unittest.TestCase):
         The only rule left to fail is whether a path exists at all. That is
         the one question the controller also answers.
         """
-        target = Target(platform=platform, emulator=True, release=(99,))
+        target = CapabilityTarget(platform=platform, emulator=True, release=(99,))
         return unsupported_for(capability, target) is not None
 
     def test_the_table_refuses_what_the_controller_refuses(self):
@@ -115,7 +115,7 @@ class ReleaseBoundaryTests(unittest.TestCase):
     """
 
     def _target(self, release, emulator=True, platform=Platform.IOS):
-        return Target(platform=platform, emulator=emulator, release=release)
+        return CapabilityTarget(platform=platform, emulator=emulator, release=release)
 
     def _refused(self, kind, release, emulator=True, platform=Platform.IOS):
         return unsupported_capability(
@@ -153,12 +153,12 @@ class ReleaseBoundaryTests(unittest.TestCase):
 
     def test_a_target_of_unestablished_kind_meets_a_physical_floor(self):
         """A read that failed must not refuse work the target can do."""
-        target = Target(platform=Platform.IOS, emulator=None, release=(16,))
+        target = CapabilityTarget(platform=Platform.IOS, emulator=None, release=(16,))
 
         self.assertIsNone(unsupported_capability(CapabilityKind.INTERRUPT, target))
 
     def test_an_unread_release_meets_every_floor(self):
-        target = Target(platform=Platform.IOS, emulator=False, release=None)
+        target = CapabilityTarget(platform=Platform.IOS, emulator=False, release=None)
 
         self.assertIsNone(unsupported_capability(CapabilityKind.INTERRUPT, target))
         self.assertIsNone(unsupported_capability(CapabilityKind.DEEPLINK, target))
@@ -184,7 +184,7 @@ class PermissionSupportTests(unittest.TestCase):
     EVERY_TOOL = frozenset({"applesimutils"})
 
     def _refused(self, permission: str, platform: Platform, release=(99,), tools=None):
-        target = Target(
+        target = CapabilityTarget(
             platform=platform,
             emulator=True,
             release=release,
@@ -212,7 +212,7 @@ class PermissionSupportTests(unittest.TestCase):
 
     def test_a_host_nothing_was_read_from_refuses_nothing(self):
         """The same rule as an unread package list, for the same reason."""
-        target = Target(
+        target = CapabilityTarget(
             platform=Platform.IOS, emulator=True, release=(18, 2), host_tools=None
         )
         camera = PermissionCapability(permission="camera", grant=True)

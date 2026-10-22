@@ -19,12 +19,12 @@ from yewo.testing.report.page.view import page_of
 from yewo.utils.secrets import SecretScrubber
 
 
-def step(n: int, described: str, success: bool = True, **written) -> StepRecord:
+def step(n: int, action_description: str, success: bool = True, **written) -> StepRecord:
     return StepRecord(
         n=n,
         screen_name="Basket",
         decision=DecisionRecord(current_screen="Basket", reasoning="The control is here."),
-        action=ActionRecord(type="tap", described=described),
+        action=ActionRecord(type="tap", description=action_description),
         outcome=OutcomeRecord(
             success=success, observation="Done" if success else "Nothing changed"
         ),
@@ -426,18 +426,18 @@ class WhenAReportWillNotWriteTests(unittest.TestCase):
     def test_a_record_that_will_not_write_fails_the_run(self):
         """A run nobody can read is not a run that passed."""
         from yewo.testing.report import writing
-        from yewo.testing.report.manifest import Inputs, RunManifest, Subject
+        from yewo.testing.report.manifest import RunInputs, RunManifest, RunSubject
 
         report = journey(status="PASSED", scenarios=[scenario()], passed_count=1)
         with tempfile.TemporaryDirectory() as directory:
             manifest = RunManifest(
                 Path(directory) / "run.json",
-                Subject(kind="journey", id="checkout", name="Checkout"),
+                RunSubject(kind="journey", id="checkout", name="Checkout"),
                 [],
                 environment=RunEnvironment(
                     yewo_version="0.1.0", model="m", platform="android", grounding="marks"
                 ),
-                inputs=Inputs(subject="checkout", subject_sha256="abc"),
+                inputs=RunInputs(subject="checkout", subject_sha256="abc"),
             )
             # A directory that was removed mid-run is the ordinary way this
             # happens, and the writer records it rather than raising.

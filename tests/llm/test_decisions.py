@@ -65,9 +65,9 @@ class DecisionRecordTests(unittest.TestCase):
 
     def test_the_tracker_totals_both_routes_together(self):
         from yewo.llm import usage
-        from yewo.testing.report.usage_tracker import Totals
+        from yewo.testing.report.usage_tracker import UsageTotals
 
-        totals = Totals()
+        totals = UsageTotals()
         totals.add(usage.record_decision(self._response(), "typesafe/jev-1.14.0", 1.0, 0.0001))
         totals.add(
             usage.CallRecord(
@@ -102,9 +102,9 @@ class FrameTests(unittest.TestCase):
         return buffer.getvalue()
 
     def test_a_phone_frame_is_shrunk_within_the_limits(self):
-        from yewo.llm.jev_client import MAX_PIXELS, MAX_SIDE, MIN_SIDE, prepare
+        from yewo.llm.jev_client import MAX_PIXELS, MAX_SIDE, MIN_SIDE, prepare_image
 
-        frame = prepare(self._png((1080, 2400)))
+        frame = prepare_image(self._png((1080, 2400)))
 
         self.assertEqual(frame.original, (1080, 2400))
         self.assertLessEqual(max(frame.sent), MAX_SIDE)
@@ -112,16 +112,16 @@ class FrameTests(unittest.TestCase):
         self.assertLessEqual(frame.sent[0] * frame.sent[1], MAX_PIXELS)
 
     def test_a_frame_already_within_the_limits_is_left_alone(self):
-        from yewo.llm.jev_client import prepare
+        from yewo.llm.jev_client import prepare_image
 
-        frame = prepare(self._png((706, 1568)))
+        frame = prepare_image(self._png((706, 1568)))
 
         self.assertEqual(frame.sent, (706, 1568))
 
     def test_a_box_maps_back_to_the_device_not_the_sent_image(self):
-        from yewo.llm.jev_client import prepare
+        from yewo.llm.jev_client import prepare_image
 
-        frame = prepare(self._png((1080, 2400)))
+        frame = prepare_image(self._png((1080, 2400)))
 
         # The tick in the Fossify header, as the model reports it.
         self.assertEqual(frame.to_device(0.91, 0.08, 0.96, 0.11), (983, 192, 1037, 264))
@@ -293,7 +293,7 @@ class VendorContractTests(unittest.TestCase):
         )
 
     def test_the_grounder_builds_its_client_with_that_policy(self):
-        """One owner for the retry policy, and `failures.answered` is it."""
+        """One owner for the retry policy, and `call_with_retry` is it."""
         from unittest import mock
 
         import typesafe_sdk

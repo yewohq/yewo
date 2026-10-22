@@ -1,4 +1,4 @@
-"""`yewo.lock` — the test, committed, so two runs can be compared.
+"""The `yewo.lock` file — the test, committed, so two runs can be compared.
 
 A cell key is not a test. `security.negative.0` can name a scenario about a
 rejected password this week. Next week it can name one about a locked
@@ -54,7 +54,7 @@ LOCK_NAME = "yewo.lock"
 """What the file is called, beside the journey file it locks."""
 
 
-def _asked(journey: UserJourney) -> dict:
+def _extract_journey_contract(journey: UserJourney) -> dict:
     """What the journey asks, with no value in it.
 
     Names only. A value is excluded on purpose: a hash of a six-character
@@ -87,7 +87,7 @@ def _digest(payload: dict) -> str:
 def contract_sha256(journey: UserJourney, cell: CoverageCell) -> str:
     """What the file asked for at this cell, so a changed question reads as stale."""
     return _digest(
-        {**_asked(journey), "cell": cell.key, "priority": cell.priority.value}
+        {**_extract_journey_contract(journey), "cell": cell.key, "priority": cell.priority.value}
     )
 
 
@@ -95,7 +95,7 @@ def journey_sha256(journey: UserJourney) -> str:
     """The journey as a whole, for a run manifest to record what it was given."""
     return _digest(
         {
-            **_asked(journey),
+            **_extract_journey_contract(journey),
             "coverage": [cell.key for cell in journey.coverage],
         }
     )
@@ -179,7 +179,7 @@ class Lock(BaseModel):
         self.entries.sort(key=lambda entry: (entry.workflow, entry.journey, entry.cell))
         return self
 
-    def held(self, workflow: str, journey: str) -> dict[str, LockEntry]:
+    def entries_for(self, workflow: str, journey: str) -> dict[str, LockEntry]:
         """The entries for one journey of one workflow, by cell key."""
         return {
             entry.cell: entry

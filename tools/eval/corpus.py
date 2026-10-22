@@ -36,8 +36,8 @@ from yewo.testing.models import (
     ExpectedOutcome,
     QAIssue,
     RuleVerification,
+    ScenarioStatus,
     SensitiveFinding,
-    Status,
 )
 
 CORPUS_ROOT = Path(__file__).resolve().parents[2] / "eval"
@@ -153,7 +153,7 @@ class _Expect(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: Status
+    status: ScenarioStatus
     cause: Optional[Cause] = None
     reason_holds: Optional[str] = None
 

@@ -33,7 +33,7 @@ TRUNCATED = "length"
 
 
 @dataclass
-class Totals:
+class UsageTotals:
     """What a run spent, one call at a time.
 
     These field names go straight into the report. They match the names already
@@ -86,7 +86,7 @@ class LLMUsageTracker:
     ):
         self.output_dir = output_dir
         self._scrubber = scrubber
-        self.totals = Totals()
+        self.totals = UsageTotals()
         self._step: Optional[StepRecord] = None
         self._outside: Dict[str, list[CallRow]] = {}
 

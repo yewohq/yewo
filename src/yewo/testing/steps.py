@@ -58,7 +58,7 @@ class ActionStep(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _is_an_action_and_not_a_claim(self) -> "ActionStep":
+    def _validate_instruction_action(self) -> "ActionStep":
         """Raises:
             ValueError: If the instruction names no action, or makes a claim.
         """
@@ -99,18 +99,18 @@ class CapabilityStep(BaseModel):
         A hint rather than the mechanism. The planner asks for the capability
         it recognises, and the typed capability beside this says which one.
         """
-        asked = self.capability.kind.value.replace("_", " ")
-        given = {
+        capability_name = self.capability.kind.value.replace("_", " ")
+        params = {
             name: value
             for name, value in self.capability.model_dump(exclude={"kind"}).items()
             if value is not None
         }
-        if not given:
-            return f"Set the device {asked}."
-        if len(given) == 1:
-            return f"Set the device {asked} to {next(iter(given.values()))}."
-        spelled = ", ".join(f"{name} {value}" for name, value in given.items())
-        return f"Set the device {asked}: {spelled}."
+        if not params:
+            return f"Set the device {capability_name}."
+        if len(params) == 1:
+            return f"Set the device {capability_name} to {next(iter(params.values()))}."
+        formatted_params = ", ".join(f"{name} {value}" for name, value in params.items())
+        return f"Set the device {capability_name}: {formatted_params}."
 
 
 Step = Annotated[

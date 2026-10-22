@@ -109,7 +109,7 @@ class StepLogTests(unittest.TestCase):
     def test_an_action_that_reached_the_device_is_recorded_with_its_outcome(self):
         log = StepLog()
         log.open(1)
-        log.acted(
+        log.record_action(
             TapAction(coordinates=Coordinates(x=10, y=20), mark=7, reason="place the order"),
             "tap (10, 20)",
             ActionResult(success=True, observation="tap executed — screen changed"),
@@ -125,7 +125,7 @@ class StepLogTests(unittest.TestCase):
     def test_a_typed_value_does_not_reach_the_record(self):
         log = scrubbing()
         log.open(1)
-        log.acted(
+        log.record_action(
             TypeAction(coordinates=Coordinates(x=1, y=2), text="password123", reason="sign in"),
             "type 'password123' at (1, 2)",
             ActionResult(success=False, observation="failed", error="password123 rejected"),
@@ -139,12 +139,12 @@ class StepLogTests(unittest.TestCase):
         """It happened to the step, and the grounding says why it stopped."""
         log = StepLog()
         log.open(1)
-        log.grounded(
+        log.record_grounding(
             "marks",
             SimpleNamespace(ok=False, observation="mark 9 is not listed", unmatched=True),
             TapMarkAction(mark=9, reason="open the menu"),
         )
-        log.blocked(
+        log.record_blocked_action(
             TapAction(coordinates=Coordinates(x=1, y=2), reason="open the menu"),
             "tap (1, 2)",
             "mark 9 is not listed",
@@ -159,14 +159,14 @@ class StepLogTests(unittest.TestCase):
     def test_a_resolved_target_carries_no_refusal(self):
         log = StepLog()
         log.open(1)
-        log.grounded(
+        log.record_grounding(
             "marks",
             SimpleNamespace(ok=True, observation="matched", unmatched=False),
             TapMarkAction(mark=3, reason="tap Checkout"),
         )
 
         self.assertIsNone(log.records[0].grounding.refusal)
-        self.assertEqual(log.records[0].grounding.answer, 3)
+        self.assertEqual(log.records[0].grounding.mark_id, 3)
 
     def test_only_the_files_a_step_wrote_are_named(self):
         log = StepLog()
@@ -309,7 +309,7 @@ class TargetLabelTests(unittest.TestCase):
 
         log = scrubbing()
         log.open(1)
-        log.acted(
+        log.record_action(
             TapAction(coordinates=Coordinates(x=1, y=2), reason="pay"),
             "tap",
             ActionResult(success=True, observation="ok"),
@@ -321,7 +321,7 @@ class TargetLabelTests(unittest.TestCase):
     def test_a_refused_action_still_records_what_it_aimed_at(self):
         log = StepLog()
         log.open(1)
-        log.blocked(
+        log.record_blocked_action(
             TapAction(coordinates=Coordinates(x=1, y=2), reason="pay"),
             "tap",
             "mark 9 is not listed",
@@ -338,7 +338,7 @@ class TargetLabelTests(unittest.TestCase):
 
         log = StepLog()
         log.open(1)
-        log.acted(
+        log.record_action(
             TapAction(coordinates=Coordinates(x=1, y=2), reason="pay"),
             "tap",
             ActionResult(success=True, observation="ok"),
@@ -365,7 +365,10 @@ class ComponentTests(unittest.TestCase):
             )
 
         self.assertEqual(row("QAStepResponse").answering, "QAStepResponse")
-        self.assertNotEqual(row("QAStepResponse").answering, row("Assessment").answering)
+        self.assertNotEqual(
+            row("QAStepResponse").answering,
+            row("ScreenAssessment").answering,
+        )
 
     def test_a_call_with_no_required_shape_names_none(self):
         from yewo.llm.usage import CallRecord

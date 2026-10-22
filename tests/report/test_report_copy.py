@@ -51,7 +51,7 @@ class HowIssuesAreGatheredTests(unittest.TestCase):
         found = self._found([self._issue(), self._issue()])
 
         self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].seen, 2)
+        self.assertEqual(found[0].occurrence_count, 2)
 
     def _linked(self, issues, steps):
         from yewo.testing.report.page.view import _findings
@@ -139,15 +139,15 @@ class WhatTheMachineReportsSayTests(unittest.TestCase):
 class WhatTheReaderIsAskedToLookAtTests(unittest.TestCase):
     def test_rules_are_numbered_from_one(self):
         """The stored id indexes a list. A reader is not reading an array."""
-        from yewo.testing.report.page.view import _named
+        from yewo.testing.report.page.view import _format_rule_display_name
 
-        self.assertEqual(_named("expected:0"), "Expected outcome 1")
-        self.assertEqual(_named("security:2"), "Security rule 3")
+        self.assertEqual(_format_rule_display_name("expected:0"), "Expected outcome 1")
+        self.assertEqual(_format_rule_display_name("security:2"), "Security rule 3")
 
     def test_an_id_that_is_not_an_index_is_left_alone(self):
-        from yewo.testing.report.page.view import _named
+        from yewo.testing.report.page.view import _format_rule_display_name
 
-        self.assertEqual(_named("dynamic:abc"), "dynamic:abc")
+        self.assertEqual(_format_rule_display_name("dynamic:abc"), "dynamic:abc")
 
     def test_an_action_that_failed_inside_a_passing_scenario_says_recovered(self):
         """The bare word reads as the scenario's own result."""

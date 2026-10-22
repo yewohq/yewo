@@ -1,6 +1,6 @@
 """Deciding whether a target can give a scenario what it declared.
 
-Support is not a property of the platform alone. The emulator console, the API
+CapabilitySupport is not a property of the platform alone. The emulator console, the API
 level and the installed tools all decide it, and a scenario that needs one this
 target lacks is skipped before it spends a step finding out.
 """
@@ -51,9 +51,9 @@ class PreflightTests(unittest.TestCase):
         return self._case(steps=[CapabilityStep(capability=capability)])
 
     def _target(self, platform=Platform.ANDROID, **kwargs):
-        from yewo.testing.judge.capabilities import Target
+        from yewo.testing.judge.capabilities import CapabilityTarget
 
-        return Target(platform=platform, **{"emulator": True, **kwargs})
+        return CapabilityTarget(platform=platform, **{"emulator": True, **kwargs})
 
     def _reason(self, case, target):
         from yewo.testing.judge.capabilities import unsupported_reason
@@ -168,13 +168,13 @@ class PreflightTests(unittest.TestCase):
         """An absent row is how two implemented iOS capabilities were skipped."""
         from yewo.testing.judge.capabilities import (
             CAPABILITY_SUPPORT,
-            Support,
+            CapabilitySupport,
             unsupported_capability,
         )
 
         with mock.patch.dict(
             CAPABILITY_SUPPORT,
-            {CapabilityKind.CLIPBOARD: {Platform.ANDROID: Support()}},
+            {CapabilityKind.CLIPBOARD: {Platform.ANDROID: CapabilitySupport()}},
         ):
             refusal = unsupported_capability(
                 CapabilityKind.CLIPBOARD, self._target(Platform.IOS)
@@ -241,7 +241,7 @@ class TargetReadingTests(unittest.TestCase):
         self.assertFalse(self._read(avd=None).emulator)
 
     def test_the_api_level_is_read_as_the_release(self):
-        """Support is keyed on the API level, which is the number adb reports."""
+        """CapabilitySupport is keyed on the API level, which is the number adb reports."""
         self.assertEqual(self._read(avd="Pixel_8", api="36").release, (36,))
 
     def test_an_api_level_that_is_not_a_number_is_unknown(self):

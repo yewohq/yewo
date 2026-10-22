@@ -105,9 +105,9 @@ class UsageTotalsTests(unittest.TestCase):
         return CallRecord(**values)
 
     def test_totals_accumulate_across_calls(self):
-        from yewo.testing.report.usage_tracker import Totals
+        from yewo.testing.report.usage_tracker import UsageTotals
 
-        totals = Totals()
+        totals = UsageTotals()
         totals.add(self._call(prompt_tokens=10, cost=0.002))
         totals.add(self._call(prompt_tokens=5, cost=0.003))
 
@@ -116,19 +116,19 @@ class UsageTotalsTests(unittest.TestCase):
         self.assertAlmostEqual(totals.total_estimated_cost_usd, 0.005)
 
     def test_a_missing_cost_is_counted_not_treated_as_free(self):
-        from yewo.testing.report.usage_tracker import Totals
+        from yewo.testing.report.usage_tracker import UsageTotals
 
-        totals = Totals()
+        totals = UsageTotals()
         totals.add(self._call(cost=None))
 
         self.assertEqual(totals.cost_unknown_calls, 1)
         self.assertEqual(totals.total_estimated_cost_usd, 0.0)
 
     def test_the_report_keeps_the_field_names_already_on_disk(self):
-        from yewo.testing.report.usage_tracker import Totals
+        from yewo.testing.report.usage_tracker import UsageTotals
         from dataclasses import asdict
 
-        written = asdict(Totals())
+        written = asdict(UsageTotals())
 
         for name in ("total_calls", "total_estimated_cost_usd", "components"):
             self.assertIn(name, written)

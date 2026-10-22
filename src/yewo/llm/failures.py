@@ -118,7 +118,9 @@ def reportable(error: BaseException) -> str:
     return str(error) or type(error).__name__
 
 
-def answered(ask: Callable[[], Answer], named: str, wait=time.sleep) -> Answer:
+def call_with_retry(
+    operation: Callable[[], Answer], task_label: str, wait=time.sleep
+) -> Answer:
     """One provider call, made again while the service could still answer it.
 
     The same policy as the completion client, over a different vendor. A
@@ -135,7 +137,7 @@ def answered(ask: Callable[[], Answer], named: str, wait=time.sleep) -> Answer:
     last: BaseException | None = None
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            return ask()
+            return operation()
         except Exception as exc:  # noqa: BLE001 - provider boundary
             if not is_retryable(exc):
                 raise
@@ -145,7 +147,7 @@ def answered(ask: Callable[[], Answer], named: str, wait=time.sleep) -> Answer:
             pause = BACKOFF_SECONDS[attempt - 1]
             logger.warning(
                 "%s did not answer (%s). Attempt %d of %d, waiting %.0fs.",
-                named,
+                task_label,
                 describe(exc),
                 attempt,
                 ATTEMPTS,
@@ -154,7 +156,7 @@ def answered(ask: Callable[[], Answer], named: str, wait=time.sleep) -> Answer:
             wait(pause)
 
     raise ProviderUnavailable(
-        f"{named} did not answer after {ATTEMPTS} attempts: "
+        f"{task_label} did not answer after {ATTEMPTS} attempts: "
         f"{describe(last) if last else 'no attempt was made'}"
     ) from last
 
@@ -166,5 +168,9 @@ def describe(exc: BaseException) -> str:
     quote the prompt back, and this reaches a report.
     """
     status = _status_of(exc)
-    named = type(exc).__name__
-    return f"{named} (HTTP {status})" if status is not None else named
+    exception_name = type(exc).__name__
+    return (
+        f"{exception_name} (HTTP {status})"
+        if status is not None
+        else exception_name
+    )

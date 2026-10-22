@@ -36,16 +36,16 @@ class HashTests(unittest.TestCase):
     def test_the_same_prompt_is_named_the_same_way(self):
         with tempfile.TemporaryDirectory() as directory:
             keeper = store(directory)
-            first, _ = keeper.keep([TextMessage(content="hello")])
-            second, _ = keeper.keep([TextMessage(content="hello")])
+            first, _ = keeper.store_messages([TextMessage(content="hello")])
+            second, _ = keeper.store_messages([TextMessage(content="hello")])
 
         self.assertEqual(first, second)
 
     def test_a_different_prompt_is_named_differently(self):
         with tempfile.TemporaryDirectory() as directory:
             keeper = store(directory)
-            first, _ = keeper.keep([TextMessage(content="hello")])
-            second, _ = keeper.keep([TextMessage(content="goodbye")])
+            first, _ = keeper.store_messages([TextMessage(content="hello")])
+            second, _ = keeper.store_messages([TextMessage(content="goodbye")])
 
         self.assertNotEqual(first, second)
 
@@ -53,8 +53,8 @@ class HashTests(unittest.TestCase):
         """The same words as a system rule and as a user turn are two prompts."""
         with tempfile.TemporaryDirectory() as directory:
             keeper = store(directory)
-            first, _ = keeper.keep([TextMessage(content="be brief")])
-            second, _ = keeper.keep([SystemMessage(content="be brief")])
+            first, _ = keeper.store_messages([TextMessage(content="be brief")])
+            second, _ = keeper.store_messages([SystemMessage(content="be brief")])
 
         self.assertNotEqual(first, second)
 
@@ -62,16 +62,16 @@ class HashTests(unittest.TestCase):
         """Otherwise every step of a run would appear to have asked one thing."""
         with tempfile.TemporaryDirectory() as directory:
             keeper = store(directory)
-            first, _ = keeper.keep([ImageMessage(text="look", png_bytes=b"screen-one")])
-            second, _ = keeper.keep([ImageMessage(text="look", png_bytes=b"screen-two")])
+            first, _ = keeper.store_messages([ImageMessage(text="look", png_bytes=b"screen-one")])
+            second, _ = keeper.store_messages([ImageMessage(text="look", png_bytes=b"screen-two")])
 
         self.assertNotEqual(first, second)
 
     def test_one_prompt_is_written_once(self):
         with tempfile.TemporaryDirectory() as directory:
             keeper = store(directory)
-            keeper.keep([TextMessage(content="hello")])
-            keeper.keep([TextMessage(content="hello")])
+            keeper.store_messages([TextMessage(content="hello")])
+            keeper.store_messages([TextMessage(content="hello")])
 
             self.assertEqual(len(list(Path(directory).iterdir())), 1)
 
@@ -84,7 +84,7 @@ class HashTests(unittest.TestCase):
 class BodyTests(unittest.TestCase):
     def test_the_text_of_every_message_is_kept(self):
         with tempfile.TemporaryDirectory() as directory:
-            _, reference = store(directory).keep(
+            _, reference = store(directory).store_messages(
                 [SystemMessage(content="be brief"), TextMessage(content="sign in")]
             )
             kept = body(reference, directory)
@@ -97,7 +97,7 @@ class BodyTests(unittest.TestCase):
     def test_an_image_is_referenced_and_never_embedded(self):
         """A screenshot reaches a prompt as a megabyte of base64 text."""
         with tempfile.TemporaryDirectory() as directory:
-            _, reference = store(directory).keep(
+            _, reference = store(directory).store_messages(
                 [ImageMessage(text="which button?", png_bytes=b"a-whole-screenshot")]
             )
             written = (Path(directory) / Path(reference).name).read_text()
@@ -113,7 +113,7 @@ class BodyTests(unittest.TestCase):
     def test_a_multipart_prompt_keeps_its_text_and_references_its_images(self):
         with tempfile.TemporaryDirectory() as directory:
             message = MultiPartMessage().add_text("compare these").add_image(b"png")
-            _, reference = store(directory).keep([message])
+            _, reference = store(directory).store_messages([message])
             parts = body(reference, directory)["messages"][0]["content"]
 
         self.assertEqual(parts[0]["text"], "compare these")
@@ -121,7 +121,7 @@ class BodyTests(unittest.TestCase):
 
     def test_a_declared_secret_never_reaches_the_body(self):
         with tempfile.TemporaryDirectory() as directory:
-            _, reference = store(directory).keep(
+            _, reference = store(directory).store_messages(
                 [TextMessage(content="type 'password123' into Password")]
             )
             written = (Path(directory) / Path(reference).name).read_text()
@@ -135,7 +135,7 @@ class PolicyTests(unittest.TestCase):
 
     def test_nothing_is_written_when_inputs_must_not_be_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
-            digest, reference = store(directory, keep_bodies=False).keep(
+            digest, reference = store(directory, keep_bodies=False).store_messages(
                 [TextMessage(content="type 'password123' into Password")]
             )
 
@@ -149,8 +149,8 @@ class PolicyTests(unittest.TestCase):
             kept = store(directory, keep_bodies=True)
             quiet = store(directory, keep_bodies=False)
 
-            with_body, _ = kept.keep([TextMessage(content="sign in")])
-            without_body, _ = quiet.keep([TextMessage(content="sign in")])
+            with_body, _ = kept.store_messages([TextMessage(content="sign in")])
+            without_body, _ = quiet.store_messages([TextMessage(content="sign in")])
 
         self.assertEqual(with_body, without_body)
 
@@ -162,13 +162,13 @@ class PolicyTests(unittest.TestCase):
                 raise RuntimeError("no")
 
         with tempfile.TemporaryDirectory() as directory:
-            self.assertEqual(store(directory).keep([Unreadable()]), (None, None))
+            self.assertEqual(store(directory).store_messages([Unreadable()]), (None, None))
 
     def test_a_directory_that_cannot_be_written_still_yields_the_hash(self):
         with tempfile.TemporaryDirectory() as directory:
             blocked = Path(directory) / "file"
             blocked.write_text("not a directory")
-            digest, reference = PromptStore(blocked / "prompts").keep(
+            digest, reference = PromptStore(blocked / "prompts").store_messages(
                 [TextMessage(content="hello")]
             )
 
@@ -236,7 +236,7 @@ class ImageIdentityTests(unittest.TestCase):
 
         png = b"\x89PNG\r\n\x1a\n" + bytes(range(32))
         with tempfile.TemporaryDirectory() as directory:
-            _, reference = store(directory).keep(
+            _, reference = store(directory).store_messages(
                 [ImageMessage(text="which button?", png_bytes=png)]
             )
             part = body(reference, directory)["messages"][0]["content"][1]
@@ -260,7 +260,7 @@ class PayloadScrubbingTests(unittest.TestCase):
 
     def test_a_declared_value_is_masked_however_deeply_it_is_nested(self):
         with tempfile.TemporaryDirectory() as directory:
-            _, reference = store(directory).keep_payload(
+            _, reference = store(directory).store_payload(
                 {
                     "state": "`q_img`",
                     "questions": {
@@ -281,14 +281,14 @@ class PayloadScrubbingTests(unittest.TestCase):
         """Otherwise a rotated secret would change the identity of one question."""
         with tempfile.TemporaryDirectory() as directory:
             keeper = store(directory)
-            first, _ = keeper.keep_payload({"q": "find password123"})
-            second, _ = keeper.keep_payload({"q": "find {{password}}"})
+            first, _ = keeper.store_payload({"q": "find password123"})
+            second, _ = keeper.store_payload({"q": "find {{password}}"})
 
         self.assertEqual(first, second)
 
     def test_nothing_is_written_when_inputs_must_not_be_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
-            digest, reference = store(directory, keep_bodies=False).keep_payload(
+            digest, reference = store(directory, keep_bodies=False).store_payload(
                 {"q": "find password123"}
             )
 

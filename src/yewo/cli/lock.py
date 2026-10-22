@@ -60,8 +60,8 @@ def run(args: argparse.Namespace, config: Config) -> int:
         and 2 when the file itself could not be read.
     """
     from yewo.llm.llm_client import LLMClient
-    from yewo.testing import lock as lockfile
-    from yewo.testing import locking
+    from yewo.testing import lock_file
+    from yewo.testing import lock_resolution
     from yewo.testing.generator import ScenarioGenerator
     from yewo.testing.suite import load_workflows, select
 
@@ -79,13 +79,13 @@ def run(args: argparse.Namespace, config: Config) -> int:
         console.write(f"Could not read {args.journey_file or 'the journey file'}: {exc}")
         return 2
 
-    target = lockfile.path_beside(Path(path))
+    target = lock_file.path_beside(Path(path))
     generator = ScenarioGenerator(LLMClient(model=model))
     uncovered = 0
 
     for workflow in workflows:
         for journey in workflow.journeys:
-            resolution = locking.suite_for(
+            resolution = lock_resolution.suite_for(
                 journey,
                 lambda wanted, cells: generator.generate_suite(wanted, cells),
                 path=target,

@@ -78,7 +78,7 @@ class PromptStore:
         self._scrub = scrub
         self.keep_bodies = keep_bodies
 
-    def keep(self, messages: list) -> tuple[Optional[str], Optional[str]]:
+    def store_messages(self, messages: list) -> tuple[Optional[str], Optional[str]]:
         """The prompt's hash, and where its body was written.
 
         Returns:
@@ -87,13 +87,13 @@ class PromptStore:
             not be read, because a prompt is a record and not a guess.
         """
         try:
-            readable = [self._readable(message) for message in messages]
+            readable = [self._serialize_message(message) for message in messages]
         except Exception as exc:  # noqa: BLE001 - a record must not fail a run
             logger.warning("Could not read the prompt to record it: %s", exc)
             return None, None
-        return self.keep_payload({"messages": readable})
+        return self.store_payload({"messages": readable})
 
-    def keep_payload(self, payload: dict) -> tuple[Optional[str], Optional[str]]:
+    def store_payload(self, payload: dict) -> tuple[Optional[str], Optional[str]]:
         """The same, for a route whose question is not a message list.
 
         The decision model is asked typed questions about one state rather
@@ -105,30 +105,30 @@ class PromptStore:
         it.
         """
         try:
-            masked = self._masked(payload)
+            masked = self._mask_payload(payload)
             digest = _digest(masked)
         except Exception as exc:  # noqa: BLE001 - a record must not fail a run
             logger.warning("Could not read the prompt to record it: %s", exc)
             return None, None
         if not self.keep_bodies:
             return digest, None
-        return digest, self._written(digest, masked)
+        return digest, self._write_payload(digest, masked)
 
-    def _masked(self, payload: dict) -> dict:
+    def _mask_payload(self, payload: dict) -> dict:
         """One payload, with every declared value masked at every depth."""
-        return {key: self._scrubbed(value) for key, value in payload.items()}
+        return {key: self._scrub_value(value) for key, value in payload.items()}
 
-    def _scrubbed(self, value):
+    def _scrub_value(self, value):
         """Masks declared values wherever they sit in a nested value."""
         if isinstance(value, str):
             return self._scrub(value)
         if isinstance(value, dict):
-            return {key: self._scrubbed(item) for key, item in value.items()}
+            return {key: self._scrub_value(item) for key, item in value.items()}
         if isinstance(value, (list, tuple)):
-            return [self._scrubbed(item) for item in value]
+            return [self._scrub_value(item) for item in value]
         return value
 
-    def _written(self, digest: str, payload: dict) -> Optional[str]:
+    def _write_payload(self, digest: str, payload: dict) -> Optional[str]:
         """Writes the body once. A prompt already kept is not written again."""
         name = f"{digest[:NAME_LENGTH]}.json"
         path = self.directory / name
@@ -147,7 +147,7 @@ class PromptStore:
             return None
         return f"prompts/{name}"
 
-    def _readable(self, message) -> dict:
+    def _serialize_message(self, message) -> dict:
         """One message, with its text scrubbed and its images referenced."""
         sent = message.to_dict()
         content = sent.get("content")
@@ -155,10 +155,10 @@ class PromptStore:
             return {"role": sent.get("role"), "content": self._scrub(content)}
         return {
             "role": sent.get("role"),
-            "content": [self._part(part) for part in content or []],
+            "content": [self._serialize_part(part) for part in content or []],
         }
 
-    def _part(self, part: dict) -> dict:
+    def _serialize_part(self, part: dict) -> dict:
         """One part of a multipart message, with any image left as a hash."""
         if part.get("type") != IMAGE_PART:
             return {**part, "text": self._scrub(part.get("text"))}

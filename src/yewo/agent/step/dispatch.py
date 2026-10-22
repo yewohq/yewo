@@ -83,7 +83,7 @@ def execute(
     action_desc = narration.describe(action)
     label = target_label(action, snapshot.gui_elements)
 
-    ctx.steps.acted(action, action_desc, action_result, label)
+    ctx.steps.record_action(action, action_desc, action_result, label)
 
     if replay_ledger is not None and error is None:
         replay_ledger.record(

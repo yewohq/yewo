@@ -18,7 +18,7 @@ from yewo.testing.taxonomy import (
     Priority,
     ScenarioType,
     audits_every_screen,
-    ordered,
+    sort_cells_by_priority,
 )
 
 
@@ -57,14 +57,14 @@ class OrderTests(unittest.TestCase):
         late = CoverageCell(Category.INPUT, ScenarioType.BOUNDARY, Priority.P2)
         early = CoverageCell(Category.FUNCTIONAL, ScenarioType.CONCURRENCY, Priority.P0)
 
-        self.assertEqual([c.key for c in ordered([late, early])], [early.key, late.key])
+        self.assertEqual([c.key for c in sort_cells_by_priority([late, early])], [early.key, late.key])
 
     def test_the_declared_order_holds_inside_one_priority(self):
         first = CoverageCell(Category.FUNCTIONAL, ScenarioType.HAPPY_PATH, Priority.P1)
         second = CoverageCell(Category.INPUT, ScenarioType.EMPTY, Priority.P1)
 
         self.assertEqual(
-            [c.key for c in ordered([first, second])], [first.key, second.key]
+            [c.key for c in sort_cells_by_priority([first, second])], [first.key, second.key]
         )
 
 

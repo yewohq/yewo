@@ -13,8 +13,14 @@ from pathlib import Path
 from fakes import walk
 
 from yewo.agent.run.record import DecisionRecord, StepRecord
-from yewo.testing.models import GeneratedTestCase, RunEnvironment, ScenarioReport, UserJourney
-from yewo.testing.report.manifest import SCHEMA, Inputs, RunManifest, Subject
+from yewo.testing.models import (
+    GeneratedTestCase,
+    ReportStatus,
+    RunEnvironment,
+    ScenarioReport,
+    UserJourney,
+)
+from yewo.testing.report.manifest import SCHEMA, RunInputs, RunManifest, RunSubject
 from yewo.utils.secrets import SecretScrubber
 
 
@@ -27,8 +33,8 @@ def environment() -> RunEnvironment:
     )
 
 
-def inputs() -> Inputs:
-    return Inputs(
+def inputs() -> RunInputs:
+    return RunInputs(
         subject="j1",
         subject_sha256="0" * 64,
         coverage_declared=["functional.happy_path.0"],
@@ -59,7 +65,7 @@ def manifest(directory, scenarios=None, journey=None, scrubber=None) -> RunManif
     )
     return RunManifest(
         Path(directory) / "run.json",
-        Subject(kind="journey", id=about.id, name=about.name),
+        RunSubject(kind="journey", id=about.id, name=about.name),
         scenarios if scenarios is not None else [scenario(1), scenario(2)],
         environment=environment(),
         inputs=inputs(),
@@ -81,7 +87,7 @@ class PlanTests(unittest.TestCase):
             data = written(record)
 
         self.assertEqual(data["total"], 2)
-        self.assertEqual(data["counts"], {"pending": 2})
+        self.assertEqual(data["counts"], {"PENDING": 2})
 
     def test_the_schema_is_the_first_thing_a_reader_can_find(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -207,7 +213,32 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(first["status"], "FAILED")
         self.assertEqual(first["steps_executed"], 9)
         self.assertEqual(first["duration_seconds"], 12.3)
-        self.assertEqual(data["counts"], {"FAILED": 1, "pending": 1})
+        self.assertEqual(data["counts"], {"FAILED": 1, "PENDING": 1})
+
+    def test_every_status_in_the_record_is_one_yewo_spells(self):
+        """One vocabulary, so a reader of the file needs one list of words.
+
+        The statuses a scenario passes through on its way to a verdict are
+        written by the field that later holds the verdict. Spelled apart,
+        `counts` gathers one run under two keys, and whoever reads the
+        record has to know both lists.
+
+        Read while one scenario is running and another has not started, so
+        both of those words are in the file rather than overwritten.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            record = manifest(directory)
+            record.start("TS_001")
+            data = written(record)
+
+        spelled = {status.value for status in ReportStatus}
+        self.assertEqual(
+            [row["status"] for row in data["scenarios"]], ["RUNNING", "PENDING"]
+        )
+        self.assertIn(data["status"], spelled)
+        self.assertLessEqual(set(data["counts"]), spelled)
+        for row in data["scenarios"]:
+            self.assertIn(row["status"], spelled, row["test_id"])
 
     def test_a_crash_leaves_nothing_marked_running(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -408,14 +439,14 @@ class GoalRunTests(unittest.TestCase):
     """`yewo run` writes one too, or it cannot be read back at all."""
 
     def _goal(self, directory) -> RunManifest:
-        from yewo.testing.report.manifest import Subject
+        from yewo.testing.report.manifest import RunSubject
 
         return RunManifest(
             Path(directory) / "run.json",
-            Subject(kind="goal", id="abc123", name="reach checkout"),
+            RunSubject(kind="goal", id="abc123", name="reach checkout"),
             scenarios=(),
             environment=environment(),
-            inputs=Inputs(subject="goal", subject_sha256="2" * 64),
+            inputs=RunInputs(subject="goal", subject_sha256="2" * 64),
             mode="run",
         )
 

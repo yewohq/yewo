@@ -27,15 +27,18 @@ from yewo.testing.evidence import (  # noqa: F401
     ExpectedOutcome,
     IssueKind,
     JourneyReport,
+    JourneyStatus,
     QAIssue,
+    REPORT_STATUS_ALIASES,
     ReceiptRecord,
     Rendering,
+    ReportStatus,
     RuleVerification,
     RunEnvironment,
     STATUS_SPELLINGS,
     ScenarioReport,
+    ScenarioStatus,
     SensitiveFinding,
-    Status,
     VerdictInputs,
 )
 
@@ -134,7 +137,7 @@ class ScenarioDraft(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _every_value_entered_was_declared(self, info: ValidationInfo) -> "ScenarioDraft":
+    def _validate_entered_values_declared(self, info: ValidationInfo) -> "ScenarioDraft":
         """Holds an entered value to a name the file declared.
 
         The names reach this through the validation context. An unknown one
@@ -157,7 +160,7 @@ class ScenarioDraft(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _a_refusal_cell_enters_a_refused_value(
+    def _validate_refused_value_present(
         self, info: ValidationInfo
     ) -> "ScenarioDraft":
         """Holds a cell about a refusal to entering one the file marked refused.
@@ -178,7 +181,7 @@ class ScenarioDraft(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _a_capability_cell_asks_for_its_capability(
+    def _validate_capability_cell_steps(
         self, info: ValidationInfo
     ) -> "ScenarioDraft":
         """Holds a cell about a device state to having asked for one.
@@ -186,13 +189,13 @@ class ScenarioDraft(BaseModel):
         Raises:
             ValueError: If this cell needs a capability and no step carries it.
         """
-        wanted = (info.context or {}).get("capability")
-        if wanted is None:
+        required_capability = (info.context or {}).get("capability")
+        if required_capability is None:
             return self
-        if wanted not in steps.capability_kinds_in(self.steps):
+        if required_capability not in steps.capability_kinds_in(self.steps):
             raise ValueError(
-                f"This cell is about the device being {wanted.value}. One "
-                f"'capability' step has to carry a {wanted.value} capability."
+                f"This cell is about the device being {required_capability.value}. One "
+                f"'capability' step has to carry a {required_capability.value} capability."
             )
         return self
 
@@ -231,7 +234,7 @@ class GeneratedTestCase(ScenarioDraft):
     )
 
     @model_validator(mode="after")
-    def _read_what_the_steps_say(self) -> "GeneratedTestCase":
+    def _derive_instructions_and_capabilities(self) -> "GeneratedTestCase":
         """Fills the rendered sentences and the capabilities from the steps.
 
         Derived rather than passed in. A scenario built any other way then

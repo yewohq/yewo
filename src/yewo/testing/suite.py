@@ -16,8 +16,8 @@ from pydantic import ValidationError
 from yewo.config import SETTING_ALIASES, STRUCTURE_KEYS, ConfigError, expand_device
 from yewo.testing.journey_env import resolve, substitute
 from yewo.testing.models import Actor, UserJourney
-from yewo.testing.taxonomy import DEFAULT_COVERAGE, CoverageCell, indexed
-from yewo.schema import CoverageSpec, YewoFile, explain
+from yewo.testing.taxonomy import DEFAULT_COVERAGE, CoverageCell, index_coverage_cells
+from yewo.schema import CoverageSpec, YewoFile, format_validation_errors
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,9 @@ class Workflow:
     journeys: list[UserJourney] = field(default_factory=list)
 
 
-def _normalise(block: dict[str, Any], where: str) -> dict[str, Any]:
+def _normalise(block: dict[str, Any], yaml_location: str) -> dict[str, Any]:
     """Settings from one level of the file, under the names Yewo resolves."""
-    expanded = expand_device(block, where)
+    expanded = expand_device(block, yaml_location)
     settings = {}
     for key, value in expanded.items():
         if key in STRUCTURE_KEYS:
@@ -59,7 +59,7 @@ def _anchor(settings: dict[str, Any], base: Path) -> dict[str, Any]:
     return anchored
 
 
-def _cells(declared: Any, where: str) -> list[CoverageCell]:
+def _cells(coverage_data: Any, yaml_location: str) -> list[CoverageCell]:
     """The cells one `coverage:` block asks for, one per category and type.
 
     Returns the default set where nothing is declared, so a file gets a
@@ -68,34 +68,34 @@ def _cells(declared: Any, where: str) -> list[CoverageCell]:
     Raises:
         ConfigError: If the block is not a list, is empty, or is not valid.
     """
-    if declared is None:
+    if coverage_data is None:
         return list(DEFAULT_COVERAGE)
-    if not isinstance(declared, list):
-        raise ConfigError(f"'coverage' in {where} must be a list of categories.")
+    if not isinstance(coverage_data, list):
+        raise ConfigError(f"'coverage' in {yaml_location} must be a list of categories.")
     # An empty list is refused rather than read as "cover nothing". A run with
     # no cells writes a report of zero scenarios, and zero failures reads to
     # CI as a pass.
-    if not declared:
+    if not coverage_data:
         raise ConfigError(
-            f"'coverage' in {where} is empty. Remove the key to use the "
+            f"'coverage' in {yaml_location} is empty. Remove the key to use the "
             f"default cells, or name the categories to cover."
         )
     pairs = []
-    for item in declared:
+    for item in coverage_data:
         try:
             spec = CoverageSpec.model_validate(item)
         except ValidationError as exc:
-            problems = "; ".join(explain(exc))
-            raise ConfigError(f"'coverage' in {where} is not valid: {problems}") from None
+            problems = "; ".join(format_validation_errors(exc))
+            raise ConfigError(f"'coverage' in {yaml_location} is not valid: {problems}") from None
         pairs.extend(
             (spec.category, wanted, spec.priority) for wanted in spec.types
         )
     # Indexed here rather than defaulted on the cell: a file may name the
     # same pair twice, and two cells sharing a key would share a test id.
-    return indexed(pairs)
+    return index_coverage_cells(pairs)
 
 
-def _actors(declared: Any, where: str) -> tuple[dict[str, Actor], dict[str, str]]:
+def _actors(actors_data: Any, yaml_location: str) -> tuple[dict[str, Actor], dict[str, str]]:
     """Each declared account, and any secret among their values.
 
     An account holds whatever this app signs in with, under the app's own
@@ -106,40 +106,45 @@ def _actors(declared: Any, where: str) -> tuple[dict[str, Actor], dict[str, str]
     Raises:
         ConfigError: If the block, or an account inside it, is not valid.
     """
-    if declared is None:
+    if actors_data is None:
         return {}, {}
-    if not isinstance(declared, dict):
-        raise ConfigError(f"'actors' in {where} must be a mapping of name to account.")
+    if not isinstance(actors_data, dict):
+        raise ConfigError(f"'actors' in {yaml_location} must be a mapping of name to account.")
     actors: dict[str, Actor] = {}
     secrets: dict[str, str] = {}
-    for name, block in declared.items():
+    for name, block in actors_data.items():
         if not isinstance(block, dict) or not block:
             raise ConfigError(
-                f"'actors.{name}' in {where} must be a mapping of name to value."
+                f"'actors.{name}' in {yaml_location} must be a mapping of name to value."
             )
         try:
-            values, found, _ = resolve({"env": block})
+            values, secret_values, _ = resolve({"env": block})
         except ValueError as problem:
             raise ConfigError(
-                f"'actors.{name}' in {where} is not valid: {problem}"
+                f"'actors.{name}' in {yaml_location} is not valid: {problem}"
             ) from None
         actors[str(name)] = Actor(values=values)
-        secrets.update({f"actors.{name}.{key}": value for key, value in found.items()})
+        secrets.update(
+            {
+                f"actors.{name}.{key}": value
+                for key, value in secret_values.items()
+            }
+        )
     return actors, secrets
 
 
-def _every_name(values: dict[str, str], actors: dict[str, Actor]) -> dict[str, str]:
+def _merge_actor_values(values: dict[str, str], actors: dict[str, Actor]) -> dict[str, str]:
     """One namespace of every value a scenario may name.
 
     An account's values join it under a dotted name, so a step can reach
     `actors.editor.email` without anything having to know where it came from.
     """
-    named = dict(values)
+    combined_values = dict(values)
     for actor, account in actors.items():
-        named.update(
+        combined_values.update(
             {f"actors.{actor}.{key}": value for key, value in account.values.items()}
         )
-    return named
+    return combined_values
 
 
 def _journey(
@@ -148,14 +153,14 @@ def _journey(
     index: int,
     coverage: Any = None,
     actors: Any = None,
-    where: str = "the file",
+    yaml_location: str = "the file",
 ) -> UserJourney:
     """One test, with the workflow's environment, coverage and accounts behind its own."""
     merged = dict(data)
     merged["env"] = {**shared_env, **(data.get("env") or {})}
     declared, secrets, refused = resolve(merged)
-    declared_actors, actor_secrets = _actors(actors, where)
-    values = _every_name(declared, declared_actors)
+    declared_actors, actor_secrets = _actors(actors, yaml_location)
+    values = _merge_actor_values(declared, declared_actors)
     description = data.get("journey", data.get("description", ""))
     return UserJourney(
         id=str(data.get("id", f"journey_{index:02d}")),
@@ -168,14 +173,14 @@ def _journey(
         values=values,
         refused=refused,
         actors=declared_actors,
-        coverage=_cells(coverage, where),
+        coverage=_cells(coverage, yaml_location),
     )
 
 
 def _journeys_of(
     block: dict[str, Any],
     shared_env: dict[str, Any],
-    where: str,
+    yaml_location: str,
     coverage: Any = None,
     actors: Any = None,
 ) -> list[UserJourney]:
@@ -183,11 +188,11 @@ def _journeys_of(
     if listed is None and "journey" in block:
         listed = [block]
     if listed is None:
-        raise ConfigError(f"{where} has no journeys.")
+        raise ConfigError(f"{yaml_location} has no journeys.")
     if not isinstance(listed, list):
-        raise ConfigError(f"'journeys' in {where} must be a list.")
+        raise ConfigError(f"'journeys' in {yaml_location} must be a list.")
     return [
-        _journey(item, shared_env, index + 1, coverage, actors, where)
+        _journey(item, shared_env, index + 1, coverage, actors, yaml_location)
         for index, item in enumerate(listed)
     ]
 
@@ -210,7 +215,9 @@ def _validate(raw: dict[str, Any], path: Path) -> None:
     try:
         YewoFile.model_validate(raw)
     except ValidationError as exc:
-        problems = "\n".join(f"  {line}" for line in explain(exc))
+        problems = "\n".join(
+            f"  {line}" for line in format_validation_errors(exc)
+        )
         raise ConfigError(f"{path} cannot be read:\n{problems}") from None
 
 
@@ -252,10 +259,10 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
 
     workflows = []
     for name, block in declared.items():
-        where = f"workflow '{name}'"
+        yaml_location = f"workflow '{name}'"
         if not isinstance(block, dict):
-            raise ConfigError(f"{where} in {path} must be a mapping.")
-        settings = {**top, **_normalise(block, where)}
+            raise ConfigError(f"{yaml_location} in {path} must be a mapping.")
+        settings = {**top, **_normalise(block, yaml_location)}
         env = {**shared, **_shared_env(block)}
         # A workflow owns one app, so its coverage replaces the file's rather
         # than adding to it. Half a declared set would be worse than either.
@@ -265,7 +272,7 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
             Workflow(
                 str(name),
                 _anchor(settings, base),
-                _journeys_of(block, env, where, coverage, actors),
+                _journeys_of(block, env, yaml_location, coverage, actors),
             )
         )
     return workflows

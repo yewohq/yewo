@@ -52,7 +52,7 @@ def step(n: int, success: bool = True) -> StepRecord:
         screen_name="Basket",
         source="replay" if n == 1 else "model",
         decision=DecisionRecord(current_screen="Basket", reasoning="The control is here."),
-        action=ActionRecord(type="tap", described=f"Tap the control on step {n}"),
+        action=ActionRecord(type="tap", description=f"Tap the control on step {n}"),
         outcome=OutcomeRecord(
             success=success, observation="Done" if success else "Nothing changed"
         ),
@@ -222,9 +222,31 @@ class WhatTheRecordIsAllowedToSayTests(unittest.TestCase):
 
         self.assertIn("teleported", str(refused.exception))
 
+    def test_a_rule_verification_status_is_not_a_scenario_status(self):
+        record = self._record(
+            scenarios=[{"test_id": "T", "name": "S", "status": "untested"}]
+        )
+
+        with self.assertRaises(UsageError):
+            page_of_record(record, generated=GENERATED)
+
     def test_a_run_status_yewo_never_writes_is_refused(self):
         with self.assertRaises(UsageError):
             page_of_record(self._record(status="vibes"), generated=GENERATED)
+
+    def test_status_text_is_normalized_to_the_shared_enum(self):
+        from yewo.testing.models import ReportStatus
+        from yewo.testing.report.page.record import run_of
+
+        record = self._record(
+            status="pass",
+            scenarios=[{"test_id": "T", "name": "S", "status": "fail"}],
+        )
+
+        loaded = run_of(record)
+
+        self.assertIs(loaded.status, ReportStatus.PASSED)
+        self.assertIs(loaded.scenarios[0].status, ReportStatus.FAILED)
 
     def test_a_duration_that_is_a_word_is_refused_as_a_record_problem(self):
         """Named as the field it is about, not as whatever float raises."""
@@ -326,7 +348,7 @@ class WhatAPassingRunStillReportsTests(unittest.TestCase):
         answers = len(data["scenarios"][0]["rule_verifications"])
 
         self.assertEqual(len(view.scenarios[0].checks), 1)
-        self.assertEqual(view.scenarios[0].checks[0].asked, answers)
+        self.assertEqual(view.scenarios[0].checks[0].observation_count, answers)
 
     def test_the_scenario_names_its_cell_and_test_id(self):
         """What matches a failure to its lock entry and to the next run."""
@@ -398,17 +420,17 @@ class WhatAnUnfinishedRecordRendersTests(unittest.TestCase):
     def _running(self, directory: str) -> dict:
         from yewo.identity import DeviceIdentity
         from yewo.testing.models import RunEnvironment
-        from yewo.testing.report.manifest import Inputs, RunManifest, Subject
+        from yewo.testing.report.manifest import RunInputs, RunManifest, RunSubject
 
         manifest = RunManifest(
             Path(directory) / "run.json",
-            Subject(kind="journey", id="j", name="J", description="d"),
+            RunSubject(kind="journey", id="j", name="J", description="d"),
             [scenario(1)],
             environment=RunEnvironment(
                 yewo_version="0.0.2", model="m", platform="android",
                 grounding="coordinates", device=DeviceIdentity(),
             ),
-            inputs=Inputs(subject="j", subject_sha256="x" * 64),
+            inputs=RunInputs(subject="j", subject_sha256="x" * 64),
         )
         return manifest.payload()
 
@@ -437,7 +459,7 @@ class WhatAStepWasForTests(unittest.TestCase):
 
         log = StepLog()
         log.open(1)
-        log.acted(
+        log.record_action(
             SimpleNamespace(type="tap", reason="Tap Login to submit the credentials."),
             "tap at (540, 1644)",
             SimpleNamespace(success=True, observation="Done", error=None),
@@ -445,29 +467,30 @@ class WhatAStepWasForTests(unittest.TestCase):
         )
 
         self.assertEqual(log.current.action.intent, "Tap Login to submit the credentials.")
-        self.assertEqual(log.current.action.described, "tap at (540, 1644)")
+        self.assertEqual(log.current.action.description, "tap at (540, 1644)")
 
     def test_the_row_reads_as_the_intent(self):
         from yewo.agent.run.record import ActionRecord
-        from yewo.testing.report.page.walk import _title
+        from yewo.testing.report.page.scenario_steps import _title
 
         titled = StepRecord(
             n=1,
             action=ActionRecord(
-                type="tap", described="tap at (540, 1644)", intent="Tap Login."
+                type="tap", description="tap at (540, 1644)", intent="Tap Login."
             ),
         )
 
         self.assertEqual(_title(titled), "Tap Login.")
 
     def test_a_record_without_an_intent_still_reads(self):
-        """Every run written before the field existed."""
         from yewo.agent.run.record import ActionRecord
-        from yewo.testing.report.page.walk import _title
+        from yewo.testing.report.page.scenario_steps import _title
 
-        older = StepRecord(n=1, action=ActionRecord(type="tap", described="tap at (1, 2)"))
+        record = StepRecord(
+            n=1, action=ActionRecord(type="tap", description="tap at (1, 2)")
+        )
 
-        self.assertEqual(_title(older), "tap at (1, 2)")
+        self.assertEqual(_title(record), "tap at (1, 2)")
 
 
 class WhatTheOfferSaysTests(unittest.TestCase):

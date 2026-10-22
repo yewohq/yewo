@@ -23,6 +23,7 @@ from yewo.testing.models import (
     GeneratedTestCase,
     QAIssue,
     ReceiptRecord,
+    ReportStatus,
     RuleVerification,
     ScenarioReport,
     SensitiveFinding,
@@ -32,7 +33,7 @@ from yewo.agent.device import restoration
 from yewo.testing.judge.capabilities import target_of, unsupported_reason
 from yewo.agent.plan.planner import GROUNDING_COORDINATES
 from yewo.testing.judge import decide
-from yewo.testing.judge.qa_auditor import Assessment, QAAuditor, ScreenWatch
+from yewo.testing.judge.qa_auditor import QAAuditor, ScreenAssessment, ScreenAuditSession
 from yewo.testing.qa_planner import QAPlanner, QAStepResponse
 from yewo.errors import Cause, cause_of
 from yewo.testing import steps, taxonomy
@@ -187,7 +188,7 @@ class QAAgent:
         start_time = time.time()
 
         qa_outputs: List[QAStepResponse] = []
-        assessments: List[Assessment] = []
+        assessments: List[ScreenAssessment] = []
         stop_reason: dict = {"value": None}  # mutable so the nested hook can write out
 
         # Only what one screen can settle is put to the auditor. Asked whether
@@ -199,7 +200,7 @@ class QAAgent:
             scrubber=self._device_agent.scrubber,
         )
 
-        watch = ScreenWatch(auditor)
+        audit_session = ScreenAuditSession(auditor)
 
         def step_hook(step_response: DeviceStepResponse, snapshot) -> Optional[bool]:
             if not isinstance(step_response, QAStepResponse):
@@ -208,7 +209,7 @@ class QAAgent:
             qa_outputs.append(step_response)
             # The screen is audited by something that was not told the plan, so
             # a verdict here is capable of contradicting the action above it.
-            fresh = watch.look(snapshot)
+            fresh = audit_session.audit_snapshot(snapshot)
             for assessment in fresh:
                 assessment.screen_name = (
                     assessment.screen_name or step_response.current_screen
@@ -220,7 +221,7 @@ class QAAgent:
                 step_response, fresh[-1], len(qa_outputs) == 1
             ):
                 # The withdrawal promised another look; this is what keeps it.
-                watch.look_again()
+                audit_session.request_repeat_audit()
                 return None
 
             if any(
@@ -258,7 +259,7 @@ class QAAgent:
                 test_id=test_case.test_id,
                 scenario_name=test_case.scenario_name,
                 cell=test_case.cell,
-                status="UNSUPPORTED",
+                status=ReportStatus.UNSUPPORTED,
                 cause=Cause.SCENARIO.value,
                 duration=round(time.time() - start_time, 2),
                 failure_reason=unsupported,
@@ -319,7 +320,7 @@ class QAAgent:
             self._device_agent.replay_ledger = replay
 
         # Nothing ever leaves the screen a scenario ended on, so it is read here.
-        last = watch.close()
+        last = audit_session.finalize_audit()
         _seen_at(last, len(qa_outputs))
         assessments.extend(last)
 
@@ -338,7 +339,7 @@ class QAAgent:
         test_case: GeneratedTestCase,
         run_result: DeviceRunResult,
         qa_outputs: List[QAStepResponse],
-        assessments: List[Assessment],
+        assessments: List[ScreenAssessment],
         stop_reason: Optional[str],
         duration: float,
         security_rules: List[str],
@@ -411,7 +412,7 @@ class QAAgent:
         )
 
     def _settled_transitions(
-        self, test_case: GeneratedTestCase, assessments: List[Assessment]
+        self, test_case: GeneratedTestCase, assessments: List[ScreenAssessment]
     ) -> List[RuleVerification]:
         """Evidence for the outcomes no single screenshot could carry.
 
@@ -450,7 +451,7 @@ class QAAgent:
         all_verifications: List[RuleVerification],
         all_issues: List[QAIssue],
         qa_outputs: List[QAStepResponse],
-        assessments: List[Assessment],
+        assessments: List[ScreenAssessment],
         required_outcomes: Sequence[ExpectedOutcome | str],
         security_rules: Sequence[str],
         all_findings: Optional[List[SensitiveFinding]] = None,

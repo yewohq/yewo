@@ -24,13 +24,13 @@ Platform = Literal["android", "ios"]
 Grounding = Literal["coordinates", "marks", "describe"]
 
 
-class Strict(BaseModel):
+class StrictModel(BaseModel):
     """A mapping that accepts only the keys it declares."""
 
     model_config = ConfigDict(extra="forbid")
 
 
-class DeviceSpec(Strict):
+class DeviceSpec(StrictModel):
     """The target a run drives."""
 
     name: Optional[str] = Field(default=None, description="Emulator, simulator or device name.")
@@ -38,7 +38,7 @@ class DeviceSpec(Strict):
     headless: Optional[bool] = Field(default=None, description="Run the emulator without a window.")
 
 
-class DeclaredValue(Strict):
+class DeclaredValue(StrictModel):
     """A declared value, whether it is sensitive, and what the app owes it.
 
     A value marked secret is replaced by its name in everything Yewo writes
@@ -61,7 +61,7 @@ class DeclaredValue(Strict):
 EnvValue = Union[DeclaredValue, str, int, float, bool]
 
 
-class Settings(Strict):
+class Settings(StrictModel):
     """How a run behaves. Every one of these may be set per file or per workflow."""
 
     device: Optional[Union[DeviceSpec, str]] = Field(
@@ -88,7 +88,7 @@ class Settings(Strict):
     )
 
 
-class CoverageSpec(Strict):
+class CoverageSpec(StrictModel):
     """One category, and which shapes of test to write for it.
 
     Eight categories and nine types give up to seventy-two pairs. One model
@@ -107,7 +107,7 @@ class CoverageSpec(Strict):
     )
 
 
-class JourneySpec(Strict):
+class JourneySpec(StrictModel):
     """One test: what a user does, and what must be true afterwards."""
 
     id: Optional[str] = None
@@ -172,16 +172,16 @@ class YewoFile(Settings):
     )
 
 
-def _where(location: tuple[Any, ...]) -> str:
+def _format_error_location(location: tuple[Any, ...]) -> str:
     """Names the place in the file a problem is, the way the file reads."""
     return ".".join(str(part) for part in location) or "the file"
 
 
-def explain(error: Any) -> list[str]:
+def format_validation_errors(error: Any) -> list[str]:
     """Turns a validation failure into lines that name the key and the fix."""
     lines = []
     for detail in error.errors():
-        location = _where(detail["loc"])
+        location = _format_error_location(detail["loc"])
         kind = detail.get("type", "")
         if kind == "extra_forbidden":
             lines.append(f"{location}: unknown key")

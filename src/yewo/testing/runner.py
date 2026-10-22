@@ -15,14 +15,16 @@ from yewo.agent.memory.replay import ReplayLedger
 from yewo.errors import ProviderUnavailable
 from yewo.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
-from . import lock, locking
+from . import lock_file, lock_resolution
 from .generator import ScenarioGenerator
-from .report.manifest import Inputs, RunManifest, Subject
+from .report.manifest import RunInputs, RunManifest, RunSubject
 from .report import infrastructure
 from . import sensitivity
 from yewo.llm.prompts import PromptStore
 from .models import (
     JourneyReport,
+    JourneyStatus,
+    ReportStatus,
     RunEnvironment,
     ScenarioReport,
     UserJourney,
@@ -63,14 +65,20 @@ def is_session_responsive(device_control) -> bool:
 
 def tally(reports: List[ScenarioReport]) -> tuple[int, int, int]:
     """Passed, failed and skipped, where anything else that ran counts as failed."""
-    passed = sum(1 for report in reports if report.status == "PASSED")
-    skipped = sum(1 for report in reports if report.status == "SKIPPED")
+    passed = sum(1 for report in reports if report.status == ReportStatus.PASSED)
+    skipped = sum(1 for report in reports if report.status == ReportStatus.SKIPPED)
     return passed, len(reports) - passed - skipped, skipped
 
 
-def aggregate_journey_status(passed_count: int, failed_count: int) -> str:
+def aggregate_journey_status(
+    passed_count: int, failed_count: int
+) -> JourneyStatus:
     """A suite passes only when at least one scenario has verified evidence."""
-    return "PASSED" if passed_count > 0 and failed_count == 0 else "FAILED"
+    return (
+        ReportStatus.PASSED
+        if passed_count > 0 and failed_count == 0
+        else ReportStatus.FAILED
+    )
 
 
 class YewoTestRunner:
@@ -151,14 +159,14 @@ class YewoTestRunner:
             ci=identity.ci_identity(),
         )
 
-    def _suite(self, journey: UserJourney, llm) -> locking.Resolution:
+    def _suite(self, journey: UserJourney, llm) -> lock_resolution.LockResolution:
         """The scenarios to run, from the lock where the lock still holds.
 
         Already in priority order, so a run that dies part way has done the
         P0 cells.
         """
         generator = ScenarioGenerator(llm)
-        return locking.suite_for(
+        return lock_resolution.suite_for(
             journey,
             lambda wanted, cells: generator.generate_suite(wanted, cells),
             path=self._lock_path(),
@@ -168,7 +176,7 @@ class YewoTestRunner:
 
     def _lock_path(self) -> Optional[Path]:
         """Where this run's lock is, or None for a journey file off disk."""
-        return lock.path_beside(self.journey_file) if self.journey_file else None
+        return lock_file.path_beside(self.journey_file) if self.journey_file else None
 
     def run_journey(self, journey: UserJourney) -> JourneyReport:
         """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics.
@@ -183,7 +191,7 @@ class YewoTestRunner:
         # First, because reading a lock costs nothing. A stale lock in CI has
         # to fail in a second rather than after a device boots.
         if self.locked:
-            locking.require_lock(journey, self._lock_path(), self.workflow)
+            lock_resolution.require_lock(journey, self._lock_path(), self.workflow)
 
         # Nothing masks a video frame, so a journey that types a declared
         # secret on screen is not recorded unless the caller asked for it.
@@ -284,7 +292,7 @@ class YewoTestRunner:
 
             manifest = RunManifest(
                 session.manifest_path,
-                Subject(
+                RunSubject(
                     kind="journey",
                     id=journey.id,
                     name=artifact_scrubber.scrub(journey.name),
@@ -292,20 +300,20 @@ class YewoTestRunner:
                 ),
                 scenarios,
                 environment=self._environment(),
-                inputs=Inputs(
+                inputs=RunInputs(
                     subject=journey.id,
-                    subject_sha256=lock.journey_sha256(journey),
+                    subject_sha256=lock_file.journey_sha256(journey),
                     coverage_declared=[cell.key for cell in journey.coverage],
                     lock_sha256=suite.lock_sha256,
-                    scenarios_from_lock=suite.reused,
-                    scenarios_generated=suite.generated,
+                    scenarios_from_lock=suite.reused_count,
+                    scenarios_generated=suite.generated_count,
                 ),
                 scrubber=artifact_scrubber,
                 artifacts=sensitivity.declared_for(journey),
             )
             # Generation happened before this file existed, and it is the one
             # call a run makes that no scenario owns.
-            manifest.spent(usage_tracker.calls_outside_steps(GENERATION))
+            manifest.record_unattached_calls(usage_tracker.calls_outside_steps(GENERATION))
 
             # A cell nothing covered is recorded before the first scenario
             # runs, so a reader sees the gap even if the run dies next. It
@@ -490,7 +498,7 @@ class YewoTestRunner:
             journey_id=journey.id,
             journey_name=journey.name,
             description=scrubber.scrub(journey.description),
-            status="RUNNING",
+            status=ReportStatus.RUNNING,
             total_duration=round(time.time() - started_at, 2),
             scenarios=list(reports),
             passed_count=passed,

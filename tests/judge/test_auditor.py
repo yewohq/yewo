@@ -6,11 +6,11 @@ from unittest.mock import Mock
 
 
 def _assessment(**overrides):
-    from yewo.testing.judge.qa_auditor import Assessment
+    from yewo.testing.judge.qa_auditor import ScreenAssessment
 
     values = {"screen_name": "Login Screen"}
     values.update(overrides)
-    return Assessment(**values)
+    return ScreenAssessment(**values)
 
 
 class AuditorInputTests(unittest.TestCase):
@@ -207,7 +207,7 @@ class ScreenWatchTests(unittest.TestCase):
     """
 
     def _watch(self):
-        from yewo.testing.judge.qa_auditor import ScreenWatch
+        from yewo.testing.judge.qa_auditor import ScreenAuditSession
 
         looked = []
 
@@ -216,7 +216,7 @@ class ScreenWatchTests(unittest.TestCase):
                 looked.append(screen_id)
                 return _assessment()
 
-        return ScreenWatch(Recording()), looked
+        return ScreenAuditSession(Recording()), looked
 
     def _snapshot(self, phash, reason):
         return SimpleNamespace(
@@ -232,9 +232,9 @@ class ScreenWatchTests(unittest.TestCase):
         and nothing ever departs a crash.
         """
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
-        fresh = watch.look(self._snapshot("B", "layout_shift"))
+        fresh = watch.audit_snapshot(self._snapshot("B", "layout_shift"))
 
         self.assertTrue(fresh)
         self.assertIn("B", looked)
@@ -243,35 +243,35 @@ class ScreenWatchTests(unittest.TestCase):
         """A crash or a blank screen has to be caught while it can be acted on."""
         watch, looked = self._watch()
 
-        fresh = watch.look(self._snapshot("A", "first_pass"))
+        fresh = watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
         self.assertEqual(len(fresh), 1)
         self.assertEqual(looked, ["A"])
 
     def test_working_a_screen_is_not_audited(self):
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
-        self.assertEqual(watch.look(self._snapshot("A2", "stable")), [])
-        self.assertEqual(watch.look(self._snapshot("A3", "stable")), [])
+        self.assertEqual(watch.audit_snapshot(self._snapshot("A2", "stable")), [])
+        self.assertEqual(watch.audit_snapshot(self._snapshot("A3", "stable")), [])
         self.assertEqual(looked, ["A"])
 
     def test_leaving_a_screen_audits_the_state_it_was_left_in(self):
         """Where a typed secret would be showing, if it is showing anywhere."""
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
-        watch.look(self._snapshot("A-filled", "stable"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A-filled", "stable"))
 
-        watch.look(self._snapshot("B", "navigation"))
+        watch.audit_snapshot(self._snapshot("B", "navigation"))
 
         self.assertEqual(looked, ["A", "A-filled", "B"])
 
     def test_a_screen_left_as_it_was_found_is_reported_once(self):
         """The cache spares the call, but a second answer double-counts the rules."""
         watch, looked = self._watch()
-        first = watch.look(self._snapshot("A", "first_pass"))
+        first = watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
-        leaving = watch.look(self._snapshot("B", "navigation"))
+        leaving = watch.audit_snapshot(self._snapshot("B", "navigation"))
 
         self.assertEqual(len(first), 1)
         self.assertEqual(len(leaving), 1, "only the arrival on B")
@@ -279,27 +279,27 @@ class ScreenWatchTests(unittest.TestCase):
 
     def test_the_last_screen_is_read_when_the_scenario_ends(self):
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
-        watch.look(self._snapshot("A-filled", "stable"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A-filled", "stable"))
 
-        closing = watch.close()
+        closing = watch.finalize_audit()
 
         self.assertEqual(len(closing), 1)
         self.assertEqual(looked, ["A", "A-filled"])
 
     def test_closing_twice_reads_nothing_again(self):
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
-        self.assertEqual(watch.close(), [], "the screen was not changed since arrival")
-        self.assertEqual(watch.close(), [])
+        self.assertEqual(watch.finalize_audit(), [], "the screen was not changed since arrival")
+        self.assertEqual(watch.finalize_audit(), [])
         self.assertEqual(looked, ["A"])
 
     def test_a_snapshot_with_no_scan_is_treated_as_arrival(self):
         """Not knowing why the screen changed is no reason to skip looking."""
         watch, looked = self._watch()
 
-        fresh = watch.look(
+        fresh = watch.audit_snapshot(
             SimpleNamespace(raw_img_bytes=b"png", current_phash="A", scan_info=None)
         )
 
@@ -308,10 +308,10 @@ class ScreenWatchTests(unittest.TestCase):
     def test_a_changed_screen_is_reported_on_arrival_and_on_departure(self):
         """Two states, two answers. Suppressing the second would lose the leak."""
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
-        watch.look(self._snapshot("A-filled", "stable"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A-filled", "stable"))
 
-        leaving = watch.look(self._snapshot("B", "navigation"))
+        leaving = watch.audit_snapshot(self._snapshot("B", "navigation"))
 
         self.assertEqual(len(leaving), 2, "the filled state, then arrival on B")
         self.assertEqual(looked, ["A", "A-filled", "B"])
@@ -324,10 +324,10 @@ class ScreenWatchTests(unittest.TestCase):
         reaches the report, and the outcome it evidenced goes missing.
         """
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
-        watch.look(self._snapshot("B", "navigation"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("B", "navigation"))
 
-        returning = watch.look(self._snapshot("A", "navigation"))
+        returning = watch.audit_snapshot(self._snapshot("A", "navigation"))
 
         self.assertTrue(returning)
         self.assertEqual(looked, ["A", "B", "A"])
@@ -339,21 +339,21 @@ class ScreenWatchTests(unittest.TestCase):
         the second look never comes, the crash is not deferred — it is lost.
         """
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
-        watch.look_again()
-        fresh = watch.look(self._snapshot("A", "stable"))
+        watch.request_repeat_audit()
+        fresh = watch.audit_snapshot(self._snapshot("A", "stable"))
 
         self.assertEqual(len(fresh), 1)
         self.assertEqual(looked, ["A", "A"])
 
     def test_the_second_look_is_only_taken_once(self):
         watch, looked = self._watch()
-        watch.look(self._snapshot("A", "first_pass"))
-        watch.look_again()
-        watch.look(self._snapshot("A", "stable"))
+        watch.audit_snapshot(self._snapshot("A", "first_pass"))
+        watch.request_repeat_audit()
+        watch.audit_snapshot(self._snapshot("A", "stable"))
 
-        self.assertEqual(watch.look(self._snapshot("A", "stable")), [])
+        self.assertEqual(watch.audit_snapshot(self._snapshot("A", "stable")), [])
 
 
 class ScanVocabularyTests(unittest.TestCase):
@@ -440,21 +440,21 @@ class ScanVocabularyTests(unittest.TestCase):
     def test_each_describe_mode_arrival_is_audited(self):
         """One audit per screen arrived at, which is what marks mode gets."""
         from yewo.agent.perception import elements
-        from yewo.testing.judge.qa_auditor import ScreenWatch
+        from yewo.testing.judge.qa_auditor import ScreenAuditSession
 
         audited = []
-        watch = ScreenWatch(
+        watch = ScreenAuditSession(
             SimpleNamespace(audit=lambda png, sid: audited.append(sid) or _assessment())
         )
 
-        watch.look(
+        watch.audit_snapshot(
             SimpleNamespace(
                 raw_img_bytes=b"png",
                 current_phash="A",
                 scan_info=SimpleNamespace(reason=elements.FIRST_PASS),
             )
         )
-        watch.look(
+        watch.audit_snapshot(
             SimpleNamespace(
                 raw_img_bytes=b"png",
                 current_phash="B",

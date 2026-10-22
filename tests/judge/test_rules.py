@@ -59,10 +59,10 @@ class AuditorNamingTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import Mock
 
-        from yewo.testing.judge.qa_auditor import Assessment, QAAuditor
+        from yewo.testing.judge.qa_auditor import ScreenAssessment, QAAuditor
 
         llm = SimpleNamespace(
-            generate_response=Mock(return_value=Assessment(screen_name="Login"))
+            generate_response=Mock(return_value=ScreenAssessment(screen_name="Login"))
         )
         QAAuditor(llm, self.OUTCOMES, self.SECURITY).audit(b"png", "screen")
 
@@ -76,7 +76,9 @@ class AuditorNamingTests(unittest.TestCase):
 
         auditor = self._auditor_prompt()
 
-        for line in rules.labelled(self.OUTCOMES, rules.EXPECTED) + rules.labelled(
+        for line in rules.format_rules_for_prompt(
+            self.OUTCOMES, rules.EXPECTED
+        ) + rules.format_rules_for_prompt(
             self.SECURITY, rules.SECURITY
         ):
             self.assertIn(line, auditor, "the auditor names this rule differently")

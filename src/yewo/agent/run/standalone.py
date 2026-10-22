@@ -74,7 +74,7 @@ def run_goal(
             perception=for_grounding(agent.grounding, session),
             session_dir=session.screenshots_dir,
         )
-        manifest.spent(usage.calls_outside_steps(AGENT))
+        manifest.record_unattached_calls(usage.calls_outside_steps(AGENT))
         manifest.record_goal(result, usage=usage.summary())
         return result
     except BaseException as interruption:
@@ -92,11 +92,11 @@ def run_goal(
 def _manifest(session, agent, goal: str, platform: Platform, device_control):
     """The record for this run, opened as soon as the device answers."""
     from yewo.testing.models import RunEnvironment
-    from yewo.testing.report.manifest import Inputs, RunManifest, Subject
+    from yewo.testing.report.manifest import RunInputs, RunManifest, RunSubject
 
     return RunManifest(
         session.manifest_path,
-        Subject(
+        RunSubject(
             kind="goal",
             id=hashlib.sha256(goal.encode("utf-8")).hexdigest()[:16],
             name=agent.scrubber.scrub(goal),
@@ -115,7 +115,7 @@ def _manifest(session, agent, goal: str, platform: Platform, device_control):
             git=identity.git_identity(),
             ci=identity.ci_identity(),
         ),
-        inputs=Inputs(
+        inputs=RunInputs(
             subject="goal",
             subject_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
         ),

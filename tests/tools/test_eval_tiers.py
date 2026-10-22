@@ -85,7 +85,7 @@ class _FakeAuditor:
         self._looks = looks
 
     def audit(self, screenshot: bytes, screen_id):
-        from yewo.testing.judge.qa_auditor import Assessment
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
         from yewo.testing.models import RuleVerification
 
         self._looks.append(screen_id)
@@ -101,7 +101,7 @@ class _FakeAuditor:
                     reasoning="the fake read the screen",
                 )
             )
-        return Assessment(screen_name="Cart", rule_verifications=verifications)
+        return ScreenAssessment(screen_name="Cart", rule_verifications=verifications)
 
 
 class ScreenTierTests(unittest.TestCase):

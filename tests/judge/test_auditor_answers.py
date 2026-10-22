@@ -11,9 +11,9 @@ from unittest.mock import Mock
 
 
 def _assessment(*verifications):
-    from yewo.testing.judge.qa_auditor import Assessment
+    from yewo.testing.judge.qa_auditor import ScreenAssessment
 
-    return Assessment(screen_name="Cart", rule_verifications=list(verifications))
+    return ScreenAssessment(screen_name="Cart", rule_verifications=list(verifications))
 
 
 def _verdict(rule, rule_id=None, status="passed"):

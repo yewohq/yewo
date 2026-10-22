@@ -14,6 +14,7 @@ from typing import Optional, Protocol, Sequence
 from yewo.agent.run.record import StepRecord
 from yewo.testing.models import (
     QAIssue,
+    ReportStatus,
     RuleVerification,
     RunEnvironment,
     VerdictInputs,
@@ -23,9 +24,8 @@ from yewo.testing.models import (
 class ScenarioSource(Protocol):
     """One scenario, under the names the page asks for it by.
 
-    `status` is `str` rather than the `Status` literal. A record is a file,
-    and a file can say anything. What it says is checked where it is read.
-    The page is handed a word it can already render.
+    A record is a file and can contain any status text. Its reader validates
+    that text before the page receives this enum.
     """
 
     @property
@@ -38,7 +38,7 @@ class ScenarioSource(Protocol):
     def cell(self) -> str: ...
 
     @property
-    def status(self) -> str: ...
+    def status(self) -> ReportStatus: ...
 
     @property
     def cause(self) -> Optional[str]: ...
@@ -86,7 +86,7 @@ class RunSource(Protocol):
     def description(self) -> str: ...
 
     @property
-    def status(self) -> str: ...
+    def status(self) -> ReportStatus: ...
 
     @property
     def total_duration(self) -> float: ...

@@ -26,7 +26,7 @@ capability and a tool nothing needs is never searched for.
 
 
 @dataclass(frozen=True)
-class Support:
+class CapabilitySupport:
     """What one capability needs of a target on one platform.
 
     `available` is false for a capability the platform offers no working path
@@ -63,12 +63,12 @@ class Support:
 # A platform absent from a capability's entry cannot apply it at all. The
 # controller refuses the same cases at the device. This is that knowledge
 # early enough to skip a scenario instead of failing a step inside it.
-CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
+CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, CapabilitySupport]] = {
     CapabilityKind.LOCATION: {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             emulator_only=True, detail="'adb emu geo fix' needs an emulator console"
         ),
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             min_release=(16, 4),
             detail=(
                 "simulating a location through the driver arrived in iOS 16.4, "
@@ -77,8 +77,8 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
         ),
     },
     CapabilityKind.NETWORK: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail=(
                 "the simulator shares the host network connection, and the "
@@ -87,8 +87,8 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
         ),
     },
     CapabilityKind.BATTERY: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail=(
                 "'simctl status_bar' overrides what the status bar draws and "
@@ -98,7 +98,7 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
         ),
     },
     CapabilityKind.TIMEZONE: {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             available=False,
             detail=(
                 "the system zone is persist.sys.timezone, which the shell user "
@@ -106,15 +106,15 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
                 "nothing the device reads"
             ),
         ),
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             available=False, detail="simctl sets no system zone at all"
         ),
     },
     CapabilityKind.LOCALE: {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             min_release=(33,), detail="per-app locales arrived in Android 13"
         ),
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail=(
                 "'mobile: configureLocalization' needs a booted simulator. It "
@@ -124,8 +124,8 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
         ),
     },
     CapabilityKind.PERMISSION: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             emulator_only=True,
             needs_host_tool="applesimutils",
             detail=(
@@ -137,8 +137,8 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
         ),
     },
     CapabilityKind.INTERRUPT: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             physical_min_release=(17,),
             physical_detail=(
                 "'mobile: sendMemoryWarning' is the only path to a device, "
@@ -147,37 +147,37 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
         ),
     },
     CapabilityKind.BIOMETRIC: {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             emulator_only=True, detail="a fingerprint can only be injected into an emulator"
         ),
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             emulator_only=True, detail="biometric enrolment needs a simulator"
         ),
     },
     CapabilityKind.CLIPBOARD: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(),
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(),
     },
     CapabilityKind.DEEPLINK: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             min_release=(16, 4),
             detail="opening a URL through the driver arrived in iOS 16.4",
         ),
     },
     CapabilityKind.APP_STATE: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(),
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(),
     },
     CapabilityKind.MEDIA_INJECT: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             emulator_only=True, detail="'simctl addmedia' needs a simulator"
         ),
     },
     CapabilityKind.ACCESSIBILITY: {
-        Platform.ANDROID: Support(),
-        Platform.IOS: Support(
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(
             min_release=(27,), detail="VoiceOver automation arrived in iOS 27"
         ),
     },
@@ -186,22 +186,22 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
 
 # A variant one target answers and another does not. Every capability absent
 # from here is decided by its kind alone.
-VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, Support]] = {
+VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, CapabilitySupport]] = {
     (CapabilityKind.INTERRUPT, "incoming_call"): {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             emulator_only=True, detail="placing a call needs an emulator console"
         ),
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail="neither simctl nor the driver places a call into a device",
         ),
     },
     (CapabilityKind.PERMISSION, "notifications"): {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             min_release=(33,),
             detail="POST_NOTIFICATIONS is a runtime permission from Android 13",
         ),
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail=(
                 "simctl has no notification service, and the service that "
@@ -213,7 +213,7 @@ VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, Support]] = {
     # inuse, never or unset, across two simctl services, so neither the write
     # nor the way back is expressible as a decision to allow or deny.
     (CapabilityKind.PERMISSION, "location"): {
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail=(
                 "an iOS location decision is always, inuse, never or unset, "
@@ -222,13 +222,13 @@ VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, Support]] = {
         ),
     },
     (CapabilityKind.PERMISSION, "storage"): {
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             available=False,
             detail="simctl has no service for file or media storage",
         ),
     },
     (CapabilityKind.PERMISSION, "photos"): {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             min_release=(33,),
             detail="READ_MEDIA_IMAGES replaced the storage permission in Android 13",
         ),
@@ -236,13 +236,13 @@ VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, Support]] = {
     # Only switching the screen reader on needs it installed. Switching it
     # off is already true of a device that does not have it.
     (CapabilityKind.ACCESSIBILITY, "on"): {
-        Platform.ANDROID: Support(
+        Platform.ANDROID: CapabilitySupport(
             needs_package=TALKBACK_PACKAGE,
             detail="the screen reader must be installed to be switched on",
         ),
     },
     (CapabilityKind.APP_STATE, "clear_data"): {
-        Platform.IOS: Support(
+        Platform.IOS: CapabilitySupport(
             emulator_only=True,
             detail="'mobile: clearApp' reads the simulator's data container",
         ),

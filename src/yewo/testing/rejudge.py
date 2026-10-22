@@ -32,7 +32,7 @@ FIRST_WITH_INPUTS = 2
 """The schema version from which a record holds the judge's inputs."""
 
 
-class Unreadable(Exception):
+class UnreadableRunRecord(Exception):
     """A scenario that kept too little of what its verdict was decided from.
 
     Raised rather than answered from what is there. Half the inputs reach a
@@ -62,10 +62,10 @@ def verdict_of(entry: dict, schema: int) -> decide.Verdict:
     """What the judge answers now about one scenario in a record.
 
     Raises:
-        Unreadable: The record kept no account of what the judge was given.
+        UnreadableRunRecord: The record kept no account of what the judge was given.
     """
     if schema < FIRST_WITH_INPUTS or not entry.get("verdict_inputs"):
-        raise Unreadable(
+        raise UnreadableRunRecord(
             f"written under schema {schema}, which kept no record of what "
             "the judge was given"
         )

@@ -183,7 +183,9 @@ rather than answered with a scenario that cannot run.
 """
 
 
-def indexed(pairs: list[tuple[Category, ScenarioType, Priority]]) -> list[CoverageCell]:
+def index_coverage_cells(
+    pairs: list[tuple[Category, ScenarioType, Priority]]
+) -> list[CoverageCell]:
     """Cells for declared pairs, numbering a pair that appears more than once.
 
     A file may ask for the same pair twice, deliberately or by mistake. Two
@@ -200,7 +202,7 @@ def indexed(pairs: list[tuple[Category, ScenarioType, Priority]]) -> list[Covera
     return cells
 
 
-def ordered(cells: list[CoverageCell]) -> list[CoverageCell]:
+def sort_cells_by_priority(cells: list[CoverageCell]) -> list[CoverageCell]:
     """The cells in the order a run has to attempt them.
 
     Priority first, then the order the file declared. A file that lists its

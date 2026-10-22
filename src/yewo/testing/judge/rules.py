@@ -41,8 +41,8 @@ def id_in(text) -> Optional[str]:
     """
     if not isinstance(text, str):
         return None
-    found = IN_TEXT.search(text)
-    return found.group(0) if found else None
+    match = IN_TEXT.search(text)
+    return match.group(0) if match else None
 
 
 def as_id(text, kind: str) -> Optional[str]:
@@ -53,11 +53,11 @@ def as_id(text, kind: str) -> Optional[str]:
     listed. It is not unambiguous for a judge shown both kinds, which is why
     this takes the kind rather than assuming one.
     """
-    found = id_in(text)
-    if found:
-        return found
-    bare = (text or "").strip() if isinstance(text, str) else ""
-    return rule_id(kind, int(bare)) if bare.isdigit() else None
+    embedded_id = id_in(text)
+    if embedded_id:
+        return embedded_id
+    numeric_rule_id = (text or "").strip() if isinstance(text, str) else ""
+    return rule_id(kind, int(numeric_rule_id)) if numeric_rule_id.isdigit() else None
 
 
 def is_kind(identifier: Optional[str], kind: str) -> bool:
@@ -74,7 +74,7 @@ def statement_of(rule) -> str:
     return rule if isinstance(rule, str) else rule.statement
 
 
-def labelled(rules: Iterable, kind: str) -> List[str]:
+def format_rules_for_prompt(rules: Iterable, kind: str) -> List[str]:
     """The rules as prompt lines. Each line carries the id its verdict must use."""
     return [
         f"- [{rule_id(kind, index)}] {statement_of(rule)}"
@@ -83,7 +83,9 @@ def labelled(rules: Iterable, kind: str) -> List[str]:
     ]
 
 
-def by_statement(expected_outcomes: Iterable, security_rules: Iterable) -> dict:
+def map_statements_to_rule_ids(
+    expected_outcomes: Iterable, security_rules: Iterable
+) -> dict:
     """The id for each rule's exact words.
 
     A verdict names its rule by the id it was given. Some answers name it by
@@ -94,19 +96,19 @@ def by_statement(expected_outcomes: Iterable, security_rules: Iterable) -> dict:
     alike cannot be told apart by their words, and settling the wrong one is
     worse than settling neither.
     """
-    found: dict = {}
-    twice = set()
+    rule_ids_by_statement: dict = {}
+    duplicate_statements = set()
     for kind, listed in ((EXPECTED, expected_outcomes), (SECURITY, security_rules)):
         for index, rule in enumerate(listed or []):
             if rule is None:
                 continue
             text = statement_of(rule).strip()
-            if text in found:
-                twice.add(text)
-            found[text] = rule_id(kind, index)
-    for text in twice:
-        found.pop(text, None)
-    return found
+            if text in rule_ids_by_statement:
+                duplicate_statements.add(text)
+            rule_ids_by_statement[text] = rule_id(kind, index)
+    for text in duplicate_statements:
+        rule_ids_by_statement.pop(text, None)
+    return rule_ids_by_statement
 
 
 def listed_ids(rules: Iterable, kind: str) -> Set[str]:
@@ -125,7 +127,7 @@ def listed_ids(rules: Iterable, kind: str) -> Set[str]:
 
 def listing(rules: Iterable, kind: str) -> str:
     """One prompt section: the rules of this kind, or a note that none exist."""
-    return "\n".join(labelled(rules, kind)) or NONE_SPECIFIED
+    return "\n".join(format_rules_for_prompt(rules, kind)) or NONE_SPECIFIED
 
 
 def unprovable(outcomes: Iterable) -> List[str]:
@@ -185,5 +187,7 @@ def transitions_only(outcomes: Iterable) -> List:
 
 def every_rule(expected_outcomes: Iterable, security_rules: Iterable) -> str:
     """Both kinds in one list, for a prompt that keeps them together."""
-    lines = labelled(expected_outcomes, EXPECTED) + labelled(security_rules, SECURITY)
+    lines = format_rules_for_prompt(
+        expected_outcomes, EXPECTED
+    ) + format_rules_for_prompt(security_rules, SECURITY)
     return "\n".join(lines) or NONE_SPECIFIED

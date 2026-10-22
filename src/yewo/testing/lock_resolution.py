@@ -1,6 +1,6 @@
-"""Deciding which scenarios come from the lock and which must be generated.
+"""Resolving which scenarios come from the lock and which must be generated.
 
-The data is in `lock.py`. This is the policy, kept apart so one module holds
+The data is in `lock_file.py`. This is the policy, kept apart so one module holds
 the file's shape and the other holds what a run does about it.
 
 Three states of the lock, and two commands.
@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from yewo.errors import UsageError
-from yewo.testing.generator import GeneratedSuite, Uncovered, with_values_filled
-from yewo.testing.lock import Lock, LockEntry, contract_sha256, read, write
+from yewo.testing.generator import GeneratedSuite, UncoveredCell, with_values_filled
+from yewo.testing.lock_file import Lock, LockEntry, contract_sha256, read, write
 from yewo.testing.models import GeneratedTestCase, UserJourney
-from yewo.testing.taxonomy import CoverageCell, ordered
+from yewo.testing.taxonomy import CoverageCell, sort_cells_by_priority
 
 logger = logging.getLogger(__name__)
 
@@ -32,31 +32,31 @@ Generate = Callable[[UserJourney, list[CoverageCell]], GeneratedSuite]
 
 
 @dataclass
-class Resolution:
+class LockResolution:
     """The suite a run will execute, and where each scenario came from."""
 
     scenarios: list[GeneratedTestCase] = field(default_factory=list)
-    uncovered: list[Uncovered] = field(default_factory=list)
-    reused: int = 0
-    generated: int = 0
+    uncovered: list[UncoveredCell] = field(default_factory=list)
+    reused_count: int = 0
+    generated_count: int = 0
     lock_sha256: Optional[str] = None
-    wrote: bool = False
+    lock_written: bool = False
 
     @property
     def note(self) -> str:
         """One line a reader of the log can tell the three states apart by."""
-        if not self.reused and not self.generated:
+        if not self.reused_count and not self.generated_count:
             return "no scenario was produced"
         parts = []
-        if self.reused:
-            parts.append(f"{self.reused} read from the lock")
-        if self.generated:
-            parts.append(f"{self.generated} generated")
+        if self.reused_count:
+            parts.append(f"{self.reused_count} read from the lock")
+        if self.generated_count:
+            parts.append(f"{self.generated_count} generated")
         return ", ".join(parts)
 
 
-def _wanted(journey: UserJourney) -> list[CoverageCell]:
-    return ordered(list(journey.coverage))
+def _ordered_coverage_cells(journey: UserJourney) -> list[CoverageCell]:
+    return sort_cells_by_priority(list(journey.coverage))
 
 
 def staleness(
@@ -74,10 +74,10 @@ def staleness(
     `refresh` reports every cell as needing generation, which is what
     `yewo lock --all` asks for.
     """
-    held = lock.held(workflow, journey.id) if lock is not None else {}
+    locked_entries = lock.entries_for(workflow, journey.id) if lock is not None else {}
     problems = {}
-    for cell in _wanted(journey):
-        entry = held.get(cell.key)
+    for cell in _ordered_coverage_cells(journey):
+        entry = locked_entries.get(cell.key)
         if refresh:
             problems[cell.key] = "asked for again"
         elif entry is None:
@@ -110,7 +110,7 @@ def suite_for(
     workflow: str = "",
     locked: bool = False,
     refresh: bool = False,
-) -> Resolution:
+) -> LockResolution:
     """The scenarios to run, read from the lock wherever the lock still holds.
 
     Args:
@@ -137,23 +137,23 @@ def suite_for(
     if locked:
         _refuse(path, lock, problems)
 
-    held = lock.held(workflow, journey.id) if lock is not None else {}
-    missing = [cell for cell in _wanted(journey) if cell.key in problems]
+    locked_entries = lock.entries_for(workflow, journey.id) if lock is not None else {}
+    missing = [cell for cell in _ordered_coverage_cells(journey) if cell.key in problems]
     produced = generate(journey, missing) if missing else GeneratedSuite()
 
     fresh = {scenario.cell: scenario for scenario in produced.locked}
     filled = {scenario.cell: scenario for scenario in produced.scenarios}
 
-    resolution = Resolution(uncovered=list(produced.uncovered))
+    resolution = LockResolution(uncovered=list(produced.uncovered))
     keeping: list[LockEntry] = []
     # By identity, not by cell. Two scenarios can carry one cell key, and
     # dropping the second as a duplicate would lose a scenario that was
     # generated and paid for.
     taken: set[str] = set()
-    for cell in _wanted(journey):
+    for cell in _ordered_coverage_cells(journey):
         if cell.key in filled:
             resolution.scenarios.append(filled[cell.key])
-            resolution.generated += 1
+            resolution.generated_count += 1
             taken.add(filled[cell.key].scenario_uuid)
             keeping.append(
                 LockEntry.of(
@@ -161,7 +161,7 @@ def suite_for(
                 )
             )
             continue
-        entry = held.get(cell.key)
+        entry = locked_entries.get(cell.key)
         if entry is None:
             continue
         if cell.key in problems:
@@ -185,7 +185,7 @@ def suite_for(
         resolution.scenarios.append(
             with_values_filled(entry.scenario(), journey.values)
         )
-        resolution.reused += 1
+        resolution.reused_count += 1
         keeping.append(entry)
 
     # A scenario for a cell this journey does not declare is still a scenario
@@ -201,10 +201,10 @@ def suite_for(
             scenario.cell,
         )
         resolution.scenarios.append(scenario)
-        resolution.generated += 1
+        resolution.generated_count += 1
 
     if path is not None:
-        resolution.lock_sha256, resolution.wrote = _persist(
+        resolution.lock_sha256, resolution.lock_written = _persist(
             path, lock, journey, workflow, keeping
         )
     return resolution
