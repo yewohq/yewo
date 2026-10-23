@@ -83,6 +83,9 @@ class DeviceSession(DeviceRecording):
 
         self.layout = RunLayout.under(self.session_dir, self.session_id)
         self.layout.create()
+        # Per session, because its segment number is what tells this
+        # session's logs from those of the session that replaces it.
+        self._device_logs = device_logs.DeviceLogRecorder(self.layout, self.platform)
         self._file_handler = attach_run_log(self.layout.run_log)
 
         host = os.environ.get("APPIUM_HOST", "127.0.0.1")
@@ -231,12 +234,24 @@ class DeviceSession(DeviceRecording):
         except Exception as e:
             logger.warning("Failed to uninstall %s: %s", package, e)
 
+    def checkpoint_device_logs(self) -> None:
+        """Takes what the device has logged so far, at a scenario boundary."""
+        driver = self._log_reading_driver()
+        if driver is not None:
+            self._device_logs.drain(driver)
+
     def _save_device_logs(self) -> None:
         """Before the quit, because a quit driver reads nothing."""
-        if self.device_control is None or self.device_control.driver is None:
+        driver = self._log_reading_driver()
+        if driver is None:
             logger.warning("No driver to read the device log from.")
             return
-        device_logs.capture(self.device_control.driver, self.platform, self.layout)
+        self._device_logs.finish(driver)
+
+    def _log_reading_driver(self):
+        if self.device_control is None:
+            return None
+        return self.device_control.driver
 
     def close(self, final: bool = True):
         """Ends the session, and by default removes what the run installed.

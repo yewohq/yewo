@@ -323,7 +323,13 @@ def refused():
 
 
 def suite_run(
-    scenarios, directory, journey=None, report_for=None, uncovered=None, **runner
+    scenarios,
+    directory,
+    journey=None,
+    report_for=None,
+    uncovered=None,
+    session_calls=None,
+    **runner,
 ):
     """One journey run end to end, with the device and the models faked.
 
@@ -339,6 +345,8 @@ def suite_run(
         report_for: Called with each scenario, returning its report. A
             passing report by default.
         uncovered: Cells the generator could produce nothing for.
+        session_calls: A list the fake session appends each method name to,
+            so a caller can assert what the runner asked of it and when.
         runner: Anything else to pass to `YewoTestRunner`.
 
     Returns:
@@ -374,6 +382,7 @@ def suite_run(
             self.appium_log_path = root / "appium.log"
             self.manifest_path = root / "run.json"
             self.prompts_dir = root / "prompts"
+            self.asked = session_calls if session_calls is not None else []
 
         def start(self, **_):
             return SimpleNamespace(
@@ -381,10 +390,13 @@ def suite_run(
             )
 
         def checkpoint_recording(self):
-            pass
+            self.asked.append("checkpoint_recording")
+
+        def checkpoint_device_logs(self):
+            self.asked.append("checkpoint_device_logs")
 
         def close(self, **_):
-            pass
+            self.asked.append("close")
 
     class Generator:
         def __init__(self, *_, **__):
@@ -446,25 +458,43 @@ def log_entries(*messages):
 class LoggingDriver:
     """A driver answering `get_log`, as each kind of target answers it.
 
-    `offers` is what `log_types` lists, and `logs` is what each one returns.
-    A log listed with nothing behind it is the case the capture has to
-    explain rather than write an empty file for. `failing` names logs this
-    driver lists and then refuses, which is a different fault again.
+    Reads drain, the way Appium's own buffer does: each `get_log` returns
+    only what arrived since the last one. A fake that returned everything
+    every time would let a capture that duplicates its lines pass.
+
+    `offers` is what `log_types` lists, and `logs` is what is buffered to
+    begin with. A log listed with nothing behind it is the case the capture
+    has to explain rather than write an empty file for. `failing` names
+    logs this driver lists and then refuses, which is a different fault.
     """
 
     def __init__(self, offers=(), logs=None, failing=(), list_fails=False):
         self._offers = tuple(offers)
-        self._logs = logs or {}
+        self._buffered = {name: list(entries) for name, entries in (logs or {}).items()}
         self._failing = set(failing)
         self._list_fails = list_fails
         self.asked = []
+        self.type_reads = 0
         self.quit_called = False
+        self._failing_next = False
+        self._failing_next_loses = False
 
     @property
     def log_types(self):
+        self.type_reads += 1
         if self._list_fails:
             raise RuntimeError("the session is gone")
         return list(self._offers)
+
+    def arrive(self, log_type, *messages):
+        """More lines reach the buffer, as they do while a scenario runs."""
+        self._buffered.setdefault(log_type, []).extend(log_entries(*messages))
+
+    def fail_next(self, *, losing=False):
+        """The next read raises. `losing` drains the buffer first, as the
+        server does when it answered and the response never arrived."""
+        self._failing_next = True
+        self._failing_next_loses = losing
 
     def get_log(self, log_type):
         self.asked.append(log_type)
@@ -472,7 +502,14 @@ class LoggingDriver:
             raise RuntimeError("a quit driver reads nothing")
         if log_type in self._failing:
             raise RuntimeError(f"no such log '{log_type}'")
-        return self._logs.get(log_type, [])
+        if self._failing_next:
+            self._failing_next = False
+            if self._failing_next_loses:
+                self._buffered[log_type] = []
+            raise RuntimeError("the server dropped the response")
+        drained = self._buffered.get(log_type, [])
+        self._buffered[log_type] = []
+        return drained
 
     def quit(self):
         self.quit_called = True

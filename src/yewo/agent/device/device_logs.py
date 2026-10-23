@@ -1,24 +1,26 @@
 """The device's own log, taken through the driver that holds the session.
 
-Yewo's log says what Yewo asked for and the Appium log says what the server
-did with it. Neither can see inside the device, so a run that ends
+Yewo's log says what Yewo asked for. The Appium log says what the server did
+with it. Neither can see inside the device, so a run that ends
 `ERROR (device)` cannot say what the device was doing.
 
-`driver.get_log` is the seam. Both drivers implement it, `adb` does not exist
-on iOS, and the driver buffers from session start. A device's own ring buffer
-survives an emulator reboot, so reading that instead returns another run's
-lines.
+`driver.get_log` is the seam, because both drivers implement it and `adb`
+does not reach iOS.
 
-A target that cannot be asked records a reason, never an empty file. An empty
-file says the device was silent. A missing capture says nobody could ask it.
-A reader has to be able to tell those two apart.
+Two properties of that buffer shape everything here. It holds 10,000 lines
+and evicts the oldest whether or not anybody reads, so a session drained
+once keeps its tail and loses its start. And a read returns only what
+arrived since the last one, so drains append rather than repeat.
+
+A log nothing could ask for records a reason instead of an empty file. An
+empty file says the device was silent, which is a different answer.
 """
 
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Protocol, Sequence
+from typing import Dict, Optional, Protocol, Sequence
 
 from yewo.agent.artifacts.layout import RunLayout
 from yewo.agent.device.platform import Platform
@@ -26,91 +28,122 @@ from yewo.agent.device.platform import Platform
 logger = logging.getLogger(__name__)
 
 BUFFERED_LINES = 10000
-"""Appium's cap per log. It discards from the front, so a full buffer has lost
-the beginning of the run rather than the end."""
+"""Appium's buffer size, per log. A drain this full reached a buffer at its
+limit, so older lines may already have been evicted."""
 
 MAX_SEGMENTS = 999
-"""How many times one session may be recovered before its logs stop being
-numbered. The width of the number in the filename."""
+"""The highest segment a session's logs are numbered to. Three digits,
+matching the filename, and the bound on the search for a free one."""
 
 
 @dataclass(frozen=True)
 class LogSource:
-    """One log a platform is worth asking for, under the driver's name for it."""
+    """One log worth asking a platform for, named as `get_log` takes it."""
 
-    driver_name: str
-    stem: str
+    log_type: str
+    file_stem: str
 
 
 LOG_SOURCES_BY_PLATFORM: dict[Platform, tuple[LogSource, ...]] = {
     Platform.ANDROID: (LogSource("logcat", "logcat"),),
     Platform.IOS: (LogSource("syslog", "syslog"), LogSource("crashlog", "crashlog")),
 }
-"""What to ask each platform for. Whether this target can answer is not
-tabulated, because `log_types` is the open session answering it.
+"""What to ask each platform for. Whether a target can answer is left to
+`log_types`, which is the open session answering it.
 
-XCUITest lists `syslog` and `crashlog` statically, for a simulator and for a
-physical device alike, and reads a real device in process over RemoteXPC. So
-on iOS an empty answer is the refusal, rather than an absent log type.
+XCUITest lists both of its logs whatever the target is, and reads a physical
+device in process over RemoteXPC. So on iOS a silent log is a log that
+answered nothing, never a log the target could not be asked for.
 """
 
 
 @dataclass(frozen=True)
 class LogCapture:
-    """A written log, or the reason there is none."""
+    """What one log came to over a session.
 
-    driver_name: str
+    `reason` says why the capture is less than whole, whether that means no
+    file at all or a file with gaps in it. A written log is still evidence
+    about what it holds, so a gap is reported beside it rather than instead
+    of it.
+    """
+
+    log_type: str
     path: Optional[Path] = None
     line_count: int = 0
     truncated: bool = False
+    failed_drains: int = 0
     reason: str = ""
 
     @property
     def is_written(self) -> bool:
         return self.path is not None
 
+    @property
+    def is_whole(self) -> bool:
+        """Whether this log holds everything the session produced."""
+        return self.is_written and not self.reason
+
     def describe(self) -> str:
         if not self.is_written:
-            return f"{self.driver_name}: not captured, {self.reason}"
-        lost = ", and the oldest lines were dropped" if self.truncated else ""
-        return f"{self.driver_name}: {self.line_count} lines{lost}"
+            return f"{self.log_type}: not captured, {self.reason}"
+        if self.reason:
+            return f"{self.log_type}: {self.line_count} lines, incomplete. {self.reason}"
+        return f"{self.log_type}: {self.line_count} lines"
 
 
 class LogReadingDriver(Protocol):
+    """The part of a driver this module uses."""
+
     @property
     def log_types(self) -> Sequence[str]: ...
 
     def get_log(self, log_type: str) -> Sequence[object]: ...
 
 
+@dataclass
+class _SourceState:
+    """What one log has come to so far, across this session's drains.
+
+    A failed drain is counted whether or not a file already exists. Reads
+    are incremental, so the lines a failed read would have returned can be
+    gone for good. A later drain that succeeds does not bring them back.
+    """
+
+    path: Optional[Path] = None
+    line_count: int = 0
+    truncated: bool = False
+    failed_drains: int = 0
+    last_failure: str = ""
+    unwritten_reason: str = "this session was never drained"
+
+
 def _resolve_free_segment(
     layout: RunLayout, sources: Sequence[LogSource]
 ) -> Optional[int]:
-    """One number for the whole capture, so a segment names a session.
+    """The number this session's logs are written under.
 
-    Numbered because session recovery opens a new session on the same id.
-    One name would let the healthy replacement overwrite the failed
-    session's log.
+    Session recovery opens a new session on the same id. One filename would
+    let the healthy replacement overwrite the failed session's log.
 
-    Chosen once for every source rather than per source. A crashlog is read
-    against the syslog beside it. Numbering each on its own pairs a crash
-    with another session's log whenever one source is silent.
+    One number covers every source. A reader takes a crashlog together with
+    the syslog beside it, and numbering each alone would pair a crash with
+    another session's log.
 
-    None when every segment is taken. Bounded rather than open, because this
-    runs during teardown, and a search that cannot end would hang the run
-    instead of reporting.
+    None when every segment is taken. Bounded, because a search that cannot
+    end would hang the run instead of reporting.
     """
     for segment in range(1, MAX_SEGMENTS + 1):
-        if not any(layout.device_log(source.stem, segment).exists() for source in sources):
+        if not any(layout.device_log(source.file_stem, segment).exists() for source in sources):
             return segment
     return None
 
 
 def _format_timestamp(value: object) -> str:
-    """The host's receipt time, which is the clock Yewo's own log runs on.
+    """The host's receipt time, on the clock Yewo's own log runs on.
 
-    A logcat line carries the device's clock in its text, and the two drift.
-    Keeping both lines a device failure up against the step that provoked it.
+    The device stamps its own clock inside the line, and the two drift. Both
+    are kept, because one orders the log against Yewo's steps and the other
+    against the device's.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return ""
@@ -121,8 +154,11 @@ def _format_timestamp(value: object) -> str:
 
 
 def _format_line(entry: object) -> str:
-    """Selenium's contract is a mapping holding a message, a level and a
-    timestamp. A driver that returns anything else still has a line in it."""
+    """One line, from an entry carrying a timestamp, a level and a message.
+
+    A driver that answers in some other shape still has the line in it, so
+    the entry is rendered whole rather than dropped.
+    """
     if not isinstance(entry, dict):
         return str(entry)
     parts = (
@@ -133,86 +169,148 @@ def _format_line(entry: object) -> str:
     return " ".join(part for part in parts if part)
 
 
-def _read_log_types(driver: LogReadingDriver) -> frozenset[str]:
-    """What this session says it will answer for. Empty on failure, which
-    refuses each log with a reason rather than asking for one it would
-    reject."""
-    try:
-        return frozenset(f"{name}" for name in driver.log_types)
-    except Exception as exc:  # noqa: BLE001 - a log capture must not fail a run
-        logger.warning("The driver would not list its log types: %s", type(exc).__name__)
-        return frozenset()
-
-
-def _capture_log(
-    driver: LogReadingDriver, source: LogSource, layout: RunLayout, segment: int
-) -> LogCapture:
-    try:
-        entries = list(driver.get_log(source.driver_name))
-    except Exception as exc:  # noqa: BLE001 - a log capture must not fail a run
-        return LogCapture(source.driver_name, reason=f"the read failed: {type(exc).__name__}")
-
-    if not entries:
-        return LogCapture(
-            source.driver_name, reason="the driver offered it and returned nothing"
+def _gaps_in(state: _SourceState) -> str:
+    """Why a written log may be missing lines, or empty when it is whole."""
+    gaps = []
+    if state.failed_drains:
+        drains = "drain" if state.failed_drains == 1 else "drains"
+        gaps.append(
+            f"{state.failed_drains} {drains} did not land, the last with "
+            f"{state.last_failure}"
         )
-
-    try:
-        lines = [_format_line(entry) for entry in entries]
-        path = layout.device_log(source.stem, segment)
-        # A device log is bytes rather than text. One unpaired surrogate must
-        # not cost the whole capture, and the escape keeps the byte visible.
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="backslashreplace")
-    except Exception as exc:  # noqa: BLE001 - a log capture must not fail a run
-        return LogCapture(source.driver_name, reason=f"the write failed: {type(exc).__name__}")
-
-    return LogCapture(
-        source.driver_name,
-        path=path,
-        line_count=len(lines),
-        truncated=len(lines) >= BUFFERED_LINES,
-    )
+    if state.truncated:
+        gaps.append(
+            f"a drain reached Appium's {BUFFERED_LINES}-line buffer limit, "
+            "so older lines may be missing"
+        )
+    return ". ".join(gaps)
 
 
-def capture(
-    driver: LogReadingDriver, platform: Platform, layout: RunLayout
-) -> tuple[LogCapture, ...]:
-    """Every log worth taking from this target, each written or explained.
+class DeviceLogRecorder:
+    """Drains one session's device logs into one file each.
 
-    Call before the session is quit, because a quit driver reads nothing.
-    Nothing here raises. The run whose log is wanted is the run that failed
-    on the device, and a capture that failed it would take the evidence too.
+    Built per session. Its segment number is what tells this session's logs
+    from those of the session that replaced it.
+
+    No method raises. A device log is wanted most on the run that failed on
+    the device, and a capture that failed with it would take the evidence.
     """
-    sources = LOG_SOURCES_BY_PLATFORM.get(platform, ())
-    available_logs = _read_log_types(driver)
-    listed = ", ".join(sorted(available_logs)) or "nothing"
-    segment = _resolve_free_segment(layout, sources)
 
-    captures: List[LogCapture] = []
-    for source in sources:
-        if segment is None:
-            captures.append(
-                LogCapture(
-                    source.driver_name,
-                    reason=f"{MAX_SEGMENTS} device logs are already written here",
-                )
-            )
-        elif source.driver_name in available_logs:
-            captures.append(_capture_log(driver, source, layout, segment))
-        else:
-            captures.append(
-                LogCapture(
-                    source.driver_name,
-                    reason=f"the driver does not offer it. It offers: {listed}",
-                )
-            )
+    def __init__(self, layout: RunLayout, platform: Platform):
+        self._layout = layout
+        self._sources = LOG_SOURCES_BY_PLATFORM.get(platform, ())
+        self._segment = _resolve_free_segment(layout, self._sources)
+        self._state: Dict[str, _SourceState] = {
+            source.log_type: _SourceState() for source in self._sources
+        }
+        self._available: Optional[frozenset[str]] = None
 
-    for log_capture in captures:
-        # A refusal goes to the run log, which is what a reader opens first.
-        # An absence nobody is told about reads as silence from the device.
-        logger.log(
-            logging.INFO if log_capture.is_written else logging.WARNING,
-            "Device log %s",
-            log_capture.describe(),
+    def drain(self, driver: LogReadingDriver) -> None:
+        """Appends what arrived since the last drain.
+
+        Called at a scenario boundary. Finding nothing new is the ordinary
+        case between two quiet scenarios, and reports nothing.
+        """
+        for source in self._sources:
+            self._drain_source(driver, source)
+
+    def finish(self, driver: LogReadingDriver) -> tuple[LogCapture, ...]:
+        """A last drain, then what each log came to.
+
+        Called before the session is quit, because a quit driver reads
+        nothing.
+        """
+        self.drain(driver)
+        captures = tuple(self._capture_of(source) for source in self._sources)
+        for capture in captures:
+            # The run log is what a reader opens first, so anything short of
+            # a whole capture has to reach it. An absence nobody is told of
+            # reads as silence from the device, and so does a gap.
+            logger.log(
+                logging.INFO if capture.is_whole else logging.WARNING,
+                "Device log %s",
+                capture.describe(),
+            )
+        return captures
+
+    def _capture_of(self, source: LogSource) -> LogCapture:
+        state = self._state[source.log_type]
+        return LogCapture(
+            log_type=source.log_type,
+            path=state.path,
+            line_count=state.line_count,
+            truncated=state.truncated,
+            failed_drains=state.failed_drains,
+            reason=state.unwritten_reason if state.path is None else _gaps_in(state),
         )
-    return tuple(captures)
+
+    def _log_types(self, driver: LogReadingDriver) -> frozenset[str]:
+        """What this session answers for, asked once.
+
+        A driver lists the same types for its whole life, and the question
+        costs a round trip to the server.
+        """
+        if self._available is not None:
+            return self._available
+        try:
+            self._available = frozenset(f"{name}" for name in driver.log_types)
+        except Exception as exc:  # noqa: BLE001 - a log capture must not fail a run
+            logger.warning(
+                "The driver would not list its log types: %s", type(exc).__name__
+            )
+            return frozenset()
+        return self._available
+
+    @staticmethod
+    def _failed(state: _SourceState, source: LogSource, detail: str) -> None:
+        """Counts a drain that did not land, and says so where it happened.
+
+        Said now rather than only at the end, because which boundary failed
+        is what tells a reader which part of the log to distrust.
+        """
+        state.failed_drains += 1
+        state.last_failure = detail
+        if state.path is None:
+            state.unwritten_reason = detail
+        logger.warning("Device log %s drain failed: %s", source.log_type, detail)
+
+    def _drain_source(self, driver: LogReadingDriver, source: LogSource) -> None:
+        state = self._state[source.log_type]
+        if self._segment is None:
+            state.unwritten_reason = (
+                f"{MAX_SEGMENTS} device logs are already written here"
+            )
+            return
+
+        available = self._log_types(driver)
+        if source.log_type not in available:
+            listed = ", ".join(sorted(available)) or "nothing"
+            state.unwritten_reason = f"the driver does not offer it. It offers: {listed}"
+            return
+
+        try:
+            entries = list(driver.get_log(source.log_type))
+        except Exception as exc:  # noqa: BLE001 - a log capture must not fail a run
+            self._failed(state, source, f"the read failed: {type(exc).__name__}")
+            return
+
+        if not entries:
+            if state.path is None:
+                state.unwritten_reason = "the driver offered it and returned nothing"
+            return
+
+        try:
+            lines = [_format_line(entry) for entry in entries]
+            path = self._layout.device_log(source.file_stem, self._segment)
+            # A device log is bytes rather than text. One unpaired surrogate
+            # must not cost the drain, and the escape keeps the byte visible.
+            with path.open("a", encoding="utf-8", errors="backslashreplace") as opened:
+                opened.write("\n".join(lines) + "\n")
+        except Exception as exc:  # noqa: BLE001 - a log capture must not fail a run
+            self._failed(state, source, f"the write failed: {type(exc).__name__}")
+            return
+
+        state.path = path
+        state.line_count += len(lines)
+        # A full drain arrived at a buffer that had already evicted.
+        state.truncated = state.truncated or len(lines) >= BUFFERED_LINES

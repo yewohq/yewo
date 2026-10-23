@@ -1,8 +1,9 @@
-"""Taking the device's own log, on each of the four kinds of target.
+"""What each target answers when asked for its own log, and what it refuses.
 
-A run that fails on the device is the run whose log is wanted, so the capture
-must not fail with it. What it must never do is leave an empty file, because
-zero bytes reads as a silent device rather than as a target nothing could ask.
+A run that fails on the device is the run whose log is wanted, so the
+capture must not fail with it. What it must never do is leave an empty file
+or an ordinary-looking one, because a reader cannot see a gap that nothing
+reports.
 """
 
 import logging
@@ -11,6 +12,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 
+from device_log_case import CaptureCase
 from fakes import LOG_EPOCH_MS, LoggingDriver, log_entries
 
 from yewo.agent.artifacts.layout import RunLayout
@@ -24,23 +26,6 @@ def _moment(offset_seconds):
     """The host receipt time `log_entries` stamps, as the capture renders it."""
     stamped = datetime.fromtimestamp((LOG_EPOCH_MS + offset_seconds * 1000) / 1000)
     return stamped.isoformat(sep=" ", timespec="milliseconds")
-
-
-class CaptureCase(unittest.TestCase):
-    """Runs one capture against a target, under its own artifact tree."""
-
-    def capture(self, driver, platform):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.layout = RunLayout.under(Path(self.directory.name), SESSION)
-        self.layout.create()
-        return device_logs.capture(driver, platform, self.layout)
-
-    def files(self):
-        return sorted(path.name for path in self.layout.logs.iterdir())
-
-    def by_name(self, captures):
-        return {one.driver_name: one for one in captures}
 
 
 class AndroidTests(CaptureCase):
@@ -165,70 +150,75 @@ class AbsenceTests(CaptureCase):
         self.assertIn("the read failed", captures[0].reason)
 
 
-class RecoveryTests(CaptureCase):
-    """Session recovery opens a second session on the same session id."""
+class GapTests(CaptureCase):
+    """A drain that did not land, reported beside the file it is missing from.
 
-    def test_a_second_capture_does_not_overwrite_the_first(self):
-        """The failed session's log is the one worth reading, and it is
-        written first. The healthy replacement closes after it."""
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.layout = RunLayout.under(Path(self.directory.name), SESSION)
-        self.layout.create()
+    Reads are incremental. Lines a failed read would have returned can be
+    gone for good, so a later drain that succeeds does not make the capture
+    whole again. A file that looks ordinary is the one way a reader would
+    never know.
+    """
 
-        for message in ("the session that died", "the session that replaced it"):
-            driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries(message)})
-            device_logs.capture(driver, Platform.ANDROID, self.layout)
+    def _flaky(self, losing):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("first")})
+        recorder = self.recorder(Platform.ANDROID)
+        recorder.drain(driver)
+        driver.arrive("logcat", "during the failed drain")
+        driver.fail_next(losing=losing)
+        recorder.drain(driver)
+        driver.arrive("logcat", "last")
+        return recorder.finish(driver)[0], driver
 
-        self.assertEqual(
-            self.files(),
-            [f"device_logcat_{SESSION}_001.log", f"device_logcat_{SESSION}_002.log"],
-        )
-        first = self.layout.device_log("logcat", 1).read_text()
-        self.assertIn("the session that died", first)
+    def test_a_failed_middle_drain_is_reported_though_the_file_exists(self):
+        capture, _ = self._flaky(losing=False)
 
+        self.assertTrue(capture.is_written)
+        self.assertFalse(capture.is_whole)
+        self.assertEqual(capture.failed_drains, 1)
+        self.assertIn("did not land", capture.describe())
 
-class SegmentPairingTests(CaptureCase):
-    """One segment number per capture, so a number names a session."""
+    def test_a_lossy_failed_drain_leaves_a_gap_the_file_cannot_show(self):
+        """The server read and the response never arrived, so those lines
+        are gone. The count is the only trace left of them."""
+        capture, _ = self._flaky(losing=True)
 
-    def _tree(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.layout = RunLayout.under(Path(self.directory.name), SESSION)
-        self.layout.create()
+        written = capture.path.read_text()
+        self.assertNotIn("during the failed drain", written)
+        self.assertEqual(capture.failed_drains, 1)
+        self.assertFalse(capture.is_whole)
 
-    def _ios(self, **logs):
-        driver = LoggingDriver(offers=("syslog", "crashlog"), logs=logs)
-        return device_logs.capture(driver, Platform.IOS, self.layout)
+    def test_a_session_with_no_failures_is_whole(self):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
 
-    def test_a_crashlog_is_numbered_with_the_syslog_of_its_own_session(self):
-        """A crash is read against the syslog beside it. Numbering each log
-        on its own pairs the second session's crash with the first
-        session's syslog whenever one source was silent."""
-        self._tree()
-        self._ios(syslog=log_entries("session one"))
-        self._ios(
-            syslog=log_entries("session two"),
-            crashlog=log_entries("the crash in session two"),
-        )
+        capture = self.recorder(Platform.ANDROID).finish(driver)[0]
 
-        self.assertIn("session two", self.layout.device_log("syslog", 2).read_text())
-        self.assertIn(
-            "the crash in session two", self.layout.device_log("crashlog", 2).read_text()
-        )
-        self.assertFalse(self.layout.device_log("crashlog", 1).exists())
+        self.assertTrue(capture.is_whole)
+        self.assertEqual(capture.reason, "")
 
-    def test_a_segment_is_skipped_rather_than_reused_by_either_log(self):
-        """The number advances for both sources together, so a reader can
-        take two files with one number as one session."""
-        self._tree()
-        self._ios(crashlog=log_entries("only a crash"))
-        self._ios(syslog=log_entries("only a log"))
+    def test_a_failed_drain_is_reported_where_it_happened(self):
+        """Which boundary failed is what tells a reader which part of the
+        log to distrust, and finish() is too late to say it."""
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        recorder = self.recorder(Platform.ANDROID)
+        recorder.drain(driver)
+        driver.fail_next()
 
-        self.assertEqual(
-            self.files(),
-            [f"device_crashlog_{SESSION}_001.log", f"device_syslog_{SESSION}_002.log"],
-        )
+        with self.assertLogs("yewo.agent.device.device_logs", logging.WARNING) as logged:
+            recorder.drain(driver)
+
+        self.assertTrue(any("drain failed" in line for line in logged.output), logged.output)
+
+    def test_an_incomplete_capture_is_a_warning_at_the_end(self):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        recorder = self.recorder(Platform.ANDROID)
+        recorder.drain(driver)
+        driver.fail_next()
+        recorder.drain(driver)
+
+        with self.assertLogs("yewo.agent.device.device_logs", logging.WARNING) as logged:
+            recorder.finish(driver)
+
+        self.assertTrue(any("incomplete" in line for line in logged.output), logged.output)
 
 
 class UnbreakableTests(CaptureCase):
@@ -265,23 +255,24 @@ class UnbreakableTests(CaptureCase):
         self.addCleanup(self.directory.cleanup)
         self.layout = RunLayout.under(Path(self.directory.name), SESSION)
 
-        captures = device_logs.capture(driver, Platform.ANDROID, self.layout)
+        captures = self.recorder(Platform.ANDROID).finish(driver)
 
         self.assertFalse(captures[0].is_written)
         self.assertIn("the write failed", captures[0].reason)
 
 
 class TruncationTests(CaptureCase):
-    """Appium discards from the front, so a full buffer has lost the start."""
+    """A drain at the buffer limit may have arrived after an eviction."""
 
-    def test_a_full_buffer_is_reported_as_having_dropped_lines(self):
+    def test_a_full_buffer_is_reported_as_possibly_missing_lines(self):
         entries = log_entries(*(f"line {n}" for n in range(device_logs.BUFFERED_LINES)))
         driver = LoggingDriver(offers=("logcat",), logs={"logcat": entries})
 
         captures = self.capture(driver, Platform.ANDROID)
 
         self.assertTrue(captures[0].truncated)
-        self.assertIn("the oldest lines were dropped", captures[0].describe())
+        self.assertIn("older lines may be missing", captures[0].describe())
+        self.assertFalse(captures[0].is_whole)
 
     def test_a_buffer_under_the_cap_is_not(self):
         entries = log_entries(*(f"line {n}" for n in range(device_logs.BUFFERED_LINES - 1)))
@@ -338,3 +329,20 @@ class EntryShapeTests(CaptureCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimestampTests(unittest.TestCase):
+    """A stamp a reader can line up against Yewo's own log, or nothing."""
+
+    def test_an_epoch_millisecond_value_is_rendered(self):
+        line = device_logs._format_line({"timestamp": LOG_EPOCH_MS, "message": "x"})
+
+        self.assertTrue(line.endswith(" x"), line)
+        self.assertIn(":", line.split(" x")[0])
+
+    def test_a_value_that_is_not_a_time_is_left_out(self):
+        for value in ("not a time", None, True, float("nan"), 10**20):
+            with self.subTest(value=value):
+                line = device_logs._format_line({"timestamp": value, "message": "x"})
+
+                self.assertEqual(line, "x")

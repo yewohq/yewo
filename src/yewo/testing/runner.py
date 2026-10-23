@@ -422,6 +422,10 @@ class YewoTestRunner:
                     logger.warning(
                         "Failed to save the scenario recording: %s", record_err
                     )
+                try:
+                    session.checkpoint_device_logs()
+                except Exception as log_err:  # noqa: BLE001 - evidence, not the run
+                    logger.warning("Failed to drain the device log: %s", log_err)
 
         except BaseException as e:
             safe_error = artifact_scrubber.scrub(reportable(e))

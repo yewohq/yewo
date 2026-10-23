@@ -13,6 +13,7 @@ from unittest.mock import patch
 from fakes import PACKAGE, SERIAL, LoggingDriver, log_entries
 
 from yewo.agent.artifacts.layout import RunLayout
+from yewo.agent.device.device_logs import DeviceLogRecorder
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.files import DeviceFiles
 from yewo.agent.device.session import DeviceSession
@@ -159,6 +160,7 @@ class UninstallPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         session.layout = RunLayout.under(Path(directory.name), "s1")
         session.layout.create()
+        session._device_logs = DeviceLogRecorder(session.layout, session.platform)
         for name, value in overrides.items():
             setattr(session, name, value)
         return session
