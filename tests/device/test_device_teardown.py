@@ -6,6 +6,7 @@ means it has to know what it put there.
 """
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -224,6 +225,39 @@ class UninstallPolicyTests(unittest.TestCase):
         uninstall = self._clean(self._session(platform=Platform.IOS))
 
         uninstall.assert_not_called()
+
+    def test_starting_a_session_starts_the_device_log_timer(self):
+        """The timer is what makes draining happen inside a scenario, and a
+        session that never starts it drains only at its boundaries."""
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("boot")})
+        control = self._control(driver=driver)
+        session = self._session(
+            app_path="app.apk",
+            record_session=False,
+            keep_device=False,
+            reuse_app=False,
+            _appium_url="http://127.0.0.1:4723",
+        )
+
+        with (
+            patch.object(DeviceSession, "_start_appium"),
+            patch.object(DeviceSession, "_note_app_ownership"),
+            patch.object(AdbControl, "enable_feedback"),
+            patch("yewo.agent.device.session.DeviceControl", return_value=control),
+            patch("yewo.agent.device.session.time.sleep"),
+        ):
+            session.start()
+
+        try:
+            self.assertTrue(
+                any(
+                    thread.name == "yewo-device-logs"
+                    for thread in threading.enumerate()
+                ),
+                "the session started without a device log timer",
+            )
+        finally:
+            session._device_logs.finish(driver)
 
     def test_the_device_log_is_taken_before_the_driver_is_quit(self):
         """A quit driver reads nothing, and the run worth a device log is the

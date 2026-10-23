@@ -265,17 +265,21 @@ class TruncationTests(CaptureCase):
     """A drain at the buffer limit may have arrived after an eviction."""
 
     def test_a_full_buffer_is_reported_as_possibly_missing_lines(self):
-        entries = log_entries(*(f"line {n}" for n in range(device_logs.BUFFERED_LINES)))
+        entries = ["line"] * device_logs.BUFFERED_LINES
         driver = LoggingDriver(offers=("logcat",), logs={"logcat": entries})
+        recorder = self.recorder(Platform.ANDROID)
 
-        captures = self.capture(driver, Platform.ANDROID)
+        recorder.drain(driver)
+        driver.arrive("logcat", "after the full buffer")
+        captures = recorder.finish(driver)
 
         self.assertTrue(captures[0].truncated)
+        self.assertEqual(captures[0].line_count, device_logs.BUFFERED_LINES + 1)
         self.assertIn("older lines may be missing", captures[0].describe())
         self.assertFalse(captures[0].is_whole)
 
     def test_a_buffer_under_the_cap_is_not(self):
-        entries = log_entries(*(f"line {n}" for n in range(device_logs.BUFFERED_LINES - 1)))
+        entries = ["line"] * (device_logs.BUFFERED_LINES - 1)
         driver = LoggingDriver(offers=("logcat",), logs={"logcat": entries})
 
         captures = self.capture(driver, Platform.ANDROID)

@@ -8,6 +8,8 @@ reopens on the same id, so the numbering is what tells two sessions apart.
 
 import logging
 import tempfile
+import threading
+import time
 import unittest
 
 from device_log_case import CaptureCase
@@ -90,20 +92,6 @@ class DrainingTests(CaptureCase):
         recorder.finish(driver)
 
         self.assertEqual(driver.type_reads, 1)
-
-    def test_a_drain_that_fills_the_buffer_reports_lines_lost(self):
-        """Evicted between drains, which means drain more often."""
-        full = log_entries(*(f"line {n}" for n in range(device_logs.BUFFERED_LINES)))
-        driver = LoggingDriver(offers=("logcat",), logs={"logcat": full})
-        recorder = self.recorder(Platform.ANDROID)
-
-        recorder.drain(driver)
-        driver.arrive("logcat", "after the flood")
-        captures = recorder.finish(driver)
-
-        self.assertTrue(captures[0].truncated)
-        self.assertEqual(captures[0].line_count, device_logs.BUFFERED_LINES + 1)
-
 
 class RecoveryTests(CaptureCase):
     """Session recovery opens a second session on the same session id."""
@@ -222,4 +210,154 @@ class RunnerWiringTests(unittest.TestCase):
 
         self.assertLess(
             asked.index("checkpoint_device_logs"), asked.index("close"), asked
+        )
+
+
+class TickerTests(CaptureCase):
+    """Draining on a timer, because a step is too coarse for the rate.
+
+    A step takes about twelve seconds. The buffer has been seen to take
+    1,100 lines in one second, which fills it in nine, so waiting for a
+    step boundary can lose a burst that happened inside the step.
+    """
+
+    def _ticking(self, driver, interval=0.01):
+        recorder = device_logs.DeviceLogRecorder(
+            self.layout, Platform.ANDROID, interval=interval
+        )
+        self.addCleanup(recorder.finish, driver)
+        recorder.start(driver)
+        return recorder
+
+    def _until(self, condition, limit=2.0):
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            if condition():
+                return True
+            time.sleep(0.01)
+        return False
+
+    def test_lines_are_taken_without_anyone_asking(self):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("mid-step")})
+        self._ticking(driver)
+
+        self.assertTrue(
+            self._until(lambda: self.layout.device_log("logcat", 1).exists()),
+            "the timer never drained",
+        )
+
+    def test_the_timer_stops_when_the_session_is_finished(self):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        recorder = self._ticking(driver)
+        self.assertTrue(self._until(lambda: driver.asked))
+
+        recorder.finish(driver)
+        settled = len(driver.asked)
+        self.assertFalse(any(t.name == "yewo-device-logs" for t in threading.enumerate()))
+        self.assertEqual(len(driver.asked), settled, "the timer kept reading after finish")
+
+    def test_no_thread_outlives_the_session(self):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        recorder = self._ticking(driver)
+        self.assertTrue(self._until(lambda: driver.asked))
+
+        recorder.finish(driver)
+
+        self.assertNotIn(
+            "yewo-device-logs", [thread.name for thread in threading.enumerate()]
+        )
+
+    def test_a_dead_session_stops_the_timer_rather_than_failing_forever(self):
+        """Polling a gone session only repeats one failure into the run log."""
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        self._ticking(driver)
+        self.assertTrue(self._until(lambda: driver.asked))
+
+        driver.quit()
+        at_death = len(driver.asked)
+        self.assertTrue(
+            self._until(
+                lambda: not any(
+                    thread.name == "yewo-device-logs"
+                    for thread in threading.enumerate()
+                )
+            )
+        )
+
+        self.assertLessEqual(
+            len(driver.asked) - at_death,
+            device_logs.CONSECUTIVE_FAILURES_BEFORE_DISABLING_SOURCE,
+            "the timer kept polling a dead session",
+        )
+
+    def test_a_timer_that_stopped_says_so(self):
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        self._ticking(driver)
+        self.assertTrue(self._until(lambda: driver.asked))
+
+        with self.assertLogs("yewo.agent.device.device_logs", logging.WARNING) as logged:
+            driver.quit()
+            self.assertTrue(
+                self._until(lambda: any("draining stopped" in line for line in logged.output))
+            )
+
+    def test_a_boundary_drain_and_a_tick_never_read_at_once(self):
+        """Two reads in flight would append one session's lines out of order.
+
+        The driver holds each read open, so a lock that was not taken shows
+        up as two callers inside it at the same time.
+        """
+
+        class Colliding(LoggingDriver):
+            def __init__(self, **named):
+                super().__init__(**named)
+                self.inside = 0
+                self.most_inside = 0
+                self._counting = threading.Lock()
+
+            def get_log(self, log_type):
+                with self._counting:
+                    self.inside += 1
+                    self.most_inside = max(self.most_inside, self.inside)
+                time.sleep(0.02)
+                try:
+                    return super().get_log(log_type)
+                finally:
+                    with self._counting:
+                        self.inside -= 1
+
+        driver = Colliding(offers=("logcat",), logs={"logcat": log_entries("a")})
+        recorder = self._ticking(driver)
+
+        for number in range(3):
+            driver.arrive("logcat", f"line {number}")
+            recorder.drain(driver)
+        recorder.finish(driver)
+
+        self.assertEqual(driver.most_inside, 1, "two drains read the log at once")
+        written = [
+            line.split(" INFO ")[-1]
+            for line in self.layout.device_log("logcat", 1).read_text().splitlines()
+        ]
+        self.assertEqual(written, ["a"] + [f"line {n}" for n in range(3)])
+
+    def test_a_second_start_does_not_raise_a_second_timer(self):
+        """Nothing calls it twice today, and two timers on one session would
+        read the same buffer against each other."""
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("a")})
+        recorder = self._ticking(driver)
+
+        recorder.start(driver)
+
+        running = [t for t in threading.enumerate() if t.name == "yewo-device-logs"]
+        self.assertEqual(len(running), 1)
+
+    def test_a_platform_with_no_logs_runs_no_timer(self):
+        recorder = device_logs.DeviceLogRecorder(self.layout, None, interval=0.01)
+        self.addCleanup(recorder.finish, LoggingDriver())
+
+        recorder.start(LoggingDriver())
+
+        self.assertNotIn(
+            "yewo-device-logs", [t.name for t in threading.enumerate()]
         )

@@ -207,6 +207,7 @@ class DeviceSession(DeviceRecording):
                 serial=serial, pointer_location=False, tap_highlights=True
             )
         time.sleep(6)
+        self._device_logs.start(self.device_control.driver)
         if self.record_session:
             self.discard_stale_recordings()
             self.start_recording()
@@ -238,7 +239,9 @@ class DeviceSession(DeviceRecording):
         """Takes what the device has logged so far, at a scenario boundary."""
         driver = self._log_reading_driver()
         if driver is not None:
-            self._device_logs.drain(driver)
+            # The timer may already be reading the same incremental buffer.
+            # Do not hold the scenario behind that in-flight device request.
+            self._device_logs.drain(driver, timeout=0)
 
     def _save_device_logs(self) -> None:
         """Before the quit, because a quit driver reads nothing."""
