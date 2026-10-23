@@ -2,7 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 class SystemPromptTests(unittest.TestCase):
@@ -143,7 +143,8 @@ class FocusTests(unittest.TestCase):
         control = self._control(Platform.IOS, "com.example.App", "com.apple.Preferences")
         control.driver.activate_app = Mock()
 
-        DeviceState(control).recover_to_sut()
+        with patch("yewo.agent.device.state.time.sleep"):
+            DeviceState(control).recover_to_sut()
 
         control.driver.activate_app.assert_called_once_with("com.example.App")
 

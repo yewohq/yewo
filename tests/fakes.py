@@ -41,6 +41,19 @@ from yewo.agent.grounding.marks import Mark
 STAMP = "2026-01-01T00:00:00"
 
 
+class FakeClock:
+    """A monotonic clock that advances only when production asks it to sleep."""
+
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+
+    def monotonic(self) -> float:
+        return self.elapsed
+
+    def sleep(self, seconds: float) -> None:
+        self.elapsed += seconds
+
+
 def solid_png(fill: str = "white", size: tuple[int, int] = (200, 400)) -> bytes:
     """A screenshot of one colour, for comparing a screen against itself."""
     buffer = io.BytesIO()

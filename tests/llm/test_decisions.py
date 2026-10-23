@@ -272,6 +272,8 @@ class VendorContractTests(unittest.TestCase):
             retry=policy,
             transport=httpx2.MockTransport(refuse),
         )
+        # Exercise the real retry policy without paying its wall-clock delay.
+        client._retry.sleep = lambda _seconds: None
         import typesafe_sdk
 
         with self.assertRaises(typesafe_sdk.TypeSafeRateLimitError):

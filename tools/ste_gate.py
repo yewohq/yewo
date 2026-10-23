@@ -23,6 +23,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections import Counter
+from dataclasses import dataclass
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -274,37 +278,80 @@ def prose_of(path: Path) -> str:
     return "\n\n".join(dict.fromkeys(found))
 
 
-def hard_violations(linter: Path, prose: str) -> tuple[int, list[str]]:
-    """What the skill's linter says about one file's prose.
+@dataclass(frozen=True)
+class HardViolation:
+    """One exact hard finding, independent of its generated line number."""
 
-    Returns the number of hard violations and the lines describing them.
-    Advisory findings are reported and do not count, because the linter does
-    not fail on them either.
-    """
+    rule: str
+    message: str
+    match: str
+    source: str
+
+    def fingerprint(self) -> str:
+        return json.dumps(
+            (self.rule, self.message, self.match, self.source),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+
+    def render(self) -> str:
+        return f"{self.rule}: {self.message} [{self.match}] — {self.source}"
+
+
+@dataclass(frozen=True)
+class Baseline:
+    count: int
+    digest: str
+
+
+def _prose_block(lines: list[str], line_number: int) -> str:
+    """The extracted prose block that owns one linter line."""
+    if not 0 < line_number <= len(lines):
+        return ""
+    start = line_number - 1
+    end = start + 1
+    while start and lines[start - 1].strip():
+        start -= 1
+    while end < len(lines) and lines[end].strip():
+        end += 1
+    return " ".join(" ".join(lines[start:end]).split())
+
+
+def hard_violations(linter: Path, prose: str) -> list[HardViolation]:
+    """The exact hard findings in one file's extracted prose."""
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as handle:
         handle.write(prose)
         temporary = Path(handle.name)
     try:
         result = subprocess.run(
-            [sys.executable, str(linter), str(temporary)],
+            [sys.executable, str(linter), "--json", str(temporary)],
             capture_output=True, text=True, timeout=120,
         )
     finally:
         temporary.unlink(missing_ok=True)
 
-    output = result.stdout + result.stderr
-    count = 0
-    summary = re.search(r"(\d+) violations \((\d+) hard", output)
-    if summary:
-        count = int(summary.group(2))
-    reported = [
-        line.split(str(temporary) + ":")[-1]
-        for line in output.splitlines()
-        if str(temporary) in line
-        and not any(soft in line for soft in ("passive-voice", "compound-tense",
-                                              "present-perfect"))
-    ]
-    return count, reported
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise RuntimeError(
+            f"STE linter produced no JSON (exit {result.returncode}): {result.stderr}"
+        ) from None
+
+    lines = prose.splitlines()
+    found = []
+    for finding in report.get("violations", []):
+        if finding.get("level") != "advisory-free":
+            continue
+        line_number = int(finding.get("line", 0))
+        found.append(
+            HardViolation(
+                rule=str(finding.get("rule", "unknown")),
+                message=" ".join(str(finding.get("message", "")).split()),
+                match=" ".join(str(finding.get("match", "")).split()),
+                source=_prose_block(lines, line_number),
+            )
+        )
+    return found
 
 
 def _named(path: Path) -> str:
@@ -322,11 +369,41 @@ def _named(path: Path) -> str:
         return str(path)
 
 
-def _load_baseline() -> dict[str, int]:
+def _load_baseline() -> dict[str, Baseline]:
     if not BASELINE_PATH.is_file():
         return {}
     with BASELINE_PATH.open("rb") as baseline_file:
-        return tomllib.load(baseline_file).get("allowed_hard_violations", {})
+        entries = tomllib.load(baseline_file).get("files", [])
+    return {
+        entry["path"]: Baseline(count=entry["count"], digest=entry["digest"])
+        for entry in entries
+    }
+
+
+def _digest(violations: list[HardViolation]) -> str:
+    fingerprints = Counter(item.fingerprint() for item in violations)
+    serialized = json.dumps(sorted(fingerprints.items()), separators=(",", ":"))
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _render_baseline(findings: dict[str, list[HardViolation]]) -> str:
+    lines = [
+        "# Existing hard STE findings, fingerprinted without generated line numbers.",
+        "# A changed finding is new debt even when a file's total stays the same.",
+    ]
+    for path, violations in sorted(findings.items()):
+        if not violations:
+            continue
+        lines.extend(
+            [
+                "",
+                "[[files]]",
+                f"path = {json.dumps(path)}",
+                f"count = {len(violations)}",
+                f"digest = {json.dumps(_digest(violations))}",
+            ]
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _python_files(targets: list[Path]) -> list[Path]:
@@ -339,10 +416,15 @@ def _python_files(targets: list[Path]) -> list[Path]:
     return [f for f in files if "__pycache__" not in f.parts]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", default=["src/yewo"])
-    args = parser.parse_args()
+    parser.add_argument(
+        "--write-baseline",
+        action="store_true",
+        help="Record the current hard findings instead of enforcing the baseline",
+    )
+    args = parser.parse_args(argv)
 
     linter = _find_linter()
     if linter is None:
@@ -355,18 +437,39 @@ def main() -> int:
     baseline = _load_baseline()
     failures: list[str] = []
     checked = 0
+    findings: dict[str, list[HardViolation]] = {}
+    selected = {_named(path) for path in _python_files([Path(p) for p in args.paths])}
 
     for path in _python_files([Path(p) for p in args.paths]):
         prose = prose_of(path)
         if not prose.strip():
             continue
         checked += 1
-        count, reported = hard_violations(linter, prose)
         relative = _named(path)
-        allowed = baseline.get(relative, 0)
-        if count > allowed:
-            failures.append(f"{relative}: {count} hard violation(s), allowed {allowed}")
-            failures.extend(f"    {line.strip()}" for line in reported[:6])
+        violations = hard_violations(linter, prose)
+        findings[relative] = violations
+
+    if args.write_baseline:
+        BASELINE_PATH.write_text(_render_baseline(findings), encoding="utf-8")
+        count = sum(len(violations) for violations in findings.values())
+        print(f"Recorded {count} hard STE findings across {len(findings)} files.")
+        return 0
+
+    for relative, violations in findings.items():
+        recorded = baseline.get(relative)
+        current = Baseline(len(violations), _digest(violations))
+        if violations and current != recorded:
+            allowed = recorded.count if recorded else 0
+            failures.append(
+                f"{relative}: hard findings changed ({len(violations)} found, "
+                f"{allowed} recorded)"
+            )
+            failures.extend(f"    {item.render()}" for item in violations[:6])
+        elif not violations and recorded is not None:
+            failures.append(f"{relative}: all hard findings were fixed; rewrite the baseline")
+
+    for relative in sorted(set(baseline) & selected - set(findings)):
+        failures.append(f"{relative}: no prose remains; rewrite the baseline")
 
     if failures:
         print("\n".join(failures))

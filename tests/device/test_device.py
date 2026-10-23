@@ -1,10 +1,9 @@
 """Driving a device, and reporting when it cannot be driven."""
 
 import io
-import time
 import unittest
 
-from fakes import walk
+from fakes import FakeClock, walk
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, PropertyMock, patch
@@ -146,6 +145,17 @@ class LaunchPaintTests(unittest.TestCase):
     def _device(self, png):
         return SimpleNamespace(get_screenshot=Mock(return_value=png))
 
+    def _await_first_paint(self, device):
+        from yewo.agent.device.launch import await_first_paint
+
+        clock = FakeClock()
+        with (
+            patch("yewo.agent.device.launch.time.monotonic", side_effect=clock.monotonic),
+            patch("yewo.agent.device.launch.time.sleep", side_effect=clock.sleep),
+        ):
+            await_first_paint(device)
+        return clock.elapsed
+
     def _png(self, pixels):
 
         from PIL import Image
@@ -168,14 +178,14 @@ class LaunchPaintTests(unittest.TestCase):
         self.assertFalse(screen_is_blank(self._device(self._png(pixels))))
 
     def test_an_unreadable_screen_does_not_block_the_launch(self):
-        from yewo.agent.device.launch import await_first_paint, screen_is_blank
+        from yewo.agent.device.launch import screen_is_blank
 
         device = SimpleNamespace(
             get_screenshot=Mock(side_effect=ObservationUnavailable("no screen"))
         )
 
         self.assertIsNone(screen_is_blank(device))
-        await_first_paint(device)
+        self._await_first_paint(device)
 
     def _drawn(self, seed=0):
         return self._png(
@@ -183,29 +193,23 @@ class LaunchPaintTests(unittest.TestCase):
         )
 
     def test_waiting_stops_once_a_drawn_screen_repeats(self):
-        from yewo.agent.device.launch import await_first_paint
-
         blank = self._png([255] * 1000)
         device = self._device(blank)
         device.get_screenshot = Mock(
             side_effect=[blank, blank, self._drawn(), self._drawn()]
         )
 
-        await_first_paint(device)
+        self._await_first_paint(device)
 
         self.assertEqual(device.get_screenshot.call_count, 4)
 
     def test_a_screen_that_never_settles_is_not_waited_out(self):
-        from yewo.agent.device.launch import await_first_paint
-
         device = self._device(self._drawn())
         device.get_screenshot = Mock(
             side_effect=[self._drawn(seed=index) for index in range(60)]
         )
 
-        started = time.monotonic()
-        await_first_paint(device)
-        elapsed = time.monotonic() - started
+        elapsed = self._await_first_paint(device)
 
         from yewo.defaults import LAUNCH_CONTENT_GRACE, LAUNCH_PAINT_TIMEOUT
 
@@ -213,13 +217,11 @@ class LaunchPaintTests(unittest.TestCase):
         self.assertGreaterEqual(elapsed, LAUNCH_CONTENT_GRACE)
 
     def test_a_splash_is_not_mistaken_for_the_first_screen(self):
-        from yewo.agent.device.launch import await_first_paint
-
         splash, real = self._drawn(seed=0), self._drawn(seed=1)
         device = self._device(splash)
         device.get_screenshot = Mock(side_effect=[splash, real, real])
 
-        await_first_paint(device)
+        self._await_first_paint(device)
 
         self.assertEqual(device.get_screenshot.call_count, 3)
 

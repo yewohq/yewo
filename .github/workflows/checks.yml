@@ -30,7 +30,18 @@ jobs:
       - run: uv run coverage run -m pytest
       - run: uv run coverage report
       - run: uv run python -m tools.eval_gate
-      - run: uv run python -m tools.mutation_sweep
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The focused mutants do not cross the optional model boundary.
+      - run: uv sync --group dev
+      - run: uv run python -m tools.mutation_sweep --jobs 4
 
   eval-screens:
     # Spends tokens, so it is opt-in: set the repository variable

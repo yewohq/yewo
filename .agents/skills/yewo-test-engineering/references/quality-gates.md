@@ -48,14 +48,15 @@ integration gap.
 
 Repository-wide coverage is measured by `uv run coverage run -m pytest` plus
 `uv run coverage report`, with line-and-branch `fail_under` in
-`pyproject.toml`. The floor started at the measured 34%; raise it as coverage
-improves rather than treating it as the standard for changed code.
+`pyproject.toml`. The floor is 74%, just below the measured cross-platform
+result. Raise it as coverage improves rather than treating it as the standard
+for changed code.
 
 For safety-critical pure logic—action validation, coordinate conversion,
-status aggregation, path handling, redaction, and cleanup decisions—use
-mutation testing when the relevant tool is configured or the task requests a
-hardening pass. The scoped target is zero surviving meaningful mutants. Do not
-run mutation tests across device or paid-model boundaries.
+status aggregation, path handling, redaction, and cleanup decisions—use the
+focused mutation sweep when the subsystem has declared mutants. Its isolated
+workers must catch every declared mutant. Add realistic mutants during a
+hardening pass; do not run mutation tests across device or paid-model boundaries.
 
 ## Static quality
 
@@ -79,13 +80,21 @@ ratchet like the baseline above — remove entries, never add them.
 reformats most of the repository. Land that as its own mechanical commit, then
 add `ruff format --check` to the workflow.
 
-Pyright runs in `basic` mode over `src/yewo` through `tools/type_gate.py`,
-which compares per-file error counts against `tools/type-baseline.toml`. Every
-file stays checked and recorded counts may only fall; whole-file suppression
-would hide new mistakes in the modules that already have the most. Lower an
-entry when a file improves, and delete it at zero. Regenerate the baseline with
-`--write-baseline` only when relocating or re-scoping the gate, never to absorb
-new errors.
+Pyright runs in `basic` mode over `src/yewo` through `tools/type_gate.py`.
+`tools/type-baseline.toml` fingerprints each existing diagnostic by file, rule,
+and whitespace-normalized message. This means that a different error cannot
+reuse an old error's allowance merely because the per-file count stayed the
+same. Every file stays checked; whole-file suppression would hide new mistakes
+in the modules that already have the most. The gate also fails when an error is
+fixed until the stale allowance is removed. Regenerate the baseline with
+`--write-baseline` after verified improvements or intentional gate relocation,
+never to absorb new errors.
+
+The STE gate uses the same ratchet rule. Its baseline fingerprints each hard
+finding by rule, message, matched text, and normalized source text. A different
+finding cannot inherit an old finding's allowance because the totals match.
+Rewrite the baseline only after verified prose improvements or an intentional
+change to the vendored STE rules.
 
 ## Metrics not used as gates
 

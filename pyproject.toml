@@ -120,6 +120,6 @@ source = ["src/yewo"]
 
 [tool.coverage.report]
 show_missing = true
-# The measured baseline for the offline suite. Raise it as coverage improves.
-# It is a floor against regression, not a target.
-fail_under = 46
+# Keep the floor just below the measured offline result so platform-specific
+# branches cannot erase the ratchet through rounding.
+fail_under = 74

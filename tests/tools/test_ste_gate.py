@@ -125,7 +125,17 @@ class BaselineTests(unittest.TestCase):
     def test_no_baseline_entry_allows_nothing(self):
         """A zero entry is the same as absence, so it is noise."""
         for name, allowed in ste_gate._load_baseline().items():
-            self.assertGreater(allowed, 0, name)
+            self.assertGreater(allowed.count, 0, name)
+
+    def test_a_different_finding_cannot_reuse_the_same_count(self):
+        before = ste_gate.HardViolation(
+            "long-sentence", "Sentence has 26 words.", "26 words", "Old sentence."
+        )
+        after = ste_gate.HardViolation(
+            "long-sentence", "Sentence has 26 words.", "26 words", "New sentence."
+        )
+
+        self.assertNotEqual(ste_gate._digest([before]), ste_gate._digest([after]))
 
 
 if __name__ == "__main__":

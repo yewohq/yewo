@@ -45,7 +45,8 @@ dead code, duplication, and deferred metrics.
 
 Ruff, Pyright, pytest, and coverage are declared in the `dev` dependency
 group and configured in `pyproject.toml`; `.github/workflows/checks.yml` runs
-them. No mutation-testing tool is configured. Existing tests are
+them. The focused mutation sweep in `tools/mutation_sweep.py` checks realistic
+judge and evaluation-gate defects in isolated parallel workers. Existing tests are
 `unittest`-style and run under pytest unchanged. Each file covers one
 contract, named for it, and `tests/fakes.py` builds the values the boundaries
 hand to the logic through their real constructors. Do not report unconfigured
@@ -61,6 +62,7 @@ uv run ruff check
 uv run python tools/quality_gate.py
 uv run python tools/type_gate.py
 uv run coverage run -m pytest && uv run coverage report
+uv run python -m tools.mutation_sweep
 git diff --check
 ```
 

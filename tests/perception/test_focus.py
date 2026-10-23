@@ -123,7 +123,10 @@ class TypeAfterTheKeyboardOpensTests(unittest.TestCase):
         driver = FakeDriver(rect=ELSEWHERE)
         device = control(driver, keyboard=(False, False), focuses=ELSEWHERE)
 
-        with self.assertRaises(TargetNotInteractive) as refusal:
+        with (
+            patch("yewo.agent.device.focus.time.sleep"),
+            self.assertRaises(TargetNotInteractive) as refusal,
+        ):
             device.type("someone@example.com", *POINT)
 
         self.assertIn("holds no text", str(refusal.exception))
@@ -132,7 +135,10 @@ class TypeAfterTheKeyboardOpensTests(unittest.TestCase):
         driver = FakeDriver()
         device = control(driver, keyboard=(False, True))
 
-        with self.assertRaises(ActionRejected) as refusal:
+        with (
+            patch("yewo.agent.device.focus.time.sleep"),
+            self.assertRaises(ActionRejected) as refusal,
+        ):
             device.type("someone@example.com", *POINT)
 
         self.assertIn("nothing reported focus", str(refusal.exception))

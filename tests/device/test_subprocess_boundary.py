@@ -8,6 +8,7 @@ never raised the error its callers catch, and every mock agreed that it did.
 
 import subprocess
 import unittest
+from unittest.mock import patch
 
 from yewo.agent.device.adb_control import AdbControl
 from yewo.errors import DeviceUnavailable
@@ -64,7 +65,8 @@ class DeviceTranslationTests(unittest.TestCase):
 
     def test_an_unknown_serial_answers_with_no_packages(self):
         """installed_packages answers with an empty set rather than failing."""
-        self.assertEqual(AdbControl.installed_packages(MISSING_BINARY), set())
+        with patch.object(AdbControl, "ask", return_value=None):
+            self.assertEqual(AdbControl.installed_packages(MISSING_BINARY), set())
 
 
 if __name__ == "__main__":
