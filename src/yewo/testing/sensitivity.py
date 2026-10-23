@@ -124,7 +124,8 @@ ARTIFACTS: tuple[ArtifactClass, ...] = (
         Sensitivity.UNMASKED,
         Retention.TRANSIENT,
         False,
-        "The Appium log. The device's own output, large, and masked by nothing.",
+        "The Appium log, and the device's own log beside it. Large, and "
+        "masked by nothing. A device log holds other apps' output too.",
     ),
     ArtifactClass(
         "recordings",

@@ -57,6 +57,12 @@ class RunLayout:
     def run_log(self) -> Path:
         return self.logs / f"yewo_session_{self.session_id}.log"
 
+    def device_log(self, stem: str, segment: int = 1) -> Path:
+        """Named for the log rather than the platform, because a reader of
+        `logs/` is asking what the device said. Numbered like a recording,
+        because session recovery reopens on the same session id."""
+        return self.logs / f"device_{stem}_{self.session_id}_{segment:03d}.log"
+
     def create(self) -> None:
         """Makes every directory, so nothing downstream has to check."""
         for directory in (

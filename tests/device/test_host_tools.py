@@ -2,9 +2,11 @@
 
 A device can be perfect and a capability still unusable, because part of it
 runs on the host. Reading an iOS privacy decision back is one program away,
-and without it a permission scenario is skipped rather than guessed at. So
-the tool is checked where a person can act on the answer, and offered where
-the rest of the install is offered.
+and without it a permission scenario is skipped rather than guessed at.
+
+So the tool is checked where a person can act on the answer, and offered
+where the rest of the install is offered. A check that reports a tool Yewo
+can install must name the command that installs it.
 """
 
 import unittest

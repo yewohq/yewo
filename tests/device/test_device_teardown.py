@@ -5,9 +5,14 @@ that look nothing like storage. Teardown removes what the run put there, which
 means it has to know what it put there.
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from fakes import PACKAGE, SERIAL, LoggingDriver, log_entries
+
+from yewo.agent.artifacts.layout import RunLayout
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.files import DeviceFiles
 from yewo.agent.device.session import DeviceSession
@@ -26,7 +31,7 @@ class StaleRecordingSweepTests(unittest.TestCase):
             patch.object(DeviceFiles, "list_directory", side_effect=lambda _s, d: listings[d]),
             patch.object(DeviceFiles, "remove_file") as remove,
         ):
-            count = DeviceFiles.remove_stale_recordings("emulator-5554")
+            count = DeviceFiles.remove_stale_recordings(SERIAL)
         return count, [call.args[1] for call in remove.call_args_list]
 
     def test_an_appium_screenrecord_file_is_removed(self):
@@ -68,11 +73,11 @@ class OwnershipDetectionTests(unittest.TestCase):
     guessing wrong is uninstalling somebody else's app.
     """
 
-    def _session(self, serial, packages, package="org.fossify.calendar"):
+    def _session(self, serial, packages, package=PACKAGE):
         session = DeviceSession.__new__(DeviceSession)
         session.platform = Platform.ANDROID
         session.device_name = "Pixel_8"
-        session.app_path = "calendar.apk"
+        session.app_path = "app.apk"
         session._installed_by_run = None
         with (
             patch.object(AdbControl, "resolve_emulator_serial", return_value=serial),
@@ -83,13 +88,13 @@ class OwnershipDetectionTests(unittest.TestCase):
         return session
 
     def test_an_app_absent_before_the_run_belongs_to_the_run(self):
-        session = self._session("emulator-5554", {"com.android.settings"})
+        session = self._session(SERIAL, {"com.android.settings"})
 
         self.assertTrue(session._installed_by_run)
 
     def test_an_app_already_there_does_not(self):
         session = self._session(
-            "emulator-5554", {"com.android.settings", "org.fossify.calendar"}
+            SERIAL, {"com.android.settings", PACKAGE}
         )
 
         self.assertFalse(session._installed_by_run)
@@ -102,7 +107,7 @@ class OwnershipDetectionTests(unittest.TestCase):
 
     def test_an_adb_call_that_fails_answers_nothing(self):
         """installed_packages returns an empty set when it cannot ask."""
-        session = self._session("emulator-5554", set())
+        session = self._session(SERIAL, set())
 
         self.assertFalse(session._installed_by_run)
 
@@ -126,6 +131,22 @@ class OwnershipDetectionTests(unittest.TestCase):
 class UninstallPolicyTests(unittest.TestCase):
     """Teardown removes the app this run installed, and nothing else."""
 
+    def _control(self, package=PACKAGE, driver=None):
+        """A real DeviceControl holds a driver and quits through it, so a stub
+        of one does too. Quitting is what makes the log unreadable."""
+
+        class Control:
+            serial = SERIAL
+            package_id = package
+
+            def __init__(self):
+                self.driver = driver if driver is not None else LoggingDriver()
+
+            def quit(self):
+                self.driver.quit()
+
+        return Control()
+
     def _session(self, **overrides):
         session = DeviceSession.__new__(DeviceSession)
         session.platform = Platform.ANDROID
@@ -133,9 +154,11 @@ class UninstallPolicyTests(unittest.TestCase):
         session.keep_app = False
         session.reuse_app = False
         session._installed_by_run = True
-        session.device_control = type(
-            "Control", (), {"serial": "emulator-5554", "package_id": "org.fossify.calendar"}
-        )()
+        session.device_control = self._control()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        session.layout = RunLayout.under(Path(directory.name), "s1")
+        session.layout.create()
         for name, value in overrides.items():
             setattr(session, name, value)
         return session
@@ -158,7 +181,7 @@ class UninstallPolicyTests(unittest.TestCase):
     def test_an_app_this_run_installed_is_removed(self):
         uninstall = self._clean(self._session())
 
-        uninstall.assert_called_once_with("emulator-5554", "org.fossify.calendar")
+        uninstall.assert_called_once_with(SERIAL, PACKAGE)
 
     def test_keep_app_leaves_it_installed(self):
         uninstall = self._clean(self._session(keep_app=True))
@@ -190,8 +213,7 @@ class UninstallPolicyTests(unittest.TestCase):
 
     def test_nothing_is_uninstalled_without_a_package(self):
         """A session that died before resolving one has no package to name."""
-        control = type("Control", (), {"serial": "emulator-5554", "package_id": None})()
-        uninstall = self._clean(self._session(device_control=control))
+        uninstall = self._clean(self._session(device_control=self._control(package=None)))
 
         uninstall.assert_not_called()
 
@@ -200,6 +222,50 @@ class UninstallPolicyTests(unittest.TestCase):
         uninstall = self._clean(self._session(platform=Platform.IOS))
 
         uninstall.assert_not_called()
+
+    def test_the_device_log_is_taken_before_the_driver_is_quit(self):
+        """A quit driver reads nothing, and the run worth a device log is the
+        one that died on the device."""
+        driver = LoggingDriver(offers=("logcat",), logs={"logcat": log_entries("oom")})
+        session = self._session(_owns_appium=False, device_control=self._control(driver=driver))
+        with (
+            patch.object(DeviceSession, "save_recording"),
+            patch.object(AdbControl, "uninstall_app"),
+        ):
+            session.close(final=True)
+
+        self.assertTrue(session.layout.device_log("logcat").exists())
+        self.assertTrue(driver.quit_called)
+
+    def test_a_session_with_no_driver_still_closes(self):
+        """A session that died before it opened one has nothing to read."""
+        session = self._session(_owns_appium=False, device_control=self._control(driver=None))
+        session.device_control.driver = None
+        with (
+            patch.object(DeviceSession, "save_recording"),
+            patch.object(AdbControl, "uninstall_app") as uninstall,
+        ):
+            session.close(final=True)
+
+        uninstall.assert_called_once()
+
+    def test_a_failing_log_capture_does_not_cost_the_teardown(self):
+        """The app, the driver and the Appium server all come down after the
+        log is taken. Evidence must not be what strands them."""
+        session = self._session(_owns_appium=False)
+        with (
+            patch.object(DeviceSession, "save_recording"),
+            patch.object(
+                DeviceSession,
+                "_save_device_logs",
+                side_effect=RuntimeError("the capture exploded"),
+            ),
+            patch.object(AdbControl, "uninstall_app") as uninstall,
+        ):
+            session.close(final=True)
+
+        uninstall.assert_called_once()
+        self.assertTrue(session.device_control.driver.quit_called)
 
     def test_the_video_is_saved_before_the_app_goes(self):
         """Saving is what takes the video off the device.

@@ -345,7 +345,7 @@ def check_applesimutils() -> CheckResult:
             "applesimutils",
             Status.WARN,
             "not installed, so iOS permission scenarios are skipped",
-            "brew tap wix/brew && brew install applesimutils",
+            "yewo setup   (or: brew tap wix/brew && brew install applesimutils)",
         )
     result = _capture(["applesimutils", "--version"])
     version = (result.stdout or "").strip() if result else ""

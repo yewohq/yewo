@@ -16,6 +16,7 @@ from appium.webdriver.appium_service import AppiumService
 from yewo.agent.artifacts.layout import RunLayout, attach_run_log, detach_run_log
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.control import DeviceControl
+from yewo.agent.device import device_logs
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.recording import DeviceRecording
 from yewo.utils.platform_checks import run_android_preflight, run_ios_preflight
@@ -230,6 +231,13 @@ class DeviceSession(DeviceRecording):
         except Exception as e:
             logger.warning("Failed to uninstall %s: %s", package, e)
 
+    def _save_device_logs(self) -> None:
+        """Before the quit, because a quit driver reads nothing."""
+        if self.device_control is None or self.device_control.driver is None:
+            logger.warning("No driver to read the device log from.")
+            return
+        device_logs.capture(self.device_control.driver, self.platform, self.layout)
+
     def close(self, final: bool = True):
         """Ends the session, and by default removes what the run installed.
 
@@ -241,6 +249,10 @@ class DeviceSession(DeviceRecording):
             self.save_recording()
         except Exception as e:
             logger.warning("Failed to save session recording: %s", e)
+        try:
+            self._save_device_logs()
+        except Exception as e:  # noqa: BLE001 - evidence must not cost the teardown
+            logger.warning("Failed to save the device log: %s", e)
         self._clean_device(final=final)
         if self.device_control:
             try:

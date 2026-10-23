@@ -1,6 +1,6 @@
 """Deciding whether a target can give a scenario what it declared.
 
-CapabilitySupport is not a property of the platform alone. The emulator console, the API
+Support is not a property of the platform alone. The emulator console, the API
 level and the installed tools all decide it, and a scenario that needs one this
 target lacks is skipped before it spends a step finding out.
 """

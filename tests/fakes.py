@@ -429,3 +429,50 @@ def suite_run(
 
     written = json.loads((root / "run.json").read_text())
     return report, written
+
+
+LOG_EPOCH_MS = 1761000000000
+"""A fixed receipt time, in the milliseconds since the epoch Selenium uses."""
+
+
+def log_entries(*messages):
+    """Log entries in the shape Selenium's `get_log` returns them."""
+    return [
+        {"timestamp": LOG_EPOCH_MS + n * 1000, "level": "INFO", "message": text}
+        for n, text in enumerate(messages)
+    ]
+
+
+class LoggingDriver:
+    """A driver answering `get_log`, as each kind of target answers it.
+
+    `offers` is what `log_types` lists, and `logs` is what each one returns.
+    A log listed with nothing behind it is the case the capture has to
+    explain rather than write an empty file for. `failing` names logs this
+    driver lists and then refuses, which is a different fault again.
+    """
+
+    def __init__(self, offers=(), logs=None, failing=(), list_fails=False):
+        self._offers = tuple(offers)
+        self._logs = logs or {}
+        self._failing = set(failing)
+        self._list_fails = list_fails
+        self.asked = []
+        self.quit_called = False
+
+    @property
+    def log_types(self):
+        if self._list_fails:
+            raise RuntimeError("the session is gone")
+        return list(self._offers)
+
+    def get_log(self, log_type):
+        self.asked.append(log_type)
+        if self.quit_called:
+            raise RuntimeError("a quit driver reads nothing")
+        if log_type in self._failing:
+            raise RuntimeError(f"no such log '{log_type}'")
+        return self._logs.get(log_type, [])
+
+    def quit(self):
+        self.quit_called = True
