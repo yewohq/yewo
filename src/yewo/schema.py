@@ -16,6 +16,7 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from yewo.testing.taxonomy import Category, Priority, ScenarioType
+from yewo.testing.lifecycle import ScenarioPreconditions
 
 PLATFORMS = ("android", "ios")
 GROUNDINGS = ("marks", "describe")
@@ -193,6 +194,10 @@ class JourneySpec(StrictModel):
     env: dict[str, EnvValue] = Field(
         default_factory=dict, description="Values for this test, over the workflow's."
     )
+    preconditions: Optional[ScenarioPreconditions] = Field(
+        default=None,
+        description="Optional app and device state applied before visible UI execution.",
+    )
 
 
 class WorkflowSpec(Settings):
@@ -217,6 +222,7 @@ class WorkflowSpec(Settings):
         ),
     )
     policy: Optional[PolicySpec] = None
+    preconditions: Optional[ScenarioPreconditions] = None
 
 
 class YewoFile(Settings):
@@ -245,6 +251,7 @@ class YewoFile(Settings):
         ),
     )
     policy: Optional[PolicySpec] = None
+    preconditions: Optional[ScenarioPreconditions] = None
 
 
 def _format_error_location(location: tuple[Any, ...]) -> str:

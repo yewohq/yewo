@@ -66,7 +66,10 @@ class SetupExecutionTests(unittest.TestCase):
 
         # The run is cut short once setup is done. Only the setup matters.
         with (
-            patch("yewo.agent.run.agent.clear_app_data", lambda _d: calls.append("clear")),
+            patch(
+                "yewo.agent.run.agent.clear_app_data",
+                lambda _d: calls.append("clear") or True,
+            ),
             patch("yewo.agent.run.agent.restart_app", lambda _d: calls.append("restart")),
             patch("yewo.agent.run.agent.replay_known_path", side_effect=RuntimeError("stop")),
             contextlib.suppress(Exception),

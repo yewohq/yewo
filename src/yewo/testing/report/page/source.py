@@ -20,6 +20,7 @@ from yewo.testing.models import (
     RunEnvironment,
     VerdictInputs,
 )
+from yewo.testing.lifecycle import LifecycleOperation
 
 
 class ScenarioSource(Protocol):
@@ -61,6 +62,9 @@ class ScenarioSource(Protocol):
 
     @property
     def detected_issues(self) -> Sequence[QAIssue]: ...
+
+    @property
+    def lifecycle_operations(self) -> Sequence[LifecycleOperation]: ...
 
     @property
     def verdict_inputs(self) -> Optional[VerdictInputs]:

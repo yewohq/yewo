@@ -244,7 +244,7 @@ VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, CapabilitySuppo
     (CapabilityKind.APP_STATE, "clear_data"): {
         Platform.IOS: CapabilitySupport(
             emulator_only=True,
-            detail="'mobile: clearApp' reads the simulator's data container",
+            detail="a fresh app installation provides a clean simulator container",
         ),
     },
 }

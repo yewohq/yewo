@@ -34,7 +34,7 @@ from yewo.agent.perception import keyboard
 from yewo.agent.artifacts.redaction import RedactedImages
 from yewo.agent.perception.screen import ScreenPerception
 from yewo.agent.memory.trail import SessionTrail
-from yewo.errors import Cause, cause_of
+from yewo.errors import Cause, DeviceUnavailable, cause_of
 from yewo.llm.failures import reportable
 from yewo.llm.llm_client import LLMClient
 
@@ -166,8 +166,10 @@ class DeviceAgent:
         try:
             # Establish the state the caller asked for, rather than describing
             # a state to the planner and hoping the device agrees.
-            if setup is SetupMode.CLEAR_DATA:
-                clear_app_data(device_control)
+            if setup is SetupMode.CLEAR_DATA and not clear_app_data(device_control):
+                raise DeviceUnavailable(
+                    "The requested clean app state was not applied."
+                )
             if setup is not SetupMode.PRESERVE:
                 restart_app(device_control)
             replay_known_path(

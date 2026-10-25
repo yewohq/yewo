@@ -19,6 +19,7 @@ from typing import Optional, Tuple
 
 import imagehash
 from PIL import Image, ImageStat
+from selenium.common.exceptions import WebDriverException
 
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.platform import Platform
@@ -104,18 +105,14 @@ def _clear_task_restart(device_control, package_id: str) -> bool:
         device_control.device_name
     )
     try:
-        activity = adb_runner.resolve_launch_activity(
-            device_control.app_path, package_id, serial
-        )
+        activity = adb_runner.resolve_launch_activity(device_control.app_path, package_id, serial)
     except DeviceUnavailable as apk_err:
         logger.warning("Failed to get APK activity: %s", apk_err)
         return False
     cmd = ["adb"]
     if serial:
         cmd.extend(["-s", serial])
-    cmd.extend(
-        ["shell", "am", "start", "-n", f"{package_id}/{activity}", "--activity-clear-task"]
-    )
+    cmd.extend(["shell", "am", "start", "-n", f"{package_id}/{activity}", "--activity-clear-task"])
     try:
         adb_runner.run_adb_command(cmd)
         return True
@@ -150,8 +147,9 @@ class SetupMode(str, Enum):
         return {
             SetupMode.CLEAR_DATA: (
                 "The app's data was cleared before this scenario, so it is in the "
-                "state a first install would be in. Any session, permission, or "
-                "saved app data from earlier scenarios is gone."
+                "local state a first install would be in. Any session or saved app "
+                "data from earlier scenarios is gone. Do not assume an OS-managed "
+                "permission decision unless the scenario declares it."
             ),
             SetupMode.RELAUNCH: (
                 "The app was restarted before this scenario. Its stored data is "
@@ -159,28 +157,33 @@ class SetupMode(str, Enum):
                 "may still be in place."
             ),
             SetupMode.PRESERVE: (
-                "The app was left exactly as the previous scenario left it. It was "
-                "not restarted."
+                "The app was left exactly as the previous scenario left it. It was not restarted."
             ),
         }[self]
 
 
 def clear_app_data(device_control) -> bool:
-    """Wipes the app's stored data so it opens as a first install would.
-
-    Android only. Returns whether the data went. A caller that asked for a
-    cleared app and did not get one is testing a different scenario from the
-    one it described. So it needs to know.
-    """
-    if device_control.platform != Platform.ANDROID:
-        logger.warning(
-            "Clearing app data is an Android operation. Leaving state as it is."
-        )
-        return False
+    """Wipe the app container through the platform's supported control."""
     try:
-        AdbControl.clear_app_data(device_control.serial, device_control.package_id)
+        app_id = getattr(device_control, "app_id", None) or getattr(
+            device_control, "package_id", None
+        )
+        if not app_id:
+            raise DeviceUnavailable("The app id is not known.")
+        if device_control.platform == Platform.IOS:
+            app_path = getattr(device_control, "app_path", None)
+            if not app_path:
+                raise DeviceUnavailable("The iOS app path is not known.")
+            # XCUITest documents clearApp as best effort. Apple supports a
+            # fresh installation as the reliable clean-container boundary.
+            device_control.driver.remove_app(app_id)
+            device_control.driver.install_app(app_path)
+            if not device_control.driver.is_app_installed(app_id):
+                raise DeviceUnavailable("The clean iOS app was not reinstalled.")
+        else:
+            AdbControl.clear_app_data(device_control.serial, app_id)
         return True
-    except (DeviceUnavailable, OSError) as exc:
+    except (DeviceUnavailable, OSError, WebDriverException) as exc:
         logger.warning("Could not clear app data: %s", exc)
         return False
 
@@ -188,20 +191,22 @@ def clear_app_data(device_control) -> bool:
 def restart_app(device_control) -> None:
     """Restarts the app under test and waits for it to draw."""
     try:
-        if not hasattr(device_control, "package_id"):
-            return
-        package_id = device_control.package_id
-        logger.info("Restarting application: %s", package_id)
+        app_id = getattr(device_control, "app_id", None) or getattr(
+            device_control, "package_id", None
+        )
+        if not app_id:
+            raise DeviceUnavailable("The app id is not known.")
+        logger.info("Restarting application: %s", app_id)
 
         if device_control.platform == Platform.ANDROID and _clear_task_restart(
-            device_control, package_id
+            device_control, app_id
         ):
             await_first_paint(device_control)
             return
 
-        device_control.driver.terminate_app(package_id)
+        device_control.driver.terminate_app(app_id)
         time.sleep(1.5)
-        device_control.driver.activate_app(package_id)
+        device_control.driver.activate_app(app_id)
         await_first_paint(device_control)
     except Exception as exc:
         raise DeviceUnavailable(f"Failed to restart app: {exc}") from exc

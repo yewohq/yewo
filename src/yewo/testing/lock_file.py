@@ -43,6 +43,7 @@ from yewo.testing.models import (
     UserJourney,
 )
 from yewo.testing.steps import Step
+from yewo.testing.lifecycle import SetupOrigin
 from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
 from yewo.utils.secrets import SecretScrubber
 
@@ -65,7 +66,7 @@ def _extract_journey_contract(journey: UserJourney) -> dict:
     """
     scrubber = SecretScrubber()
     scrubber.learn_secrets(journey.secrets)
-    return {
+    contract = {
         "journey": journey.id,
         "name": scrubber.scrub(journey.name),
         "description": scrubber.scrub(journey.description),
@@ -77,6 +78,15 @@ def _extract_journey_contract(journey: UserJourney) -> dict:
             for name, actor in sorted(journey.actors.items())
         },
     }
+    if journey.preconditions.app_state is not None or journey.preconditions.capabilities:
+        contract["preconditions"] = scrubber.scrub(
+            json.dumps(
+                journey.preconditions.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    return contract
 
 
 def _digest(payload: dict) -> str:
@@ -155,10 +165,13 @@ class LockEntry(BaseModel):
             scenario_name=self.scenario_name,
             steps=list(self.steps),
             expected_outcomes=list(self.expected_outcomes),
-            setup=self.setup,
         )
         return GeneratedTestCase.of(
-            self.cell_of(), draft, scenario_uuid=self.scenario_uuid
+            self.cell_of(),
+            draft,
+            scenario_uuid=self.scenario_uuid,
+            setup=self.setup,
+            setup_origin=SetupOrigin.LOCKED,
         )
 
 

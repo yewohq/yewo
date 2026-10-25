@@ -41,15 +41,15 @@ from yewo.testing.models import (
 )
 from yewo.policy import policy_checks_succeeded
 from yewo.utils.secrets import SecretScrubber
+from yewo.testing.lifecycle import LifecycleOperation
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = 2
+SCHEMA = 3
 """The version of this file's shape.
 
-2 adds `verdict_inputs` to a scenario. A record written under 1 holds the
-verdict and the auditor's answers alone. Nothing can reach its verdict again
-from one.
+3 adds lifecycle operations to each scenario. Schema 2 added `verdict_inputs`.
+A record written under 1 holds too little to reach its verdict again.
 """
 
 ABORTED = ReportStatus.ABORTED
@@ -115,6 +115,7 @@ class ScenarioEntry(BaseModel):
     )
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
+    lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
     verdict_inputs: Optional[VerdictInputs] = Field(
         default=None,
         description=(
@@ -289,6 +290,10 @@ class RunManifest:
             entry.steps = list(report.steps)
             entry.rule_verifications = list(report.rule_verifications)
             entry.detected_issues = list(report.detected_issues)
+            entry.lifecycle_operations = [
+                self._masked_lifecycle_operation(operation)
+                for operation in report.lifecycle_operations
+            ]
             entry.verdict_inputs = self._masked(report.verdict_inputs)
             entry.finished_at = _now()
         self.write()
@@ -312,6 +317,25 @@ class RunManifest:
             finding.quoted = self._scrub(finding.quoted) or ""
             finding.field = self._scrub(finding.field) or ""
         return kept
+
+    def _masked_lifecycle_operation(
+        self, operation: LifecycleOperation
+    ) -> LifecycleOperation:
+        """A lifecycle record with every device-supplied string scrubbed."""
+        return operation.model_copy(
+            update={
+                "requested": self._scrub(operation.requested),
+                "source": self._scrub(operation.source),
+                "observed": (
+                    self._scrub(operation.observed) if operation.observed else None
+                ),
+                "failure_reason": (
+                    self._scrub(operation.failure_reason)
+                    if operation.failure_reason
+                    else None
+                ),
+            }
+        )
 
     def record_unattached_calls(self, calls: List[CallRow]) -> None:
         """Takes the calls nothing in the run owns, such as generation."""

@@ -27,6 +27,9 @@ from yewo.testing.models import (
     VerdictInputs,
 )
 from yewo.agent.device import restoration
+from yewo.agent.device.capability_controller import CapabilityController
+from yewo.agent.device.launch import SetupMode
+from yewo.agent.device.receipts import Receipt
 from yewo.testing.judge.capabilities import (
     target_of,
     unavailable_metric_reason,
@@ -38,6 +41,15 @@ from yewo.testing.judge.qa_auditor import QAAuditor, ScreenAssessment, ScreenAud
 from yewo.testing.qa_planner import QAPlanner, QAStepResponse
 from yewo.errors import Cause, cause_of
 from yewo.testing import steps, taxonomy
+from yewo.testing.lifecycle import (
+    LifecyclePhase,
+    LifecycleStatus,
+    apply_app_precondition,
+    apply_capability_precondition,
+    failed_operation,
+    restore_app_precondition,
+    restoration_operations,
+)
 from yewo.testing.judge import transitions
 from yewo.testing.judge.screen_audits import LiveScreenAudits
 
@@ -247,31 +259,81 @@ class QAAgent:
             step_budget,
         )
 
+        lifecycle_operations = []
+        initial_receipts: list[Receipt] = []
+        restoration_events: list[restoration.RestorationEvent] = []
+        precondition_failure: Optional[Exception] = None
         try:
-            # Scenarios share one device, and SetupMode restores the app and
-            # not the system around it. Without this, one scenario that goes
-            # offline decides what every later scenario was testing.
-            # The typed capabilities say which states could move, so iOS
-            # reads only those rather than all of them. Read off the steps,
-            # because a declared kind with no step applies nothing.
+            # Preserve every typed state this scenario can change.
             with restoration.preserved(
-                device_control, capabilities=steps.capabilities_in(test_case.steps)
+                device_control,
+                capabilities=[
+                    *test_case.initial_capabilities,
+                    *steps.capabilities_in(test_case.steps),
+                ],
+                events=restoration_events,
             ):
-                run_result: DeviceRunResult = self._device_agent.run(
-                    goal=test_case.steps_instructions,
-                    device_control=device_control,
-                    perception=perception,
-                    session_dir=session_dir,
-                    session_trail=session_trail,
-                    observation_hook=screen_audits.observe,
-                    before_action_hook=screen_audits.before_action,
-                    step_hook=step_hook,
-                    planner_override=qa_planner,
-                    max_steps=step_budget,
-                    setup=test_case.setup,
-                )
+                try:
+                    try:
+                        lifecycle_operations.append(
+                            apply_app_precondition(
+                                device_control, test_case.setup, test_case.setup_origin
+                            )
+                        )
+                        controller = CapabilityController(device_control)
+                        for capability in test_case.initial_capabilities:
+                            operation, receipt = apply_capability_precondition(
+                                controller, capability
+                            )
+                            lifecycle_operations.append(operation)
+                            initial_receipts.append(receipt)
+                    except Exception as exc:  # noqa: BLE001 - device boundaries vary
+                        precondition_failure = exc
+                        lifecycle_operations.append(
+                            failed_operation(
+                                "scenario_preconditions.setup",
+                                LifecyclePhase.SETUP,
+                                "device_state",
+                                "declared scenario preconditions",
+                                "device control",
+                                reportable(exc),
+                            )
+                        )
+                    if precondition_failure is None:
+                        run_result: DeviceRunResult = self._device_agent.run(
+                            goal=test_case.steps_instructions,
+                            device_control=device_control,
+                            perception=perception,
+                            session_dir=session_dir,
+                            session_trail=session_trail,
+                            observation_hook=screen_audits.observe,
+                            before_action_hook=screen_audits.before_action,
+                            step_hook=step_hook,
+                            planner_override=qa_planner,
+                            max_steps=step_budget,
+                            setup=SetupMode.PRESERVE,
+                        )
+                finally:
+                    app_restoration = restore_app_precondition(device_control, test_case.setup)
+                    if app_restoration is not None:
+                        lifecycle_operations.append(app_restoration)
         finally:
             self._device_agent.replay_ledger = in_run_ledger
+
+        lifecycle_operations.extend(restoration_operations(restoration_events))
+        if precondition_failure is not None:
+            return ScenarioReport(
+                scenario_uuid=test_case.scenario_uuid,
+                test_id=test_case.test_id,
+                scenario_name=test_case.scenario_name,
+                cell=test_case.cell,
+                status=ReportStatus.ERROR,
+                cause=Cause.DEVICE.value,
+                duration=round(time.time() - start_time, 2),
+                failure_reason=reportable(precondition_failure),
+                lifecycle_operations=lifecycle_operations,
+            )
+        run_result.capability_receipts[0:0] = initial_receipts
 
         # Nothing ever leaves the screen a scenario ended on, so read it here.
         screen_audits.finalize()
@@ -286,6 +348,19 @@ class QAAgent:
             duration=time.time() - start_time,
             security_rules=security_rules,
         )
+        report.lifecycle_operations = lifecycle_operations
+        failed_restorations = [
+            operation
+            for operation in lifecycle_operations
+            if operation.phase is LifecyclePhase.RESTORATION
+            and operation.status is LifecycleStatus.FAILED
+        ]
+        if failed_restorations:
+            report.status = ReportStatus.ERROR
+            report.cause = Cause.DEVICE.value
+            report.failure_reason = "Device state restoration failed: " + "; ".join(
+                operation.failure_reason or operation.requested for operation in failed_restorations
+            )
         self._save_trace(test_case, replay, report)
         return report
 

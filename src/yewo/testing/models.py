@@ -15,12 +15,13 @@ from yewo.testing.taxonomy import (
 from typing import Dict, FrozenSet, List, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
-from yewo.agent.actuation.actions import CapabilityKind
+from yewo.agent.actuation.actions import Capability, CapabilityKind
 from yewo.metrics import Measurement, Metric  # noqa: F401
 from yewo.policy import PolicyCheckReport, PolicyCheckStatus  # noqa: F401
 from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.agent.device.launch import SetupMode  # noqa: F401
 from yewo.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
+from yewo.testing.lifecycle import ScenarioPreconditions, SetupOrigin
 
 # Re-exported so a caller reads one module. These live in evidence.py, which
 # holds what a run produces, and the rules it answers.
@@ -103,6 +104,7 @@ class UserJourney(BaseModel):
         default_factory=lambda: list(DEFAULT_COVERAGE),
         description="The cells a run covers for this journey, in declared order.",
     )
+    preconditions: ScenarioPreconditions = Field(default_factory=ScenarioPreconditions)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -134,16 +136,6 @@ class ScenarioDraft(BaseModel):
             "for every value the file says this app refuses."
         ),
     )
-    setup: SetupMode = Field(
-        default=SetupMode.CLEAR_DATA,
-        description=(
-            "The state this scenario needs before its first step. "
-            "'clear_data' wipes the app so it starts as a first install would. "
-            "'relaunch' restarts it and keeps any session. "
-            "'preserve' leaves the app where the previous scenario left it."
-        ),
-    )
-
     @model_validator(mode="after")
     def _validate_entered_values_declared(self, info: ValidationInfo) -> "ScenarioDraft":
         """Holds an entered value to a name the file declared.
@@ -226,6 +218,9 @@ class GeneratedTestCase(ScenarioDraft):
     category: Category
     scenario_type: ScenarioType
     priority: Priority
+    setup: SetupMode = SetupMode.CLEAR_DATA
+    setup_origin: SetupOrigin = SetupOrigin.DEFAULT
+    initial_capabilities: List[Capability] = Field(default_factory=list)
     steps_instructions: List[str] = Field(
         default_factory=list,
         description=(
@@ -259,7 +254,9 @@ class GeneratedTestCase(ScenarioDraft):
         if not self.steps_instructions:
             self.steps_instructions = steps.rendered(self.steps)
         if not self.required_capabilities:
-            self.required_capabilities = steps.capability_kinds_in(self.steps)
+            kinds = [capability.kind for capability in self.initial_capabilities]
+            kinds.extend(steps.capability_kinds_in(self.steps))
+            self.required_capabilities = list(dict.fromkeys(kinds))
         measured_metrics = [
             outcome.metric
             for outcome in self.expected_outcomes
@@ -286,6 +283,9 @@ class GeneratedTestCase(ScenarioDraft):
         cell: CoverageCell,
         draft: ScenarioDraft,
         scenario_uuid: Optional[str] = None,
+        setup: SetupMode = SetupMode.CLEAR_DATA,
+        setup_origin: SetupOrigin = SetupOrigin.DEFAULT,
+        initial_capabilities: Optional[List[Capability]] = None,
     ) -> "GeneratedTestCase":
         """Stamps a draft with the identity of the cell that asked for it.
 
@@ -299,5 +299,8 @@ class GeneratedTestCase(ScenarioDraft):
             category=cell.category,
             scenario_type=cell.scenario_type,
             priority=cell.priority,
+            setup=setup,
+            setup_origin=setup_origin,
+            initial_capabilities=list(initial_capabilities or []),
             **draft.model_dump(),
         )

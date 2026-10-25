@@ -2,6 +2,117 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/Becca-Saka/yewo/master/yewo-schema.json",
   "$defs": {
+    "AccessibilityCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "accessibility",
+          "default": "accessibility",
+          "title": "Kind",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "title": "AccessibilityCapability",
+      "type": "object"
+    },
+    "AppStateCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "app_state",
+          "default": "app_state",
+          "title": "Kind",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "force_stop",
+            "clear_data"
+          ],
+          "title": "Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "AppStateCapability",
+      "type": "object"
+    },
+    "BatteryCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "battery",
+          "default": "battery",
+          "title": "Kind",
+          "type": "string"
+        },
+        "level": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Level",
+          "type": "integer"
+        },
+        "charging": {
+          "default": true,
+          "title": "Charging",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "level"
+      ],
+      "title": "BatteryCapability",
+      "type": "object"
+    },
+    "BiometricCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "biometric",
+          "default": "biometric",
+          "title": "Kind",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "match",
+            "unmatch",
+            "enroll"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "type": {
+          "default": "faceId",
+          "enum": [
+            "faceId",
+            "touchId"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "finger_id": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Finger Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "BiometricCapability",
+      "type": "object"
+    },
     "Category": {
       "description": "What a scenario looks for.",
       "enum": [
@@ -16,6 +127,26 @@
       ],
       "title": "Category",
       "type": "string"
+    },
+    "ClipboardCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "clipboard",
+          "default": "clipboard",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ClipboardCapability",
+      "type": "object"
     },
     "CoverageSpec": {
       "additionalProperties": false,
@@ -132,6 +263,27 @@
       "title": "DeclaredValue",
       "type": "object"
     },
+    "DeeplinkCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "deeplink",
+          "default": "deeplink",
+          "title": "Kind",
+          "type": "string"
+        },
+        "url": {
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "DeeplinkCapability",
+      "type": "object"
+    },
     "DeviceSpec": {
       "additionalProperties": false,
       "description": "The target a run drives.",
@@ -181,6 +333,36 @@
         }
       },
       "title": "DeviceSpec",
+      "type": "object"
+    },
+    "InterruptCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "interrupt",
+          "default": "interrupt",
+          "title": "Kind",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "low_memory",
+            "incoming_call"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "phone": {
+          "default": "555-5555",
+          "description": "Used by 'incoming_call' only.",
+          "title": "Phone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "InterruptCapability",
       "type": "object"
     },
     "JourneySpec": {
@@ -268,9 +450,156 @@
           "description": "Values for this test, over the workflow's.",
           "title": "Env",
           "type": "object"
+        },
+        "preconditions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenarioPreconditions"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional app and device state applied before visible UI execution."
         }
       },
       "title": "JourneySpec",
+      "type": "object"
+    },
+    "LocaleCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "locale",
+          "default": "locale",
+          "title": "Kind",
+          "type": "string"
+        },
+        "language": {
+          "description": "An ISO code, e.g. 'fr'.",
+          "minLength": 1,
+          "title": "Language",
+          "type": "string"
+        },
+        "country": {
+          "default": "",
+          "description": "An ISO code, e.g. 'FR'. May be empty.",
+          "title": "Country",
+          "type": "string"
+        }
+      },
+      "required": [
+        "language"
+      ],
+      "title": "LocaleCapability",
+      "type": "object"
+    },
+    "LocationCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "location",
+          "default": "location",
+          "title": "Kind",
+          "type": "string"
+        },
+        "latitude": {
+          "title": "Latitude",
+          "type": "number"
+        },
+        "longitude": {
+          "title": "Longitude",
+          "type": "number"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ],
+      "title": "LocationCapability",
+      "type": "object"
+    },
+    "MediaInjectCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "media_inject",
+          "default": "media_inject",
+          "title": "Kind",
+          "type": "string"
+        },
+        "local_path": {
+          "minLength": 1,
+          "title": "Local Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "local_path"
+      ],
+      "title": "MediaInjectCapability",
+      "type": "object"
+    },
+    "NetworkCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "network",
+          "default": "network",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "offline",
+            "online",
+            "wifi_only",
+            "data_only",
+            "airplane"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "title": "NetworkCapability",
+      "type": "object"
+    },
+    "PermissionCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "permission",
+          "default": "permission",
+          "title": "Kind",
+          "type": "string"
+        },
+        "permission": {
+          "enum": [
+            "camera",
+            "location",
+            "microphone",
+            "notifications",
+            "photos",
+            "contacts",
+            "storage"
+          ],
+          "title": "Permission",
+          "type": "string"
+        },
+        "grant": {
+          "title": "Grant",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "permission",
+        "grant"
+      ],
+      "title": "PermissionCapability",
       "type": "object"
     },
     "PolicySpec": {
@@ -299,6 +628,91 @@
       "title": "Priority",
       "type": "string"
     },
+    "ScenarioPreconditions": {
+      "description": "Optional state declared for every scenario in one journey.",
+      "properties": {
+        "app_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SetupMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Initial app state. Independent scenarios default to clear_data."
+        },
+        "capabilities": {
+          "description": "Device states to apply and confirm before visible UI execution.",
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "accessibility": "#/$defs/AccessibilityCapability",
+                "app_state": "#/$defs/AppStateCapability",
+                "battery": "#/$defs/BatteryCapability",
+                "biometric": "#/$defs/BiometricCapability",
+                "clipboard": "#/$defs/ClipboardCapability",
+                "deeplink": "#/$defs/DeeplinkCapability",
+                "interrupt": "#/$defs/InterruptCapability",
+                "locale": "#/$defs/LocaleCapability",
+                "location": "#/$defs/LocationCapability",
+                "media_inject": "#/$defs/MediaInjectCapability",
+                "network": "#/$defs/NetworkCapability",
+                "permission": "#/$defs/PermissionCapability",
+                "timezone": "#/$defs/TimezoneCapability"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LocationCapability"
+              },
+              {
+                "$ref": "#/$defs/NetworkCapability"
+              },
+              {
+                "$ref": "#/$defs/BatteryCapability"
+              },
+              {
+                "$ref": "#/$defs/TimezoneCapability"
+              },
+              {
+                "$ref": "#/$defs/LocaleCapability"
+              },
+              {
+                "$ref": "#/$defs/PermissionCapability"
+              },
+              {
+                "$ref": "#/$defs/InterruptCapability"
+              },
+              {
+                "$ref": "#/$defs/BiometricCapability"
+              },
+              {
+                "$ref": "#/$defs/ClipboardCapability"
+              },
+              {
+                "$ref": "#/$defs/DeeplinkCapability"
+              },
+              {
+                "$ref": "#/$defs/AppStateCapability"
+              },
+              {
+                "$ref": "#/$defs/MediaInjectCapability"
+              },
+              {
+                "$ref": "#/$defs/AccessibilityCapability"
+              }
+            ]
+          },
+          "title": "Capabilities",
+          "type": "array"
+        }
+      },
+      "title": "ScenarioPreconditions",
+      "type": "object"
+    },
     "ScenarioType": {
       "description": "What shape a scenario takes.",
       "enum": [
@@ -314,6 +728,38 @@
       ],
       "title": "ScenarioType",
       "type": "string"
+    },
+    "SetupMode": {
+      "description": "The state a scenario needs before its first step.\n\nRequired state is part of what a test is. Stated in a prompt instead, it\nis an assumption, and a prompt enforces nothing.",
+      "enum": [
+        "clear_data",
+        "relaunch",
+        "preserve"
+      ],
+      "title": "SetupMode",
+      "type": "string"
+    },
+    "TimezoneCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "timezone",
+          "default": "timezone",
+          "title": "Kind",
+          "type": "string"
+        },
+        "timezone": {
+          "description": "An IANA name, e.g. 'America/New_York'.",
+          "minLength": 1,
+          "title": "Timezone",
+          "type": "string"
+        }
+      },
+      "required": [
+        "timezone"
+      ],
+      "title": "TimezoneCapability",
+      "type": "object"
     },
     "WorkflowSpec": {
       "additionalProperties": false,
@@ -696,6 +1142,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/PolicySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preconditions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenarioPreconditions"
             },
             {
               "type": "null"
@@ -1103,6 +1560,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/PolicySpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "preconditions": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScenarioPreconditions"
         },
         {
           "type": "null"

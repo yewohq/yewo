@@ -122,6 +122,24 @@ accessibility trees, screen readers, focus order and measured contrast need
 separate tooling. A scenario that asks for one is reported as unsupported
 rather than guessed at.
 
+Independent scenarios start with cleared app data by default. A journey may
+declare a different app state or a typed device precondition:
+
+```yaml
+preconditions:
+  app_state: relaunch
+  capabilities:
+    - kind: permission
+      permission: camera
+      grant: false
+journey: The user opens the camera while camera access is denied.
+```
+
+Yewo applies and confirms these conditions before model-driven UI work, then
+restores device state after the scenario. Preconditions never create backend
+data or replace an action in the visible user journey. Credentials, payment
+details, and other non-observable values still belong in `env`.
+
 ## What a verdict means
 
 | Verdict | Meaning |
@@ -235,4 +253,3 @@ What each one holds:
 | `eval_gate.py` | The judging still answers a corpus of labelled cases as it should |
 | `mutation_sweep.py` | Deliberate defects are still caught by something |
 | `type_gate.py` | Pyright, against a per-file baseline |
-

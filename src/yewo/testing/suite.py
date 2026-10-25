@@ -24,6 +24,7 @@ from yewo.testing.models import Actor, UserJourney
 from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.testing.taxonomy import DEFAULT_COVERAGE, CoverageCell, index_coverage_cells
 from yewo.schema import CoverageSpec, YewoFile, format_validation_errors
+from yewo.testing.lifecycle import ScenarioPreconditions
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,7 @@ def _journey(
     index: int,
     coverage: Any = None,
     actors: Any = None,
+    preconditions: Any = None,
     yaml_location: str = "the file",
 ) -> UserJourney:
     """One test with its workflow environment, coverage, and actors."""
@@ -211,6 +213,9 @@ def _journey(
         refused=refused,
         actors=declared_actors,
         coverage=_cells(coverage, yaml_location),
+        preconditions=ScenarioPreconditions.model_validate(
+            data.get("preconditions", preconditions) or {}
+        ),
     )
 
 
@@ -220,6 +225,7 @@ def _journeys_of(
     yaml_location: str,
     coverage: Any = None,
     actors: Any = None,
+    preconditions: Any = None,
 ) -> list[UserJourney]:
     listed = block.get("journeys")
     if listed is None and "journey" in block:
@@ -229,7 +235,15 @@ def _journeys_of(
     if not isinstance(listed, list):
         raise ConfigError(f"'journeys' in {yaml_location} must be a list.")
     return [
-        _journey(item, shared_env, index + 1, coverage, actors, yaml_location)
+        _journey(
+            item,
+            shared_env,
+            index + 1,
+            coverage,
+            actors,
+            preconditions,
+            yaml_location,
+        )
         for index, item in enumerate(listed)
     ]
 
@@ -295,7 +309,14 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
             Workflow(
                 "",
                 _anchor(top, base),
-                _journeys_of(raw, shared, str(path), top_coverage, top_actors),
+                _journeys_of(
+                    raw,
+                    shared,
+                    str(path),
+                    top_coverage,
+                    top_actors,
+                    raw.get("preconditions"),
+                ),
                 top_waivers,
             )
         ]
@@ -313,12 +334,15 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
         # than adding to it. Half a declared set would be worse than either.
         coverage = block.get("coverage", top_coverage)
         actors = {**(top_actors or {}), **(block.get("actors") or {})} or None
+        preconditions = block.get("preconditions", raw.get("preconditions"))
         waivers = {**top_waivers, **_policy_waivers(block)}
         workflows.append(
             Workflow(
                 str(name),
                 _anchor(settings, base),
-                _journeys_of(block, env, yaml_location, coverage, actors),
+                _journeys_of(
+                    block, env, yaml_location, coverage, actors, preconditions
+                ),
                 waivers,
             )
         )

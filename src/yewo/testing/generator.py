@@ -31,6 +31,7 @@ from yewo.llm.messages import SystemMessage, TextMessage
 from yewo.metrics import metrics_without_live_collectors
 from yewo.testing import steps
 from yewo.testing.journey_env import substitute
+from yewo.testing.lifecycle import resolve_setup
 from yewo.testing.models import (
     ExpectedOutcome,
     GeneratedTestCase,
@@ -244,6 +245,21 @@ def with_values_filled(
     )
 
 
+def with_journey_preconditions(
+    scenario: GeneratedTestCase, journey: UserJourney
+) -> GeneratedTestCase:
+    """Attach current declared capabilities to a locked scenario."""
+    initial_capabilities = list(journey.preconditions.capabilities)
+    kinds = [capability.kind for capability in initial_capabilities]
+    kinds.extend(steps.capability_kinds_in(scenario.steps))
+    return scenario.model_copy(
+        update={
+            "initial_capabilities": initial_capabilities,
+            "required_capabilities": list(dict.fromkeys(kinds)),
+        }
+    )
+
+
 def _with_derived_outcomes(
     draft: ScenarioDraft, refused: frozenset[str]
 ) -> ScenarioDraft:
@@ -339,8 +355,13 @@ class ScenarioGenerator:
                     )
                 )
                 continue
+            setup, setup_origin = resolve_setup(journey.preconditions)
             stamped = GeneratedTestCase.of(
-                cell, _with_derived_outcomes(draft, journey.refused)
+                cell,
+                _with_derived_outcomes(draft, journey.refused),
+                setup=setup,
+                setup_origin=setup_origin,
+                initial_capabilities=journey.preconditions.capabilities,
             )
             suite.locked.append(stamped)
             suite.scenarios.append(with_values_filled(stamped, journey.values))

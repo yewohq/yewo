@@ -83,6 +83,7 @@ class StampedIssueTests(unittest.TestCase):
             priority="P0",
             steps=walk("Tap Pay."),
             expected_outcomes=["the order is placed"],
+            setup="preserve",
         )
 
     def _run(self, replay):

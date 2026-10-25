@@ -137,6 +137,16 @@ class RestorationTests(unittest.TestCase):
 
         self.adb.set_timezone.assert_called_once_with(SERIAL, "Europe/London")
 
+    def test_a_failed_restore_is_returned_to_the_scenario_reporter(self):
+        self.adb.set_airplane_mode.side_effect = DeviceUnavailable("adb: offline")
+        events = []
+
+        with restoration.preserved(device(), events=events):
+            self._answer({"airplane_mode": "on"})
+
+        self.assertFalse(events[0].restored)
+        self.assertIn("adb: offline", events[0].reason)
+
     def test_a_failed_restore_does_not_hide_why_the_scenario_ended(self):
         self.adb.set_airplane_mode.side_effect = DeviceUnavailable("adb: offline")
 

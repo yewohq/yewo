@@ -26,6 +26,7 @@ from yewo.testing.models import (
 )
 from yewo.testing.report.page import RUN_FILES, document, page_of_record
 from yewo.testing.report.page.view import page_of
+from yewo.testing.report.manifest import SCHEMA
 
 GENERATED = "22 Oct 2026, 07:46 UTC"
 VERSION = "0.0.2"
@@ -173,7 +174,7 @@ class WhenTheRecordIsNotReadableTests(unittest.TestCase):
     def test_an_unreadable_step_fails_the_page(self):
         """A walk that silently lost a step reads as a shorter walk."""
         payload = {
-            "schema": 2,
+            "schema": SCHEMA,
             "subject": {"kind": "journey", "id": "j", "name": "J"},
             "status": "PASSED",
             "counts": {"PASSED": 1},
@@ -185,7 +186,7 @@ class WhenTheRecordIsNotReadableTests(unittest.TestCase):
 
     def test_an_unreadable_identity_fails_the_page(self):
         payload = {
-            "schema": 2,
+            "schema": SCHEMA,
             "subject": {"kind": "journey", "id": "j", "name": "J"},
             "status": "PASSED",
             "counts": {},
@@ -202,7 +203,7 @@ class WhatTheRecordIsAllowedToSayTests(unittest.TestCase):
 
     def _record(self, **extra) -> dict:
         base = {
-            "schema": 2,
+            "schema": SCHEMA,
             "subject": {"kind": "journey", "id": "j", "name": "J"},
             "status": "PASSED",
             "counts": {"PASSED": 1},

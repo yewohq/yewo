@@ -19,6 +19,7 @@ from yewo.agent.run.record import StepRecord
 from yewo.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
 from yewo.metrics import Measurement, Metric
 from yewo.policy import PolicyCheckReport, policy_checks_succeeded
+from yewo.testing.lifecycle import LifecycleOperation, LifecycleStatus
 
 
 # The model writes this one to point at what it reports. The detector's
@@ -472,6 +473,7 @@ class ScenarioReport(BaseModel):
         description="Secret-free local verifications that ran before dependent actions.",
     )
     measurements: List[Measurement] = Field(default_factory=list)
+    lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
     failure_reason: Optional[str] = None
     verdict_inputs: Optional[VerdictInputs] = Field(
         default=None,
@@ -529,9 +531,16 @@ class JourneyReport(BaseModel):
     environment: Optional[RunEnvironment] = None
 
     @model_validator(mode="after")
-    def _validate_policy_check_status(self) -> "JourneyReport":
+    def _validate_run_level_status(self) -> "JourneyReport":
         if self.status == ReportStatus.PASSED and not policy_checks_succeeded(
             self.policy_checks
         ):
             raise ValueError("A run with an unsuccessful policy evaluation cannot pass.")
+        failed_lifecycle = any(
+            operation.status is LifecycleStatus.FAILED
+            for scenario in self.scenarios
+            for operation in scenario.lifecycle_operations
+        )
+        if self.status == ReportStatus.PASSED and failed_lifecycle:
+            raise ValueError("A run with a failed lifecycle operation cannot pass.")
         return self

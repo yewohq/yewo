@@ -24,37 +24,9 @@ from .policy_checks import (
 )
 from .scenario_steps import StepView, anchor_of, failed_at, step_views
 from .source import RunSource, ScenarioSource
+from .lifecycle import lifecycle_rows
+from .statuses import TONES, VERBS
 from .summary_tiles import SummaryTile, seconds, tiles_of
-
-TONES: Dict[ReportStatus, str] = {
-    ReportStatus.PASSED: "pass",
-    ReportStatus.FAILED: "fail",
-    ReportStatus.UNVERIFIED: "warn",
-    ReportStatus.UNSUPPORTED: "warn",
-    ReportStatus.ERROR: "warn",
-    ReportStatus.ABORTED: "warn",
-    ReportStatus.SKIPPED: "muted",
-    ReportStatus.PENDING: "muted",
-    ReportStatus.RUNNING: "muted",
-}
-"""How each verdict is coloured.
-
-Red is kept for what the app did. A scenario that ended on the provider, the
-device or missing evidence is amber. Nothing was learned about the app. A
-reader of a red build must not go looking in it.
-"""
-
-VERBS: Dict[ReportStatus, str] = {
-    ReportStatus.FAILED: "failed",
-    ReportStatus.UNVERIFIED: "reached no verdict",
-    ReportStatus.UNSUPPORTED: "could not be run here",
-    ReportStatus.ERROR: "could not run",
-    ReportStatus.ABORTED: "was interrupted",
-    ReportStatus.SKIPPED: "was skipped",
-    ReportStatus.PENDING: "has not started",
-    ReportStatus.RUNNING: "is still running",
-}
-"""What the headline says a scenario did, in the reader's words."""
 
 SEVERITY = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 """Worst first, because a findings list is read from the top."""
@@ -137,6 +109,7 @@ class ScenarioView:
     status: str
     summary: str
     failure_reason: str = ""
+    lifecycle: Tuple[str, ...] = ()
     steps: Tuple[StepView, ...] = ()
     checks: Tuple[CheckView, ...] = ()
 
@@ -263,6 +236,7 @@ def _scenarios(report: RunSource, href: str) -> Tuple[ScenarioView, ...]:
                 status=scenario.status.title(),
                 summary=_summary(scenario),
                 failure_reason=scenario.failure_reason or "",
+                lifecycle=lifecycle_rows(scenario.lifecycle_operations),
                 steps=step_views(scenario, href, opened),
                 checks=_checks(scenario),
             )

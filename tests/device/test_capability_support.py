@@ -14,8 +14,10 @@ from unittest import mock
 from yewo.agent.actuation.actions import (
     AppStateCapability,
     CapabilityKind,
+    ClipboardCapability,
     InterruptCapability,
     NetworkCapability,
+    PermissionCapability,
 )
 from yewo.agent.device.platform import Platform
 
@@ -61,31 +63,41 @@ class PreflightTests(unittest.TestCase):
         return unsupported_reason(case, target)
 
     def test_a_capability_the_target_can_apply_is_no_obstacle(self):
-        self.assertIsNone(
-            self._reason(self._case(CapabilityKind.NETWORK), self._target())
-        )
+        self.assertIsNone(self._reason(self._case(CapabilityKind.NETWORK), self._target()))
+
+    def test_an_initial_capability_must_have_a_restoration_path(self):
+        case = self._case()
+        case.initial_capabilities = [ClipboardCapability(text="temporary")]
+
+        reason = self._reason(case, self._target())
+
+        self.assertIn("initial precondition", reason)
+        self.assertIn("cannot be restored", reason)
+
+    def test_android_retained_data_refuses_a_permission_precondition(self):
+        case = self._case()
+        case.setup = "relaunch"
+        case.initial_capabilities = [PermissionCapability(permission="camera", grant=False)]
+
+        reason = self._reason(case, self._target())
+
+        self.assertIn("previous prompt decision", reason)
 
     def test_a_capability_the_platform_lacks_skips_the_scenario(self):
-        reason = self._reason(
-            self._case(CapabilityKind.NETWORK), self._target(Platform.IOS)
-        )
+        reason = self._reason(self._case(CapabilityKind.NETWORK), self._target(Platform.IOS))
 
         self.assertIn("network", reason)
         self.assertIn("ios", reason)
 
     def test_a_capability_needing_an_emulator_names_the_target(self):
         """Mock location goes through the emulator console, which a phone lacks."""
-        reason = self._reason(
-            self._case(CapabilityKind.LOCATION), self._target(emulator=False)
-        )
+        reason = self._reason(self._case(CapabilityKind.LOCATION), self._target(emulator=False))
 
         self.assertIn("emulator", reason)
         self.assertIn("physical device", reason)
 
     def test_a_release_below_the_floor_skips_the_scenario(self):
-        reason = self._reason(
-            self._case(CapabilityKind.LOCALE), self._target(release=(31,))
-        )
+        reason = self._reason(self._case(CapabilityKind.LOCALE), self._target(release=(31,)))
 
         self.assertIn("API 33", reason)
 
@@ -124,9 +136,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_an_unknown_package_list_refuses_nothing(self):
         self.assertIsNone(
-            self._reason(
-                self._case(CapabilityKind.ACCESSIBILITY), self._target(packages=None)
-            )
+            self._reason(self._case(CapabilityKind.ACCESSIBILITY), self._target(packages=None))
         )
 
     def test_a_variant_a_step_asks_for_is_read_off_the_step(self):
@@ -176,9 +186,7 @@ class PreflightTests(unittest.TestCase):
             CAPABILITY_SUPPORT,
             {CapabilityKind.CLIPBOARD: {Platform.ANDROID: CapabilitySupport()}},
         ):
-            refusal = unsupported_capability(
-                CapabilityKind.CLIPBOARD, self._target(Platform.IOS)
-            )
+            refusal = unsupported_capability(CapabilityKind.CLIPBOARD, self._target(Platform.IOS))
 
         self.assertIn("clipboard is not available on ios", refusal)
 
@@ -216,19 +224,13 @@ class TargetReadingTests(unittest.TestCase):
     """Identifying the target without a driver session."""
 
     def _read(self, avd, api="33", packages=frozenset()):
-        device = SimpleNamespace(
-            platform=Platform.ANDROID, serial=SERIAL, os_version="14"
-        )
-        adb = mock.patch(
-            "yewo.agent.device.adb_control.AdbControl.avd_name", return_value=avd
-        )
+        device = SimpleNamespace(platform=Platform.ANDROID, serial=SERIAL, os_version="14")
+        adb = mock.patch("yewo.agent.device.adb_control.AdbControl.avd_name", return_value=avd)
         installed = mock.patch(
             "yewo.agent.device.adb_control.AdbControl.installed_packages",
             return_value=packages,
         )
-        sdk = mock.patch(
-            "yewo.agent.device.adb_control.AdbControl.ask", return_value=api
-        )
+        sdk = mock.patch("yewo.agent.device.adb_control.AdbControl.ask", return_value=api)
         from yewo.testing.judge.capabilities import target_of
 
         with adb, installed, sdk:
@@ -250,9 +252,7 @@ class TargetReadingTests(unittest.TestCase):
     def test_a_target_with_no_serial_reads_nothing_off_it(self):
         from yewo.testing.judge.capabilities import target_of
 
-        target = target_of(
-            SimpleNamespace(platform=Platform.ANDROID, serial="", os_version=None)
-        )
+        target = target_of(SimpleNamespace(platform=Platform.ANDROID, serial="", os_version=None))
 
         self.assertIsNone(target.release)
         self.assertIsNone(target.packages)
@@ -288,9 +288,7 @@ class PhysicalDeviceTests(unittest.TestCase):
         from yewo.testing.judge.capabilities import unsupported_capability
 
         return {
-            kind.value
-            for kind in CapabilityKind
-            if unsupported_capability(kind, target) is None
+            kind.value for kind in CapabilityKind if unsupported_capability(kind, target) is None
         }
 
     def test_a_udid_simctl_does_not_list_is_a_physical_device(self):
@@ -323,9 +321,7 @@ class PhysicalDeviceTests(unittest.TestCase):
         """VoiceOver arrived in iOS 27, and this target reports 18.2."""
         from yewo.testing.judge.capabilities import unsupported_capability
 
-        refusal = unsupported_capability(
-            CapabilityKind.ACCESSIBILITY, self._target("  (none)")
-        )
+        refusal = unsupported_capability(CapabilityKind.ACCESSIBILITY, self._target("  (none)"))
 
         self.assertIn("iOS 27", refusal)
         self.assertIn("iOS 18", refusal)
@@ -380,9 +376,7 @@ class PhysicalDeviceTests(unittest.TestCase):
         for listed in ("  (none)", f"  iPhone ({self.PHYSICAL}) (Booted)"):
             with self.subTest(listed=listed):
                 self.assertIsNone(
-                    unsupported_for(
-                        InterruptCapability(type="low_memory"), self._target(listed)
-                    )
+                    unsupported_for(InterruptCapability(type="low_memory"), self._target(listed))
                 )
 
     def test_a_simctl_that_will_not_answer_refuses_nothing(self):
@@ -427,24 +421,18 @@ class DeclaredCapabilityTests(unittest.TestCase):
         self.assertEqual(missing, ["network (never applied)"])
 
     def test_a_capability_applied_and_confirmed_is_not_named(self):
-        missing = self._missing(
-            [CapabilityKind.NETWORK], [self._receipt("network", "on")]
-        )
+        missing = self._missing([CapabilityKind.NETWORK], [self._receipt("network", "on")])
 
         self.assertEqual(missing, [])
 
     def test_a_capability_applied_but_never_confirmed_is_named(self):
         """Unreadable is safe only while something later notices it."""
-        missing = self._missing(
-            [CapabilityKind.NETWORK], [self._receipt("network", None)]
-        )
+        missing = self._missing([CapabilityKind.NETWORK], [self._receipt("network", None)])
 
         self.assertEqual(missing, ["network (applied but never confirmed)"])
 
     def test_another_capability_s_receipt_does_not_answer_for_this_one(self):
-        missing = self._missing(
-            [CapabilityKind.NETWORK], [self._receipt("battery", "42", "42")]
-        )
+        missing = self._missing([CapabilityKind.NETWORK], [self._receipt("battery", "42", "42")])
 
         self.assertEqual(missing, ["network (never applied)"])
 
@@ -474,9 +462,7 @@ class DeclaredCapabilityGateTests(unittest.TestCase):
             stop_reason=None,
             all_verifications=[],
             all_issues=[],
-            qa_outputs=[
-                SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)
-            ],
+            qa_outputs=[SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)],
             assessments=[SimpleNamespace(rule_verifications=[], detected_issues=[])],
             required_outcomes=[],
             security_rules=[],

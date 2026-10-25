@@ -189,6 +189,16 @@ def _append_scenario(
         lines.append(
             f"* ❌ **Failure Reason**: `{_scrub(scrubber, scenario.failure_reason)}`"
         )
+    if scenario.lifecycle_operations:
+        lines.append("### Lifecycle:")
+        for operation in scenario.lifecycle_operations:
+            detail = operation.failure_reason or operation.observed or ""
+            lines.append(
+                f"  * **{operation.phase.value.title()}** "
+                f"`{operation.requested}`: {operation.status.value}"
+                + (f" — {_scrub(scrubber, detail)}" if detail else "")
+            )
+        lines.append("")
     rule_verdicts = verdicts.per_rule(list(scenario.rule_verifications))
     if rule_verdicts:
         lines.append("### Verification Results:")
@@ -329,9 +339,21 @@ def _append_junit_case(
         )
         for verification in scenario.rule_verifications
     ]
-    if verification_lines:
+    lifecycle_lines = [
+        " ".join(
+            (
+                f"lifecycle_id={operation.operation_id}",
+                f"phase={operation.phase.value}",
+                f"requested={_scrub(scrubber, operation.requested)}",
+                f"status={operation.status.value}",
+                f"reason={_scrub(scrubber, operation.failure_reason)}",
+            )
+        )
+        for operation in scenario.lifecycle_operations
+    ]
+    if verification_lines or lifecycle_lines:
         output = ET.SubElement(testcase, "system-out")
-        output.text = "\n".join(verification_lines)
+        output.text = "\n".join([*lifecycle_lines, *verification_lines])
 
 
 def _append_junit_policy_check(

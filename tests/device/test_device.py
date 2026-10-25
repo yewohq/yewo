@@ -330,6 +330,7 @@ class ScenarioIsolationTests(unittest.TestCase):
             priority="P0",
             steps=walk("Tap the Login button."),
             expected_outcomes=["the Login button is visible"],
+            setup="preserve",
         )
 
         # A serial-less control is enough: the capability preflight reads the

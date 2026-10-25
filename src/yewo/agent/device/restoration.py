@@ -33,6 +33,15 @@ from yewo.errors import DeviceUnavailable
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class RestorationEvent:
+    """The result of putting one changed device state back."""
+
+    state: str
+    restored: bool
+    reason: Optional[str] = None
+
+
 class StateSnapshot:
     """What was read before a scenario, whichever platform answered.
 
@@ -225,6 +234,8 @@ def _put_back(
     write: Callable[[str], None],
     wanted: Optional[str],
     observed: Optional[str],
+    events: Optional[list[RestorationEvent]] = None,
+    read_back: Optional[Callable[[], Optional[str]]] = None,
 ) -> None:
     """Write one state back, when it was read and has since moved.
 
@@ -242,10 +253,29 @@ def _put_back(
         write(wanted)
     except (DeviceUnavailable, OSError) as exc:
         logger.warning("Could not restore %s to %s: %s", what, wanted, exc)
+        if events is not None:
+            events.append(RestorationEvent(what, False, str(exc)))
+    else:
+        if events is None:
+            return
+        restored = read_back() if read_back is not None else wanted
+        if restored == wanted:
+            events.append(RestorationEvent(what, True))
+        else:
+            events.append(
+                RestorationEvent(
+                    what,
+                    False,
+                    f"read-back returned {restored or 'nothing'} instead of {wanted}",
+                )
+            )
 
 
 def _restore_radios(
-    serial: str, found: AndroidStateSnapshot, commands: Optional[DriverCommands]
+    serial: str,
+    found: AndroidStateSnapshot,
+    commands: Optional[DriverCommands],
+    events: Optional[list[RestorationEvent]] = None,
 ) -> None:
     """Put the three radios back, in one call where the driver can read them.
 
@@ -259,6 +289,8 @@ def _restore_radios(
             lambda value: AdbControl.set_airplane_mode(serial, value == "on"),
             found.airplane,
             receipts.airplane_mode(serial),
+            events,
+            lambda: receipts.airplane_mode(serial),
         )
         return
 
@@ -282,6 +314,22 @@ def _restore_radios(
         commands.set_connectivity(**wanted)
     except DeviceUnavailable as exc:
         logger.warning("Could not restore the radios to %s: %s", wanted, exc)
+        if events is not None:
+            events.append(RestorationEvent("the radios", False, str(exc)))
+    else:
+        if events is not None:
+            restored = commands.connectivity()
+            restored_state = {
+                "wifi": bool((restored or {}).get("wifi")),
+                "data": bool((restored or {}).get("data")),
+                "airplane": bool((restored or {}).get("airplaneMode")),
+            }
+            if restored is not None and restored_state == wanted:
+                events.append(RestorationEvent("the radios", True))
+            else:
+                events.append(
+                    RestorationEvent("the radios", False, "radio read-back did not match")
+                )
 
 
 def restore_android(
@@ -289,9 +337,10 @@ def restore_android(
     package: Optional[str],
     found: AndroidStateSnapshot,
     commands: Optional[DriverCommands] = None,
+    events: Optional[list[RestorationEvent]] = None,
 ) -> None:
     """Put back every state that moved during the scenario."""
-    _restore_radios(serial, found, commands)
+    _restore_radios(serial, found, commands, events)
     # Reset rather than written back: an override is either on or off, so
     # there is no level to restore it to, only the real battery.
     _put_back(
@@ -299,12 +348,16 @@ def restore_android(
         lambda _: AdbControl.reset_battery(serial),
         found.battery,
         receipts.battery_level(serial),
+        events,
+        lambda: receipts.battery_level(serial),
     )
     _put_back(
         "timezone",
         lambda value: AdbControl.set_timezone(serial, value),
         found.timezone,
         receipts.timezone(serial),
+        events,
+        lambda: receipts.timezone(serial),
     )
     if package:
         _put_back(
@@ -312,16 +365,24 @@ def restore_android(
             lambda value: AdbControl.set_app_locale(serial, package, value),
             found.locale,
             receipts.app_locale(serial, package),
+            events,
+            lambda: receipts.app_locale(serial, package),
         )
     _put_back(
         "the accessibility services",
         lambda value: AdbControl.set_accessibility_services(serial, value),
         found.accessibility,
         AdbControl.enabled_accessibility_services(serial),
+        events,
+        lambda: AdbControl.enabled_accessibility_services(serial),
     )
 
 
-def _restore_location(found: IosStateSnapshot, commands: DriverCommands) -> None:
+def _restore_location(
+    found: IosStateSnapshot,
+    commands: DriverCommands,
+    events: Optional[list[RestorationEvent]] = None,
+) -> None:
     """Put the simulated location back, or take it away again.
 
     A reset is the only way back to no location, and a pair of coordinates
@@ -341,6 +402,8 @@ def _restore_location(found: IosStateSnapshot, commands: DriverCommands) -> None
         write,
         found.simulated_location,
         _simulated_location(commands),
+        events,
+        lambda: _simulated_location(commands),
     )
 
 
@@ -349,6 +412,7 @@ def _restore_permissions(
     app_id: Optional[str],
     found: IosStateSnapshot,
     commands: DriverCommands,
+    events: Optional[list[RestorationEvent]] = None,
 ) -> None:
     """Put back each decision the scenario could have changed.
 
@@ -366,6 +430,8 @@ def _restore_permissions(
             ),
             decision if decision in PERMISSION_ACTIONS else None,
             commands.ios_permission(app_id, service),
+            events,
+            lambda service=service: commands.ios_permission(app_id, service),
         )
 
 
@@ -374,6 +440,7 @@ def restore_ios(
     app_id: Optional[str],
     found: IosStateSnapshot,
     commands: DriverCommands,
+    events: Optional[list[RestorationEvent]] = None,
 ) -> None:
     """Put back every iOS state this snapshot read.
 
@@ -386,10 +453,12 @@ def restore_ios(
             lambda value: commands.set_ios_voice_over(value == "on"),
             _switch(found.voice_over),
             _switch(commands.ios_voice_over()),
+            events,
+            lambda: _switch(commands.ios_voice_over()),
         )
     if found.simulated_location is not None:
-        _restore_location(found, commands)
-    _restore_permissions(udid, app_id, found, commands)
+        _restore_location(found, commands, events)
+    _restore_permissions(udid, app_id, found, commands, events)
 
 
 class RestorableDevice(Protocol):
@@ -411,6 +480,7 @@ def preserved(
     device_control: RestorableDevice,
     package: Optional[str] = None,
     capabilities: Sequence[Capability] = (),
+    events: Optional[list[RestorationEvent]] = None,
 ):
     """Hands the device back as the scenario found it, whatever ended it.
 
@@ -442,7 +512,7 @@ def preserved(
         try:
             yield android_found
         finally:
-            restore_android(serial, package, android_found, commands)
+            restore_android(serial, package, android_found, commands, events)
         return
 
     if platform == Platform.IOS and commands is not None:
@@ -452,7 +522,7 @@ def preserved(
         try:
             yield ios_found
         finally:
-            restore_ios(serial, app_id, ios_found, commands)
+            restore_ios(serial, app_id, ios_found, commands, events)
         return
 
     yield None

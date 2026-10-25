@@ -9,7 +9,7 @@ from yewo import identity
 from yewo.agent.device.platform import Platform
 from yewo.errors import Cause
 from yewo.testing import lock_file, lock_resolution
-from yewo.testing.generator import with_values_filled
+from yewo.testing.generator import with_journey_preconditions, with_values_filled
 from yewo.testing.judge.capabilities import (
     CapabilityTarget,
     unavailable_metric_reason,
@@ -113,7 +113,10 @@ def _known_locked_scenarios(
     problems = lock_resolution.staleness(stored, journey, runner.workflow)
     entries_by_cell = stored.entries_for(runner.workflow, journey.id)
     scenarios = [
-        with_values_filled(entries_by_cell[cell.key].scenario(), journey.values)
+        with_journey_preconditions(
+            with_values_filled(entries_by_cell[cell.key].scenario(), journey.values),
+            journey,
+        )
         for cell in sort_cells_by_priority(list(journey.coverage))
         if cell.key not in problems and cell.key in entries_by_cell
     ]

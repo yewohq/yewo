@@ -19,7 +19,9 @@ from yewo.testing import lock_file
 from yewo.testing.generator import ScenarioGenerator
 from yewo.testing.lock_file import contract_sha256
 from yewo.testing.lock_resolution import staleness, suite_for
+from yewo.testing.lifecycle import ScenarioPreconditions
 from yewo.testing.models import ScenarioDraft, UserJourney
+from yewo.agent.actuation.actions import CapabilityKind, PermissionCapability
 from yewo.testing.steps import EnterStep
 from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
 
@@ -51,8 +53,6 @@ def generator(*responses):
 
 
 class ResolutionTests(unittest.TestCase):
-    """Which scenarios a run takes from the lock, and which it pays for."""
-
     def _suite(self, path, responses=(), **kwargs):
         made, client = generator(*responses)
         resolution = suite_for(
@@ -89,6 +89,26 @@ class ResolutionTests(unittest.TestCase):
                 first.scenarios[0].scenario_uuid,
             )
 
+    def test_a_locked_scenario_receives_current_journey_preconditions(self):
+        declared = journey(
+            preconditions=ScenarioPreconditions(
+                capabilities=[PermissionCapability(permission="camera", grant=False)]
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "yewo.lock"
+            made, _ = generator(draft())
+            suite_for(declared, made.generate_suite, path=path)
+            unused, client = generator()
+
+            resolution = suite_for(declared, unused.generate_suite, path=path)
+
+        self.assertEqual(client.generate_response.call_count, 0)
+        self.assertEqual(
+            resolution.scenarios[0].initial_capabilities[0].kind,
+            CapabilityKind.PERMISSION,
+        )
+
     def test_a_changed_journey_regenerates_only_that_cell(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
@@ -97,9 +117,10 @@ class ResolutionTests(unittest.TestCase):
             suite_for(two, lambda j, cells: made.generate_suite(j, cells), path=path)
 
             changed = journey(HAPPY, NEGATIVE)
-            changed.coverage = [HAPPY, CoverageCell(
-                Category.SECURITY, ScenarioType.NEGATIVE, Priority.P1
-            )]
+            changed.coverage = [
+                HAPPY,
+                CoverageCell(Category.SECURITY, ScenarioType.NEGATIVE, Priority.P1),
+            ]
             again, client = generator(draft("C"))
             resolution = suite_for(
                 changed, lambda j, cells: again.generate_suite(j, cells), path=path
@@ -116,8 +137,11 @@ class ResolutionTests(unittest.TestCase):
             path = Path(directory) / "yewo.lock"
             made, _ = generator(draft(steps=steps))
             live = UserJourney(
-                id="j", name="J", description="A user signs in.",
-                coverage=[HAPPY], values={"email": "qa@example.com"},
+                id="j",
+                name="J",
+                description="A user signs in.",
+                coverage=[HAPPY],
+                values={"email": "qa@example.com"},
             )
             first = suite_for(live, lambda j, c: made.generate_suite(j, c), path=path)
             again, _ = generator()
@@ -239,8 +263,9 @@ class LockedRunTests(unittest.TestCase):
             staleness(held, journey(HAPPY, NEGATIVE), ""),
             {"security.negative.0": "not in the lock"},
         )
-        self.assertEqual(staleness(None, journey(), ""),
-                         {"functional.happy_path.0": "not in the lock"})
+        self.assertEqual(
+            staleness(None, journey(), ""), {"functional.happy_path.0": "not in the lock"}
+        )
 
 
 class StableFileTests(unittest.TestCase):
@@ -248,7 +273,9 @@ class StableFileTests(unittest.TestCase):
 
     def _lock_one(self, path, journey_id, responses=None):
         one = UserJourney(
-            id=journey_id, name=journey_id, description="A user signs in.",
+            id=journey_id,
+            name=journey_id,
+            description="A user signs in.",
             coverage=[HAPPY],
         )
         made, client = generator(*(responses if responses is not None else [draft()]))
@@ -310,9 +337,7 @@ class RefusalCostTests(unittest.TestCase):
             patch("yewo.testing.runner.DeviceSession") as session,
             self.assertRaises(UsageError) as raised,
         ):
-            runner.run_journey(
-                UserJourney(id="j", name="J", description="A user signs in.")
-            )
+            runner.run_journey(UserJourney(id="j", name="J", description="A user signs in."))
         return str(raised.exception), ready, session, Path(directory)
 
     def test_no_device_is_asked_for(self):
@@ -431,17 +456,15 @@ class StaleAndUnregenerableTests(unittest.TestCase):
             suite_for(two, made.generate_suite, path=path)
 
             # Only the security cell's question changes.
-            altered = journey(HAPPY, CoverageCell(
-                Category.SECURITY, ScenarioType.NEGATIVE, Priority.P1
-            ))
+            altered = journey(
+                HAPPY, CoverageCell(Category.SECURITY, ScenarioType.NEGATIVE, Priority.P1)
+            )
             broken, _ = generator(mismatch)
             resolution = suite_for(altered, broken.generate_suite, path=path)
 
         self.assertEqual(resolution.reused_count, 1)
         self.assertEqual(resolution.generated_count, 0)
-        self.assertEqual(
-            [s.cell for s in resolution.scenarios], ["functional.happy_path.0"]
-        )
+        self.assertEqual([s.cell for s in resolution.scenarios], ["functional.happy_path.0"])
 
 
 class PartialRegenerationTests(unittest.TestCase):
@@ -508,9 +531,7 @@ class PartialRegenerationTests(unittest.TestCase):
             path = Path(directory) / "yewo.lock"
             resolution, _ = self._half_failed(path)
 
-        self.assertEqual(
-            [s.cell for s in resolution.scenarios], ["functional.happy_path.0"]
-        )
+        self.assertEqual([s.cell for s in resolution.scenarios], ["functional.happy_path.0"])
         self.assertEqual(resolution.generated_count, 1)
         self.assertEqual(resolution.reused_count, 0)
 
@@ -525,7 +546,5 @@ class PartialRegenerationTests(unittest.TestCase):
             again, _ = generator(*([mismatch] * 3))
             second = suite_for(altered, again.generate_suite, path=path)
 
-        self.assertEqual(
-            [s.cell for s in second.scenarios], ["functional.happy_path.0"]
-        )
+        self.assertEqual([s.cell for s in second.scenarios], ["functional.happy_path.0"])
         self.assertEqual(second.reused_count, 1)

@@ -20,7 +20,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from yewo.errors import UsageError
-from yewo.testing.generator import GeneratedSuite, UncoveredCell, with_values_filled
+from yewo.testing.generator import (
+    GeneratedSuite,
+    UncoveredCell,
+    with_journey_preconditions,
+    with_values_filled,
+)
 from yewo.testing.lock_file import Lock, LockEntry, contract_sha256, read, write
 from yewo.testing.models import GeneratedTestCase, UserJourney
 from yewo.testing.taxonomy import CoverageCell, sort_cells_by_priority
@@ -87,9 +92,7 @@ def staleness(
     return problems
 
 
-def require_lock(
-    journey: UserJourney, path: Optional[Path], workflow: str = ""
-) -> None:
+def require_lock(journey: UserJourney, path: Optional[Path], workflow: str = "") -> None:
     """Refuses a missing or stale lock before anything costly happens.
 
     `--locked` is what CI passes, and a stale lock there has to fail in a
@@ -156,9 +159,7 @@ def suite_for(
             resolution.generated_count += 1
             taken.add(filled[cell.key].scenario_uuid)
             keeping.append(
-                LockEntry.of(
-                    fresh[cell.key], journey, workflow, contract_sha256(journey, cell)
-                )
+                LockEntry.of(fresh[cell.key], journey, workflow, contract_sha256(journey, cell))
             )
             continue
         entry = locked_entries.get(cell.key)
@@ -183,7 +184,9 @@ def suite_for(
             )
             continue
         resolution.scenarios.append(
-            with_values_filled(entry.scenario(), journey.values)
+            with_journey_preconditions(
+                with_values_filled(entry.scenario(), journey.values), journey
+            )
         )
         resolution.reused_count += 1
         keeping.append(entry)
@@ -217,9 +220,7 @@ def _refuse(path: Optional[Path], lock: Optional[Lock], problems: dict[str, str]
         UsageError: Always, unless the lock holds every declared cell.
     """
     if path is None:
-        raise UsageError(
-            "--locked needs a journey file on disk to find yewo.lock beside."
-        )
+        raise UsageError("--locked needs a journey file on disk to find yewo.lock beside.")
     if lock is None:
         raise UsageError(f"No lock at {path}. Run 'yewo lock' and commit it.")
     if problems:

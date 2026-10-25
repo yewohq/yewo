@@ -33,6 +33,7 @@ from yewo.testing.models import (
     VerdictInputs,
 )
 from yewo.testing.report.manifest import SCHEMA
+from yewo.testing.lifecycle import LifecycleOperation
 
 from .view import RUN_FILES, ReportView, page_of
 
@@ -80,6 +81,7 @@ class _RecordedScenarioEntry(BaseModel):
     steps: List[StepRecord] = Field(default_factory=list)
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
+    lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
     verdict_inputs: Optional[VerdictInputs] = None
 
 
@@ -130,6 +132,7 @@ class RecordedScenario:
     steps: Sequence[StepRecord] = ()
     rule_verifications: Sequence[RuleVerification] = ()
     detected_issues: Sequence[QAIssue] = ()
+    lifecycle_operations: Sequence[LifecycleOperation] = ()
     verdict_inputs: Optional[VerdictInputs] = None
 
 
@@ -193,6 +196,7 @@ def _scenario(entry: _RecordedScenarioEntry) -> RecordedScenario:
         steps=tuple(entry.steps),
         rule_verifications=tuple(entry.rule_verifications),
         detected_issues=tuple(entry.detected_issues),
+        lifecycle_operations=tuple(entry.lifecycle_operations),
         verdict_inputs=entry.verdict_inputs,
     )
 

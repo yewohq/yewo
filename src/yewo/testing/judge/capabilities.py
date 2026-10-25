@@ -15,7 +15,8 @@ import shutil
 from dataclasses import dataclass
 from typing import Optional, Protocol, Sequence
 
-from yewo.agent.actuation.actions import Capability, CapabilityKind
+from yewo.agent.actuation.actions import AppStateCapability, Capability, CapabilityKind
+from yewo.agent.device.launch import SetupMode
 from yewo.agent.device.receipts import Receipt
 from yewo.agent.device.platform import Platform
 from yewo.metrics import (
@@ -34,8 +35,6 @@ from yewo.testing.models import GeneratedTestCase
 from yewo.testing.steps import capabilities_in
 
 logger = logging.getLogger(__name__)
-
-
 
 
 _UNSUPPORTED_REQUIREMENTS = {
@@ -120,9 +119,7 @@ def _below(target: CapabilityTarget, floor: tuple[int, ...]) -> bool:
     return target.release is not None and target.release < floor
 
 
-def _refusal(
-    name: str, support: CapabilitySupport, target: CapabilityTarget
-) -> Optional[str]:
+def _refusal(name: str, support: CapabilitySupport, target: CapabilityTarget) -> Optional[str]:
     """Why this target fails one support rule, or None when it meets them all.
 
     The kind table and the variant table are read through here, so a refusal
@@ -156,16 +153,11 @@ def _refusal(
         and target.host_tools is not None
         and support.needs_host_tool not in target.host_tools
     ):
-        return (
-            f"{name} needs {support.needs_host_tool} on this machine: "
-            f"{support.detail}"
-        )
+        return f"{name} needs {support.needs_host_tool} on this machine: {support.detail}"
     return None
 
 
-def unsupported_capability(
-    kind: CapabilityKind, target: CapabilityTarget
-) -> Optional[str]:
+def unsupported_capability(kind: CapabilityKind, target: CapabilityTarget) -> Optional[str]:
     """Why this target cannot apply this capability, or None when it can.
 
     Reads the kind and not the variant, so a caller holding the capability
@@ -199,9 +191,7 @@ def unavailable_metric_reason(test_case: GeneratedTestCase) -> Optional[str]:
     return f"No live collector is available for required metric(s): {metric_names}."
 
 
-def _variant_refusal(
-    capability: Capability, target: CapabilityTarget
-) -> Optional[str]:
+def _variant_refusal(capability: Capability, target: CapabilityTarget) -> Optional[str]:
     """Why this target cannot apply this variant of the capability.
 
     A variant with no row is governed by its kind. Absence here refuses
@@ -217,17 +207,59 @@ def _variant_refusal(
     return _refusal(f"{capability.kind.value} '{variant}'", support, target)
 
 
-def unsupported_for(
-    capability: Capability, target: CapabilityTarget
-) -> Optional[str]:
+def unsupported_for(capability: Capability, target: CapabilityTarget) -> Optional[str]:
     """Why this target cannot apply this capability, variant included.
 
     The kind is read first. A kind this target cannot apply at all refuses
     every variant of it, and naming the kind is the more useful reason.
     """
-    return unsupported_capability(capability.kind, target) or _variant_refusal(
-        capability, target
-    )
+    return unsupported_capability(capability.kind, target) or _variant_refusal(capability, target)
+
+
+_RESTORABLE_PRECONDITIONS = {
+    Platform.ANDROID: {
+        CapabilityKind.NETWORK,
+        CapabilityKind.BATTERY,
+        CapabilityKind.TIMEZONE,
+        CapabilityKind.LOCALE,
+        CapabilityKind.PERMISSION,
+        CapabilityKind.ACCESSIBILITY,
+    },
+    Platform.IOS: {
+        CapabilityKind.LOCATION,
+        CapabilityKind.PERMISSION,
+        CapabilityKind.ACCESSIBILITY,
+    },
+}
+
+
+def _unsupported_precondition(
+    capability: Capability,
+    setup: SetupMode,
+    target: CapabilityTarget,
+) -> Optional[str]:
+    """Refuse initial state Yewo cannot clean up on this target.
+
+    Mid-journey actions have a wider vocabulary. An initial precondition has
+    a stronger contract: Yewo must read it before UI work and return the
+    device to a deterministic state afterward.
+    """
+    if capability.kind not in _RESTORABLE_PRECONDITIONS[target.platform]:
+        return (
+            f"{capability.kind.value} cannot be used as an initial precondition "
+            f"on {target.platform.value}: its previous state cannot be restored"
+        )
+    if (
+        target.platform is Platform.ANDROID
+        and capability.kind is CapabilityKind.PERMISSION
+        and setup is not SetupMode.CLEAR_DATA
+    ):
+        return (
+            "permission cannot be used as an initial precondition on Android "
+            "with retained app data: the previous prompt decision cannot be "
+            "restored exactly"
+        )
+    return None
 
 
 def unsupported_reason(
@@ -249,15 +281,23 @@ def unsupported_reason(
             *(outcome.statement for outcome in test_case.expected_outcomes),
         ]
     ).lower()
-    reasons = {
-        reason for phrase, reason in _UNSUPPORTED_REQUIREMENTS.items() if phrase in text
-    }
+    reasons = {reason for phrase, reason in _UNSUPPORTED_REQUIREMENTS.items() if phrase in text}
 
     if target is not None:
         asked = set()
-        for capability in capabilities_in(test_case.steps):
+        scenario_capabilities = [
+            *test_case.initial_capabilities,
+            *capabilities_in(test_case.steps),
+        ]
+        if test_case.setup is SetupMode.CLEAR_DATA:
+            scenario_capabilities.insert(0, AppStateCapability(action="clear_data"))
+        for capability in scenario_capabilities:
             asked.add(capability.kind)
             refusal = unsupported_for(capability, target)
+            if refusal:
+                reasons.add(f"{refusal} (target: {target.describe()})")
+        for capability in test_case.initial_capabilities:
+            refusal = _unsupported_precondition(capability, test_case.setup, target)
             if refusal:
                 reasons.add(f"{refusal} (target: {target.describe()})")
         # A kind declared with no step to carry it has no variant to read, so
@@ -375,7 +415,8 @@ def unconfirmed_capabilities(
         if name in confirmed:
             continue
         missing.append(
-            f"{name} (applied but never confirmed)" if name in applied
+            f"{name} (applied but never confirmed)"
+            if name in applied
             else f"{name} (never applied)"
         )
     return missing
