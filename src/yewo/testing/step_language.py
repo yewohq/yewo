@@ -49,7 +49,9 @@ VERBS_BY_CAPABILITY: dict[CapabilityKind, tuple[str, ...]] = {
     CapabilityKind.BIOMETRIC: ("match", "enroll"),
     CapabilityKind.CLIPBOARD: ("copy",),
     CapabilityKind.DEEPLINK: ("open",),
-    CapabilityKind.APP_STATE: ("stop", "clear", "relaunch"),
+    CapabilityKind.APP_STATE: ("stop", "clear", "relaunch", "background"),
+    CapabilityKind.ORIENTATION: ("rotate",),
+    CapabilityKind.DEVICE_LOCK: ("lock",),
     CapabilityKind.MEDIA_INJECT: ("inject",),
     CapabilityKind.ACCESSIBILITY: ("enable", "disable"),
 }

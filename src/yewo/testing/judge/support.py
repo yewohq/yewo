@@ -36,6 +36,7 @@ class CapabilitySupport:
 
     available: bool = True
     emulator_only: bool = False
+    physical_only: bool = False
     min_release: Optional[tuple[int, ...]] = None
     needs_package: Optional[str] = None
     needs_host_tool: Optional[str] = None
@@ -78,13 +79,7 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, CapabilitySupport]] = {
     },
     CapabilityKind.NETWORK: {
         Platform.ANDROID: CapabilitySupport(),
-        Platform.IOS: CapabilitySupport(
-            available=False,
-            detail=(
-                "the simulator shares the host network connection, and the "
-                "condition inducers that would change it need a real device"
-            ),
-        ),
+        Platform.IOS: CapabilitySupport(),
     },
     CapabilityKind.BATTERY: {
         Platform.ANDROID: CapabilitySupport(),
@@ -169,6 +164,18 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, CapabilitySupport]] = {
         Platform.ANDROID: CapabilitySupport(),
         Platform.IOS: CapabilitySupport(),
     },
+    CapabilityKind.ORIENTATION: {
+        Platform.ANDROID: CapabilitySupport(),
+        Platform.IOS: CapabilitySupport(),
+    },
+    CapabilityKind.DEVICE_LOCK: {
+        Platform.ANDROID: CapabilitySupport(
+            detail="lock/unlock requires a target without an unknown device credential"
+        ),
+        Platform.IOS: CapabilitySupport(
+            detail="lock/unlock supports a simple lock screen without a passcode"
+        ),
+    },
     CapabilityKind.MEDIA_INJECT: {
         Platform.ANDROID: CapabilitySupport(),
         Platform.IOS: CapabilitySupport(
@@ -187,6 +194,35 @@ CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, CapabilitySupport]] = {
 # A variant one target answers and another does not. Every capability absent
 # from here is decided by its kind alone.
 VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, CapabilitySupport]] = {
+    **{
+        (CapabilityKind.NETWORK, mode): {
+            Platform.IOS: CapabilitySupport(
+                available=False,
+                detail=(
+                    "iOS does not expose radio toggles to automation; simulator "
+                    "networking also shares the host connection"
+                ),
+            )
+        }
+        for mode in ("offline", "online", "wifi_only", "data_only", "airplane")
+    },
+    **{
+        (CapabilityKind.NETWORK, mode): {
+            Platform.ANDROID: CapabilitySupport(
+                emulator_only=True,
+                detail="network speed and latency shaping needs an emulator console",
+            ),
+            Platform.IOS: CapabilitySupport(
+                physical_only=True,
+                min_release=(13,),
+                detail=(
+                    "Xcode condition inducers require a physical device running "
+                    "iOS 13 or later; iOS simulators share the host network"
+                ),
+            ),
+        }
+        for mode in ("slow_2g", "slow_3g", "high_latency")
+    },
     (CapabilityKind.INTERRUPT, "incoming_call"): {
         Platform.ANDROID: CapabilitySupport(
             emulator_only=True, detail="placing a call needs an emulator console"

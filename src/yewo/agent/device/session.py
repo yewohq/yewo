@@ -111,6 +111,8 @@ class DeviceSession(DeviceRecording):
                 "--log-level",
                 "warn",
                 "--log-no-colors",
+                "--allow-insecure",
+                "uiautomator2:emulator_console",
             ],
         }
 

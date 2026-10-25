@@ -88,6 +88,49 @@ class DriverCommands:
         answer = self.ask("queryAppState", {"appId": app_id, "bundleId": app_id})
         return answer if isinstance(answer, int) else None
 
+    def activate_app(self, app_id: str) -> None:
+        self.change("activateApp", {"appId": app_id, "bundleId": app_id})
+
+    def background_app(self) -> None:
+        """Leave the app backgrounded until an explicit activation.
+
+        A negative duration has the same meaning in both Appium mobile
+        drivers: do not automatically return the app to the foreground.
+        """
+        self.change("backgroundApp", {"seconds": -1})
+
+    def orientation(self) -> Optional[str]:
+        """The cross-platform WebDriver orientation, normalized to lower case."""
+        try:
+            answer = self.driver.orientation
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            logger.warning("The driver could not read orientation: %s", exc)
+            return None
+        if not isinstance(answer, str):
+            return None
+        normalized = answer.lower()
+        return normalized if normalized in ("portrait", "landscape") else None
+
+    def set_orientation(self, orientation: str) -> None:
+        try:
+            self.driver.orientation = orientation.upper()
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            raise DeviceUnavailable(
+                f"The driver could not set orientation: {exc}"
+            ) from exc
+
+    def is_locked(self) -> Optional[bool]:
+        answer = self.ask("isLocked")
+        if isinstance(answer, dict):
+            answer = answer.get("isLocked", answer.get("locked"))
+        return answer if isinstance(answer, bool) else None
+
+    def lock(self) -> None:
+        self.change("lock")
+
+    def unlock(self) -> None:
+        self.change("unlock")
+
     # --- State one platform sets its own way ---
 
     def set_connectivity(self, wifi: bool, data: bool, airplane: bool) -> None:
@@ -101,6 +144,33 @@ class DriverCommands:
         """Android only. What the three radios report."""
         answer = self.ask("getConnectivity")
         return answer if isinstance(answer, dict) else None
+
+    def emulator_console(self, command: str) -> Optional[str]:
+        """Android emulator console through Appium's authenticated channel."""
+        answer = self.ask("execEmuConsoleCommand", {"command": command})
+        return answer if isinstance(answer, str) and answer else None
+
+    def condition_inducers(self) -> Optional[list[dict]]:
+        """iOS physical-device conditions, including their active profiles."""
+        answer = self.ask("listConditionInducers")
+        if not isinstance(answer, list) or not all(isinstance(item, dict) for item in answer):
+            return None
+        return answer
+
+    def enable_condition_inducer(self, condition_id: str, profile_id: str) -> None:
+        answer = self.change(
+            "enableConditionInducer",
+            {"conditionID": condition_id, "profileID": profile_id},
+        )
+        if answer is not True:
+            raise DeviceUnavailable(
+                f"The driver did not confirm condition profile '{profile_id}'"
+            )
+
+    def disable_condition_inducer(self) -> None:
+        answer = self.change("disableConditionInducer")
+        if answer is not True:
+            raise DeviceUnavailable("The driver did not confirm disabling the condition inducer")
 
     def set_android_location(self, latitude: float, longitude: float) -> None:
         """Sets the mocked location, which takes the pair at the top level."""

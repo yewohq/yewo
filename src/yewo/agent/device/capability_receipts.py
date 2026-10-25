@@ -20,6 +20,7 @@ from yewo.agent.actuation.actions import (
     LocaleCapability,
     LocationCapability,
     NetworkCapability,
+    OrientationCapability,
     PermissionCapability,
 )
 from yewo.agent.device import receipts
@@ -70,6 +71,25 @@ def _read_android_receipt(
         case NetworkCapability(mode=mode):
             radios = commands.connectivity()
             if radios is not None:
+                if mode in ("offline", "airplane"):
+                    requested = "wifi=off,airplane=on"
+                    observed = (
+                        f"wifi={'on' if radios.get('wifi') else 'off'},"
+                        f"airplane={'on' if radios.get('airplaneMode') else 'off'}"
+                    )
+                    return create_receipt(
+                        requested, observed, "mobile: getConnectivity"
+                    )
+                if mode == "online":
+                    observed_online = (
+                        not bool(radios.get("airplaneMode"))
+                        and (bool(radios.get("wifi")) or bool(radios.get("data")))
+                    )
+                    return create_receipt(
+                        "online",
+                        "online" if observed_online else "offline",
+                        "mobile: getConnectivity",
+                    )
                 return create_receipt(
                     _format_radio_state(CONNECTIVITY[mode]),
                     _format_radio_state({
@@ -130,6 +150,8 @@ def _read_android_receipt(
             )
         case ClipboardCapability(text=text):
             return create_receipt(text, commands.clipboard(), "mobile: getClipboard")
+        case OrientationCapability(orientation=orientation):
+            return create_receipt(orientation, commands.orientation(), "WebDriver orientation")
         case _:
             return None
 
@@ -164,6 +186,8 @@ def _read_ios_receipt(
             )
         case ClipboardCapability(text=text):
             return create_receipt(text, commands.clipboard(), "mobile: getClipboard")
+        case OrientationCapability(orientation=orientation):
+            return create_receipt(orientation, commands.orientation(), "WebDriver orientation")
         case _:
             return None
 

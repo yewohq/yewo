@@ -1,16 +1,4 @@
-"""Giving the device back the way a scenario found it.
-
-Scenarios share one device, and `SetupMode` restores the app rather than the
-system around it. A scenario that goes offline, or moves the clock, or switches
-the screen reader on, leaves it that way for every scenario after it. The next
-one then tests a device nobody configured, and its verdict is about a state it
-never declared.
-
-So each scenario reads the states a capability could change, and writes back
-the ones that moved. Reading first is what makes this honest. A state that
-could not be read is not restored, because restoring it would write a value
-that was never observed.
-"""
+"""Return every readable device state to the way a scenario found it."""
 
 import logging
 from contextlib import contextmanager
@@ -24,8 +12,18 @@ from yewo.agent.actuation.actions import (
 )
 from yewo.agent.device import receipts
 from yewo.agent.device.adb_control import AdbControl
-from yewo.agent.device.capability_maps import IOS_PRIVACY_SERVICES, PERMISSION_UNSET
+from yewo.agent.device.capability_maps import (
+    IOS_PRIVACY_SERVICES,
+    PERMISSION_UNSET,
+)
 from yewo.agent.device.driver_commands import DriverCommands
+from yewo.agent.device.emulator_network import EmulatorNetworkShape
+from yewo.agent.device.network_restoration import (
+    restore_android_network,
+    restore_ios_condition,
+    snapshot_android_network,
+    snapshot_ios_condition,
+)
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.simctl_control import SimctlControl
 from yewo.errors import DeviceUnavailable
@@ -76,6 +74,9 @@ class AndroidStateSnapshot(StateSnapshot):
     whatever that boolean implied and drop every other service in it.
     """
 
+    orientation: Optional[str] = None
+    network_shape: Optional[EmulatorNetworkShape] = None
+
 
 @dataclass(frozen=True)
 class IosStateSnapshot(StateSnapshot):
@@ -104,6 +105,9 @@ class IosStateSnapshot(StateSnapshot):
     An unread state stays None, and nothing is written back for it.
     """
 
+    orientation: Optional[str] = None
+    condition: Optional[tuple[str, str]] = None
+
 
 def _switch(state: Optional[bool]) -> Optional[str]:
     """A read-back boolean as "on" or "off", or None where nothing answered.
@@ -122,7 +126,10 @@ def _radio(radios: Optional[dict], name: str) -> Optional[str]:
 
 
 def snapshot_android(
-    serial: str, package: Optional[str], commands: Optional[DriverCommands] = None
+    serial: str,
+    package: Optional[str],
+    commands: Optional[DriverCommands] = None,
+    capabilities: Sequence[Capability] = (),
 ) -> AndroidStateSnapshot:
     """The states to put back, read before the scenario runs.
 
@@ -132,6 +139,7 @@ def snapshot_android(
     watching only airplane mode then sees nothing move, and leaves data off
     for every scenario after it.
     """
+    wanted = {item.kind for item in capabilities}
     radios = commands.connectivity() if commands is not None else None
     return AndroidStateSnapshot(
         airplane=receipts.airplane_mode(serial),
@@ -141,6 +149,13 @@ def snapshot_android(
         timezone=receipts.timezone(serial),
         locale=receipts.app_locale(serial, package) if package else None,
         accessibility=AdbControl.enabled_accessibility_services(serial),
+        orientation=(
+            commands.orientation()
+            if commands is not None
+            and CapabilityKind.ORIENTATION in wanted
+            else None
+        ),
+        network_shape=snapshot_android_network(serial, capabilities, commands),
     )
 
 
@@ -195,16 +210,7 @@ def snapshot_ios(
     capabilities: Sequence[Capability] = (),
     app_id: Optional[str] = None,
 ) -> IosStateSnapshot:
-    """The iOS states to put back, read before the scenario runs.
-
-    Only the states these capabilities could change are read, service by
-    service rather than kind by kind. A scenario that asks for nothing is not
-    worth four driver calls, and a screen-reader read answers nothing before
-    iOS 27.
-
-    The driver takes every read. No command line answers any of them, so this
-    asks for a driver rather than one that might be absent.
-    """
+    """Read only the iOS states that the declared capabilities can change."""
     wanted = {capability.kind for capability in capabilities}
     permissions = None
     services = _services_named(capabilities)
@@ -226,6 +232,12 @@ def snapshot_ios(
             if CapabilityKind.LOCATION in wanted
             else None
         ),
+        orientation=(
+            commands.orientation()
+            if CapabilityKind.ORIENTATION in wanted
+            else None
+        ),
+        condition=snapshot_ios_condition(commands, capabilities),
     )
 
 
@@ -376,6 +388,18 @@ def restore_android(
         events,
         lambda: AdbControl.enabled_accessibility_services(serial),
     )
+    if commands is not None:
+        _put_back(
+            "orientation",
+            commands.set_orientation,
+            found.orientation,
+            commands.orientation(),
+            events,
+            commands.orientation,
+        )
+    network_result = restore_android_network(serial, found.network_shape, commands)
+    if events is not None and network_result is not None:
+        events.append(RestorationEvent("network shaping", *network_result))
 
 
 def _restore_location(
@@ -459,6 +483,17 @@ def restore_ios(
     if found.simulated_location is not None:
         _restore_location(found, commands, events)
     _restore_permissions(udid, app_id, found, commands, events)
+    _put_back(
+        "orientation",
+        commands.set_orientation,
+        found.orientation,
+        commands.orientation() if found.orientation is not None else None,
+        events,
+        commands.orientation,
+    )
+    condition_result = restore_ios_condition(commands, found.condition)
+    if events is not None and condition_result is not None:
+        events.append(RestorationEvent("device condition", *condition_result))
 
 
 class RestorableDevice(Protocol):
@@ -482,24 +517,7 @@ def preserved(
     capabilities: Sequence[Capability] = (),
     events: Optional[list[RestorationEvent]] = None,
 ):
-    """Hands the device back as the scenario found it, whatever ended it.
-
-    Restoration is in a `finally`, so it runs after a pass, after a failure,
-    and after an interruption.
-
-    `capabilities` are the typed states the steps ask for. Android reads its
-    states through adb either way, which is cheap and needs no driver. iOS
-    reads each state through the driver, so it reads only what these
-    capabilities could change, down to the privacy service. Asking for a
-    screen reader on iOS 18 answers nothing and warns about it, once per
-    scenario.
-
-    Not every state is covered. Android puts back the radios, the battery,
-    the clock, the app locale and the accessibility services. iOS puts back
-    the screen reader, the simulated location, and each privacy decision a
-    step asked for. Those are the states a supported iOS capability changes
-    and something reads.
-    """
+    """Restore declared device state after success, failure, or interruption."""
     platform = device_control.platform
     serial = device_control.serial or ""
     driver = device_control.driver
@@ -507,7 +525,7 @@ def preserved(
 
     if platform == Platform.ANDROID and serial:
         package = package or device_control.package_id
-        android_found = snapshot_android(serial, package, commands)
+        android_found = snapshot_android(serial, package, commands, capabilities)
         logger.info("Device state before the scenario: %s", android_found.describe())
         try:
             yield android_found

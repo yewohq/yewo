@@ -1,19 +1,8 @@
-"""Setting the device states a scenario asks for.
-
-Every capability arrives as its own model, and every one is dispatched by an
-explicit case. A capability this platform cannot apply raises, because the
-alternative is a scenario that reads as having run offline while the device
-stayed online.
-
-The driver comes first and adb or simctl second. The session already holds a
-driver, the driver speaks to both platforms in one vocabulary, and it reads
-back what it sets. A command line is the fallback for what it has no method
-for, and for a device the driver answers about but cannot change.
-"""
+"""Apply typed device states through the driver or platform fallback."""
 
 import logging
-import mimetypes
 import os
+import time
 from typing import Callable, Optional
 
 from yewo.agent.actuation.actions import (
@@ -24,11 +13,13 @@ from yewo.agent.actuation.actions import (
     Capability,
     ClipboardCapability,
     DeeplinkCapability,
+    DeviceLockCapability,
     InterruptCapability,
     LocaleCapability,
     LocationCapability,
     MediaInjectCapability,
     NetworkCapability,
+    OrientationCapability,
     PermissionCapability,
     TimezoneCapability,
 )
@@ -39,31 +30,19 @@ from yewo.agent.device.capability_maps import (
     APPIUM_NETWORK_TYPES,
     CONNECTIVITY,
     IOS_PRIVACY_SERVICES,
+    SLOW_NETWORK_MODES,
     PERMISSION_LIMITED,
     TALKBACK,
 )
 from yewo.agent.device.driver_commands import DriverCommands
 from yewo.agent.device.platform import Platform
+from yewo.agent.device.media import android_media_directory
 from yewo.agent.device.receipts import Receipt
+from yewo.agent.device import resilience
 from yewo.agent.device.simctl_control import SimctlControl
 from yewo.errors import ActionRejected, DeviceUnavailable
 
 logger = logging.getLogger(__name__)
-
-
-def _android_media_directory(local_path: str) -> str:
-    """Select Android's public collection from the file's media type."""
-    media_type, _ = mimetypes.guess_type(local_path)
-    if media_type:
-        category = media_type.split("/", 1)[0]
-        if category == "audio":
-            return "Music"
-        if category == "video":
-            return "Movies"
-        if category == "image":
-            return "Pictures"
-    return "Download"
-
 
 def _format_capability_label(capability: Capability) -> str:
     """A capability as a reader needs it, with the variant it chose.
@@ -79,7 +58,7 @@ def _format_capability_label(capability: Capability) -> str:
 class CapabilityController:
     """Dispatches system-level state commands to the active device."""
 
-    def __init__(self, device_control):
+    def __init__(self, device_control, sleep: Callable[[float], None] = time.sleep):
         """Initializes CapabilityController with active device controls.
 
         Args:
@@ -90,6 +69,7 @@ class CapabilityController:
         self.platform = device_control.platform
         self.adb_control = getattr(device_control, "adb_control", None)
         self.commands = DriverCommands(device_control.driver)
+        self.sleep = sleep
 
     def resolve_device_identifier(self) -> str:
         """Resolves the current device serial number (Android) or UDID (iOS).
@@ -122,7 +102,7 @@ class CapabilityController:
         logger.info("Executing capability control: %s", capability_label)
         target = self.resolve_device_identifier()
         try:
-            self._apply_capability(target, capability)
+            transition_receipt = self._apply_capability(target, capability)
         except ActionRejected:
             raise
         except Exception as exc:
@@ -131,7 +111,7 @@ class CapabilityController:
                 f"Capability {capability_label} failed: {exc}"
             ) from exc
 
-        receipt = capability_receipts.read_capability_receipt(
+        receipt = transition_receipt or capability_receipts.read_capability_receipt(
             self.platform, target, capability, self.commands, self._resolve_app_id()
         )
         if receipt is None:
@@ -144,7 +124,7 @@ class CapabilityController:
             logger.info("Capability confirmed. %s", receipt)
         return receipt
 
-    def _apply_capability(self, target: str, capability: Capability) -> None:
+    def _apply_capability(self, target: str, capability: Capability) -> Optional[Receipt]:
         """Routes one capability to the method that applies it.
 
         Matched on the model rather than looked up by name. The wildcard below
@@ -156,7 +136,7 @@ class CapabilityController:
             case LocationCapability():
                 self._apply_location(target, capability)
             case NetworkCapability():
-                self._apply_network(target, capability)
+                return self._apply_network(target, capability)
             case BatteryCapability():
                 self._apply_battery(target, capability)
             case TimezoneCapability():
@@ -174,7 +154,13 @@ class CapabilityController:
             case DeeplinkCapability():
                 self._apply_deeplink(target, capability)
             case AppStateCapability():
-                self._apply_app_state(target, capability)
+                return self._apply_app_state(target, capability)
+            case OrientationCapability():
+                self.commands.set_orientation(capability.orientation)
+            case DeviceLockCapability():
+                return resilience.lock_cycle(
+                    target, capability, self.commands, self.sleep
+                )
             case MediaInjectCapability():
                 self._apply_media_injection(target, capability)
             case AccessibilityCapability():
@@ -183,6 +169,7 @@ class CapabilityController:
                 raise ActionRejected(
                     f"No handler for capability {capability.kind.value}"
                 )
+        return None
 
     def _unsupported_capability_error(self, capability: Capability, detail: str) -> ActionRejected:
         """The refusal to raise, naming the capability and this platform."""
@@ -263,12 +250,23 @@ class CapabilityController:
                 ),
             )
 
-    def _apply_network(self, target: str, capability: NetworkCapability) -> None:
+    def _apply_network(
+        self, target: str, capability: NetworkCapability
+    ) -> Optional[Receipt]:
+        if capability.mode in SLOW_NETWORK_MODES:
+            if self.platform == Platform.IOS:
+                return resilience.apply_ios_network_profile(
+                    target, capability, self.commands
+                )
+            return resilience.apply_android_network_profile(
+                target, capability, self.commands
+            )
+
         if self.platform != Platform.ANDROID:
             raise self._unsupported_capability_error(
                 capability,
-                "the simulator shares the host network connection, and the "
-                "condition inducers that would change it need a real device",
+                "iOS exposes no automatable radio toggles, and a simulator "
+                "shares the host network connection",
             )
 
         radios = CONNECTIVITY[capability.mode]
@@ -277,6 +275,7 @@ class CapabilityController:
             lambda: self.commands.set_connectivity(**radios),
             lambda: self._apply_network_by_command(target, capability.mode),
         )
+        return None
 
     def _apply_network_by_command(self, target: str, mode: str) -> None:
         """Airplane mode through adb, and the rest through Appium's bitmask."""
@@ -480,7 +479,9 @@ class CapabilityController:
             lambda: AdbControl.open_deeplink(target, capability.url, package),
         )
 
-    def _apply_app_state(self, target: str, capability: AppStateCapability) -> None:
+    def _apply_app_state(
+        self, target: str, capability: AppStateCapability
+    ) -> Optional[Receipt]:
         package = self._require_app_id(capability)
 
         if capability.action == "force_stop":
@@ -489,7 +490,17 @@ class CapabilityController:
                 lambda: self.commands.terminate_app(package),
                 lambda: self._terminate_app_by_command(target, package),
             )
-            return
+            return None
+
+        if capability.action == "relaunch":
+            return resilience.relaunch(
+                target, capability, package, self.commands, self.sleep
+            )
+
+        if capability.action == "background_resume":
+            return resilience.background_resume(
+                target, capability, package, self.commands, self.sleep
+            )
 
         if self.platform != Platform.ANDROID:
             def no_command_line() -> None:
@@ -502,8 +513,9 @@ class CapabilityController:
                 lambda: self.commands.clear_app(package),
                 no_command_line,
             )
-            return
+            return None
         AdbControl.clear_app_data(target, package)
+        return None
 
     def _terminate_app_by_command(self, target: str, package: str) -> None:
         if self.platform == Platform.IOS:
@@ -518,7 +530,7 @@ class CapabilityController:
         if self.platform == Platform.IOS:
             SimctlControl.add_media(target, capability.local_path)
         else:
-            directory = _android_media_directory(capability.local_path)
+            directory = android_media_directory(capability.local_path)
             destination = f"/sdcard/{directory}/{os.path.basename(capability.local_path)}"
             AdbControl.push_file(target, capability.local_path, destination)
             AdbControl.scan_media_file(target, destination)

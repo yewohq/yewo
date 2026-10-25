@@ -84,7 +84,10 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("previous prompt decision", reason)
 
     def test_a_capability_the_platform_lacks_skips_the_scenario(self):
-        reason = self._reason(self._case(CapabilityKind.NETWORK), self._target(Platform.IOS))
+        reason = self._reason(
+            self._asking_for(NetworkCapability(mode="offline")),
+            self._target(Platform.IOS),
+        )
 
         self.assertIn("network", reason)
         self.assertIn("ios", reason)
@@ -172,7 +175,7 @@ class PreflightTests(unittest.TestCase):
             self._target(Platform.IOS),
         )
 
-        self.assertEqual(reason.count("network cannot be set"), 1)
+        self.assertEqual(reason.count("network 'offline' cannot be set"), 1)
 
     def test_a_capability_with_no_row_for_the_platform_is_refused(self):
         """An absent row is how two implemented iOS capabilities were skipped."""
@@ -314,8 +317,27 @@ class PhysicalDeviceTests(unittest.TestCase):
 
         self.assertEqual(
             self._allowed(target),
-            {"clipboard", "deeplink", "app_state", "interrupt", "location"},
+            {
+                "clipboard",
+                "deeplink",
+                "app_state",
+                "interrupt",
+                "location",
+                "network",
+                "orientation",
+                "device_lock",
+            },
         )
+
+    def test_slow_network_profiles_are_physical_only_on_ios(self):
+        from yewo.testing.judge.capabilities import unsupported_for
+
+        slow = NetworkCapability(mode="slow_3g")
+        physical = self._target("  (none)")
+        simulator = self._target(f"  iPhone ({self.PHYSICAL}) (Booted)")
+
+        self.assertIsNone(unsupported_for(slow, physical))
+        self.assertIn("physical device", unsupported_for(slow, simulator))
 
     def test_the_release_a_capability_needs_is_read_off_the_driver(self):
         """VoiceOver arrived in iOS 27, and this target reports 18.2."""

@@ -36,7 +36,7 @@ class DerivationTests(unittest.TestCase):
 
     def test_no_verb_names_something_yewo_cannot_do(self):
         """The hand-written list allowed all five, and none of them is shipped."""
-        for absent in ("rotate", "lock", "unlock", "background", "foreground"):
+        for absent in ("shake", "unlock", "foreground"):
             self.assertNotIn(absent, ACTION_VERBS, absent)
 
     def test_every_verb_traces_to_an_action_a_capability_or_the_run(self):

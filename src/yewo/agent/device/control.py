@@ -18,6 +18,7 @@ from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.focus import Focus
 from yewo.agent.device.diagnostics import diagnose_avd_launch
 from yewo.agent.device.platform import Platform
+from yewo.agent.device.ios_app import bundle_identifier
 from yewo.defaults import (
     AVD_LAUNCH_TIMEOUT_MS,
     IDLE_SESSION_TIMEOUT_SECONDS,
@@ -104,6 +105,10 @@ class DeviceControl:
             options.is_headless = is_headless
             options.new_command_timeout = IDLE_SESSION_TIMEOUT_SECONDS
             options.set_capability("appium:enforceAppInstall", not reuse_app)
+            # This session starts WDA, so it must also stop its xcodebuild.
+            # XCUITest otherwise caches that process after driver.quit(),
+            # which accumulated across runs and exhausted the host.
+            options.set_capability("appium:useNewWDA", True)
             self.adb_control = None
         else:
             self._device_was_running = bool(
@@ -223,6 +228,8 @@ class DeviceControl:
             value = capabilities.get(name)
             if isinstance(value, str) and value:
                 return value
+        if self.platform == Platform.IOS:
+            return bundle_identifier(self.app_path)
         return self.package_id
 
     @property

@@ -70,6 +70,48 @@ class ReceiptTests(unittest.TestCase):
         self.assertIn("airplane=on", str(raised.exception))
         self.assertIn("airplane=off", str(raised.exception))
 
+    def test_online_needs_one_radio_not_two(self):
+        """An emulator with Wi-Fi and no cellular subscription is still online."""
+        receipt = self._apply(
+            NetworkCapability(mode="online"),
+            answers={
+                "getConnectivity": {
+                    "wifi": True,
+                    "data": False,
+                    "airplaneMode": False,
+                }
+            },
+        )
+
+        self.assertTrue(receipt.confirmed)
+
+    def test_airplane_mode_makes_a_stale_cellular_flag_irrelevant(self):
+        receipt = self._apply(
+            NetworkCapability(mode="offline"),
+            answers={
+                "getConnectivity": {
+                    "wifi": False,
+                    "data": True,
+                    "airplaneMode": True,
+                }
+            },
+        )
+
+        self.assertTrue(receipt.confirmed)
+
+    def test_online_refuses_airplane_off_with_no_active_radio(self):
+        with self.assertRaisesRegex(ActionRejected, "observed offline"):
+            self._apply(
+                NetworkCapability(mode="online"),
+                answers={
+                    "getConnectivity": {
+                        "wifi": False,
+                        "data": False,
+                        "airplaneMode": False,
+                    }
+                },
+            )
+
     def test_a_state_that_cannot_be_read_is_not_a_mismatch(self):
         """Unconfirmed is not wrong, so the scenario continues."""
         receipt = self._apply(NetworkCapability(mode="offline"), airplane_mode=None)

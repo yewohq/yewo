@@ -172,6 +172,7 @@ class SessionTargetingTests(unittest.TestCase):
         capabilities = self._capabilities("00008140-00096DC43A5280")
 
         self.assertEqual(capabilities["appium:udid"], "00008140-00096DC43A5280")
+        self.assertIs(capabilities["appium:useNewWDA"], True)
 
     def test_a_name_that_resolves_to_nothing_still_starts_a_session(self):
         """A simulator is reachable by name, so a failed read must not stop a run."""

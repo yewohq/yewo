@@ -23,6 +23,64 @@ CONNECTIVITY = {
     "data_only": {"wifi": False, "data": True, "airplane": False},
 }
 
+SLOW_NETWORK_MODES = frozenset({"slow_2g", "slow_3g", "high_latency"})
+
+# Android emulator-console presets. Each profile sets throughput and latency;
+# setting only one leaves an undeclared half of the network condition behind.
+ANDROID_NETWORK_PROFILES = {
+    "slow_2g": {
+        "speed": "gsm", "delay": "gprs",
+        "upload_kbps": 14.4, "download_kbps": 14.4,
+        "min_latency_ms": 150, "max_latency_ms": 550,
+    },
+    "slow_3g": {
+        "speed": "umts", "delay": "umts",
+        "upload_kbps": 128.0, "download_kbps": 1920.0,
+        "min_latency_ms": 35, "max_latency_ms": 200,
+    },
+    "high_latency": {
+        "speed": "full", "delay": "gprs",
+        "upload_kbps": 0.0, "download_kbps": 0.0,
+        "min_latency_ms": 150, "max_latency_ms": 550,
+    },
+}
+
+# Xcode names can vary by release, so these are ranked semantic fragments and
+# never opaque profile identifiers. The identifiers are discovered from the
+# attached physical device at run time.
+IOS_NETWORK_PROFILE_TERMS = {
+    "slow_2g": (("2g",), ("edge",), ("very bad", "network")),
+    "slow_3g": (("3g",), ("poor", "network"), ("average", "network")),
+    "high_latency": (("high", "latency"), ("lossy", "network")),
+}
+
+
+def ios_network_profile(conditions: list[dict], mode: str) -> tuple[str, str] | None:
+    """Find the device's profile by meaning, never by a version-specific ID."""
+    ranked_terms = IOS_NETWORK_PROFILE_TERMS.get(mode, ())
+    for terms in ranked_terms:
+        for condition in conditions:
+            condition_id = condition.get("identifier")
+            for profile in condition.get("profiles", ()):
+                profile_id = profile.get("identifier")
+                haystack = " ".join(
+                    str(profile.get(key, ""))
+                    for key in ("name", "description", "identifier")
+                ).lower()
+                if condition_id and profile_id and all(term in haystack for term in terms):
+                    return str(condition_id), str(profile_id)
+    return None
+
+
+def active_ios_condition(conditions: list[dict]) -> tuple[str, str] | None:
+    """The active condition/profile IDs, or None when the readable list has none."""
+    for condition in conditions:
+        condition_id = condition.get("identifier")
+        profile_id = condition.get("activeProfile")
+        if condition.get("isActive") and condition_id and profile_id:
+            return str(condition_id), str(profile_id)
+    return None
+
 ANDROID_PERMISSIONS = {
     "camera": "android.permission.CAMERA",
     "location": "android.permission.ACCESS_FINE_LOCATION",

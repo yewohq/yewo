@@ -90,7 +90,7 @@ class CapabilityStepTests(unittest.TestCase):
         """The typed capability is the real one, so it cannot be invented."""
         with self.assertRaises(ValidationError):
             CapabilityStep.model_validate(
-                {"capability": {"kind": "orientation", "orientation": "landscape"}}
+                {"capability": {"kind": "thermal_state", "state": "critical"}}
             )
 
 
@@ -115,9 +115,9 @@ class ActionStepTests(unittest.TestCase):
             ActionStep(instruction="Tap Login and verify the error appears.")
 
     def test_a_verb_for_something_yewo_cannot_do_is_refused(self):
-        """No capability rotates the screen, so no step may ask for it."""
+        """No capability shakes the device, so no step may ask for it."""
         with self.assertRaisesRegex(ValidationError, "not an action"):
-            ActionStep(instruction="Rotate the device to landscape.")
+            ActionStep(instruction="Shake the device.")
 
     def test_the_refusal_names_the_actions_that_are_allowed(self):
         with self.assertRaises(ValidationError) as refused:

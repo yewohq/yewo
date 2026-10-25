@@ -15,22 +15,7 @@ from unittest import mock
 
 from PIL import Image
 
-from yewo.agent.actuation.actions import (
-    AccessibilityCapability,
-    AppStateCapability,
-    BatteryCapability,
-    BiometricCapability,
-    CapabilityKind,
-    ClipboardCapability,
-    DeeplinkCapability,
-    InterruptCapability,
-    LocaleCapability,
-    LocationCapability,
-    MediaInjectCapability,
-    NetworkCapability,
-    PermissionCapability,
-    TimezoneCapability,
-)
+from capability_fakes import EVERY_CAPABILITY as EVERY_CAPABILITY
 from yewo.agent.device import capability_receipts
 from yewo.agent.device.capability_controller import CapabilityController
 from yewo.agent.device.platform import Platform
@@ -172,25 +157,6 @@ READERS = (
     "app_running",
 )
 
-# One instance of every capability, so a capability added to the union without
-# a case in the dispatch fails here rather than at run time on a device.
-EVERY_CAPABILITY = {
-    CapabilityKind.LOCATION: LocationCapability(latitude=1.0, longitude=2.0),
-    CapabilityKind.NETWORK: NetworkCapability(mode="offline"),
-    CapabilityKind.BATTERY: BatteryCapability(level=50),
-    CapabilityKind.TIMEZONE: TimezoneCapability(timezone="Europe/London"),
-    CapabilityKind.LOCALE: LocaleCapability(language="fr", country="FR"),
-    CapabilityKind.PERMISSION: PermissionCapability(permission="camera", grant=True),
-    CapabilityKind.INTERRUPT: InterruptCapability(type="low_memory"),
-    CapabilityKind.BIOMETRIC: BiometricCapability(action="match"),
-    CapabilityKind.CLIPBOARD: ClipboardCapability(text="hello"),
-    CapabilityKind.DEEPLINK: DeeplinkCapability(url="app://cart"),
-    CapabilityKind.APP_STATE: AppStateCapability(action="force_stop"),
-    CapabilityKind.MEDIA_INJECT: MediaInjectCapability(local_path=__file__),
-    CapabilityKind.ACCESSIBILITY: AccessibilityCapability(enabled=True),
-}
-
-
 class FakeDriver:
     """A driver that records the `mobile:` methods it was asked for.
 
@@ -211,13 +177,31 @@ class FakeDriver:
         self.without = set(without)
         self.set_network_connection = mock.Mock()
         self.finger_print = mock.Mock()
+        self._orientation = "PORTRAIT"
+        self._locked = False
 
     def execute_script(self, script, params=None):
         method = script.removeprefix("mobile: ")
         self.calls.append((method, params or {}))
         if method in self.without:
             raise RuntimeError(f"Unknown mobile command '{method}'")
+        if method == "lock":
+            self._locked = True
+        elif method == "unlock":
+            self._locked = False
+        elif method == "isLocked" and method not in self.answers:
+            return self._locked
         return self.answers.get(method)
+
+    @property
+    def orientation(self):
+        self.calls.append(("getOrientation", {}))
+        return self._orientation
+
+    @orientation.setter
+    def orientation(self, value):
+        self.calls.append(("setOrientation", {"orientation": value}))
+        self._orientation = value
 
     def asked(self, method):
         """The params one method was called with, or None if it never was."""
@@ -227,7 +211,7 @@ class FakeDriver:
         return None
 
 
-def controller(platform=Platform.ANDROID, package=None, driver=None):
+def controller(platform=Platform.ANDROID, package=None, driver=None, sleep=None):
     """A controller over a session that resolved its app the way a run does.
 
     `package_id` is Android's alone, as it is in a real session, so a path
@@ -245,7 +229,7 @@ def controller(platform=Platform.ANDROID, package=None, driver=None):
         package_id=None if ios else app_id,
         adb_control=SimpleNamespace(resolve_emulator_serial=lambda name: SERIAL),
     )
-    return CapabilityController(device)
+    return CapabilityController(device, **({"sleep": sleep} if sleep else {}))
 
 
 def silent_reads():

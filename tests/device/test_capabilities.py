@@ -306,6 +306,8 @@ class SessionIdentityTests(unittest.TestCase):
         control = object.__new__(DeviceControl)
         control.driver = SimpleNamespace(capabilities=capabilities)
         control.package_id = package_id
+        control.platform = Platform.ANDROID
+        control.app_path = ""
         return control._resolve_app_id()
 
     def test_an_android_session_is_named_by_its_package(self):

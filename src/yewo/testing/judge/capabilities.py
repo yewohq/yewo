@@ -129,6 +129,8 @@ def _refusal(name: str, support: CapabilitySupport, target: CapabilityTarget) ->
         return f"{name} cannot be set on {target.platform.value}: {support.detail}"
     if support.emulator_only and target.emulator is False:
         return f"{name} needs an emulator: {support.detail}"
+    if support.physical_only and target.emulator is True:
+        return f"{name} needs a physical device: {support.detail}"
     floor = support.min_release
     if floor is not None and _below(target, floor):
         return (
@@ -241,11 +243,14 @@ _RESTORABLE_PRECONDITIONS = {
         CapabilityKind.LOCALE,
         CapabilityKind.PERMISSION,
         CapabilityKind.ACCESSIBILITY,
+        CapabilityKind.ORIENTATION,
     },
     Platform.IOS: {
+        CapabilityKind.NETWORK,
         CapabilityKind.LOCATION,
         CapabilityKind.PERMISSION,
         CapabilityKind.ACCESSIBILITY,
+        CapabilityKind.ORIENTATION,
     },
 }
 
