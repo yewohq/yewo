@@ -70,7 +70,7 @@ def preflight_metrics_before_device(
         reason = (
             "Unsupported evidence requirement(s): " + "; ".join(platform_reasons)
             if platform_reasons
-            else unavailable_metric_reason(scenario)
+            else unavailable_metric_reason(scenario, target)
         )
         if reason is None:
             runnable.append(scenario)

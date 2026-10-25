@@ -30,6 +30,10 @@ class ObservationUnavailable(YewoError):
     """Yewo could not read the screen, so it has nothing to decide from."""
 
 
+class MeasurementUnavailable(YewoError):
+    """The app ran, but its measurement source produced no usable sample."""
+
+
 class ActionRejected(YewoError):
     """The device did not do what the action asked. Nothing may assume it did."""
 

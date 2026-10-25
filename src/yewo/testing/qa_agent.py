@@ -18,13 +18,11 @@ from yewo.testing.models import (
     ExpectedOutcome,
     GeneratedTestCase,
     QAIssue,
-    ReceiptRecord,
     ReportStatus,
     RuleVerification,
     ScenarioReport,
     SensitiveFinding,
     Measurement,
-    VerdictInputs,
 )
 from yewo.agent.device import restoration
 from yewo.agent.device.capability_controller import CapabilityController
@@ -52,46 +50,11 @@ from yewo.testing.lifecycle import (
 )
 from yewo.testing.judge import transitions
 from yewo.testing.judge.screen_audits import LiveScreenAudits
+from yewo.testing.measurement_collection import ScenarioMeasurementCollector
+from yewo.testing.report.measurement_log import MeasurementLog
+from yewo.testing.verdict_inputs import build_verdict_inputs
 
 logger = logging.getLogger(__name__)
-
-
-def _verdict_inputs(
-    run_result,
-    stop_reason,
-    qa_outputs,
-    assessments,
-    test_case,
-    security_rules,
-    all_findings,
-    measurement_samples=(),
-) -> VerdictInputs:
-    """What the judge was given, kept so the verdict can be reached again.
-
-    Written beside the verdict rather than derived later. Nothing else in the
-    record holds the walk's own status, what the planner last said about
-    proceeding, or which device states the target reported back.
-    """
-    last = qa_outputs[-1] if qa_outputs else None
-    return VerdictInputs(
-        run_status=run_result.status,
-        stop_reason=stop_reason,
-        is_scenario_feasible=last.is_scenario_feasible if last else True,
-        infeasibility_reason=last.infeasibility_reason if last else None,
-        screens_judged=len(assessments),
-        expected_outcomes=list(test_case.expected_outcomes),
-        security_rules=list(security_rules),
-        sensitive_findings=list(all_findings),
-        required_capabilities=list(test_case.required_capabilities),
-        measurements=list(measurement_samples),
-        receipts=[
-            ReceiptRecord(capability=receipt.capability, confirmed=receipt.confirmed)
-            for receipt in run_result.capability_receipts
-        ],
-        postcondition_verifications=list(run_result.postcondition_verifications),
-    )
-
-
 class QAAgent:
     """Runs one QA scenario, and keeps the clients a journey shares.
 
@@ -159,6 +122,7 @@ class QAAgent:
         perception,
         session_dir: Path,
         session_trail: Optional[SessionTrail] = None,
+        telemetry_dir: Optional[Path] = None,
     ) -> ScenarioReport:
         """Execute one test scenario and return a complete ScenarioReport."""
         start_time = time.time()
@@ -212,7 +176,7 @@ class QAAgent:
         preflight_reason = unsupported_reason(test_case, target)
         preflight_status = ReportStatus.UNSUPPORTED
         if preflight_reason is None:
-            preflight_reason = unavailable_metric_reason(test_case)
+            preflight_reason = unavailable_metric_reason(test_case, target)
             preflight_status = ReportStatus.UNVERIFIED
         if preflight_reason:
             return ScenarioReport(
@@ -225,6 +189,24 @@ class QAAgent:
                 duration=round(time.time() - start_time, 2),
                 failure_reason=preflight_reason,
             )
+
+        measurement_log = (
+            MeasurementLog(telemetry_dir, self._device_agent.scrubber)
+            if telemetry_dir is not None
+            else None
+        )
+        measurement_collector = ScenarioMeasurementCollector(
+            device_control,
+            target,
+            test_case.scenario_uuid,
+            test_case.setup,
+            test_case.required_metrics,
+            measurement_log,
+        )
+
+        def observe_screen(snapshot, step: int):
+            measurement_collector.observe_screen(snapshot.current_phash, step)
+            return screen_audits.observe(snapshot, step)
 
         # OCR caches are useful within a scenario but are evidence from the
         # wrong run once the app has been restarted.
@@ -275,11 +257,24 @@ class QAAgent:
             ):
                 try:
                     try:
-                        lifecycle_operations.append(
-                            apply_app_precondition(
-                                device_control, test_case.setup, test_case.setup_origin
-                            )
+                        setup_evidence = apply_app_precondition(
+                            device_control,
+                            test_case.setup,
+                            test_case.setup_origin,
+                            collect_launch_ttid=(
+                                device_control.platform is Platform.ANDROID
+                                and test_case.setup is not SetupMode.PRESERVE
+                            ),
                         )
+                        lifecycle_operations.append(setup_evidence.operation)
+                        if setup_evidence.launch_timing is not None:
+                            measurement_collector.record_launch(
+                                setup_evidence.launch_timing
+                            )
+                        if setup_evidence.measurement_failure:
+                            measurement_collector.record_failure(
+                                setup_evidence.measurement_failure
+                            )
                         controller = CapabilityController(device_control)
                         for capability in test_case.initial_capabilities:
                             operation, receipt = apply_capability_precondition(
@@ -300,19 +295,23 @@ class QAAgent:
                             )
                         )
                     if precondition_failure is None:
-                        run_result: DeviceRunResult = self._device_agent.run(
-                            goal=test_case.steps_instructions,
-                            device_control=device_control,
-                            perception=perception,
-                            session_dir=session_dir,
-                            session_trail=session_trail,
-                            observation_hook=screen_audits.observe,
-                            before_action_hook=screen_audits.before_action,
-                            step_hook=step_hook,
-                            planner_override=qa_planner,
-                            max_steps=step_budget,
-                            setup=SetupMode.PRESERVE,
-                        )
+                        measurement_collector.begin_frame_diagnostics()
+                        try:
+                            run_result: DeviceRunResult = self._device_agent.run(
+                                goal=test_case.steps_instructions,
+                                device_control=device_control,
+                                perception=perception,
+                                session_dir=session_dir,
+                                session_trail=session_trail,
+                                observation_hook=observe_screen,
+                                before_action_hook=screen_audits.before_action,
+                                step_hook=step_hook,
+                                planner_override=qa_planner,
+                                max_steps=step_budget,
+                                setup=SetupMode.PRESERVE,
+                            )
+                        finally:
+                            measurement_collector.finish_frame_diagnostics()
                 finally:
                     app_restoration = restore_app_precondition(device_control, test_case.setup)
                     if app_restoration is not None:
@@ -331,6 +330,7 @@ class QAAgent:
                 cause=Cause.DEVICE.value,
                 duration=round(time.time() - start_time, 2),
                 failure_reason=reportable(precondition_failure),
+                measurements=list(measurement_collector.samples),
                 lifecycle_operations=lifecycle_operations,
             )
         run_result.capability_receipts[0:0] = initial_receipts
@@ -347,6 +347,7 @@ class QAAgent:
             stop_reason=stop_reason["value"],
             duration=time.time() - start_time,
             security_rules=security_rules,
+            measurement_samples=measurement_collector.samples,
         )
         report.lifecycle_operations = lifecycle_operations
         failed_restorations = [
@@ -441,7 +442,7 @@ class QAAgent:
             postcondition_verifications=list(run_result.postcondition_verifications),
             measurements=list(measurement_samples),
             failure_reason=scrub(failure_reason or "") or None,
-            verdict_inputs=_verdict_inputs(
+            verdict_inputs=build_verdict_inputs(
                 run_result,
                 stop_reason,
                 qa_outputs,

@@ -24,8 +24,8 @@
     "name": "a-lower-is-better-metric-uses-the-best-sample",
     "owner": "judge",
     "path": "src/yewo/testing/judge/measurements.py",
-    "find": "    return max(values) if direction is MetricDirection.LOWER else min(values)",
-    "replace": "    return min(values) if direction is MetricDirection.LOWER else max(values)"
+    "find": "    if failed:\n        selected = (",
+    "replace": "    if failed and all(decision is False for _, decision in decisions):\n        selected = ("
   },
   {
     "name": "a-recorded-verdict-settles-a-measured-outcome",
@@ -367,15 +367,15 @@
     "name": "a-report-carries-no-record-of-its-inputs",
     "owner": "gate",
     "path": "src/yewo/testing/qa_agent.py",
-    "find": "            verdict_inputs=_verdict_inputs(",
-    "replace": "            verdict_inputs=None and _verdict_inputs("
+    "find": "            verdict_inputs=build_verdict_inputs(",
+    "replace": "            verdict_inputs=None and build_verdict_inputs("
   },
   {
     "name": "the-planners-last-word-is-not-carried",
     "owner": "gate",
-    "path": "src/yewo/testing/qa_agent.py",
-    "find": "    last = qa_outputs[-1] if qa_outputs else None",
-    "replace": "    last = qa_outputs[0] if qa_outputs else None"
+    "path": "src/yewo/testing/verdict_inputs.py",
+    "find": "    last_output = qa_outputs[-1] if qa_outputs else None",
+    "replace": "    last_output = qa_outputs[0] if qa_outputs else None"
   },
   {
     "name": "an-old-record-is-decided-from-half-its-inputs",

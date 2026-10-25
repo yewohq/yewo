@@ -1,5 +1,6 @@
 """Deterministic state around a scenario's visible user journey."""
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Literal, Optional
 
@@ -7,11 +8,17 @@ from pydantic import BaseModel, Field
 
 from yewo.agent.actuation.actions import Capability
 from yewo.agent.device.capability_controller import CapabilityController
-from yewo.agent.device.launch import SetupMode, clear_app_data, restart_app
+from yewo.agent.device.launch import (
+    LaunchTiming,
+    SetupMode,
+    clear_app_data,
+    measure_android_launch_ttid,
+    restart_app,
+)
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.receipts import Receipt
 from yewo.agent.device.restoration import RestorationEvent
-from yewo.errors import DeviceUnavailable
+from yewo.errors import DeviceUnavailable, MeasurementUnavailable
 
 
 class SetupOrigin(str, Enum):
@@ -63,6 +70,15 @@ class ScenarioPreconditions(BaseModel):
     )
 
 
+@dataclass(frozen=True)
+class AppSetupEvidence:
+    """The lifecycle operation and any telemetry its launch produced."""
+
+    operation: LifecycleOperation
+    launch_timing: Optional[LaunchTiming] = None
+    measurement_failure: Optional[str] = None
+
+
 def resolve_setup(preconditions: ScenarioPreconditions) -> tuple[SetupMode, SetupOrigin]:
     """Return the declared app state, or the independent-scenario default."""
     if preconditions.app_state is not None:
@@ -71,8 +87,11 @@ def resolve_setup(preconditions: ScenarioPreconditions) -> tuple[SetupMode, Setu
 
 
 def apply_app_precondition(
-    device_control, mode: SetupMode, origin: SetupOrigin
-) -> LifecycleOperation:
+    device_control,
+    mode: SetupMode,
+    origin: SetupOrigin,
+    collect_launch_ttid: bool = False,
+) -> AppSetupEvidence:
     """Establish the requested app state before the planner sees a screen."""
     source = "none"
     if mode is SetupMode.CLEAR_DATA:
@@ -83,22 +102,39 @@ def apply_app_precondition(
             if device_control.platform is Platform.ANDROID
             else "fresh app installation"
         )
+    launch_timing = None
+    measurement_failure = None
     if mode is not SetupMode.PRESERVE:
-        restart_app(device_control)
-        source = f"{source}; app restart" if source != "none" else "app restart"
-    return LifecycleOperation(
-        operation_id="app_state.setup",
-        phase=LifecyclePhase.SETUP,
-        kind="app_state",
-        requested=mode.value,
-        status=LifecycleStatus.CONFIRMED,
-        source=source,
-        observed=f"{mode.value} ({origin.value})",
+        if collect_launch_ttid and device_control.platform is Platform.ANDROID:
+            try:
+                launch_timing = measure_android_launch_ttid(device_control)
+            except MeasurementUnavailable as exc:
+                measurement_failure = str(exc)
+            source = (
+                f"{source}; measured app restart"
+                if source != "none"
+                else "measured app restart"
+            )
+        else:
+            restart_app(device_control)
+            source = f"{source}; app restart" if source != "none" else "app restart"
+    return AppSetupEvidence(
+        operation=LifecycleOperation(
+            operation_id="app_state.setup",
+            phase=LifecyclePhase.SETUP,
+            kind="app_state",
+            requested=mode.value,
+            status=LifecycleStatus.CONFIRMED,
+            source=source,
+            observed=f"{mode.value} ({origin.value})",
+        ),
+        launch_timing=launch_timing,
+        measurement_failure=measurement_failure,
     )
 
 
 def restore_app_precondition(device_control, mode: SetupMode) -> Optional[LifecycleOperation]:
-    """Return a clean-state scenario to the clean boundary it started from.
+    """Return a clean-state scenario to its initial clean boundary.
 
     Clearing app data is intentionally destructive, so it cannot recreate the
     data that existed before the scenario. It can still guarantee that a

@@ -91,13 +91,18 @@ Say what has to be visible, and give the evidence that settles each one:
 
 - "current_screen" — true or false from one screenshot. Prefer this always.
 - "transition" — the run reached a screen, or moved between two.
-Do not write "measured". Live metric collection is not connected to scenario
-execution yet. A measured outcome would have no sample and could not pass.
+- "measured" — only when the app description explicitly states a measurable
+  requirement. Name one supported metric and copy its numeric threshold:
+  `app_launch_ttid_ms`, `min_touch_target`, or
+  `unlabelled_actionable_count`. Never invent a performance or accessibility
+  threshold. "No unlabelled actionable controls" has threshold zero.
 
 Yewo can read screenshots, on-screen text, and the result of an action. It
 cannot read network traffic, HTTP headers, the app's own logs, an
 accessibility tree, a screen reader, focus order or a contrast ratio. Write
-no outcome that needs one of those.
+no outcome that needs one of those. Yewo's separate iOS accessibility audit
+can settle only the two named accessibility metrics; it is not available to
+the planner.
 
 Yewo writes its own outcome for every value the file says this app
 refuses. A step entering one needs no claim from you.

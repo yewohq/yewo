@@ -13,6 +13,7 @@ from typing import Optional, Protocol, Sequence
 
 from yewo.agent.run.record import StepRecord
 from yewo.testing.models import (
+    Measurement,
     PolicyCheckReport,
     QAIssue,
     ReportStatus,
@@ -65,6 +66,9 @@ class ScenarioSource(Protocol):
 
     @property
     def lifecycle_operations(self) -> Sequence[LifecycleOperation]: ...
+
+    @property
+    def measurements(self) -> Sequence[Measurement]: ...
 
     @property
     def verdict_inputs(self) -> Optional[VerdictInputs]:

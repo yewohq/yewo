@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, Valid
 from yewo.agent.run.record import StepRecord
 from yewo.errors import UsageError
 from yewo.testing.models import (
+    Measurement,
     PolicyCheckReport,
     QAIssue,
     REPORT_STATUS_ALIASES,
@@ -82,6 +83,7 @@ class _RecordedScenarioEntry(BaseModel):
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
     lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
+    measurements: List[Measurement] = Field(default_factory=list)
     verdict_inputs: Optional[VerdictInputs] = None
 
 
@@ -133,6 +135,7 @@ class RecordedScenario:
     rule_verifications: Sequence[RuleVerification] = ()
     detected_issues: Sequence[QAIssue] = ()
     lifecycle_operations: Sequence[LifecycleOperation] = ()
+    measurements: Sequence[Measurement] = ()
     verdict_inputs: Optional[VerdictInputs] = None
 
 
@@ -197,6 +200,7 @@ def _scenario(entry: _RecordedScenarioEntry) -> RecordedScenario:
         rule_verifications=tuple(entry.rule_verifications),
         detected_issues=tuple(entry.detected_issues),
         lifecycle_operations=tuple(entry.lifecycle_operations),
+        measurements=tuple(entry.measurements),
         verdict_inputs=entry.verdict_inputs,
     )
 

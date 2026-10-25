@@ -2,17 +2,57 @@
 
 from collections.abc import Iterable, Sequence
 
-from yewo.metrics import MetricDirection, definition_for
+from yewo.metrics import MeasurementRelation, MetricDirection, definition_for
 from yewo.testing.judge import rules
 from yewo.testing.models import AssertionScope, ExpectedOutcome, Measurement, RuleVerification
 
 
-def _worst_value(outcome: ExpectedOutcome, samples: Iterable[Measurement]) -> float | None:
-    values = [sample.value for sample in samples if sample.metric is outcome.metric]
-    if not values or outcome.metric is None:
+def _proves(sample: Measurement, threshold: float, direction: MetricDirection) -> bool | None:
+    """Return the verdict this exact value or bound proves."""
+    if direction is MetricDirection.LOWER:
+        if sample.relation is MeasurementRelation.EXACT:
+            return sample.value <= threshold
+        if sample.relation is MeasurementRelation.AT_MOST and sample.value <= threshold:
+            return True
+        if sample.relation is MeasurementRelation.AT_LEAST and sample.value > threshold:
+            return False
+        return None
+    if sample.relation is MeasurementRelation.EXACT:
+        return sample.value >= threshold
+    if sample.relation is MeasurementRelation.AT_LEAST and sample.value >= threshold:
+        return True
+    if sample.relation is MeasurementRelation.AT_MOST and sample.value < threshold:
+        return False
+    return None
+
+
+def _decide_samples(
+    outcome: ExpectedOutcome,
+    samples: Iterable[Measurement],
+) -> tuple[bool, Measurement] | None:
+    if outcome.metric is None or outcome.threshold is None:
+        return None
+    relevant = [sample for sample in samples if sample.metric is outcome.metric]
+    if not relevant:
         return None
     direction = definition_for(outcome.metric).direction
-    return max(values) if direction is MetricDirection.LOWER else min(values)
+    decisions = [(sample, _proves(sample, outcome.threshold, direction)) for sample in relevant]
+    failed = [sample for sample, decision in decisions if decision is False]
+    if failed:
+        selected = (
+            max(failed, key=lambda sample: sample.value)
+            if direction is MetricDirection.LOWER
+            else min(failed, key=lambda sample: sample.value)
+        )
+        return False, selected
+    if any(decision is None for _, decision in decisions):
+        return None
+    selected = (
+        max(relevant, key=lambda sample: sample.value)
+        if direction is MetricDirection.LOWER
+        else min(relevant, key=lambda sample: sample.value)
+    )
+    return True, selected
 
 
 def settle(
@@ -31,23 +71,25 @@ def settle(
             continue
         if outcome.scope is not AssertionScope.MEASURED:
             continue
-        worst = _worst_value(outcome, sample_list)
-        if worst is None or outcome.metric is None or outcome.threshold is None:
+        decision = _decide_samples(outcome, sample_list)
+        if decision is None or outcome.metric is None or outcome.threshold is None:
             continue
+        passed, selected = decision
         definition = definition_for(outcome.metric)
-        passed = (
-            worst <= outcome.threshold
-            if definition.direction is MetricDirection.LOWER
-            else worst >= outcome.threshold
-        )
         comparison = "at most" if definition.direction is MetricDirection.LOWER else "at least"
+        observed = {
+            MeasurementRelation.EXACT: "",
+            MeasurementRelation.AT_LEAST: "at least ",
+            MeasurementRelation.AT_MOST: "at most ",
+        }[selected.relation]
         verdicts.append(
             RuleVerification(
                 rule=outcome.statement,
                 rule_id=rules.rule_id(rules.EXPECTED, index),
                 status="passed" if passed else "failed",
                 reasoning=(
-                    f"Worst sample was {worst:g} {definition.unit.value}; "
+                    f"Worst proven sample was {observed}{selected.value:g} "
+                    f"{definition.unit.value}; "
                     f"required {comparison} {outcome.threshold:g} {definition.unit.value}."
                 ),
             )

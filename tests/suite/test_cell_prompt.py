@@ -206,12 +206,13 @@ class SecretTests(unittest.TestCase):
 
 
 class OutcomeScopeTests(unittest.TestCase):
-    def test_measured_outcomes_are_not_offered_without_a_live_collector(self):
+    def test_measured_outcomes_require_an_explicit_threshold(self):
         prompt = _prompt(HAPPY)
 
-        self.assertIn('Do not write "measured"', prompt)
-        self.assertNotIn("`app_launch_ttid_ms`", prompt)
-        self.assertNotIn("`min_touch_target`", prompt)
+        self.assertIn('"measured"', prompt)
+        self.assertIn("`app_launch_ttid_ms`", prompt)
+        self.assertIn("`min_touch_target`", prompt)
+        self.assertIn("Never invent", prompt)
 
 
 class DerivedVocabularyTests(unittest.TestCase):

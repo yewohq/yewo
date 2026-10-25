@@ -117,10 +117,11 @@ test is the same test between runs. `yewo lock` writes those scenarios to
 lock that is missing or out of date, which is what a build should do.
 
 Yewo only writes assertions it can evidence from a screenshot, the detected
-text on it, and what an action did. Network traffic, HTTP headers,
-accessibility trees, screen readers, focus order and measured contrast need
+text on it, what an action did, or a supported device measurement. Network
+traffic, HTTP headers, screen readers, focus order and measured contrast need
 separate tooling. A scenario that asks for one is reported as unsupported
-rather than guessed at.
+rather than guessed at. The iOS accessibility audit is a measurement source;
+its element data never reaches the planner or controls an action.
 
 Independent scenarios start with cleared app data by default. A journey may
 declare a different app state or a typed device precondition:
@@ -139,6 +140,26 @@ Yewo applies and confirms these conditions before model-driven UI work, then
 restores device state after the scenario. Preconditions never create backend
 data or replace an action in the visible user journey. Credentials, payment
 details, and other non-observable values still belong in `env`.
+
+## Measurements
+
+Android scenarios that restart the app record cold-process launch TTID as
+diagnostic telemetry. A diagnostic value does not affect the verdict. If the
+journey explicitly requires a launch limit, the same OS-reported value becomes
+required evidence and the deterministic judge applies the threshold.
+
+On iOS 17 or newer, a journey can require `min_touch_target` or
+`unlabelled_actionable_count`. Yewo derives these values from Apple's
+accessibility audit after the screen is observed. An audit with no small touch
+target proves only the platform floor (`at_least 44 pt`); it does not invent an
+exact minimum. Raw audit descriptions are not stored.
+
+Every sample records its unit, source, collection time, target context, app
+data state, and whether it was required or diagnostic. Samples are written to
+`telemetry/measurements.jsonl` and exposed consistently in `run.json`,
+Markdown, JUnit, and HTML. Missing required evidence produces `UNVERIFIED`.
+The current iOS launch-time path remains unavailable because Appium command
+duration is not an application first-frame measurement.
 
 ## What a verdict means
 

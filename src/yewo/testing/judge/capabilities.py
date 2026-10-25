@@ -182,13 +182,30 @@ def unsupported_metric(metric: Metric, target: CapabilityTarget) -> Optional[str
     return None
 
 
-def unavailable_metric_reason(test_case: GeneratedTestCase) -> Optional[str]:
-    """Why scenario execution cannot collect a requested metric yet."""
-    unavailable_metrics = metrics_without_live_collectors(test_case.required_metrics)
-    if not unavailable_metrics:
+def unavailable_metric_reason(
+    test_case: GeneratedTestCase,
+    target: Optional[CapabilityTarget] = None,
+) -> Optional[str]:
+    """Why scenario execution cannot collect a requested metric here."""
+    if target is None:
+        unavailable_metrics = metrics_without_live_collectors(test_case.required_metrics)
+        if not unavailable_metrics:
+            return None
+        metric_names = ", ".join(metric.value for metric in unavailable_metrics)
+        return f"No live collector is available for required metric(s): {metric_names}."
+
+    # Imported at the call boundary to keep the collector free to use the
+    # target model without making module initialization circular.
+    from yewo.testing.measurement_collection import collector_refusal
+
+    refusals = [
+        reason
+        for metric in test_case.required_metrics
+        if (reason := collector_refusal(metric, target, test_case.setup)) is not None
+    ]
+    if not refusals:
         return None
-    metric_names = ", ".join(metric.value for metric in unavailable_metrics)
-    return f"No live collector is available for required metric(s): {metric_names}."
+    return "No live collector is available: " + "; ".join(refusals) + "."
 
 
 def _variant_refusal(capability: Capability, target: CapabilityTarget) -> Optional[str]:

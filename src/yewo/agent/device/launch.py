@@ -13,7 +13,9 @@ go completely still. So content that has held for a while also counts.
 
 import io
 import logging
+import re
 import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
@@ -25,7 +27,7 @@ from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.platform import Platform
 
 from yewo.agent.perception.screen import NAVIGATION_THRESHOLD
-from yewo.errors import DeviceUnavailable, ObservationUnavailable
+from yewo.errors import DeviceUnavailable, MeasurementUnavailable, ObservationUnavailable
 from yewo.defaults import (
     BLANK_SCREEN_STDDEV,
     LAUNCH_CONTENT_GRACE,
@@ -35,6 +37,26 @@ from yewo.defaults import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LaunchTiming:
+    """One platform-reported application launch duration."""
+
+    duration_ms: int
+    source: str
+    launch_type: str
+
+
+def parse_android_launch_ttid(output: str) -> int:
+    """Read Activity Manager's first-frame launch duration."""
+    status = re.search(r"(?m)^Status:\s*(\S+)\s*$", output)
+    duration = re.search(r"(?m)^TotalTime:\s*(\d+)\s*$", output)
+    if status is None or status.group(1).lower() != "ok" or duration is None:
+        raise MeasurementUnavailable(
+            "Android did not report a completed app launch time."
+        )
+    return int(duration.group(1))
 
 
 def _sample(device_control) -> Tuple[Optional[bool], Optional[object]]:
@@ -119,6 +141,47 @@ def _clear_task_restart(device_control, package_id: str) -> bool:
     except DeviceUnavailable as launch_err:
         logger.warning("ADB clear-task failed: %s. Falling back.", launch_err)
         return False
+
+
+def measure_android_launch_ttid(device_control) -> LaunchTiming:
+    """Launch a stopped Android process and return its OS-reported TTID."""
+    package_id = getattr(device_control, "package_id", None) or getattr(
+        device_control, "app_id", None
+    )
+    if not package_id:
+        raise DeviceUnavailable("The Android package id is not known.")
+    adb_runner = getattr(device_control, "adb_control", None) or AdbControl
+    serial = getattr(device_control, "serial", None) or adb_runner.resolve_emulator_serial(
+        device_control.device_name
+    )
+    if not serial:
+        raise DeviceUnavailable("The Android target serial is not known.")
+    activity = adb_runner.resolve_launch_activity(
+        device_control.app_path, package_id, serial
+    )
+    result = adb_runner.run_adb_command(
+        [
+            "adb",
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "start",
+            "-S",
+            "-W",
+            "-n",
+            f"{package_id}/{activity}",
+            "--activity-clear-task",
+        ],
+        doing=f"measure the launch of {package_id}",
+    )
+    await_first_paint(device_control)
+    duration_ms = parse_android_launch_ttid(result.stdout or "")
+    return LaunchTiming(
+        duration_ms=duration_ms,
+        source="Android Activity Manager am start -S -W",
+        launch_type="cold_process",
+    )
 
 
 class SetupMode(str, Enum):

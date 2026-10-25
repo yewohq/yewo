@@ -9,6 +9,7 @@ with the same unit and direction.
 from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -28,6 +29,7 @@ class MetricUnit(str, Enum):
     MILLISECONDS = "ms"
     POINTS = "pt"
     COUNT = "count"
+    PERCENT = "percent"
 
 
 class MetricSource(str, Enum):
@@ -35,6 +37,21 @@ class MetricSource(str, Enum):
 
     DEVICE = "device"
     ACCESSIBILITY_AUDIT = "accessibility_audit"
+
+
+class MeasurementRelation(str, Enum):
+    """How the recorded value relates to the measured quantity."""
+
+    EXACT = "exact"
+    AT_LEAST = "at_least"
+    AT_MOST = "at_most"
+
+
+class MeasurementPurpose(str, Enum):
+    """Whether a sample is required evidence or optional diagnostics."""
+
+    REQUIRED = "required"
+    DIAGNOSTIC = "diagnostic"
 
 
 class TargetKind(str, Enum):
@@ -50,6 +67,7 @@ class Metric(str, Enum):
     APP_LAUNCH_TTID_MS = "app_launch_ttid_ms"
     MIN_TOUCH_TARGET = "min_touch_target"
     UNLABELLED_ACTIONABLE_COUNT = "unlabelled_actionable_count"
+    JANKY_FRAME_PERCENT = "janky_frame_percent"
 
 
 class MetricDefinition(Enum):
@@ -63,7 +81,7 @@ class MetricDefinition(Enum):
         frozenset({TargetKind.EMULATOR, TargetKind.PHYSICAL}),
         MetricSource.DEVICE,
         False,
-        False,
+        True,
     )
     MIN_TOUCH_TARGET = (
         Metric.MIN_TOUCH_TARGET,
@@ -73,7 +91,7 @@ class MetricDefinition(Enum):
         frozenset({TargetKind.EMULATOR, TargetKind.PHYSICAL}),
         MetricSource.ACCESSIBILITY_AUDIT,
         True,
-        False,
+        True,
     )
     UNLABELLED_ACTIONABLE_COUNT = (
         Metric.UNLABELLED_ACTIONABLE_COUNT,
@@ -82,6 +100,16 @@ class MetricDefinition(Enum):
         frozenset({Platform.IOS}),
         frozenset({TargetKind.EMULATOR, TargetKind.PHYSICAL}),
         MetricSource.ACCESSIBILITY_AUDIT,
+        False,
+        True,
+    )
+    JANKY_FRAME_PERCENT = (
+        Metric.JANKY_FRAME_PERCENT,
+        MetricUnit.PERCENT,
+        MetricDirection.LOWER,
+        frozenset({Platform.ANDROID}),
+        frozenset({TargetKind.EMULATOR, TargetKind.PHYSICAL}),
+        MetricSource.DEVICE,
         False,
         False,
     )
@@ -95,7 +123,7 @@ class MetricDefinition(Enum):
         target_kinds: frozenset[TargetKind],
         source: MetricSource,
         has_published_floor: bool,
-        has_live_collector: bool,
+        can_gate: bool,
     ) -> None:
         self.metric = metric
         self.unit = unit
@@ -104,7 +132,7 @@ class MetricDefinition(Enum):
         self.target_kinds = target_kinds
         self.source = source
         self.has_published_floor = has_published_floor
-        self.has_live_collector = has_live_collector
+        self.can_gate = can_gate
 
 
 def definition_for(metric: Metric) -> MetricDefinition:
@@ -113,8 +141,18 @@ def definition_for(metric: Metric) -> MetricDefinition:
 
 
 def metrics_without_live_collectors(metrics: Iterable[Metric]) -> list[Metric]:
-    """Return requested metrics that scenario execution cannot collect yet."""
-    return [metric for metric in metrics if not definition_for(metric).has_live_collector]
+    """Return metrics with no collector on any supported target.
+
+    Actual support depends on the selected platform, release, and target kind.
+    Device preflight owns that decision. Generation only needs to know whether
+    any supported target has a collector.
+    """
+    globally_collectable = {
+        Metric.APP_LAUNCH_TTID_MS,
+        Metric.MIN_TOUCH_TARGET,
+        Metric.UNLABELLED_ACTIONABLE_COUNT,
+    }
+    return [metric for metric in metrics if metric not in globally_collectable]
 
 
 class Measurement(BaseModel):
@@ -122,10 +160,20 @@ class Measurement(BaseModel):
 
     metric: Metric
     value: float = Field(ge=0, allow_inf_nan=False)
+    relation: MeasurementRelation = MeasurementRelation.EXACT
+    purpose: MeasurementPurpose = MeasurementPurpose.REQUIRED
     unit: MetricUnit
     source: MetricSource
+    collector: str = Field(default="legacy", min_length=1)
+    collector_version: Optional[str] = None
     platform: Platform
     target_kind: TargetKind | None = None
+    os_version: Optional[str] = None
+    device_model: Optional[str] = None
+    app_data_state: Optional[str] = None
+    launch_type: Optional[str] = None
+    screen: Optional[str] = None
+    iteration: Optional[int] = Field(default=None, ge=1)
     collected_at: datetime
     scenario_uuid: str | None = None
 
@@ -151,4 +199,11 @@ class Measurement(BaseModel):
                 f"{self.metric.value} is not collectable on a "
                 f"{self.target_kind.value} target."
             )
+        if self.collector != "legacy":
+            if self.target_kind is None:
+                raise ValueError("A live measurement must name its target kind.")
+            if not self.os_version:
+                raise ValueError("A live measurement must name its target OS version.")
+            if not self.device_model:
+                raise ValueError("A live measurement must name its target model.")
         return self

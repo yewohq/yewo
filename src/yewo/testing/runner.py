@@ -414,6 +414,7 @@ class YewoTestRunner:
                         perception=perception,
                         session_dir=session.screenshots_dir,
                         session_trail=trail,
+                        telemetry_dir=session.telemetry_dir,
                     )
                 except ProviderUnavailable as exc:
                     # The service was asked again and still would not answer.

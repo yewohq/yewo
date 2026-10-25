@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from yewo.errors import ArtifactWriteFailed
+from yewo.metrics import MeasurementRelation
 from yewo.testing.models import (
     JourneyReport,
     PolicyCheckReport,
@@ -199,6 +200,21 @@ def _append_scenario(
                 + (f" — {_scrub(scrubber, detail)}" if detail else "")
             )
         lines.append("")
+    if scenario.measurements:
+        lines.append("### Measurements:")
+        relation = {
+            MeasurementRelation.EXACT: "",
+            MeasurementRelation.AT_LEAST: "at least ",
+            MeasurementRelation.AT_MOST: "at most ",
+        }
+        for measurement in scenario.measurements:
+            lines.append(
+                f"  * **`{measurement.metric.value}`**: "
+                f"{relation[measurement.relation]}{measurement.value:g} "
+                f"{measurement.unit.value} — `{measurement.purpose.value}` via "
+                f"{_scrub(scrubber, measurement.collector)}"
+            )
+        lines.append("")
     rule_verdicts = verdicts.per_rule(list(scenario.rule_verifications))
     if rule_verdicts:
         lines.append("### Verification Results:")
@@ -351,9 +367,24 @@ def _append_junit_case(
         )
         for operation in scenario.lifecycle_operations
     ]
-    if verification_lines or lifecycle_lines:
+    measurement_lines = [
+        " ".join(
+            (
+                f"metric={measurement.metric.value}",
+                f"value={measurement.value:g}",
+                f"relation={measurement.relation.value}",
+                f"unit={measurement.unit.value}",
+                f"purpose={measurement.purpose.value}",
+                f"collector={_scrub(scrubber, measurement.collector)}",
+            )
+        )
+        for measurement in scenario.measurements
+    ]
+    if verification_lines or lifecycle_lines or measurement_lines:
         output = ET.SubElement(testcase, "system-out")
-        output.text = "\n".join([*lifecycle_lines, *verification_lines])
+        output.text = "\n".join(
+            [*lifecycle_lines, *measurement_lines, *verification_lines]
+        )
 
 
 def _append_junit_policy_check(

@@ -17,7 +17,7 @@ from yewo.agent.run.outcomes import RunStatus
 from yewo.agent.run.postconditions import PostconditionVerification
 from yewo.agent.run.record import StepRecord
 from yewo.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
-from yewo.metrics import Measurement, Metric
+from yewo.metrics import Measurement, Metric, definition_for
 from yewo.policy import PolicyCheckReport, policy_checks_succeeded
 from yewo.testing.lifecycle import LifecycleOperation, LifecycleStatus
 
@@ -315,6 +315,10 @@ class ExpectedOutcome(BaseModel):
                 raise ValueError("A measured outcome must name its metric.")
             if self.threshold is None:
                 raise ValueError("A measured outcome must name its threshold.")
+            if not definition_for(self.metric).can_gate:
+                raise ValueError(
+                    f"{self.metric.value} is diagnostic telemetry and cannot gate a run."
+                )
         elif self.metric is not None or self.threshold is not None:
             raise ValueError("Only a measured outcome may name a metric or threshold.")
         return self

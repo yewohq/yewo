@@ -31,6 +31,7 @@ from yewo.identity import new_uuid
 from yewo.testing.models import (
     GeneratedTestCase,
     JourneyStatus,
+    Measurement,
     QAIssue,
     PolicyCheckReport,
     ReportStatus,
@@ -45,10 +46,11 @@ from yewo.testing.lifecycle import LifecycleOperation
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = 3
+SCHEMA = 4
 """The version of this file's shape.
 
-3 adds lifecycle operations to each scenario. Schema 2 added `verdict_inputs`.
+4 adds direct measurement samples to each scenario. Schema 3 added lifecycle
+operations. Schema 2 added `verdict_inputs`.
 A record written under 1 holds too little to reach its verdict again.
 """
 
@@ -116,6 +118,7 @@ class ScenarioEntry(BaseModel):
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
     lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
+    measurements: List[Measurement] = Field(default_factory=list)
     verdict_inputs: Optional[VerdictInputs] = Field(
         default=None,
         description=(
@@ -294,6 +297,7 @@ class RunManifest:
                 self._masked_lifecycle_operation(operation)
                 for operation in report.lifecycle_operations
             ]
+            entry.measurements = [self._masked_measurement(item) for item in report.measurements]
             entry.verdict_inputs = self._masked(report.verdict_inputs)
             entry.finished_at = _now()
         self.write()
@@ -317,6 +321,30 @@ class RunManifest:
             finding.quoted = self._scrub(finding.quoted) or ""
             finding.field = self._scrub(finding.field) or ""
         return kept
+
+    def _masked_measurement(self, measurement: Measurement) -> Measurement:
+        """A numeric sample with its optional target labels scrubbed."""
+        return measurement.model_copy(
+            update={
+                "collector": self._scrub(measurement.collector),
+                "collector_version": (
+                    self._scrub(measurement.collector_version)
+                    if measurement.collector_version
+                    else None
+                ),
+                "os_version": (
+                    self._scrub(measurement.os_version)
+                    if measurement.os_version
+                    else None
+                ),
+                "device_model": (
+                    self._scrub(measurement.device_model)
+                    if measurement.device_model
+                    else None
+                ),
+                "screen": self._scrub(measurement.screen) if measurement.screen else None,
+            }
+        )
 
     def _masked_lifecycle_operation(
         self, operation: LifecycleOperation

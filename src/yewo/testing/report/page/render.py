@@ -201,6 +201,17 @@ def _walk(markup: HtmlMarkup, scenario: ScenarioView) -> str:
             '<span class="muted">State outside the user journey</span></div>'
             f"<ul>{rows}</ul></section>"
         )
+    measurements = ""
+    if scenario.measurements:
+        rows = "".join(
+            f"<li>{markup.render_masked_text(measurement)}</li>"
+            for measurement in scenario.measurements
+        )
+        measurements = (
+            '<section class="rows"><div class="head"><h3>Measurements</h3>'
+            '<span class="muted">Device and accessibility telemetry</span></div>'
+            f"<ul>{rows}</ul></section>"
+        )
     summary = " · ".join(part for part in (scenario.status, scenario.summary) if part)
     # The cell and the test id are how a failure is matched to its lock
     # entry and to the same scenario in another run. Without them a reader
@@ -211,7 +222,7 @@ def _walk(markup: HtmlMarkup, scenario: ScenarioView) -> str:
         f'<section class="walk" id="{escape(scenario.anchor, quote=True)}">'
         f'<div class="head"><h2>{markup.text(scenario.name)}</h2>'
         f'<span class="muted">{escape(summary)}</span></div>'
-        f"{identity}{failure_reason_html}{lifecycle}{steps}"
+        f"{identity}{failure_reason_html}{lifecycle}{measurements}{steps}"
         f"{_checks(markup, scenario.checks)}</section>"
     )
 

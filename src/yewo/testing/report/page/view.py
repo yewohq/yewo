@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from yewo.testing.judge import rules, verdicts
+from yewo.metrics import Measurement, MeasurementRelation
 from yewo.testing.models import QAIssue, ReportStatus
 
 from .policy_checks import (
@@ -110,6 +111,7 @@ class ScenarioView:
     summary: str
     failure_reason: str = ""
     lifecycle: Tuple[str, ...] = ()
+    measurements: Tuple[str, ...] = ()
     steps: Tuple[StepView, ...] = ()
     checks: Tuple[CheckView, ...] = ()
 
@@ -221,6 +223,27 @@ def _summary(scenario: ScenarioSource) -> str:
     return " · ".join(parts)
 
 
+def _measurement_rows(samples: Sequence[Measurement]) -> Tuple[str, ...]:
+    """Format numeric evidence without discarding its bound or context."""
+    relation = {
+        MeasurementRelation.EXACT: "",
+        MeasurementRelation.AT_LEAST: "at least ",
+        MeasurementRelation.AT_MOST: "at most ",
+    }
+    rows = []
+    for sample in samples:
+        context = [sample.purpose.value, sample.platform.value, sample.collector]
+        if sample.launch_type:
+            context.append(sample.launch_type)
+        if sample.screen:
+            context.append(sample.screen)
+        rows.append(
+            f"{sample.metric.value}: {relation[sample.relation]}{sample.value:g} "
+            f"{sample.unit.value} — {' · '.join(context)}"
+        )
+    return tuple(rows)
+
+
 def _scenarios(report: RunSource, href: str) -> Tuple[ScenarioView, ...]:
     views = []
     for scenario in report.scenarios:
@@ -237,6 +260,7 @@ def _scenarios(report: RunSource, href: str) -> Tuple[ScenarioView, ...]:
                 summary=_summary(scenario),
                 failure_reason=scenario.failure_reason or "",
                 lifecycle=lifecycle_rows(scenario.lifecycle_operations),
+                measurements=_measurement_rows(scenario.measurements),
                 steps=step_views(scenario, href, opened),
                 checks=_checks(scenario),
             )

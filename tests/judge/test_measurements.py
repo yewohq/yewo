@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from fakes import device_result, walk
 
 from yewo.agent.device.platform import Platform
-from yewo.metrics import Metric, MetricSource, MetricUnit
+from yewo.metrics import MeasurementRelation, Metric, MetricSource, MetricUnit
 from yewo.testing.models import ExpectedOutcome, Measurement, UserJourney
 
 
@@ -81,6 +81,10 @@ class MeasuredOutcomeContractTests(unittest.TestCase):
 
         self.assertEqual(case.required_metrics, [Metric.APP_LAUNCH_TTID_MS])
 
+    def test_jank_is_diagnostic_and_cannot_become_a_gate(self):
+        with self.assertRaisesRegex(ValueError, "diagnostic telemetry"):
+            outcome(Metric.JANKY_FRAME_PERCENT, threshold=5)
+
     def test_a_sample_must_use_the_catalogue_unit(self):
         with self.assertRaisesRegex(ValueError, "samples use ms"):
             Measurement(
@@ -144,6 +148,15 @@ class MeasuredVerdictTests(unittest.TestCase):
         self.assertEqual(verifications[0].status, "failed")
         self.assertIn("900 ms", verifications[0].reasoning)
 
+    def test_lower_is_better_reports_the_worst_of_multiple_failures(self):
+        verdict, verifications = self._verdict(
+            outcome(threshold=800),
+            [sample(value=900), sample(value=1000)],
+        )
+
+        self.assertEqual(verdict.status, "FAILED")
+        self.assertIn("1000 ms", verifications[0].reasoning)
+
     def test_higher_is_better_uses_the_worst_sample(self):
         verdict, _ = self._verdict(
             outcome(Metric.MIN_TOUCH_TARGET, threshold=44),
@@ -151,6 +164,32 @@ class MeasuredVerdictTests(unittest.TestCase):
         )
 
         self.assertEqual(verdict.status, "FAILED")
+
+    def test_a_lower_bound_can_prove_the_touch_target_floor(self):
+        bounded = sample(Metric.MIN_TOUCH_TARGET, 44).model_copy(
+            update={"relation": MeasurementRelation.AT_LEAST}
+        )
+
+        verdict, verifications = self._verdict(
+            outcome(Metric.MIN_TOUCH_TARGET, threshold=44),
+            [bounded],
+        )
+
+        self.assertEqual(verdict.status, "PASSED")
+        self.assertIn("at least 44 pt", verifications[0].reasoning)
+
+    def test_a_platform_floor_cannot_prove_a_stricter_requirement(self):
+        bounded = sample(Metric.MIN_TOUCH_TARGET, 44).model_copy(
+            update={"relation": MeasurementRelation.AT_LEAST}
+        )
+
+        verdict, verifications = self._verdict(
+            outcome(Metric.MIN_TOUCH_TARGET, threshold=48),
+            [bounded],
+        )
+
+        self.assertEqual(verdict.status, "UNVERIFIED")
+        self.assertEqual(verifications, [])
 
     def test_no_sample_produces_no_verdict_and_unverified_evidence(self):
         verdict, verifications = self._verdict(outcome(), [])
@@ -209,9 +248,8 @@ class MetricPreflightTests(unittest.TestCase):
 
         runnable, refused = preflight_metrics_before_device([case], Platform.IOS)
 
-        self.assertEqual(runnable, [])
-        self.assertEqual(refused[0].status, "UNVERIFIED")
-        self.assertIn("No live collector", refused[0].failure_reason)
+        self.assertEqual(runnable, [case])
+        self.assertEqual(refused, [])
 
     def test_platform_preflight_refuses_ios_only_metrics_on_android(self):
         from yewo.testing.metric_preflight import preflight_metrics_before_device
@@ -224,10 +262,16 @@ class MetricPreflightTests(unittest.TestCase):
         self.assertEqual(refused[0].status, "UNSUPPORTED")
         self.assertIn("not collectable on android", refused[0].failure_reason)
 
-    def test_a_metric_without_a_live_collector_is_a_scenario_problem(self):
-        from yewo.testing.judge.capabilities import unavailable_metric_reason
+    def test_ios_launch_without_an_accepted_collector_is_a_scenario_problem(self):
+        from yewo.testing.judge.capabilities import (
+            CapabilityTarget,
+            unavailable_metric_reason,
+        )
 
-        reason = unavailable_metric_reason(self._case(Metric.APP_LAUNCH_TTID_MS))
+        reason = unavailable_metric_reason(
+            self._case(Metric.APP_LAUNCH_TTID_MS),
+            CapabilityTarget(platform=Platform.IOS, emulator=True, release=(17,)),
+        )
 
         self.assertIn("No live collector", reason)
         self.assertIn("app_launch_ttid_ms", reason)
@@ -337,10 +381,9 @@ class MetricPreflightTests(unittest.TestCase):
 
 
 class MetricGenerationTests(unittest.TestCase):
-    def test_a_metric_without_a_live_collector_is_a_scenario_gap(self):
+    def test_a_globally_collectable_metric_is_kept_for_target_preflight(self):
         from unittest.mock import Mock
 
-        from yewo.errors import Cause
         from yewo.testing.generator import ScenarioGenerator
         from yewo.testing.models import ScenarioDraft, UserJourney
 
@@ -354,10 +397,12 @@ class MetricGenerationTests(unittest.TestCase):
 
         suite = ScenarioGenerator(client).generate_suite(journey)
 
-        self.assertEqual(suite.scenarios, [])
-        self.assertEqual(suite.uncovered[0].status, "UNVERIFIED")
-        self.assertEqual(suite.uncovered[0].cause, Cause.SCENARIO)
-        self.assertIn("app_launch_ttid_ms", suite.uncovered[0].reason)
+        self.assertEqual(len(suite.scenarios), 1)
+        self.assertEqual(
+            suite.scenarios[0].required_metrics,
+            [Metric.APP_LAUNCH_TTID_MS],
+        )
+        self.assertEqual(suite.uncovered, [])
 
 
 class MeasurementLogTests(unittest.TestCase):

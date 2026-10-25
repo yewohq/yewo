@@ -10,6 +10,7 @@ from fakes import walk
 from yewo.testing.models import (
     GeneratedTestCase,
     JourneyReport,
+    Measurement,
     RuleVerification,
     RunEnvironment,
     ScenarioReport,
@@ -46,6 +47,24 @@ class MeasuredOutcomeArtifactTests(unittest.TestCase):
             cell=case.cell,
             status="FAILED",
             failure_reason="Rule validation failed.",
+            measurements=[
+                Measurement(
+                    metric="app_launch_ttid_ms",
+                    value=900,
+                    unit="ms",
+                    source="device",
+                    collector="Android Activity Manager am start -S -W",
+                    platform="android",
+                    target_kind="emulator",
+                    os_version="35",
+                    device_model="Pixel 8",
+                    app_data_state="clear_data",
+                    launch_type="cold_process",
+                    iteration=1,
+                    collected_at="2026-10-25T12:00:00Z",
+                    scenario_uuid=case.scenario_uuid,
+                )
+            ],
             rule_verifications=[
                 RuleVerification(
                     rule=statement,
@@ -90,6 +109,8 @@ class MeasuredOutcomeArtifactTests(unittest.TestCase):
         for artifact in (markdown, junit, json.dumps(record), html):
             self.assertIn(statement, artifact)
             self.assertIn(reasoning, artifact)
+            self.assertIn("app_launch_ttid_ms", artifact)
+            self.assertIn("900", artifact)
 
         for canonical_artifact in (junit, json.dumps(record)):
             self.assertIn("expected:0", canonical_artifact)
