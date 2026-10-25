@@ -273,6 +273,22 @@
       "title": "JourneySpec",
       "type": "object"
     },
+    "PolicySpec": {
+      "additionalProperties": false,
+      "description": "Static package-policy exceptions, keyed by stable check ID.",
+      "properties": {
+        "waive": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Policy check IDs accepted for this workflow, with the reason each exception is necessary.",
+          "title": "Waive",
+          "type": "object"
+        }
+      },
+      "title": "PolicySpec",
+      "type": "object"
+    },
     "Priority": {
       "description": "Which cells a run has to finish first.\n\nA run can die part way: a device drops, a provider refuses, a person\nstops it. The order decides what it got through, so a product says which\ncells matter rather than a table in Yewo.",
       "enum": [
@@ -675,6 +691,17 @@
           "default": null,
           "description": "Named personas or role contexts for role scenarios. Each holds app-specific values under names you choose.",
           "title": "Actors"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PolicySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "title": "WorkflowSpec",
@@ -1071,6 +1098,17 @@
       "default": null,
       "description": "Named personas or role contexts for role scenarios. Each holds app-specific values under names you choose.",
       "title": "Actors"
+    },
+    "policy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PolicySpec"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "title": "Yewo configuration",

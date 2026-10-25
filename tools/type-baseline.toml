@@ -16,12 +16,6 @@ count = 1
 [[errors]]
 path = "src/yewo/agent/device/control.py"
 rule = "reportArgumentType"
-message = "Argument of type \"str | None\" cannot be assigned to parameter \"serial\" of type \"str\" in function \"kill_emulator\" Type \"str | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\""
-count = 1
-
-[[errors]]
-path = "src/yewo/agent/device/control.py"
-rule = "reportArgumentType"
 message = "Argument of type \"str | Unknown | None\" cannot be assigned to parameter \"device_name\" of type \"str\" in function \"diagnose_avd_launch\" Type \"str | Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\""
 count = 1
 
@@ -36,12 +30,6 @@ path = "src/yewo/agent/device/control.py"
 rule = "reportArgumentType"
 message = "Argument of type \"str | Unknown | None\" cannot be assigned to parameter \"device_name\" of type \"str\" in function \"resolve_emulator_serial\" Type \"str | Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\""
 count = 2
-
-[[errors]]
-path = "src/yewo/agent/device/control.py"
-rule = "reportArgumentType"
-message = "Argument of type \"str | Unknown | None\" cannot be assigned to parameter \"serial\" of type \"str\" in function \"disable_feedback\" Type \"str | Unknown | None\" is not assignable to type \"str\" \"None\" is not assignable to \"str\""
-count = 1
 
 [[errors]]
 path = "src/yewo/agent/device/control.py"

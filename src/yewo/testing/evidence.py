@@ -150,6 +150,7 @@ JourneyStatus = Literal[
     ReportStatus.PASSED,
     ReportStatus.FAILED,
     ReportStatus.RUNNING,
+    ReportStatus.ABORTED,
 ]
 """A status an aggregated journey report can carry."""
 
@@ -299,9 +300,11 @@ class ExpectedOutcome(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_expected_outcome(cls, value):
-        """A plain string is a claim about one screen, which is the common case."""
+        """Normalize shorthand and derive the scope of a named metric."""
         if isinstance(value, str):
             return {"statement": value}
+        if isinstance(value, dict) and value.get("metric") is not None and "scope" not in value:
+            return {**value, "scope": AssertionScope.MEASURED}
         return value
 
     @model_validator(mode="after")
@@ -511,7 +514,7 @@ class JourneyReport(BaseModel):
     scenarios: List[ScenarioReport] = Field(default_factory=list)
     policy_checks: List[PolicyCheckReport] = Field(
         default_factory=list,
-        description="Deterministic run-level checks that do not belong to a scenario.",
+        description="Deterministic run-level evaluations outside scenario steps.",
     )
     unevidenced_security_rules: List[str] = Field(
         default_factory=list,
@@ -530,5 +533,5 @@ class JourneyReport(BaseModel):
         if self.status == ReportStatus.PASSED and not policy_checks_succeeded(
             self.policy_checks
         ):
-            raise ValueError("A run with an unsuccessful policy check cannot pass.")
+            raise ValueError("A run with an unsuccessful policy evaluation cannot pass.")
         return self

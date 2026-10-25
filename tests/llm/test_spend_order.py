@@ -55,6 +55,7 @@ class SpendOrderTests(unittest.TestCase):
             patch("yewo.testing.runner.QAAgent"),
             patch("yewo.testing.runner.ensure_device_ready") as ready,
             patch("yewo.testing.runner.for_grounding"),
+            patch("yewo.testing.runner.evaluate_package_policy", return_value=[]),
         ):
             ready.side_effect = lambda *_: order.append("asked adb")
             YewoTestRunner(device_name="Pixel_8", app_path="app.apk").run_journey(

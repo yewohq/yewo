@@ -256,6 +256,7 @@ class SuiteSurvivalTests(unittest.TestCase):
             patch("yewo.testing.runner.ensure_device_ready"),
             patch("yewo.testing.runner.for_grounding"),
             patch("yewo.testing.runner.is_session_responsive", return_value=True),
+            patch("yewo.testing.runner.evaluate_package_policy", return_value=[]),
         ):
             report = YewoTestRunner(
                 device_name="Pixel_8", app_path="app.apk"

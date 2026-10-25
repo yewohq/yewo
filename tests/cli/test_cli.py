@@ -101,6 +101,20 @@ class ExitCodeTests(unittest.TestCase):
                 runner_class.return_value.run_journey.return_value = report(status)
                 self.assertEqual(cli.run(["j.yaml"]), expected)
 
+    def test_an_interruption_exits_130_without_escaping_the_cli(self):
+        from yewo.testing.cli import YewoCLI
+
+        with (
+            patch("yewo.testing.cli.load_workflows", return_value=[_workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.side_effect = KeyboardInterrupt
+            code = YewoCLI().run(["j.yaml"])
+
+        self.assertEqual(code, 130)
+
     def test_update_paths_is_explicit(self):
         from yewo.testing.cli import YewoCLI
         from yewo.testing.models import JourneyReport

@@ -5,6 +5,10 @@ device:
   headless: false
 model: openrouter/deepseek/deepseek-v4.1-flash
 app: build/app/outputs/flutter-apk/app-debug.apk
+policy:
+  waive:
+    android.debuggable: "Bundled development build used for the example journey"
+    android.allow_backup: "Bundled development build contains no production user data"
 workflows:
   notifications:
     env:

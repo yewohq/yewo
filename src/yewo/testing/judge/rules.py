@@ -35,9 +35,9 @@ def ids(rules: Iterable, kind: str) -> Set[str]:
 def id_in(text) -> Optional[str]:
     """The rule id a line of text carries, or None when it carries none.
 
-    A verdict names its rule in whichever field the model chose, and the gate
+    A verdict names its rule in whichever field the model chose. The gate
     matches on the id alone. An id read out of the wrong field is still the
-    right id; one that is never read discards the verdict in silence.
+    right id. An id that is never read discards the verdict in silence.
     """
     if not isinstance(text, str):
         return None
@@ -159,8 +159,8 @@ def transitions_only(outcomes: Iterable) -> List:
     """The outcomes only the order of screens could settle, keeping every index.
 
     A bare string is a claim about one screen, so it is not one of these. The
-    two selectors must not both claim it: an outcome answered twice is counted
-    twice, and one claimed by neither can never be settled at all.
+    two selectors must not both claim it. An outcome answered twice is counted
+    twice. An outcome claimed by neither can never be settled.
     """
     from yewo.testing.models import AssertionScope
 

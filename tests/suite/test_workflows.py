@@ -109,6 +109,32 @@ class WorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflows[0].journeys[0].description, "Go to Leeds.")
 
+    def test_workflow_policy_waivers_extend_and_override_the_file(self):
+        data = {
+            "policy": {"waive": {"android.allow_backup": "legacy migration"}},
+            "workflows": {
+                "a": {
+                    "policy": {
+                        "waive": {
+                            "android.allow_backup": "encrypted export",
+                            "android.debuggable": "internal build",
+                        }
+                    },
+                    "journeys": [{"journey": "x"}],
+                }
+            },
+        }
+
+        workflows, _ = self._load(data)
+
+        self.assertEqual(
+            workflows[0].policy_waivers,
+            {
+                "android.allow_backup": "encrypted export",
+                "android.debuggable": "internal build",
+            },
+        )
+
 
 class LegacyFileTests(unittest.TestCase):
     """A journey file written before workflows existed still runs."""
@@ -224,3 +250,13 @@ class SchemaTests(unittest.TestCase):
         workflows = self._load(SUITE)
 
         self.assertEqual(len(workflows), 2)
+
+    def test_a_waiver_without_a_reason_is_refused(self):
+        message = self._refuse(
+            {
+                "policy": {"waive": {"android.debuggable": "  "}},
+                "journeys": [{"journey": "x"}],
+            }
+        )
+
+        self.assertIn("android.debuggable", message)

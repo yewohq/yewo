@@ -442,24 +442,33 @@ class DeviceControl:
     def remove_current_app(self):
         self.remove_app(self.package_id)
 
-    def quit(self):
-        try:
-            self.driver.quit()
-        except Exception as e:
-            logger.warning("Failed to quit driver cleanly: %s", e)
+    def quit(self, interrupted: bool = False):
+        if not interrupted:
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logger.warning("Failed to quit driver cleanly: %s", e)
         if self.platform == Platform.ANDROID:
-            serial = self.serial or self.device_name
+            serial = AdbControl.resolve_emulator_serial(
+                self.serial or self.device_name or ""
+            )
+            if not serial:
+                if interrupted:
+                    logger.info("The Android target already stopped after the interruption.")
+                return
             try:
                 AdbControl.disable_feedback(serial)
             except Exception as e:
-                logger.warning("Failed to disable feedback: %s", e)
+                log = logger.info if interrupted else logger.warning
+                log("Failed to disable feedback: %s", e)
             if self.keep_device or getattr(self, "_device_was_running", False):
                 logger.info("Leaving '%s' running for the next run.", self.device_name)
                 return
             try:
-                AdbControl.kill_emulator(self.device_name, serial=self.serial)
+                AdbControl.kill_emulator(self.device_name, serial=serial)
             except Exception as e:
-                logger.warning("Failed to kill emulator: %s", e)
+                log = logger.info if interrupted else logger.warning
+                log("The Android target stopped during cleanup: %s", e)
 
     def execute_script(self, script, args=None):
         """Runs one driver extension command and returns what it answered.

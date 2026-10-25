@@ -122,11 +122,6 @@ count = 1
 digest = "ac1c5b0503e71406b55e2acda58a71baee932d9913a5b934c1bc75e24f1327ac"
 
 [[files]]
-path = "src/yewo/testing/judge/rules.py"
-count = 3
-digest = "eb3d5a28a2b8eaa62b29244049bfff4e6cd6cf35304d494db1660657792ddb07"
-
-[[files]]
 path = "src/yewo/testing/judge/transitions.py"
 count = 1
 digest = "e4f06b26267a854bf8de09da0cd09bdd4164f19f94f76719be9a09d1408cc0fd"

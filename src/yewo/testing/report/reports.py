@@ -80,6 +80,7 @@ def save_markdown_report(
         ReportStatus.PASSED: "🟢 PASSED",
         ReportStatus.FAILED: "🔴 FAILED",
         ReportStatus.RUNNING: "🟠 RUNNING (checkpoint)",
+        ReportStatus.ABORTED: "🟠 ABORTED",
     }[report.status]
     lines = [
         f"# Yewo QA Test Report: {_scrub(scrubber, report.journey_name)}",
@@ -167,13 +168,11 @@ def _append_scenario(
     scenario: ScenarioReport,
     scrubber: SecretScrubber | None,
 ) -> None:
-    icon = (
-        "🟢"
-        if scenario.status == ReportStatus.PASSED
-        else "🟡"
-        if scenario.status == ReportStatus.SKIPPED
-        else "🔴"
-    )
+    icon = {
+        ReportStatus.PASSED: "🟢",
+        ReportStatus.FAILED: "🔴",
+        ReportStatus.SKIPPED: "🟡",
+    }.get(scenario.status, "🟠")
     lines.extend(
         [
             f"## Scenario {index}: {_scrub(scrubber, scenario.scenario_name)} "
@@ -318,6 +317,21 @@ def _append_junit_case(
         element.text = message
     elif scenario.status == ReportStatus.SKIPPED:
         ET.SubElement(testcase, "skipped", {"message": message})
+
+    verification_lines = [
+        " ".join(
+            (
+                f"rule_id={verification.rule_id or ''}",
+                f"status={verification.status}",
+                f"rule={_scrub(scrubber, verification.rule)}",
+                f"reasoning={_scrub(scrubber, verification.reasoning)}",
+            )
+        )
+        for verification in scenario.rule_verifications
+    ]
+    if verification_lines:
+        output = ET.SubElement(testcase, "system-out")
+        output.text = "\n".join(verification_lines)
 
 
 def _append_junit_policy_check(

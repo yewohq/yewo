@@ -346,6 +346,15 @@ class DeviceLogRecorder:
             )
         return captures
 
+    def stop(self) -> None:
+        """Stop background reads when an interruption has ended the driver."""
+        self._stop.set()
+        self._closed.set()
+        ticker = self._ticker
+        if ticker is not None:
+            ticker.join(timeout=self._interval * 2)
+        self._ticker = None
+
     def _capture_of(self, source: LogSource) -> LogCapture:
         state = self._state[source.log_type]
         return LogCapture(

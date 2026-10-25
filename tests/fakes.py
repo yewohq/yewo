@@ -350,6 +350,7 @@ def suite_run(
     report_for=None,
     uncovered=None,
     session_calls=None,
+    session_start_error=None,
     **runner,
 ):
     """One journey run end to end, with the device and the models faked.
@@ -368,6 +369,7 @@ def suite_run(
         uncovered: Cells the generator could produce nothing for.
         session_calls: A list the fake session appends each method name to,
             so a caller can assert what the runner asked of it and when.
+        session_start_error: An exception raised while the device session starts.
         runner: Anything else to pass to `YewoTestRunner`.
 
     Returns:
@@ -406,6 +408,8 @@ def suite_run(
             self.asked = session_calls if session_calls is not None else []
 
         def start(self, **_):
+            if session_start_error is not None:
+                raise session_start_error
             # A real control reports its size once the driver answers, and
             # a saved path is only valid for the size it was learned on.
             return SimpleNamespace(
@@ -459,6 +463,7 @@ def suite_run(
         patch("yewo.testing.runner.ensure_device_ready"),
         patch("yewo.testing.runner.for_grounding"),
         patch("yewo.testing.runner.is_session_responsive", return_value=True),
+        patch("yewo.testing.runner.evaluate_package_policy", return_value=[]),
     ):
         report = YewoTestRunner(
             device_name="Pixel_8", app_path="app.apk", **runner

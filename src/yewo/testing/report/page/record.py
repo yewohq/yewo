@@ -258,8 +258,8 @@ def page_of_record(
     itself named. The record's own `artifacts` are sensitivity classes
     rather than file names, and they answer a different question.
 
-    Run-level policy checks are validated with the rest of the record and
-    rendered separately from scenario checks.
+    Run-level policy evaluations are parsed with the rest of the record. They
+    are rendered separately from scenario evaluations.
     """
     run = run_of(payload)
     usage_summary = _RunRecordPayload.model_validate(dict(payload)).usage

@@ -19,7 +19,7 @@ from yewo.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
 from . import lock_file, lock_resolution, replay_paths
 from .generator import ScenarioGenerator
-from .report.manifest import RunInputs, RunManifest, RunSubject
+from .report.run_record import create_manifest, ensure_interrupted_manifest
 from .report import infrastructure
 from . import sensitivity
 from yewo.llm.prompts import PromptStore
@@ -32,22 +32,20 @@ from .models import (
     UserJourney,
 )
 from .qa_agent import QAAgent
+from .metric_preflight import prepare_execution, record_refused_reports
 from .report.usage_tracker import LLMUsageTracker
 from yewo.utils.secrets import SecretScrubber
+from yewo.package_policy import evaluate_package_policy
 from .report import writing
 
 logger = logging.getLogger(__name__)
-
 GENERATION = "generator"
 """The call that wrote the suite. It happens once, before any scenario."""
-
 PLANNER = "planner"
 SCREEN_AUDITOR = "screen_auditor"
 TRANSITION_JUDGE = "transition_judge"
 SEMANTIC_GROUNDER = "semantic_grounder"
 SCENARIO_COMPONENTS = (PLANNER, SCREEN_AUDITOR, TRANSITION_JUDGE, SEMANTIC_GROUNDER)
-
-
 def component_for(current: str, answering: Optional[str]) -> str:
     """Name a call from the answer shape it actually requested."""
     if current == GENERATION:
@@ -57,8 +55,6 @@ def component_for(current: str, answering: Optional[str]) -> str:
     if answering == "TransitionVerdicts":
         return TRANSITION_JUDGE
     return PLANNER
-
-
 def is_session_responsive(device_control) -> bool:
     """Checks whether the driver connection and the instrumentation server are alive."""
     if not device_control or not device_control.driver:
@@ -112,12 +108,14 @@ class YewoTestRunner:
         locked: bool = False,
         persist_inputs: bool = True,
         allow_secret_exposure: bool = False,
+        policy_waivers: Optional[dict[str, str]] = None,
     ):
         self.journey_file = journey_file
         self.workflow = workflow
         self.locked = locked
         self.persist_inputs = persist_inputs
         self.allow_secret_exposure = allow_secret_exposure
+        self.policy_waivers = dict(policy_waivers or {})
         self.grounding = grounding
         self.reuse_app = reuse_app
         self.keep_app = keep_app
@@ -283,6 +281,8 @@ class YewoTestRunner:
         scenarios = []
         scenario_reports: List[ScenarioReport] = []
         manifest = None
+        policy_checks = []
+        run_was_aborted = False
         artifact_scrubber.learn_secrets(journey.secrets)
         device_agent.scrubber.learn_secrets(
             journey.secrets,
@@ -294,26 +294,26 @@ class YewoTestRunner:
         device_agent.value_names = ValueNames(device_agent.declared_values)
 
         try:
-            # Both before the model call. Asking adb is cheap and names what is
-            # available when the device is wrong. Opening the session proves
-            # the device boots, the app installs and the driver answers, and a
-            # generated suite is paid for before any of the three is known.
-            ensure_device_ready(self.platform, self.device_name)
-
-            logger.info("Initializing emulator and starting remote webdriver session...")
-            device_control = session.start(is_headless=self.headless)
-            perception = for_grounding(self.grounding, session)
-            # Recorded as soon as the driver answers, so a report written from
-            # the finally block still names the target it ran against.
-            self._device = identity.device_identity(device_control)
-            # Built here rather than in the constructor, because a path is
-            # only valid for the target that answered, and nothing knows
-            # the target until the driver does.
-            agent._trace_store = self._trace_store_for(journey)
-
-            suite = self._suite(journey, device_agent.llm)
+            policy_checks = evaluate_package_policy(
+                Path(self.app_path), self.platform, self.policy_waivers, artifact_scrubber)
+            prepared = prepare_execution(
+                self,
+                journey,
+                device_agent,
+                session,
+                ensure_device_ready,
+                for_grounding,
+                policy_checks,
+            )
+            suite = prepared.suite
+            scenarios = prepared.scenarios
+            preflight_reports = prepared.refused_reports
+            scenario_reports.extend(preflight_reports)
+            device_control = prepared.device_control
+            perception = prepared.perception
+            self._device = prepared.device_identity
+            agent._trace_store = prepared.trace_store
             logger.info("Scenarios: %s", suite.note)
-            scenarios = suite.scenarios
             logger.info(
                 "Successfully decomposed journey '%s' into %d scenarios:",
                 journey.id,
@@ -329,26 +329,9 @@ class YewoTestRunner:
                     s.test_id,
                 )
 
-            manifest = RunManifest(
-                session.manifest_path,
-                RunSubject(
-                    kind="journey",
-                    id=journey.id,
-                    name=artifact_scrubber.scrub(journey.name),
-                    description=artifact_scrubber.scrub(journey.description),
-                ),
-                scenarios,
-                environment=self._environment(),
-                inputs=RunInputs(
-                    subject=journey.id,
-                    subject_sha256=lock_file.journey_sha256(journey),
-                    coverage_declared=[cell.key for cell in journey.coverage],
-                    lock_sha256=suite.lock_sha256,
-                    scenarios_from_lock=suite.reused_count,
-                    scenarios_generated=suite.generated_count,
-                ),
-                scrubber=artifact_scrubber,
-                artifacts=sensitivity.declared_for(journey),
+            manifest = create_manifest(
+                session.manifest_path, journey, scenarios, self._environment(), suite,
+                artifact_scrubber,
             )
             # Generation happened before this file existed, and it is the one
             # call a run makes that no scenario owns.
@@ -362,6 +345,7 @@ class YewoTestRunner:
                 uncovered = infrastructure.uncovered_cell(gap)
                 scenario_reports.append(uncovered)
                 manifest.add(uncovered)
+            record_refused_reports(manifest, preflight_reports)
 
             manifest.write()
             logger.info("Run manifest: %s", manifest.path)
@@ -464,17 +448,24 @@ class YewoTestRunner:
                     logger.warning("Failed to drain the device log: %s", log_err)
 
         except BaseException as e:
+            run_was_aborted = True
             safe_error = artifact_scrubber.scrub(reportable(e))
             logger.error("Fatal run interruption (%s): %s", type(e).__name__, safe_error)
-            if manifest is not None:
-                manifest.abort(f"Aborted due to run failure/interrupt: {safe_error}")
+            manifest, scenarios = ensure_interrupted_manifest(
+                manifest, self, journey, scenarios, device_agent.llm, session,
+                artifact_scrubber, usage_tracker.calls_outside_steps(GENERATION),
+            )
+            prior_reports = len(scenario_reports)
             infrastructure.record_aborted(scenarios, scenario_reports, e)
+            for aborted_report in scenario_reports[prior_reports:]:
+                manifest.record_or_add(aborted_report)
+            manifest.abort(f"Aborted due to run failure/interrupt: {safe_error}")
             if isinstance(e, KeyboardInterrupt):
-                raise e
+                raise
         finally:
             if session is not None:
                 try:
-                    session.close()
+                    session.close(interrupted=run_was_aborted)
                 except Exception as cleanup_err:
                     logger.warning("Session cleanup failed: %s", cleanup_err)
 
@@ -493,7 +484,7 @@ class YewoTestRunner:
             for rule in unevidenced:
                 logger.warning("No scenario evidenced security rule: %s", rule)
             passed_count, failed_count, skipped_count = tally(scenario_reports)
-            journey_status = aggregate_journey_status(passed_count, failed_count)
+            journey_status = ReportStatus.ABORTED if run_was_aborted else aggregate_journey_status(passed_count, failed_count)
             report = JourneyReport(
                 journey_id=journey.id,
                 journey_name=journey.name,
@@ -505,6 +496,7 @@ class YewoTestRunner:
                 failed_count=failed_count,
                 skipped_count=skipped_count,
                 unevidenced_security_rules=unevidenced,
+                policy_checks=policy_checks,
                 environment=self._environment(),
             )
             writing.persist(

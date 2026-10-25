@@ -119,6 +119,10 @@ class SimctlControl:
         SimctlControl.run("terminate", udid, bundle_id, doing="terminate the app")
 
     @staticmethod
+    def shutdown(udid: str) -> None:
+        SimctlControl.run("shutdown", udid, doing="shut down the simulator")
+
+    @staticmethod
     def add_media(udid: str, local_path: str) -> None:
         SimctlControl.run("addmedia", udid, local_path, doing="add media")
 

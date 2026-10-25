@@ -287,10 +287,50 @@ class AbortedRunTests(unittest.TestCase):
 
         self.assertEqual(data["status"], "ABORTED")
 
+    def test_every_report_keeps_the_interrupted_status(self):
+        from fakes import suite_run
+
+        def stop(_test_case):
+            raise KeyboardInterrupt("the user stopped it")
+
+        with tempfile.TemporaryDirectory() as directory:
+            with contextlib.suppress(KeyboardInterrupt):
+                suite_run([scenario(1)], directory, report_for=stop)
+            root = Path(directory)
+            record = json.loads((root / "run.json").read_text())
+            markdown = next(root.rglob("*.md")).read_text()
+            junit = next(root.rglob("*.xml")).read_text()
+            html = next(root.rglob("*.html")).read_text()
+
+        self.assertEqual(record["status"], "ABORTED")
+        self.assertIn("**Status**: 🟠 ABORTED", markdown)
+        self.assertNotIn("🔴 ABORTED", markdown)
+        self.assertIn('type="YewoAborted"', junit)
+        self.assertIn("Aborted", html)
+        self.assertNotIn("YewoAborted.unknown", junit)
+
     def test_every_unfinished_scenario_is_aborted_in_the_record(self):
         data = self._interrupted(KeyboardInterrupt("the user stopped it"))
 
         self.assertEqual(data["counts"], {"ABORTED": 2})
+
+    def test_an_interrupted_device_start_still_leaves_the_canonical_record(self):
+        from fakes import suite_run
+
+        with tempfile.TemporaryDirectory() as directory:
+            journey_file = Path(directory) / "yewo.yaml"
+            journey_file.write_text("device: Pixel_8\n")
+            suite_run([scenario(1)], directory, journey_file=journey_file)
+            with contextlib.suppress(KeyboardInterrupt):
+                suite_run(
+                    [scenario(1)], directory, journey_file=journey_file,
+                    locked=True, session_start_error=KeyboardInterrupt(),
+                )
+            data = json.loads((Path(directory) / "run.json").read_text())
+
+        self.assertEqual(data["status"], "ABORTED")
+        self.assertEqual(data["counts"], {"ABORTED": 1})
+        self.assertIsNotNone(data["ended_at"])
 
     def test_a_crash_is_recorded_the_same_way(self):
         data = self._interrupted(RuntimeError("the driver died"))

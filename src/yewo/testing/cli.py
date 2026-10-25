@@ -133,6 +133,7 @@ class YewoCLI:
         - 0 when every journey passed
         - 1 when any journey failed
         - 2 when Yewo could not load the suite
+        - 130 when the user interrupted execution
         """
         try:
             filepath = resolve_journey_file(args.journey_file)
@@ -154,6 +155,7 @@ class YewoCLI:
         logger.info("==================================================")
 
         all_passed = True
+        interrupted = False
         results = []
 
         for workflow in workflows:
@@ -175,24 +177,37 @@ class YewoCLI:
                 try:
                     report = runner.run_journey(journey)
                     passed = (report.status == "PASSED")
+                    status = str(report.status)
                     results.append(
-                        (workflow.name, journey.id, journey.name, "PASSED" if passed else "FAILED")
+                        (workflow.name, journey.id, journey.name, status)
                     )
                     if not passed:
                         all_passed = False
+                except KeyboardInterrupt:
+                    results.append((workflow.name, journey.id, journey.name, "ABORTED"))
+                    all_passed = False
+                    interrupted = True
+                    break
                 except Exception as journey_err:
                     logger.error("Error executing journey %s: %s", journey.id, journey_err)
                     results.append((workflow.name, journey.id, journey.name, "ERROR"))
                     all_passed = False
+            if interrupted:
+                break
 
         logger.info("==================================================")
         logger.info("Execution Summary:")
         for flow_name, j_id, j_name, status in results:
-            status_icon = "🟢" if status == "PASSED" else "🔴"
+            status_icon = (
+                "🟢" if status == "PASSED" else "🟠" if status == "ABORTED" else "🔴"
+            )
             label = f"{flow_name}/{j_name}" if flow_name else j_name
             logger.info("  %s %s (%s): %s", status_icon, label, j_id, status)
         logger.info("==================================================")
 
+        if interrupted:
+            logger.info("Test execution was interrupted by the user.")
+            return 130
         if all_passed:
             logger.info("All user journeys passed successfully.")
             return 0

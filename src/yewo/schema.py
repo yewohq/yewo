@@ -13,7 +13,7 @@ disagree.
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from yewo.testing.taxonomy import Category, Priority, ScenarioType
 
@@ -135,6 +135,32 @@ class Settings(StrictModel):
     )
 
 
+class PolicySpec(StrictModel):
+    """Static package-policy exceptions, keyed by stable check ID."""
+
+    waive: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Policy check IDs accepted for this workflow, with the reason each "
+            "exception is necessary."
+        ),
+    )
+
+    @field_validator("waive")
+    @classmethod
+    def _validate_waivers(cls, values: dict[str, str]) -> dict[str, str]:
+        cleaned = {}
+        for raw_id, raw_reason in values.items():
+            check_id = raw_id.strip()
+            reason = raw_reason.strip()
+            if not check_id or "." not in check_id:
+                raise ValueError("waiver keys must be semantic check IDs, such as android.debuggable")
+            if not reason:
+                raise ValueError(f"waiver '{check_id}' must explain why it is accepted")
+            cleaned[check_id] = reason
+        return cleaned
+
+
 class CoverageSpec(StrictModel):
     """One category, and which shapes of test to write for it.
 
@@ -190,6 +216,7 @@ class WorkflowSpec(Settings):
             "app-specific values under names you choose."
         ),
     )
+    policy: Optional[PolicySpec] = None
 
 
 class YewoFile(Settings):
@@ -217,6 +244,7 @@ class YewoFile(Settings):
             "app-specific values under names you choose."
         ),
     )
+    policy: Optional[PolicySpec] = None
 
 
 def _format_error_location(location: tuple[Any, ...]) -> str:

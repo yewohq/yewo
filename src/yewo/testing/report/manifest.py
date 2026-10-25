@@ -263,6 +263,13 @@ class RunManifest:
         )
         self.record(report.test_id, report)
 
+    def record_or_add(self, report: ScenarioReport) -> None:
+        """Record a planned scenario, or add an infrastructure row."""
+        if report.test_id in self.entries:
+            self.record(report.test_id, report)
+        else:
+            self.add(report)
+
     def record(
         self,
         test_id: str,

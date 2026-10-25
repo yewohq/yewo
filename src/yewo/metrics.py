@@ -1,9 +1,9 @@
 """The measurements Yewo can name in a scenario.
 
 This catalogue is outside ``testing`` because a metric is a product contract,
-not an implementation detail of one test runner.  A scenario names a metric;
-the target decides whether it can collect it, and a collector later records
-samples using the same unit and direction.
+not an implementation detail of one test runner. A scenario names a metric.
+The target decides whether it can collect it. A collector later records samples
+with the same unit and direction.
 """
 
 from collections.abc import Iterable

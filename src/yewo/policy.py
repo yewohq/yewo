@@ -23,6 +23,37 @@ class PolicyCheckStatus(str, Enum):
     EVIDENCE_MISSING = "evidence_missing"
 
 
+class PolicyCheckId(str, Enum):
+    """Stable IDs for the package-policy checks Yewo owns."""
+
+    ANDROID_DEBUGGABLE = "android.debuggable"
+    ANDROID_BACKUP = "android.allow_backup"
+    ANDROID_CLEARTEXT = "android.cleartext_traffic"
+    ANDROID_EXPORTED_COMPONENTS = "android.exported_components"
+    IOS_GET_TASK_ALLOW = "ios.get_task_allow"
+    IOS_FILE_SHARING = "ios.file_sharing"
+    IOS_APP_TRANSPORT_SECURITY = "ios.app_transport_security"
+    IOS_EXTERNAL_ENTRY_POINTS = "ios.external_entry_points"
+
+
+POLICY_CHECK_IDS_BY_PLATFORM = {
+    Platform.ANDROID: tuple(
+        check_id.value for check_id in PolicyCheckId if check_id.value.startswith("android.")
+    ),
+    Platform.IOS: tuple(
+        check_id.value for check_id in PolicyCheckId if check_id.value.startswith("ios.")
+    ),
+}
+
+
+def bounded_policy_text(value: str, limit: int) -> str:
+    """Limit package-owned evidence before the report contract accepts it."""
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
 class PolicyCheckReport(BaseModel):
     """One deterministic check that does not belong to a scenario step."""
 

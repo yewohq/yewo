@@ -62,6 +62,7 @@ def record_aborted(
     a pass.
     """
     reason = f"Aborted due to run failure/interrupt: {reportable(error)}"
+    cause = None if isinstance(error, KeyboardInterrupt) else cause_of(error).value
     if not scenarios:
         scenario_reports.append(
             ScenarioReport(
@@ -71,7 +72,7 @@ def record_aborted(
                 status=ReportStatus.ERROR,
                 # Generation is a model call, so its failure is usually the
                 # provider's, and a reader should not look in the app.
-                cause=cause_of(error).value,
+                cause=cause,
                 failure_reason=reason,
             )
         )
@@ -88,7 +89,7 @@ def record_aborted(
                 scenario_name=scenario.scenario_name,
                 cell=scenario.cell,
                 status=ReportStatus.ABORTED,
-                cause=cause_of(error).value,
+                cause=cause,
                 failure_reason=reason,
             )
         )

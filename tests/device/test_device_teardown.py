@@ -9,7 +9,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fakes import PACKAGE, SERIAL, LoggingDriver, log_entries
 
@@ -18,7 +18,9 @@ from yewo.agent.device.device_logs import DeviceLogRecorder
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.files import DeviceFiles
 from yewo.agent.device.session import DeviceSession
+from yewo.agent.device.simctl_control import SimctlControl
 from yewo.agent.device.platform import Platform
+from yewo.devices.discovery import Device, RUNNING, SHUTDOWN
 
 
 class StaleRecordingSweepTests(unittest.TestCase):
@@ -155,7 +157,10 @@ class UninstallPolicyTests(unittest.TestCase):
         session.device_name = "Pixel_8"
         session.keep_app = False
         session.reuse_app = False
+        session.keep_device = False
         session._installed_by_run = True
+        session._ios_simulator_udid = None
+        session._ios_simulator_was_running = False
         session.device_control = self._control()
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -302,6 +307,69 @@ class UninstallPolicyTests(unittest.TestCase):
 
         uninstall.assert_called_once()
         self.assertTrue(session.device_control.driver.quit_called)
+
+    def test_an_interrupted_session_skips_dead_driver_evidence(self):
+        session = self._session(_owns_appium=False)
+        session.device_control = Mock()
+        with (
+            patch.object(session._device_logs, "stop") as stop_logs,
+            patch.object(DeviceSession, "save_recording") as save_recording,
+            patch.object(DeviceSession, "_save_device_logs") as save_logs,
+            patch.object(AdbControl, "uninstall_app"),
+        ):
+            session.close(final=True, interrupted=True)
+
+        stop_logs.assert_called_once_with()
+        save_recording.assert_not_called()
+        save_logs.assert_not_called()
+        session.device_control.quit.assert_called_once_with(interrupted=True)
+
+    def test_an_interrupted_ios_start_stops_the_simulator_it_booted(self):
+        session = self._session(
+            platform=Platform.IOS,
+            device_control=None,
+            _owns_appium=False,
+            _ios_simulator_udid="new-simulator",
+        )
+        with (
+            patch.object(session._device_logs, "stop"),
+            patch.object(SimctlControl, "shutdown") as shutdown,
+        ):
+            session.close(interrupted=True)
+
+        shutdown.assert_called_once_with("new-simulator")
+
+    def test_an_ios_simulator_that_was_already_running_is_preserved(self):
+        session = self._session(
+            platform=Platform.IOS,
+            device_control=None,
+            _owns_appium=False,
+            _ios_simulator_udid="existing-simulator",
+            _ios_simulator_was_running=True,
+        )
+        with (
+            patch.object(session._device_logs, "stop"),
+            patch.object(SimctlControl, "shutdown") as shutdown,
+        ):
+            session.close(interrupted=True)
+
+        shutdown.assert_not_called()
+
+    def test_ios_target_ownership_is_noted_before_appium_can_boot_it(self):
+        session = self._session(platform=Platform.IOS, device_name="iPhone 17 Pro Max")
+        target = Device(
+            "iPhone 17 Pro Max", "ios", "simulator", SHUTDOWN, "simulator-udid"
+        )
+        with patch("yewo.agent.device.session.ios_devices", return_value=[target]):
+            session._note_ios_target()
+
+        self.assertEqual(session._ios_simulator_udid, "simulator-udid")
+        self.assertFalse(session._ios_simulator_was_running)
+
+        target.state = RUNNING
+        with patch("yewo.agent.device.session.ios_devices", return_value=[target]):
+            session._note_ios_target()
+        self.assertTrue(session._ios_simulator_was_running)
 
     def test_the_video_is_saved_before_the_app_goes(self):
         """Saving is what takes the video off the device.

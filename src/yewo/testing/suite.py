@@ -38,6 +38,7 @@ class Workflow:
     name: str
     settings: dict[str, Any] = field(default_factory=dict)
     journeys: list[UserJourney] = field(default_factory=list)
+    policy_waivers: dict[str, str] = field(default_factory=dict)
 
 
 def _normalise(block: dict[str, Any], yaml_location: str) -> dict[str, Any]:
@@ -240,6 +241,12 @@ def _shared_env(block: dict[str, Any]) -> dict[str, Any]:
     return declared
 
 
+def _policy_waivers(block: dict[str, Any]) -> dict[str, str]:
+    """Validated waiver reasons declared at one level of the file."""
+    policy = block.get("policy") or {}
+    return dict(policy.get("waive") or {})
+
+
 def _validate(raw: dict[str, Any], path: Path) -> None:
     """Refuses a file Yewo cannot read, naming every key that is wrong.
 
@@ -280,6 +287,7 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
     shared = _shared_env(raw)
     top_coverage = raw.get("coverage")
     top_actors = raw.get("actors")
+    top_waivers = _policy_waivers(raw)
 
     declared = raw.get("workflows")
     if declared is None:
@@ -288,6 +296,7 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
                 "",
                 _anchor(top, base),
                 _journeys_of(raw, shared, str(path), top_coverage, top_actors),
+                top_waivers,
             )
         ]
     if not isinstance(declared, dict):
@@ -304,11 +313,13 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
         # than adding to it. Half a declared set would be worse than either.
         coverage = block.get("coverage", top_coverage)
         actors = {**(top_actors or {}), **(block.get("actors") or {})} or None
+        waivers = {**top_waivers, **_policy_waivers(block)}
         workflows.append(
             Workflow(
                 str(name),
                 _anchor(settings, base),
                 _journeys_of(block, env, yaml_location, coverage, actors),
+                waivers,
             )
         )
     return workflows

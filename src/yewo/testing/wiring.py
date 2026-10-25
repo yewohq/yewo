@@ -82,4 +82,5 @@ def runner_for(
         allow_secret_exposure=as_bool(
             setting("allow_secret_exposure", args.allow_secret_exposure)
         ),
+        policy_waivers=workflow.policy_waivers,
     )

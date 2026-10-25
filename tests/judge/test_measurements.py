@@ -11,7 +11,7 @@ from fakes import device_result, walk
 
 from yewo.agent.device.platform import Platform
 from yewo.metrics import Metric, MetricSource, MetricUnit
-from yewo.testing.models import ExpectedOutcome, Measurement
+from yewo.testing.models import ExpectedOutcome, Measurement, UserJourney
 
 
 def outcome(metric=Metric.APP_LAUNCH_TTID_MS, threshold=800) -> ExpectedOutcome:
@@ -44,6 +44,15 @@ def sample(metric=Metric.APP_LAUNCH_TTID_MS, value=600) -> Measurement:
 
 
 class MeasuredOutcomeContractTests(unittest.TestCase):
+    def test_a_named_metric_derives_the_measured_scope(self):
+        measured = ExpectedOutcome(
+            statement="Launch is quick",
+            metric=Metric.APP_LAUNCH_TTID_MS,
+            threshold=800,
+        )
+
+        self.assertEqual(measured.scope, "measured")
+
     def test_a_measured_outcome_requires_a_metric(self):
         with self.assertRaisesRegex(ValueError, "must name its metric"):
             ExpectedOutcome(statement="Launch is quick", scope="measured", threshold=800)
@@ -97,6 +106,17 @@ class MeasuredOutcomeContractTests(unittest.TestCase):
                 platform=Platform.ANDROID,
                 collected_at="2026-10-25T12:00:00Z",
             )
+
+    def test_launch_ttid_accepts_android_and_ios_samples(self):
+        for platform in (Platform.ANDROID, Platform.IOS):
+            with self.subTest(platform=platform):
+                measured = sample()
+                measured.platform = platform
+
+                self.assertEqual(
+                    Measurement.model_validate(measured.model_dump()).platform,
+                    platform,
+                )
 
 
 class MeasuredVerdictTests(unittest.TestCase):
@@ -182,6 +202,28 @@ class MetricPreflightTests(unittest.TestCase):
         self.assertIn("min_touch_target", reason)
         self.assertIn("android", reason)
 
+    def test_platform_preflight_keeps_ios_only_metrics_on_ios(self):
+        from yewo.testing.metric_preflight import preflight_metrics_before_device
+
+        case = self._case(Metric.MIN_TOUCH_TARGET)
+
+        runnable, refused = preflight_metrics_before_device([case], Platform.IOS)
+
+        self.assertEqual(runnable, [])
+        self.assertEqual(refused[0].status, "UNVERIFIED")
+        self.assertIn("No live collector", refused[0].failure_reason)
+
+    def test_platform_preflight_refuses_ios_only_metrics_on_android(self):
+        from yewo.testing.metric_preflight import preflight_metrics_before_device
+
+        case = self._case(Metric.MIN_TOUCH_TARGET)
+
+        runnable, refused = preflight_metrics_before_device([case], Platform.ANDROID)
+
+        self.assertEqual(runnable, [])
+        self.assertEqual(refused[0].status, "UNSUPPORTED")
+        self.assertIn("not collectable on android", refused[0].failure_reason)
+
     def test_a_metric_without_a_live_collector_is_a_scenario_problem(self):
         from yewo.testing.judge.capabilities import unavailable_metric_reason
 
@@ -219,6 +261,79 @@ class MetricPreflightTests(unittest.TestCase):
         self.assertEqual(report.cause, "scenario")
         self.assertIn("No live collector", report.failure_reason)
         perception.reset.assert_not_called()
+
+    def test_a_locked_unsupported_metric_does_not_start_a_device(self):
+        from unittest.mock import Mock, patch
+
+        from yewo.testing.lock_resolution import LockResolution
+        from yewo.testing.runner import YewoTestRunner
+        from yewo.utils.secrets import SecretScrubber
+
+        case = self._case(Metric.MIN_TOUCH_TARGET)
+        started = Mock()
+
+        class Session:
+            def __init__(self, *_, session_dir, **__):
+                root = Path(session_dir) / "run"
+                root.mkdir(parents=True)
+                self.telemetry_dir = root
+                self.screenshots_dir = root / "screenshots"
+                self.screenshots_dir.mkdir()
+                self.prompts_dir = root / "prompts"
+                self.prompts_dir.mkdir()
+                self.manifest_path = root / "run.json"
+                self.root_log_file = root / "run.log"
+                self.root_log_file.write_text("", encoding="utf-8")
+                self.appium_log_path = root / "appium.log"
+                self.session_id = "run"
+
+            def start(self, **_):
+                started()
+
+            def close(self):
+                pass
+
+        class Agent:
+            def __init__(self, *_, **__):
+                client = SimpleNamespace(usage_callback=None)
+                self._device_agent = SimpleNamespace(
+                    llm=client,
+                    fast_llm=client,
+                    scrubber=SecretScrubber(),
+                    record_prompts=lambda _store: None,
+                )
+
+        with TemporaryDirectory() as directory:
+            runner = YewoTestRunner(
+                device_name="Pixel_8",
+                app_path="app.apk",
+                assets_dir=Path(directory),
+                platform=Platform.ANDROID,
+                locked=True,
+            )
+            with (
+                patch("yewo.testing.runner.DeviceSession", Session),
+                patch("yewo.testing.runner.QAAgent", Agent),
+                patch("yewo.testing.runner.lock_resolution.require_lock"),
+                patch(
+                    "yewo.testing.metric_preflight._known_locked_scenarios",
+                    return_value=([case], True),
+                ),
+                patch.object(
+                    YewoTestRunner,
+                    "_suite",
+                    return_value=LockResolution(scenarios=[case], reused_count=1),
+                ),
+                patch("yewo.testing.runner.ensure_device_ready") as ready,
+                patch("yewo.testing.runner.evaluate_package_policy", return_value=[]),
+            ):
+                report = runner.run_journey(
+                    UserJourney(id="j", name="J", description="Measure the app.")
+                )
+
+        self.assertEqual(report.scenarios[0].status, "UNSUPPORTED")
+        ready.assert_not_called()
+        started.assert_not_called()
 
 
 class MetricGenerationTests(unittest.TestCase):

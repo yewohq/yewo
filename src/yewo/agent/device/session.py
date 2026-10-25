@@ -20,6 +20,8 @@ from yewo.agent.device.control import DeviceControl
 from yewo.agent.device import device_logs
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.recording import DeviceRecording
+from yewo.agent.device.simctl_control import SimctlControl
+from yewo.devices.discovery import RUNNING, ios_devices, resolve
 from yewo.utils.platform_checks import run_android_preflight, run_ios_preflight
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,8 @@ class DeviceSession(DeviceRecording):
         self.reuse_app = reuse_app
         self.keep_app = keep_app
         self._installed_by_run: Optional[bool] = installed_by_run
+        self._ios_simulator_udid: Optional[str] = None
+        self._ios_simulator_was_running = False
         # Run all preflight checks before touching any hardware
         if self.platform == Platform.IOS:
             run_ios_preflight(app_path)
@@ -202,6 +206,7 @@ class DeviceSession(DeviceRecording):
 
     def start(self, is_headless: bool = False) -> DeviceControl:
         self.layout.create()
+        self._note_ios_target()
         self._start_appium()
         self._note_app_ownership()
         self.device_control = DeviceControl(
@@ -225,6 +230,34 @@ class DeviceSession(DeviceRecording):
             self.discard_stale_recordings()
             self.start_recording()
         return self.device_control
+
+    def _note_ios_target(self) -> None:
+        """Remember whether this run is responsible for an iOS simulator boot."""
+        if self.platform != Platform.IOS:
+            return
+        target = resolve(self.device_name, ios_devices())
+        if target is None or target.kind != "simulator" or not target.identifier:
+            return
+        self._ios_simulator_udid = target.identifier
+        self._ios_simulator_was_running = target.state == RUNNING
+
+    def _shutdown_owned_ios_simulator(self, interrupted: bool) -> None:
+        """Stop only a simulator that was shut down before this run started."""
+        udid = getattr(self, "_ios_simulator_udid", None)
+        if (
+            self.platform != Platform.IOS
+            or self.keep_device
+            or getattr(self, "_ios_simulator_was_running", False)
+            or not udid
+        ):
+            return
+        try:
+            SimctlControl.shutdown(udid)
+            self._ios_simulator_udid = None
+            logger.info("iOS simulator stopped")
+        except Exception as exc:  # noqa: BLE001 - teardown must continue
+            log = logger.info if interrupted else logger.warning
+            log("Failed to stop iOS simulator: %s", exc)
 
     def _clean_device(self, final: bool) -> None:
         """Removes the app this run installed, once its artifacts are saved.
@@ -269,27 +302,35 @@ class DeviceSession(DeviceRecording):
             return None
         return self.device_control.driver
 
-    def close(self, final: bool = True):
+    def close(self, final: bool = True, interrupted: bool = False):
         """Ends the session, and by default removes what the run installed.
 
         Session recovery closes a dead session and opens another against the
         same app, so it passes final=False. Uninstalling there would take the
         app out from under the scenarios still to run.
         """
-        try:
-            self.save_recording()
-        except Exception as e:
-            logger.warning("Failed to save session recording: %s", e)
-        try:
-            self._save_device_logs()
-        except Exception as e:  # noqa: BLE001 - evidence must not cost the teardown
-            logger.warning("Failed to save the device log: %s", e)
+        if interrupted:
+            self._device_logs.stop()
+        else:
+            try:
+                self.save_recording()
+            except Exception as e:
+                logger.warning("Failed to save session recording: %s", e)
+            try:
+                self._save_device_logs()
+            except Exception as e:  # noqa: BLE001 - evidence must not cost the teardown
+                logger.warning("Failed to save the device log: %s", e)
         self._clean_device(final=final)
         if self.device_control:
             try:
-                self.device_control.quit()
+                if interrupted:
+                    self.device_control.quit(interrupted=True)
+                else:
+                    self.device_control.quit()
             except Exception as e:
                 logger.warning("Failed to quit device control: %s", e)
+        if final:
+            self._shutdown_owned_ios_simulator(interrupted)
         if self._owns_appium and self._appium_service.is_running:
             try:
                 self._appium_service.stop()
