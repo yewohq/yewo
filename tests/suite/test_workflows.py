@@ -135,6 +135,60 @@ class WorkflowTests(unittest.TestCase):
             },
         )
 
+    def test_a_workflow_reads_targets_in_declared_order(self):
+        data = {
+            "workflows": {
+                "a": {
+                    "app": "fallback.apk",
+                    "targets": [
+                        {
+                            "id": "pixel",
+                            "platform": "android",
+                            "device": "Pixel_8",
+                            "app": "android/app.apk",
+                        },
+                        {
+                            "id": "iphone",
+                            "platform": "ios",
+                            "device": "iPhone 16 Pro",
+                            "app": "ios/Runner.app",
+                        },
+                    ],
+                    "journeys": [{"journey": "x"}],
+                }
+            }
+        }
+
+        workflows, directory = self._load(data)
+
+        self.assertEqual([target.id for target in workflows[0].targets], ["pixel", "iphone"])
+        self.assertEqual(workflows[0].targets[0].settings["device"], "Pixel_8")
+        self.assertEqual(
+            workflows[0].targets[1].settings["app_path"],
+            str((Path(directory) / "ios/Runner.app").resolve()),
+        )
+
+    def test_file_targets_are_inherited_and_a_workflow_may_replace_them(self):
+        data = {
+            "targets": [
+                {"id": "shared", "platform": "android", "device": "Pixel_8"}
+            ],
+            "workflows": {
+                "a": {"journeys": [{"journey": "x"}]},
+                "b": {
+                    "targets": [
+                        {"id": "ios", "platform": "ios", "device": "iPhone 16"}
+                    ],
+                    "journeys": [{"journey": "y"}],
+                },
+            },
+        }
+
+        workflows, _ = self._load(data)
+
+        self.assertEqual([target.id for target in workflows[0].targets], ["shared"])
+        self.assertEqual([target.id for target in workflows[1].targets], ["ios"])
+
 
 class LegacyFileTests(unittest.TestCase):
     """A journey file written before workflows existed still runs."""
@@ -260,3 +314,28 @@ class SchemaTests(unittest.TestCase):
         )
 
         self.assertIn("android.debuggable", message)
+
+    def test_duplicate_target_ids_are_refused(self):
+        message = self._refuse(
+            {
+                "targets": [
+                    {"id": "phone", "platform": "android", "device": "Pixel"},
+                    {"id": "phone", "platform": "ios", "device": "iPhone"},
+                ],
+                "journeys": [{"journey": "x"}],
+            }
+        )
+
+        self.assertIn("target IDs must be unique", message)
+
+    def test_a_target_id_cannot_escape_its_artifact_directory(self):
+        message = self._refuse(
+            {
+                "targets": [
+                    {"id": "../phone", "platform": "android", "device": "Pixel"}
+                ],
+                "journeys": [{"journey": "x"}],
+            }
+        )
+
+        self.assertIn("targets.0.id", message)

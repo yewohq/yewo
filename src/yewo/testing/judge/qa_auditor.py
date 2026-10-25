@@ -90,12 +90,31 @@ class ScreenAssessment(BaseModel):
                 verification["reasoning"] = verification.pop(
                     "details", "No reasoning supplied by the provider."
                 )
-        for issue in normalized.get("detected_issues") or []:
-            if not isinstance(issue, dict):
+        issues = []
+        for raw_issue in normalized.get("detected_issues") or []:
+            if isinstance(raw_issue, QAIssue):
+                issues.append(raw_issue)
                 continue
-            if "description" not in issue and "issue" in issue:
-                issue["description"] = issue.pop("issue")
+            if isinstance(raw_issue, str):
+                issue = {"description": raw_issue}
+            elif isinstance(raw_issue, dict):
+                issue = raw_issue
+            else:
+                continue
+            if "description" not in issue:
+                for alias in ("issue", "reason", "details"):
+                    if alias in issue:
+                        issue["description"] = issue.pop(alias)
+                        break
+            if "issue_type" not in issue and "type" in issue:
+                issue["issue_type"] = issue.pop("type")
             issue.setdefault("issue_type", IssueKind.OTHER.value)
+            # Keep a provider's visible defect when it omitted only the
+            # ranking. Medium is deliberately non-critical: the finding is
+            # reported without allowing an invented severity to abort a run.
+            issue.setdefault("severity", "medium")
+            issues.append(issue)
+        normalized["detected_issues"] = issues
         return normalized
 
 

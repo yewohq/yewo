@@ -174,7 +174,7 @@ class AppStateCapability(CapabilityModel):
         default=None,
         ge=0,
         le=60,
-        description="Seconds to remain backgrounded; used by 'background_resume' only.",
+        description="Seconds to remain backgrounded. Only background_resume uses it.",
     )
 
     @model_validator(mode="after")

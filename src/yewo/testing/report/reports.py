@@ -32,6 +32,15 @@ def _junit_type(scenario) -> str:
     return f"{kind}.{scenario.cause}" if scenario.cause else kind
 
 
+def _junit_classname(report: JourneyReport, suffix: str) -> str:
+    """Qualify a test with its target without changing legacy class names."""
+    parts = []
+    if report.environment and report.environment.target_id:
+        parts.append(safe_artifact_stem(report.environment.target_id))
+    parts.extend((safe_artifact_stem(report.journey_id), suffix))
+    return ".".join(parts)
+
+
 def _scrub(scrubber: SecretScrubber | None, value: str | None) -> str:
     return scrubber.scrub(value) if scrubber else value or ""
 
@@ -61,6 +70,12 @@ def _environment_lines(environment) -> list[str]:
         f"* **Model**: {model}",
         f"* **Targeting**: `{environment.grounding}`",
     ]
+    if environment.target_id:
+        lines.append(f"* **Matrix target**: `{environment.target_id}`")
+    if environment.run_id:
+        lines.append(f"* **Run ID**: `{environment.run_id}`")
+    if environment.execution_id:
+        lines.append(f"* **Execution ID**: `{environment.execution_id}`")
     if environment.detector:
         lines.append(f"* **Detector**: `{environment.detector}`")
     return lines
@@ -290,6 +305,23 @@ def save_junit_report(
             **attributes,
         },
     )
+    environment = report.environment
+    if environment and environment.target_id:
+        properties = ET.SubElement(suite, "properties")
+        ET.SubElement(
+            properties, "property", name="yewo.target_id", value=environment.target_id
+        )
+        if environment.run_id:
+            ET.SubElement(
+                properties, "property", name="yewo.run_id", value=environment.run_id
+            )
+        if environment.execution_id:
+            ET.SubElement(
+                properties,
+                "property",
+                name="yewo.execution_id",
+                value=environment.execution_id,
+            )
     for scenario in report.scenarios:
         _append_junit_case(suite, report, scenario, scrubber)
     for check in report.policy_checks:
@@ -312,7 +344,7 @@ def _append_junit_case(
         "testcase",
         {
             "name": _scrub(scrubber, scenario.scenario_name),
-            "classname": f"{safe_artifact_stem(report.journey_id)}.{scenario.test_id}",
+            "classname": _junit_classname(report, scenario.test_id),
             "time": str(scenario.duration),
         },
     )
@@ -399,7 +431,7 @@ def _append_junit_policy_check(
         "testcase",
         {
             "name": check.check_id,
-            "classname": f"{safe_artifact_stem(report.journey_id)}.policy",
+            "classname": _junit_classname(report, "policy"),
             "time": "0",
         },
     )

@@ -39,6 +39,48 @@ class DeviceSpec(StrictModel):
     headless: Optional[bool] = Field(default=None, description="Run the emulator without a window.")
 
 
+class TargetSpec(StrictModel):
+    """One explicitly named member of a sequential target matrix."""
+
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        description="Stable target name used in reports and artifact paths.",
+    )
+    platform: Platform
+    device: str = Field(min_length=1, description="Emulator, simulator, or device name.")
+    app: Optional[str] = Field(
+        default=None,
+        description="Target-specific app binary. Falls back to the workflow app.",
+    )
+    app_path: Optional[str] = Field(
+        default=None, description="Another spelling of the target-specific app."
+    )
+    headless: Optional[bool] = Field(
+        default=None, description="Run this target's emulator without a window."
+    )
+
+    @field_validator("device")
+    @classmethod
+    def _validate_device(cls, value: str) -> str:
+        device = value.strip()
+        if not device:
+            raise ValueError("device must not be blank")
+        return device
+
+
+def _validate_target_ids(targets: Optional[list[TargetSpec]]) -> Optional[list[TargetSpec]]:
+    """Refuse two matrix entries that would own one report path."""
+    if targets is None:
+        return None
+    target_ids = [target.id for target in targets]
+    duplicates = sorted({target_id for target_id in target_ids if target_ids.count(target_id) > 1})
+    if duplicates:
+        raise ValueError(f"target IDs must be unique: {', '.join(duplicates)}")
+    return targets
+
+
 class DeclaredValue(StrictModel):
     """A declared value, whether it is sensitive, and what the app owes it.
 
@@ -201,7 +243,7 @@ class JourneySpec(StrictModel):
 
 
 class WorkflowSpec(Settings):
-    """One app, one device, one environment, and the tests to run against them."""
+    """One environment, its target or targets, and the tests to run there."""
 
     env: dict[str, EnvValue] = Field(default_factory=dict)
     secrets: Union[list[str], str] = Field(
@@ -223,6 +265,13 @@ class WorkflowSpec(Settings):
     )
     policy: Optional[PolicySpec] = None
     preconditions: Optional[ScenarioPreconditions] = None
+    targets: Optional[list[TargetSpec]] = Field(
+        default=None,
+        min_length=1,
+        description="Sequential targets that each receive the same locked journeys.",
+    )
+
+    _unique_target_ids = field_validator("targets")(_validate_target_ids)
 
 
 class YewoFile(Settings):
@@ -252,6 +301,13 @@ class YewoFile(Settings):
     )
     policy: Optional[PolicySpec] = None
     preconditions: Optional[ScenarioPreconditions] = None
+    targets: Optional[list[TargetSpec]] = Field(
+        default=None,
+        min_length=1,
+        description="Sequential targets inherited by each workflow unless overridden.",
+    )
+
+    _unique_target_ids = field_validator("targets")(_validate_target_ids)
 
 
 def _format_error_location(location: tuple[Any, ...]) -> str:

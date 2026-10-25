@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 def _workflow(name: str = "", **settings):
@@ -304,3 +304,240 @@ class PlatformNameTests(unittest.TestCase):
             Platform.named("androdi")
 
         self.assertIn("androdi", str(caught.exception))
+
+
+class TargetMatrixCommandTests(unittest.TestCase):
+    """One command coordinates isolated target runs without suppressing later ones."""
+
+    def _workflow(self):
+        from yewo.testing.suite import Target, Workflow
+
+        journey = SimpleNamespace(id="j", name="Journey")
+        return Workflow(
+            "checkout",
+            journeys=[journey],
+            targets=(
+                Target("pixel", {"platform": "android", "device": "Pixel_8"}),
+                Target("iphone", {"platform": "ios", "device": "iPhone 16"}),
+            ),
+        )
+
+    @staticmethod
+    def _report(status="PASSED"):
+        from yewo.testing.models import JourneyReport
+
+        return JourneyReport(
+            journey_id="j",
+            journey_name="Journey",
+            description="d",
+            status=status,
+        )
+
+    def test_a_matrix_refuses_to_start_without_a_lock(self):
+        from yewo.testing.cli import YewoCLI
+
+        with (
+            patch("yewo.testing.cli.load_workflows", return_value=[self._workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.cli.runner_for") as runner_for,
+        ):
+            code = YewoCLI().run(["j.yaml"])
+
+        self.assertEqual(code, 2)
+        runner_for.assert_not_called()
+
+    def test_a_failed_target_does_not_suppress_the_next_target(self):
+        from yewo.testing.cli import YewoCLI
+
+        broken = SimpleNamespace(
+            run_journey=Mock(side_effect=RuntimeError("driver failed")),
+            last_report_paths={},
+        )
+        passed = SimpleNamespace(
+            run_journey=Mock(return_value=self._report()),
+            last_report_paths={},
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("yewo.testing.cli.load_workflows", return_value=[self._workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch.object(YewoCLI, "_require_matrix_locks"),
+            patch(
+                "yewo.testing.cli.output_dir_for", return_value=Path(directory)
+            ),
+            patch("yewo.testing.cli.runner_for", side_effect=[broken, passed]) as runner_for,
+            patch("yewo.testing.cli.write_execution_summary"),
+            patch("yewo.testing.cli.new_uuid", side_effect=["execution", "run-1", "run-2"]),
+        ):
+            code = YewoCLI().run(["j.yaml", "--locked"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(runner_for.call_count, 2)
+        passed.run_journey.assert_called_once()
+        run_dirs = [call.kwargs["assets_dir"] for call in runner_for.call_args_list]
+        self.assertIn("pixel", run_dirs[0].parts)
+        self.assertIn("iphone", run_dirs[1].parts)
+
+    def test_target_selection_runs_only_the_named_target(self):
+        from yewo.testing.cli import YewoCLI
+
+        passed = SimpleNamespace(
+            run_journey=Mock(return_value=self._report()),
+            last_report_paths={},
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("yewo.testing.cli.load_workflows", return_value=[self._workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch.object(YewoCLI, "_require_matrix_locks"),
+            patch(
+                "yewo.testing.cli.output_dir_for", return_value=Path(directory)
+            ),
+            patch("yewo.testing.cli.runner_for", return_value=passed) as runner_for,
+            patch("yewo.testing.cli.write_execution_summary"),
+            patch("yewo.testing.cli.new_uuid", side_effect=["execution", "run-1"]),
+        ):
+            code = YewoCLI().run(
+                ["j.yaml", "--locked", "--target", "iphone"]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(runner_for.call_count, 1)
+        self.assertEqual(runner_for.call_args.kwargs["target"].id, "iphone")
+
+    def test_a_target_with_failed_restoration_is_not_reused(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.lifecycle import LifecycleOperation
+        from yewo.testing.models import ScenarioReport
+        from yewo.testing.suite import Target, Workflow
+
+        journeys = [
+            SimpleNamespace(id="first", name="First"),
+            SimpleNamespace(id="second", name="Second"),
+        ]
+        workflow = Workflow(
+            "checkout",
+            journeys=journeys,
+            targets=(Target("pixel", {"platform": "android", "device": "Pixel_8"}),),
+        )
+        failed_report = self._report("FAILED").model_copy(
+            update={
+                "journey_id": "first",
+                "journey_name": "First",
+                "scenarios": [
+                    ScenarioReport(
+                        test_id="TS_1",
+                        scenario_name="First",
+                        cell="functional.happy_path.0",
+                        status="FAILED",
+                        lifecycle_operations=[
+                            LifecycleOperation(
+                                operation_id="restore-1",
+                                phase="restoration",
+                                kind="device_state",
+                                requested="portrait",
+                                status="failed",
+                                source="orientation",
+                            )
+                        ],
+                    )
+                ],
+            }
+        )
+        failed = SimpleNamespace(
+            run_journey=Mock(return_value=failed_report),
+            last_report_paths={},
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("yewo.testing.cli.load_workflows", return_value=[workflow]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch.object(YewoCLI, "_require_matrix_locks"),
+            patch("yewo.testing.cli.output_dir_for", return_value=Path(directory)),
+            patch("yewo.testing.cli.runner_for", return_value=failed) as runner_for,
+            patch("yewo.testing.cli.write_execution_summary") as write_summary,
+            patch(
+                "yewo.testing.cli.new_uuid",
+                side_effect=["execution", "run-1", "run-2"],
+            ),
+        ):
+            code = YewoCLI().run(["j.yaml", "--locked"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(runner_for.call_count, 1)
+        self.assertEqual(write_summary.call_count, 2)
+        second_results = write_summary.call_args.args[3]
+        self.assertEqual(second_results[-1].status, "ERROR")
+        self.assertIn("failed restoration", second_results[-1].error)
+
+    def test_an_interruption_checkpoints_the_active_run_and_stops(self):
+        from yewo.testing.cli import YewoCLI
+
+        interrupted = SimpleNamespace(
+            run_journey=Mock(side_effect=KeyboardInterrupt),
+            last_report_paths={},
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("yewo.testing.cli.load_workflows", return_value=[self._workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch.object(YewoCLI, "_require_matrix_locks"),
+            patch(
+                "yewo.testing.cli.output_dir_for", return_value=Path(directory)
+            ),
+            patch("yewo.testing.cli.runner_for", return_value=interrupted) as runner_for,
+            patch("yewo.testing.cli.write_execution_summary") as write_summary,
+            patch("yewo.testing.cli.new_uuid", side_effect=["execution", "run-1"]),
+        ):
+            code = YewoCLI().run(["j.yaml", "--locked"])
+
+        self.assertEqual(code, 130)
+        self.assertEqual(runner_for.call_count, 1)
+        write_summary.assert_called_once()
+
+    def test_target_settings_and_run_identity_reach_the_runner(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.suite import Target, Workflow
+        from yewo.testing.wiring import runner_for
+
+        cli = YewoCLI()
+        args = cli.parser.parse_args(["j.yaml", "--locked"])
+        workflow = Workflow(
+            "checkout",
+            settings={
+                "platform": "android",
+                "device": "fallback",
+                "app_path": "fallback.apk",
+            },
+        )
+        declared = Target(
+            "iphone",
+            {
+                "platform": "ios",
+                "device": "iPhone 16",
+                "app_path": "Runner.app",
+            },
+        )
+        with (
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("Runner.app")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_for(
+                workflow,
+                args,
+                Path("j.yaml"),
+                cli.config,
+                target=declared,
+                assets_dir=Path("isolated"),
+                run_id="run-1",
+                execution_id="execution-1",
+            )
+
+        kwargs = runner_class.call_args.kwargs
+        self.assertEqual(kwargs["platform"].value, "ios")
+        self.assertEqual(kwargs["device_name"], "iPhone 16")
+        self.assertEqual(kwargs["app_path"], "Runner.app")
+        self.assertEqual(kwargs["assets_dir"], Path("isolated"))
+        self.assertEqual(kwargs["target_id"], "iphone")
+        self.assertEqual(kwargs["run_id"], "run-1")
+        self.assertEqual(kwargs["execution_id"], "execution-1")

@@ -17,11 +17,6 @@ count = 3
 digest = "9a3cca9572974cefa88bb44cc2c09d4427b74cdf181befbf05f1ab6516c16fb7"
 
 [[files]]
-path = "src/yewo/agent/device/control.py"
-count = 2
-digest = "e9124f7f5fc2119299354133b305d5657d8dd4d642f896a93444a39d0046c63f"
-
-[[files]]
 path = "src/yewo/agent/device/files.py"
 count = 1
 digest = "10195cf4ed4d26b55cc6250698f9134bb45120512bc594f3d15af8e330ef92a2"

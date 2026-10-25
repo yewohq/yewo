@@ -34,10 +34,27 @@
         "action": {
           "enum": [
             "force_stop",
-            "clear_data"
+            "clear_data",
+            "relaunch",
+            "background_resume"
           ],
           "title": "Action",
           "type": "string"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "maximum": 60,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Seconds to remain backgrounded. Only background_resume uses it.",
+          "title": "Duration Seconds"
         }
       },
       "required": [
@@ -282,6 +299,27 @@
         "url"
       ],
       "title": "DeeplinkCapability",
+      "type": "object"
+    },
+    "DeviceLockCapability": {
+      "additionalProperties": false,
+      "description": "Lock and unlock as one bounded interruption.\n\nKeeping this atomic prevents the planner from trying to interact with the\noperating-system lock screen, which is outside the app under test.",
+      "properties": {
+        "kind": {
+          "const": "device_lock",
+          "default": "device_lock",
+          "title": "Kind",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "default": 1.0,
+          "maximum": 60,
+          "minimum": 0,
+          "title": "Duration Seconds",
+          "type": "number"
+        }
+      },
+      "title": "DeviceLockCapability",
       "type": "object"
     },
     "DeviceSpec": {
@@ -556,7 +594,10 @@
             "online",
             "wifi_only",
             "data_only",
-            "airplane"
+            "airplane",
+            "slow_2g",
+            "slow_3g",
+            "high_latency"
           ],
           "title": "Mode",
           "type": "string"
@@ -566,6 +607,30 @@
         "mode"
       ],
       "title": "NetworkCapability",
+      "type": "object"
+    },
+    "OrientationCapability": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "orientation",
+          "default": "orientation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "orientation": {
+          "enum": [
+            "portrait",
+            "landscape"
+          ],
+          "title": "Orientation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "orientation"
+      ],
+      "title": "OrientationCapability",
       "type": "object"
     },
     "PermissionCapability": {
@@ -654,11 +719,13 @@
                 "biometric": "#/$defs/BiometricCapability",
                 "clipboard": "#/$defs/ClipboardCapability",
                 "deeplink": "#/$defs/DeeplinkCapability",
+                "device_lock": "#/$defs/DeviceLockCapability",
                 "interrupt": "#/$defs/InterruptCapability",
                 "locale": "#/$defs/LocaleCapability",
                 "location": "#/$defs/LocationCapability",
                 "media_inject": "#/$defs/MediaInjectCapability",
                 "network": "#/$defs/NetworkCapability",
+                "orientation": "#/$defs/OrientationCapability",
                 "permission": "#/$defs/PermissionCapability",
                 "timezone": "#/$defs/TimezoneCapability"
               },
@@ -697,6 +764,12 @@
               },
               {
                 "$ref": "#/$defs/AppStateCapability"
+              },
+              {
+                "$ref": "#/$defs/OrientationCapability"
+              },
+              {
+                "$ref": "#/$defs/DeviceLockCapability"
               },
               {
                 "$ref": "#/$defs/MediaInjectCapability"
@@ -739,6 +812,80 @@
       "title": "SetupMode",
       "type": "string"
     },
+    "TargetSpec": {
+      "additionalProperties": false,
+      "description": "One explicitly named member of a sequential target matrix.",
+      "properties": {
+        "id": {
+          "description": "Stable target name used in reports and artifact paths.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "android",
+            "ios"
+          ],
+          "title": "Platform",
+          "type": "string"
+        },
+        "device": {
+          "description": "Emulator, simulator, or device name.",
+          "minLength": 1,
+          "title": "Device",
+          "type": "string"
+        },
+        "app": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target-specific app binary. Falls back to the workflow app.",
+          "title": "App"
+        },
+        "app_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Another spelling of the target-specific app.",
+          "title": "App Path"
+        },
+        "headless": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Run this target's emulator without a window.",
+          "title": "Headless"
+        }
+      },
+      "required": [
+        "id",
+        "platform",
+        "device"
+      ],
+      "title": "TargetSpec",
+      "type": "object"
+    },
     "TimezoneCapability": {
       "additionalProperties": false,
       "properties": {
@@ -763,7 +910,7 @@
     },
     "WorkflowSpec": {
       "additionalProperties": false,
-      "description": "One app, one device, one environment, and the tests to run against them.",
+      "description": "One environment, its target or targets, and the tests to run there.",
       "properties": {
         "device": {
           "anyOf": [
@@ -1159,6 +1306,23 @@
             }
           ],
           "default": null
+        },
+        "targets": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TargetSpec"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Sequential targets that each receive the same locked journeys.",
+          "title": "Targets"
         }
       },
       "title": "WorkflowSpec",
@@ -1577,6 +1741,23 @@
         }
       ],
       "default": null
+    },
+    "targets": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/TargetSpec"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Sequential targets inherited by each workflow unless overridden.",
+      "title": "Targets"
     }
   },
   "title": "Yewo configuration",

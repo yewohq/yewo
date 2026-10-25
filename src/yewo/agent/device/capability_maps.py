@@ -25,7 +25,7 @@ CONNECTIVITY = {
 
 SLOW_NETWORK_MODES = frozenset({"slow_2g", "slow_3g", "high_latency"})
 
-# Android emulator-console presets. Each profile sets throughput and latency;
+# Android emulator-console presets. Each profile sets throughput and latency.
 # setting only one leaves an undeclared half of the network condition behind.
 ANDROID_NETWORK_PROFILES = {
     "slow_2g": {

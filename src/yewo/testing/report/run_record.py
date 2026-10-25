@@ -4,7 +4,9 @@ from yewo.testing import lock_file, lock_resolution, sensitivity
 from yewo.testing.report.manifest import RunInputs, RunManifest, RunSubject
 
 
-def create_manifest(path, journey, scenarios, environment, suite, scrubber) -> RunManifest:
+def create_manifest(
+    path, journey, scenarios, environment, suite, scrubber, run_id=None
+) -> RunManifest:
     """Build the same run record at every runner failure boundary."""
     return RunManifest(
         path,
@@ -26,6 +28,7 @@ def create_manifest(path, journey, scenarios, environment, suite, scrubber) -> R
         ),
         scrubber=scrubber,
         artifacts=sensitivity.declared_for(journey),
+        run_uuid=run_id,
     )
 
 
@@ -38,7 +41,13 @@ def ensure_interrupted_manifest(
     suite = runner._suite(journey, llm) if runner.locked else lock_resolution.LockResolution()
     planned = suite.scenarios if runner.locked else scenarios
     recovered = create_manifest(
-        session.manifest_path, journey, planned, runner._environment(), suite, scrubber
+        session.manifest_path,
+        journey,
+        planned,
+        runner._environment(),
+        suite,
+        scrubber,
+        runner.run_id,
     )
     recovered.record_unattached_calls(calls)
     return recovered, planned

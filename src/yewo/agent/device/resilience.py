@@ -97,7 +97,7 @@ def apply_ios_network_profile(
         )
         raise ActionRejected(
             "network cannot be applied on ios: no installed condition profile "
-            "matches it; available profiles: "
+            "matches it. Available profiles: "
             + (", ".join(available) or "none")
         )
     active = active_ios_condition(conditions)

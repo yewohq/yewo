@@ -81,9 +81,10 @@ uv run yewo test path/to/journey.yaml --app-path path/to/app.apk
 ```
 
 Or keep the settings and the tests in one `yewo.yaml`, which is what a
-project does. A workflow owns an app, a device and an environment, and the
-journeys inside it are the tests. Run it from the directory that holds the
-file. See [`example/testing_app/yewo.yaml`](example/testing_app/yewo.yaml).
+project does. A workflow owns an environment and either one app/device pair
+or a target matrix. The journeys inside it are the tests. Run it from the
+directory that holds the file. See
+[`example/testing_app/yewo.yaml`](example/testing_app/yewo.yaml).
 
 ```bash
 cd example/testing_app
@@ -115,6 +116,48 @@ Each cell keeps a stable name, such as `security.negative.0`, so the same
 test is the same test between runs. `yewo lock` writes those scenarios to
 `yewo.lock`. `yewo test --locked` runs the locked scenarios and refuses a
 lock that is missing or out of date, which is what a build should do.
+
+### Run the locked suite on several targets
+
+A workflow may declare a sequential target matrix. Each target has its own
+platform, device, and optional app artifact:
+
+```yaml
+workflows:
+  checkout:
+    targets:
+      - id: android_emulator
+        platform: android
+        device: Pixel_8_API_35
+        app: build/app-release.apk
+      - id: ios_simulator
+        platform: ios
+        device: iPhone 16 Pro
+        app: build/Runner.app
+    journeys:
+      - id: guest_checkout
+        journey: Let a guest complete checkout.
+```
+
+Create the lock, then run every target or select named targets:
+
+```bash
+uv run yewo lock
+uv run yewo test --locked
+uv run yewo test --locked --target ios_simulator
+```
+
+Matrix runs require `--locked`, so every target receives the same scenario
+definitions. They run one at a time. Every journey and target pair receives
+an independent run ID, device session, state transaction, artifact tree, and
+verdict. Failure or an unsupported capability on one target does not suppress
+later targets.
+
+The output directory contains `executions/<execution-id>/index.html`, a small
+summary linking to each run's full report. Evidence stays in the individual
+`<workflow>/<target>/<journey>/<run-id>/sessions/<session-id>/` tree. The
+execution also writes JSON and combined JUnit summaries; it does not merge
+screenshots, measurements, or lifecycle receipts between targets.
 
 Yewo only writes assertions it can evidence from a screenshot, the detected
 text on it, what an action did, or a supported device measurement. Network

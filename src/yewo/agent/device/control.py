@@ -157,10 +157,10 @@ class DeviceControl:
             options.set_capability("appium:skipDeviceInitialization", True)
 
     def _start_session(self, options):
-        """Creates the Appium session, translating a failed AVD launch into a reason.
+        """Create the Appium session. Translate an AVD failure into a reason.
 
-        Appium reports any launch problem as 'Error getting AVD with retry', hiding
-        whatever the emulator actually complained about.
+        Appium reports an AVD problem as 'Error getting AVD with retry'. This
+        hides the emulator's actual message.
         """
         try:
             return webdriver.Remote(self.server_url, options=options)
@@ -203,8 +203,12 @@ class DeviceControl:
         self.platform_name = self.driver.capabilities.get("platformName")
         self.os_version = self.driver.capabilities.get("platformVersion")
         self.model = self.driver.capabilities.get("deviceModel")
-        self.screen_width = size["width"]
-        self.screen_height = size["height"]
+        self._driver_width = size["width"]
+        self._driver_height = size["height"]
+        self.screen_width = self._driver_width
+        self.screen_height = self._driver_height
+        self._coordinate_scale_x = 1.0
+        self._coordinate_scale_y = 1.0
         self.pixel_ratio = pixel_ratio
         logger.info(
             "Device connected. Name: %s, Platform: %s, OS Version: %s, Model: %s, Serial: %s",
@@ -254,8 +258,37 @@ class DeviceControl:
     @property
     def focus(self) -> Focus:
         """Focus checks bound to this session's driver and screen size."""
-        area = getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
+        area = getattr(self, "_driver_width", 0) * getattr(self, "_driver_height", 0)
         return Focus(self.driver, area)
+
+    def _calibrate_coordinate_space(self, png: bytes) -> None:
+        """Map screenshot pixels to the point space Appium gestures consume.
+
+        Android normally reports the same dimensions for both. XCUITest can
+        report a Retina screenshot at twice the width and height of its
+        gesture viewport while omitting `pixelRatio` from capabilities.
+        Perception works in screenshot pixels, so validation and replay keep
+        that space. Only the final driver gesture is scaled to points.
+        """
+        if len(png) < 24 or png[:8] != b"\x89PNG\r\n\x1a\n":
+            return
+        width = int.from_bytes(png[16:20], "big")
+        height = int.from_bytes(png[20:24], "big")
+        if width <= 0 or height <= 0:
+            return
+        driver_width = getattr(self, "_driver_width", width)
+        driver_height = getattr(self, "_driver_height", height)
+        self.screen_width = width
+        self.screen_height = height
+        self._coordinate_scale_x = driver_width / width
+        self._coordinate_scale_y = driver_height / height
+
+    def _driver_point(self, x: int, y: int) -> tuple[int, int]:
+        """Convert a perception pixel to the coordinate space of the driver."""
+        return (
+            round(x * getattr(self, "_coordinate_scale_x", 1.0)),
+            round(y * getattr(self, "_coordinate_scale_y", 1.0)),
+        )
 
     def get_screenshot(self):
         """The screen as PNG bytes, or ObservationUnavailable if unreadable.
@@ -263,7 +296,9 @@ class DeviceControl:
         The driver can raise almost anything for a lost session.
         """
         try:
-            return self.driver.get_screenshot_as_png()
+            png = self.driver.get_screenshot_as_png()
+            self._calibrate_coordinate_space(png)
+            return png
         except Exception as exc:
             raise ObservationUnavailable(
                 f"Could not read the screen of '{self.device_name}': {exc}"
@@ -279,6 +314,7 @@ class DeviceControl:
         builder.perform()
 
     def tap(self, x, y, with_feedback: bool = True):
+        x, y = self._driver_point(x, y)
         if with_feedback:
             self.__tap_screen(x, y)
         else:
@@ -319,7 +355,10 @@ class DeviceControl:
         if self.platform == Platform.IOS:
             self.tap(x, y)
             time.sleep(1.0)
-            self.execute_script("mobile: type", {"text": text})
+            # XCUITest 12.20 removed the legacy `mobile: type` extension.
+            # Standard WebDriver text entry remains supported and writes to
+            # the exact element the preceding tap focused.
+            self.driver.switch_to.active_element.send_keys(text)
         else:
             self.__focus_field(x, y, "TYPE")
             self.driver.switch_to.active_element.send_keys(text)
@@ -333,12 +372,12 @@ class DeviceControl:
         try:
             if self.platform == Platform.IOS:
                 self.tap(x, y)
-                self.focus.wait_for(x, y)
+                self.focus.wait_for(*self._driver_point(x, y))
                 self.driver.switch_to.active_element.clear()
                 return
             self.__focus_field(x, y, "CLEAR")
             try:
-                # Select All (Ctrl+A) and then Delete (Backspace) to ensure the field is completely cleared
+                # Select All (Ctrl+A), then press Backspace to clear the field.
                 self.driver.press_keycode(29, metastate=28672)
                 time.sleep(0.2)
                 self.driver.press_keycode(67)
@@ -351,6 +390,7 @@ class DeviceControl:
             raise
 
     def double_tap(self, x, y, with_feedback: bool = True):
+        x, y = self._driver_point(x, y)
         if self.platform == Platform.IOS:
             self.execute_script("mobile: doubleTap", {"x": x, "y": y})
         else:
@@ -358,6 +398,7 @@ class DeviceControl:
         time.sleep(0.5)
 
     def long_press(self, x, y, duration):
+        x, y = self._driver_point(x, y)
         if self.platform == Platform.IOS:
             self.execute_script(
                 "mobile: touchAndHold", {"x": x, "y": y, "duration": duration}
@@ -370,6 +411,8 @@ class DeviceControl:
         time.sleep(duration + 0.5)
 
     def drag_and_drop(self, source_x, source_y, destination_x, destination_y):
+        source_x, source_y = self._driver_point(source_x, source_y)
+        destination_x, destination_y = self._driver_point(destination_x, destination_y)
         if self.platform == Platform.IOS:
             self.execute_script(
                 "mobile: dragFromToForDuration",
@@ -433,6 +476,8 @@ class DeviceControl:
             end_y: Ending y coordinate.
             duration_ms: Duration of the swipe gesture in milliseconds.
         """
+        start_x, start_y = self._driver_point(start_x, start_y)
+        end_x, end_y = self._driver_point(end_x, end_y)
         touch = PointerInput("touch", "finger")
         builder = ActionBuilder(self.driver, mouse=touch)
         builder.pointer_action.move_to_location(start_x, start_y)
@@ -480,8 +525,8 @@ class DeviceControl:
     def execute_script(self, script, args=None):
         """Runs one driver extension command and returns what it answered.
 
-        The params go through as one object. Appium reads them as `args[0]`,
-        so wrapping them in a list arrives as a list where an object belongs,
-        and the driver refuses the call rather than ignoring the extra layer.
+        The params go through as one object. Appium reads them as `args[0]`.
+        Wrapping them in a list sends a list where an object belongs. The
+        driver refuses that shape.
         """
         return self.driver.execute_script(script, args or {})

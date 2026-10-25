@@ -199,7 +199,7 @@ VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, CapabilitySuppo
             Platform.IOS: CapabilitySupport(
                 available=False,
                 detail=(
-                    "iOS does not expose radio toggles to automation; simulator "
+                    "iOS does not expose radio toggles to automation. Simulator "
                     "networking also shares the host connection"
                 ),
             )
@@ -217,7 +217,7 @@ VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, CapabilitySuppo
                 min_release=(13,),
                 detail=(
                     "Xcode condition inducers require a physical device running "
-                    "iOS 13 or later; iOS simulators share the host network"
+                    "iOS 13 or later. iOS simulators share the host network"
                 ),
             ),
         }

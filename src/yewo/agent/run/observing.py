@@ -21,6 +21,8 @@ def capture(agent, step, device_control, perception, session_dir, session_trail,
         device_control, ctx.last_external_nav, agent.settle_time
     )
     snapshot = observation.capture(perception, session_trail, ctx.prev_phash)
+    if snapshot.scan_info is not None:
+        ctx.screen_height = snapshot.scan_info.screen_height
     agent.images.clear_after_navigation(snapshot.scan_info)
     ctx.current_phash = snapshot.current_phash
     ctx.steps.files(agent.artifacts.save_step(session_dir, step, snapshot))

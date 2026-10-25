@@ -109,6 +109,9 @@ class YewoTestRunner:
         persist_inputs: bool = True,
         allow_secret_exposure: bool = False,
         policy_waivers: Optional[dict[str, str]] = None,
+        run_id: Optional[str] = None,
+        execution_id: Optional[str] = None,
+        target_id: Optional[str] = None,
     ):
         self.journey_file = journey_file
         self.workflow = workflow
@@ -116,6 +119,7 @@ class YewoTestRunner:
         self.persist_inputs = persist_inputs
         self.allow_secret_exposure = allow_secret_exposure
         self.policy_waivers = dict(policy_waivers or {})
+        self.run_id, self.execution_id, self.target_id = run_id, execution_id, target_id
         self.grounding = grounding
         self.reuse_app = reuse_app
         self.keep_app = keep_app
@@ -137,7 +141,7 @@ class YewoTestRunner:
         self._app: Optional[identity.AppIdentity] = None
         self._device = identity.DeviceIdentity()
         self._git: Optional[identity.GitIdentity] = None
-
+        self.last_report_paths: dict[str, Path] = {}
     def _trace_store_for(self, journey):
         """Build this journey's saved-path store when replay is enabled."""
         if not self.durable_replay:
@@ -181,6 +185,9 @@ class YewoTestRunner:
             device=self._device,
             git=self._git,
             ci=identity.ci_identity(),
+            execution_id=self.execution_id,
+            run_id=self.run_id,
+            target_id=self.target_id,
         )
 
     def _suite(self, journey: UserJourney, llm) -> lock_resolution.LockResolution:
@@ -205,7 +212,6 @@ class YewoTestRunner:
     def run_journey(self, journey: UserJourney) -> JourneyReport:
         """Run one journey, refusing invalid inputs before opening the device."""
         start_time = time.time()
-
         sensitivity.require_safe_secret_policy(journey, self.allow_secret_exposure)
         if self.durable_replay:
             replay_paths.validate_path_key(
@@ -224,12 +230,13 @@ class YewoTestRunner:
             logger.warning("%s", refused)
         record_session = self.record_session and refused is None
 
+        session_root = self.assets_dir / "sessions" if self.run_id else self.assets_dir
         session = DeviceSession(
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
             record_session=record_session,
-            session_dir=self.assets_dir,
+            session_dir=session_root,
             reuse_app=self.reuse_app,
             keep_app=self.keep_app,
         )
@@ -330,8 +337,13 @@ class YewoTestRunner:
                 )
 
             manifest = create_manifest(
-                session.manifest_path, journey, scenarios, self._environment(), suite,
+                session.manifest_path,
+                journey,
+                scenarios,
+                self._environment(),
+                suite,
                 artifact_scrubber,
+                self.run_id,
             )
             # Generation happened before this file existed, and it is the one
             # call a run makes that no scenario owns.
@@ -386,7 +398,7 @@ class YewoTestRunner:
                         app_path=self.app_path,
                         platform=self.platform,
                         record_session=record_session,
-                        session_dir=self.assets_dir,
+                        session_dir=session_root,
                         session_id=session.session_id,
                         reuse_app=self.reuse_app,
                         keep_app=self.keep_app,
@@ -500,7 +512,7 @@ class YewoTestRunner:
                 policy_checks=policy_checks,
                 environment=self._environment(),
             )
-            writing.persist(
+            self.last_report_paths = writing.persist(
                 report,
                 self.assets_dir,
                 session,

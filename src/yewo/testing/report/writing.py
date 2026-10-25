@@ -12,7 +12,7 @@ A page that could not be written is not a reason to also lose the JUnit file.
 
 import logging
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, List, Mapping, Optional, Tuple
 
 from yewo.agent.device.session import DeviceSession
 from yewo.errors import ArtifactWriteFailed
@@ -64,14 +64,13 @@ def _writers(
 
 def _attempt(
     writers: Tuple[Tuple[str, Callable[[], Path]], ...],
-) -> Tuple[List[str], List[Failure]]:
+) -> Tuple[dict[str, Path], List[Failure]]:
     """Runs each writer once. Returns the ones that wrote, and the ones that did not."""
-    wrote: List[str] = []
+    wrote: dict[str, Path] = {}
     failures: List[Failure] = []
     for name, write in writers:
         try:
-            write()
-            wrote.append(name)
+            wrote[name] = write()
         except ArtifactWriteFailed as failure:
             logger.error("Failed to save %s: %s", name, failure)
             failures.append((name, failure))
@@ -94,7 +93,7 @@ def write_reports(
 
 
 def _rewrite(
-    writers: Tuple[Tuple[str, Callable[[], Path]], ...], wrote: Sequence[str]
+    writers: Tuple[Tuple[str, Callable[[], Path]], ...], wrote: Mapping[str, Path]
 ) -> None:
     """Writes again whichever reports wrote the first time.
 
@@ -113,7 +112,7 @@ def persist(
     manifest,
     unevidenced: List[str],
     usage: dict,
-) -> None:
+) -> dict[str, Path]:
     """Writes every report of a finished run, then closes the record naming them.
 
     Two things fail the run after a report is already on disk. One is a
@@ -137,7 +136,7 @@ def persist(
         _rewrite(writers, wrote)
 
     if manifest is None:
-        return
+        return wrote
     # Last, so the record carries whichever reports failed to write.
     manifest.finish(
         report.status,
@@ -149,6 +148,7 @@ def persist(
     if manifest.unwritten is not None:
         failed("run_manifest", manifest.unwritten)
         _rewrite(writers, wrote)
+    return wrote
 
 
 def checkpoint(

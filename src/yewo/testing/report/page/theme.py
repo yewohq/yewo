@@ -23,6 +23,13 @@ def stylesheet() -> str:
 
 
 @lru_cache(maxsize=None)
+def execution_stylesheet() -> str:
+    """Layout additions used only by the target-execution index."""
+    asset = resources.files(__package__).joinpath("static/execution.css")
+    return asset.read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=None)
 def script() -> str:
     """The theme button. It is the only part of the page that needs script."""
     asset = resources.files(__package__).joinpath("static/report.js")

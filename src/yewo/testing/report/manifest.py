@@ -176,6 +176,7 @@ class RunManifest:
         scrubber: Optional[SecretScrubber] = None,
         mode: str = "test",
         artifacts: tuple = (),
+        run_uuid: Optional[str] = None,
     ):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,7 +185,7 @@ class RunManifest:
         self.inputs = inputs
         self.mode = mode
         self.artifacts = tuple(artifacts)
-        self.run_uuid = new_uuid()
+        self.run_uuid = run_uuid or new_uuid()
         self.started_at = datetime.now()
         self.status = ReportStatus.RUNNING
         self.unevidenced_security_rules: List[str] = []

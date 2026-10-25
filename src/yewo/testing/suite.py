@@ -1,8 +1,8 @@
 """Reading a yewo.yaml into the workflows it describes.
 
-A workflow owns an app, a device and an environment. The journeys inside it
-are only the tests, so one file can cover several apps without a journey
-having to say where it runs.
+A workflow owns an environment and either one app/device pair or a target
+matrix. The journeys inside it are only the tests, so one file can cover
+several apps without a journey having to say where it runs.
 """
 
 import logging
@@ -34,12 +34,21 @@ PATH_SETTINGS = ("app_path", "output_dir")
 
 @dataclass(frozen=True)
 class Workflow:
-    """One app, one device, and the journeys to run against them."""
+    """One environment, its targets, and the journeys to run against them."""
 
     name: str
     settings: dict[str, Any] = field(default_factory=dict)
     journeys: list[UserJourney] = field(default_factory=list)
     policy_waivers: dict[str, str] = field(default_factory=dict)
+    targets: tuple["Target", ...] = ()
+
+
+@dataclass(frozen=True)
+class Target:
+    """One named target and the settings that differ from its workflow."""
+
+    id: str
+    settings: dict[str, Any] = field(default_factory=dict)
 
 
 def _normalise(block: dict[str, Any], yaml_location: str) -> dict[str, Any]:
@@ -65,6 +74,31 @@ def _anchor(settings: dict[str, Any], base: Path) -> dict[str, Any]:
         if raw and not Path(str(raw)).is_absolute():
             anchored[name] = str((base / str(raw)).resolve())
     return anchored
+
+
+def _targets_of(
+    declared: Any,
+    inherited: Any,
+    base: Path,
+) -> tuple[Target, ...]:
+    """Build the target matrix declared at a workflow or file level."""
+    target_data = declared if declared is not None else inherited
+    if target_data is None:
+        return ()
+    targets = []
+    for item in target_data:
+        settings = {
+            "platform": item["platform"],
+            "device": item["device"].strip(),
+        }
+        if item.get("app") is not None:
+            settings["app_path"] = item["app"]
+        elif item.get("app_path") is not None:
+            settings["app_path"] = item["app_path"]
+        if item.get("headless") is not None:
+            settings["headless"] = item["headless"]
+        targets.append(Target(id=str(item["id"]), settings=_anchor(settings, base)))
+    return tuple(targets)
 
 
 def _cells(coverage_data: Any, yaml_location: str) -> list[CoverageCell]:
@@ -302,6 +336,7 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
     top_coverage = raw.get("coverage")
     top_actors = raw.get("actors")
     top_waivers = _policy_waivers(raw)
+    top_targets = raw.get("targets")
 
     declared = raw.get("workflows")
     if declared is None:
@@ -318,6 +353,7 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
                     raw.get("preconditions"),
                 ),
                 top_waivers,
+                _targets_of(raw.get("targets"), None, base),
             )
         ]
     if not isinstance(declared, dict):
@@ -344,6 +380,7 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
                     block, env, yaml_location, coverage, actors, preconditions
                 ),
                 waivers,
+                _targets_of(block.get("targets"), top_targets, base),
             )
         )
     return workflows

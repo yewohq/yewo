@@ -70,7 +70,11 @@ def _build_device_tile(environment: Optional[RunEnvironment]) -> SummaryTile:
     device_label = " · ".join(part for part in (device.model, release) if part)
     note = " · ".join(
         part
-        for part in ("emulator" if device.emulator else "", device.serial or "")
+        for part in (
+            environment.target_id or "",
+            "emulator" if device.emulator else "",
+            device.serial or "",
+        )
         if part
     )
     return SummaryTile("Device", device_label or environment.platform, note)

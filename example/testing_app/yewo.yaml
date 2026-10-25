@@ -10,6 +10,34 @@ policy:
     android.debuggable: "Bundled development build used for the example journey"
     android.allow_backup: "Bundled development build contains no production user data"
 workflows:
+  restaurant_menu_matrix_smoke:
+    targets:
+      - id: ios_iphone_17_pro_max
+        platform: ios
+        device: iPhone 17 Pro Max
+        app: build/ios/iphonesimulator/Runner.app
+      - id: android_pixel_8
+        platform: android
+        device: Pixel_8
+        app: build/app/outputs/flutter-apk/app-debug.apk
+    coverage:
+      - category: functional
+        types: [happy_path]
+        priority: P0
+    env:
+      email: matrix.tester@example.com
+      password:
+        value: secret-password123
+        secret: true
+    journeys:
+      - id: restaurant_menu_matrix_smoke_01
+        name: Cross-Platform Restaurant Menu Smoke Journey
+        journey: |
+          A user opens the app and lands on the sign-in screen. They type {{email}} in the Email
+          Address field and type {{password}} in the Password field. They tap the Login button. On
+          the location access screen they tap Deny & Alphabetical Sorting. The home screen lists
+          restaurants in alphabetical order. They tap the Menu button on the Burger Palace card.
+          The Burger Palace menu opens and shows the Classic Burger item.
   notifications:
     env:
       email: test@email.com

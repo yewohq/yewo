@@ -87,8 +87,8 @@ class SensitiveFinding(BaseModel):
         for alias in ("state", "status"):
             if "rendering" not in finding and alias in finding:
                 finding["rendering"] = finding.pop(alias)
-        if "field" not in finding and "location" in finding:
-            finding["field"] = finding["location"]
+        if "field" not in finding and ("location" in finding or "subject" in finding):
+            finding["field"] = finding.get("location", finding.get("subject"))
         if finding.get("quoted") is None:
             finding["quoted"] = ""
         return finding
@@ -489,12 +489,9 @@ class ScenarioReport(BaseModel):
 
 
 class RunEnvironment(BaseModel):
-    """What produced a report, for when the same journey behaves differently.
+    """What produced a report when two runs of one journey differ.
 
-    Yewo's own settings, and the four things around them that decide what a
-    run means: the build, the target, the commit and the job. A scenario that
-    failed, with no record of which build it failed on, is not evidence of a
-    defect.
+    A failed scenario with no build, target, commit, and job is not evidence.
     """
     yewo_version: str
     model: str
@@ -508,6 +505,9 @@ class RunEnvironment(BaseModel):
     device: DeviceIdentity = Field(default_factory=DeviceIdentity)
     git: GitIdentity = Field(default_factory=GitIdentity)
     ci: CiIdentity = Field(default_factory=CiIdentity)
+    execution_id: Optional[str] = Field(default=None, description="Invocation grouping runs.")
+    run_id: Optional[str] = Field(default=None, description="Journey and target attempt ID.")
+    target_id: Optional[str] = Field(default=None, description="Declared matrix target ID.")
 
 
 class JourneyReport(BaseModel):

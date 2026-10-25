@@ -8,7 +8,7 @@ re-deciding it.
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from yewo.agent.device.platform import Platform
 from yewo.app_discovery import resolve_app_path
@@ -16,7 +16,7 @@ from yewo.config import SETTINGS, Config
 from yewo.defaults import DEFAULT_GROUNDING
 
 from .runner import YewoTestRunner
-from .suite import Workflow
+from .suite import Target, Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +35,22 @@ def as_bool(raw: Any, unset: bool = False) -> bool:
 
 
 def runner_for(
-    workflow: Workflow, args: Any, filepath: Path, config: Config
+    workflow: Workflow,
+    args: Any,
+    filepath: Path,
+    config: Config,
+    target: Optional[Target] = None,
+    assets_dir: Optional[Path] = None,
+    run_id: Optional[str] = None,
+    execution_id: Optional[str] = None,
 ) -> YewoTestRunner:
     """The runner for one workflow, with every setting resolved in precedence order."""
 
     def setting(name: str, flag: Any) -> Any:
         if flag is not None:
             return flag
+        if target is not None and name in target.settings:
+            return target.settings[name]
         if name in workflow.settings:
             return workflow.settings[name]
         # grounding is a flag and a file key only, so the caller supplies the
@@ -60,7 +69,7 @@ def runner_for(
         device_name=setting("device", args.device),
         app_path=str(app_path),
         model=setting("model", args.model),
-        assets_dir=Path(setting("output_dir", args.output_dir)),
+        assets_dir=assets_dir or Path(setting("output_dir", args.output_dir)),
         max_steps=int(setting("max_steps", args.max_steps)),
         settle_time=float(setting("settle_time", args.settle_time)),
         headless=as_bool(setting("headless", args.headless)),
@@ -83,4 +92,16 @@ def runner_for(
             setting("allow_secret_exposure", args.allow_secret_exposure)
         ),
         policy_waivers=workflow.policy_waivers,
+        run_id=run_id,
+        execution_id=execution_id,
+        target_id=target.id if target is not None else None,
     )
+
+
+def output_dir_for(workflow: Workflow, args: Any, config: Config) -> Path:
+    """Resolve the artifact root without constructing a device runner."""
+    if args.output_dir is not None:
+        return Path(args.output_dir)
+    if "output_dir" in workflow.settings:
+        return Path(workflow.settings["output_dir"])
+    return Path(config.get("output_dir"))

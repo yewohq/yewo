@@ -115,6 +115,53 @@
           "scope": "current_screen"
         }
       ]
+    },
+    {
+      "scenario_uuid": "0eee1836-6572-4d3b-8f7e-4e944f732238",
+      "workflow": "restaurant_menu_matrix_smoke",
+      "journey": "restaurant_menu_matrix_smoke_01",
+      "cell": "functional.happy_path.0",
+      "test_id": "TS_functional_happy_path_0",
+      "category": "functional",
+      "scenario_type": "happy_path",
+      "priority": "P0",
+      "contract_sha256": "c3d87df0d193e7d2a015aabdcba8acab8260e5d32bcdd76ab7d5bcd01085104c",
+      "scenario_name": "Login and view menu in alphabetical order",
+      "setup": "clear_data",
+      "steps": [
+        {
+          "kind": "action",
+          "instruction": "Launch the app"
+        },
+        {
+          "kind": "enter",
+          "field": "Email Address",
+          "value": "email"
+        },
+        {
+          "kind": "enter",
+          "field": "Password",
+          "value": "password"
+        },
+        {
+          "kind": "action",
+          "instruction": "Tap the Login button"
+        },
+        {
+          "kind": "action",
+          "instruction": "Tap Deny & Alphabetical Sorting"
+        },
+        {
+          "kind": "action",
+          "instruction": "Tap the Menu button on the Burger Palace card"
+        }
+      ],
+      "expected_outcomes": [
+        {
+          "statement": "The Burger Palace menu opens and shows the Classic Burger item",
+          "scope": "current_screen"
+        }
+      ]
     }
   ]
 }
