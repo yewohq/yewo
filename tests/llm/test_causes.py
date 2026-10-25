@@ -105,18 +105,21 @@ class VerdictCauseTests(unittest.TestCase):
         self.assertIn("expected:0", reason)
         self.assertIs(cause, Cause.EVIDENCE)
 
-    def test_a_scenario_that_asked_the_unanswerable_is_the_scenario(self):
+    def test_a_measured_outcome_without_a_sample_is_the_evidence(self):
         from yewo.testing.models import AssertionScope, ExpectedOutcome
 
         _status, _reason, cause = self._verdict(
             required_outcomes=[
                 ExpectedOutcome(
-                    statement="the app stays responsive", scope=AssertionScope.RUN_TIMING
+                    statement="the app launches within the limit",
+                    scope=AssertionScope.MEASURED,
+                    metric="app_launch_ttid_ms",
+                    threshold=800,
                 )
             ]
         )
 
-        self.assertIs(cause, Cause.SCENARIO)
+        self.assertIs(cause, Cause.EVIDENCE)
 
     def test_a_scenario_with_nothing_to_check_is_the_scenario(self):
         _status, _reason, cause = self._verdict(required_outcomes=[])

@@ -32,12 +32,14 @@ from yewo.testing.models import (
     GeneratedTestCase,
     JourneyStatus,
     QAIssue,
+    PolicyCheckReport,
     ReportStatus,
     RuleVerification,
     RunEnvironment,
     ScenarioReport,
     VerdictInputs,
 )
+from yewo.policy import policy_checks_succeeded
 from yewo.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,13 @@ ABORTED = ReportStatus.ABORTED
 
 UNCOVERED = (ReportStatus.UNSUPPORTED, ReportStatus.ERROR)
 """Statuses that mean no verdict was reached about the app."""
+
+
+def _is_uncovered(entry: "ScenarioEntry") -> bool:
+    """Whether a row describes a cell that produced no runnable scenario."""
+    return entry.status in UNCOVERED or (
+        entry.status == ReportStatus.UNVERIFIED and not entry.category
+    )
 
 
 def _now() -> str:
@@ -82,6 +91,7 @@ class ScenarioEntry(BaseModel):
     steps_planned: int
     steps_instructions: List[str]
     expected_outcomes: List[str]
+    required_metrics: List[str] = Field(default_factory=list)
     outcome_uuids: List[str] = Field(
         default_factory=list,
         description="One per expected outcome, in the same order.",
@@ -174,6 +184,7 @@ class RunManifest:
         self.started_at = datetime.now()
         self.status = ReportStatus.RUNNING
         self.unevidenced_security_rules: List[str] = []
+        self.policy_checks: List[PolicyCheckReport] = []
         self.duration: Optional[float] = None
         self.usage: Optional[dict] = None
         self.steps: List[StepRecord] = []
@@ -216,6 +227,7 @@ class RunManifest:
                 scenario.outcome_uuid(index)
                 for index, _ in enumerate(scenario.expected_outcomes)
             ],
+            required_metrics=[metric.value for metric in scenario.required_metrics],
         )
 
     def _scrub(self, value: Optional[str]) -> str:
@@ -306,6 +318,7 @@ class RunManifest:
         self,
         status: JourneyStatus,
         unevidenced: Optional[List[str]] = None,
+        policy_checks: Optional[Sequence[PolicyCheckReport]] = None,
         usage: Optional[dict] = None,
         duration: Optional[float] = None,
     ) -> None:
@@ -319,11 +332,26 @@ class RunManifest:
         if self.status != ABORTED:
             self.status = status
         self.unevidenced_security_rules = list(unevidenced or [])
+        self.policy_checks = [self._masked_policy_check(check) for check in policy_checks or ()]
+        if self.status != ABORTED and not policy_checks_succeeded(self.policy_checks):
+            self.status = ReportStatus.FAILED
         self.usage = usage
         # The suite already timed itself. Its number is the one the reports
         # show, so the record states that rather than a second measurement.
         self.duration = duration if duration is not None else self._elapsed()
         self.write(final=True)
+
+    def _masked_policy_check(self, check: PolicyCheckReport) -> PolicyCheckReport:
+        """A run-level check with every free-text evidence field scrubbed."""
+        return check.model_copy(
+            update={
+                "source": self._scrub(check.source),
+                "evidence": self._scrub(check.evidence),
+                "waiver_reason": (
+                    self._scrub(check.waiver_reason) if check.waiver_reason else None
+                ),
+            }
+        )
 
     def record_goal(self, result, usage: Optional[dict] = None) -> None:
         """Closes the record of a single-goal run.
@@ -400,12 +428,15 @@ class RunManifest:
                  "status": entry.status, "cause": entry.cause,
                  "reason": entry.failure_reason}
                 for entry in entries
-                if entry.status in UNCOVERED
+                if _is_uncovered(entry)
             ],
             "calls": [row.model_dump(exclude_none=True) for row in self.calls],
             "unevidenced_security_rules": list(self.unevidenced_security_rules),
             "artifacts": list(self.artifacts),
-            "policy_checks": [],
+            "policy_checks": [
+                check.model_dump(mode="json", exclude_none=True)
+                for check in self.policy_checks
+            ],
             "usage": self.usage,
         }
         first = self._first_failure(entries)

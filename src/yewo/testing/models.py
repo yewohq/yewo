@@ -16,6 +16,8 @@ from typing import Dict, FrozenSet, List, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
 from yewo.agent.actuation.actions import CapabilityKind
+from yewo.metrics import Measurement, Metric  # noqa: F401
+from yewo.policy import PolicyCheckReport, PolicyCheckStatus  # noqa: F401
 from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.agent.device.launch import SetupMode  # noqa: F401
 from yewo.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
@@ -238,6 +240,13 @@ class GeneratedTestCase(ScenarioDraft):
             "A scenario that declared these beside its steps had two answers."
         ),
     )
+    required_metrics: List[Metric] = Field(
+        default_factory=list,
+        description=(
+            "The measurements this scenario requires, derived from its measured "
+            "outcomes so the list cannot disagree with them."
+        ),
+    )
 
     @model_validator(mode="after")
     def _derive_instructions_and_capabilities(self) -> "GeneratedTestCase":
@@ -251,6 +260,15 @@ class GeneratedTestCase(ScenarioDraft):
             self.steps_instructions = steps.rendered(self.steps)
         if not self.required_capabilities:
             self.required_capabilities = steps.capability_kinds_in(self.steps)
+        measured_metrics = [
+            outcome.metric
+            for outcome in self.expected_outcomes
+            if outcome.metric is not None
+        ]
+        if not self.required_metrics:
+            self.required_metrics = list(dict.fromkeys(measured_metrics))
+        elif self.required_metrics != list(dict.fromkeys(measured_metrics)):
+            raise ValueError("required_metrics must match the measured outcomes.")
         return self
 
     def outcome_uuid(self, index: int) -> str:

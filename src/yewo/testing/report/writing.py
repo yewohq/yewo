@@ -142,6 +142,7 @@ def persist(
     manifest.finish(
         report.status,
         unevidenced=unevidenced,
+        policy_checks=report.policy_checks,
         usage=usage,
         duration=report.total_duration,
     )

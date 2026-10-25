@@ -18,6 +18,12 @@ from typing import Optional, Protocol, Sequence
 from yewo.agent.actuation.actions import Capability, CapabilityKind
 from yewo.agent.device.receipts import Receipt
 from yewo.agent.device.platform import Platform
+from yewo.metrics import (
+    Metric,
+    TargetKind,
+    definition_for,
+    metrics_without_live_collectors,
+)
 from yewo.testing.judge.support import (
     CAPABILITY_SUPPORT,
     HOST_TOOLS,
@@ -171,6 +177,28 @@ def unsupported_capability(
     return _refusal(kind.value, support, target)
 
 
+def unsupported_metric(metric: Metric, target: CapabilityTarget) -> Optional[str]:
+    """Why this target cannot collect a metric, or None when it can."""
+    definition = definition_for(metric)
+    if target.platform not in definition.platforms:
+        return f"{metric.value} is not collectable on {target.platform.value}"
+    if target.emulator is None:
+        return None
+    target_kind = TargetKind.EMULATOR if target.emulator else TargetKind.PHYSICAL
+    if target_kind not in definition.target_kinds:
+        return f"{metric.value} is not collectable on a {target_kind.value} target"
+    return None
+
+
+def unavailable_metric_reason(test_case: GeneratedTestCase) -> Optional[str]:
+    """Why scenario execution cannot collect a requested metric yet."""
+    unavailable_metrics = metrics_without_live_collectors(test_case.required_metrics)
+    if not unavailable_metrics:
+        return None
+    metric_names = ", ".join(metric.value for metric in unavailable_metrics)
+    return f"No live collector is available for required metric(s): {metric_names}."
+
+
 def _variant_refusal(
     capability: Capability, target: CapabilityTarget
 ) -> Optional[str]:
@@ -238,6 +266,10 @@ def unsupported_reason(
             if kind in asked:
                 continue
             refusal = unsupported_capability(kind, target)
+            if refusal:
+                reasons.add(f"{refusal} (target: {target.describe()})")
+        for metric in test_case.required_metrics:
+            refusal = unsupported_metric(metric, target)
             if refusal:
                 reasons.add(f"{refusal} (target: {target.describe()})")
 

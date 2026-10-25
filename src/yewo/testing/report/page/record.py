@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, Valid
 from yewo.agent.run.record import StepRecord
 from yewo.errors import UsageError
 from yewo.testing.models import (
+    PolicyCheckReport,
     QAIssue,
     REPORT_STATUS_ALIASES,
     ReportStatus,
@@ -108,6 +109,7 @@ class _RunRecordPayload(BaseModel):
     status: str = ""
     duration_seconds: Optional[Number] = None
     scenarios: List[_RecordedScenarioEntry]
+    policy_checks: List[PolicyCheckReport] = Field(default_factory=list)
     unevidenced_security_rules: List[str] = Field(default_factory=list)
     identity: Optional[RunEnvironment] = None
     usage: Optional[_RecordedUsage] = None
@@ -143,6 +145,7 @@ class RecordedRun:
     passed_count: int
     skipped_count: int
     scenarios: Sequence[RecordedScenario] = ()
+    policy_checks: Sequence[PolicyCheckReport] = ()
     unevidenced_security_rules: Sequence[str] = ()
     environment: Optional[RunEnvironment] = None
 
@@ -234,6 +237,7 @@ def run_of(payload: Mapping[str, Any]) -> RecordedRun:
             1 for scenario in scenarios if scenario.status == ReportStatus.SKIPPED
         ),
         scenarios=scenarios,
+        policy_checks=tuple(read.policy_checks),
         unevidenced_security_rules=tuple(read.unevidenced_security_rules),
         environment=read.identity,
     )
@@ -254,10 +258,8 @@ def page_of_record(
     itself named. The record's own `artifacts` are sensitivity classes
     rather than file names, and they answer a different question.
 
-    `policy_checks` is read by nothing here. The record carries the field,
-    and no check writes a row into it yet. An empty list means the checks do
-    not exist. It does not mean they found nothing. A section for them would
-    report an absence as a result.
+    Run-level policy checks are validated with the rest of the record and
+    rendered separately from scenario checks.
     """
     run = run_of(payload)
     usage_summary = _RunRecordPayload.model_validate(dict(payload)).usage

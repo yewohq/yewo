@@ -129,6 +129,28 @@ class EntryTests(unittest.TestCase):
 
         self.assertNotIn("steps_instructions", stored)
         self.assertNotIn("required_capabilities", stored)
+        self.assertNotIn("required_metrics", stored)
+
+    def test_absent_metric_fields_do_not_rewrite_an_existing_lock(self):
+        _, entry = self._entry()
+        outcome = entry.model_dump(mode="json")["expected_outcomes"][0]
+
+        self.assertNotIn("metric", outcome)
+        self.assertNotIn("threshold", outcome)
+
+    def test_a_required_metric_is_rederived_from_the_locked_outcome(self):
+        measured = {
+            "statement": "The app launches within the limit",
+            "scope": "measured",
+            "metric": "app_launch_ttid_ms",
+            "threshold": 800,
+        }
+        _, entry = self._entry(outcomes=[measured])
+
+        self.assertEqual(
+            [metric.value for metric in entry.scenario().required_metrics],
+            ["app_launch_ttid_ms"],
+        )
 
     def test_the_derived_fields_come_back_anyway(self):
         _, entry = self._entry(

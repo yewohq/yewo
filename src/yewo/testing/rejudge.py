@@ -94,4 +94,5 @@ def verdict_of(entry: dict, schema: int) -> decide.Verdict:
         security_rules=inputs.security_rules,
         all_findings=inputs.sensitive_findings,
         required_capabilities=inputs.required_capabilities,
+        measurement_samples=inputs.measurements,
     )

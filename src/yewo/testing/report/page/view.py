@@ -17,6 +17,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from yewo.testing.judge import rules, verdicts
 from yewo.testing.models import QAIssue, ReportStatus
 
+from .policy_checks import (
+    PolicyCheckView,
+    policy_check_views,
+    policy_checks_succeeded,
+)
 from .scenario_steps import StepView, anchor_of, failed_at, step_views
 from .source import RunSource, ScenarioSource
 from .summary_tiles import SummaryTile, seconds, tiles_of
@@ -162,6 +167,7 @@ class ReportView:
     description: str
     secrets: int
     scenarios: Tuple[ScenarioView, ...]
+    policy_checks: Tuple[PolicyCheckView, ...] = ()
     findings: Tuple[FindingView, ...] = ()
     unevidenced: Tuple[str, ...] = ()
     artifacts: Tuple[str, ...] = ()
@@ -377,13 +383,18 @@ def _every_scenario_passed(report: RunSource) -> bool:
 def _verdict(
     report: RunSource,
     scenarios: Sequence[ScenarioView],
+    policy_checks: Sequence[PolicyCheckView],
     findings: int = 0,
     unevidenced: int = 0,
 ) -> VerdictView:
     """What the page leads with, which is the first thing that went wrong."""
     total = len(report.scenarios)
     counts = f"{report.passed_count} of {total} scenarios passed"
-    if report.status == ReportStatus.PASSED and _every_scenario_passed(report):
+    if (
+        report.status == ReportStatus.PASSED
+        and _every_scenario_passed(report)
+        and policy_checks_succeeded(policy_checks)
+    ):
         return VerdictView(
             tone="pass",
             badge="Passed",
@@ -397,6 +408,20 @@ def _verdict(
         (view for view in scenarios if view.tone in ("fail", "warn")), None
     )
     if unsuccessful is None:
+        unsuccessful_check = next(
+            (check for check in policy_checks if check.tone in ("fail", "warn")),
+            None,
+        )
+        if unsuccessful_check is not None:
+            return VerdictView(
+                tone=unsuccessful_check.tone,
+                badge="Failed",
+                counts=counts,
+                headline=f"Policy check “{unsuccessful_check.check_id}” did not pass.",
+                detail=unsuccessful_check.evidence,
+                anchor="policy-checks",
+                toward="View policy evidence",
+            )
         # A record is written before the first scenario starts and updated
         # as each one ends, so a reader can open it while the run is going.
         # Nothing has gone wrong there. Nothing has happened yet.
@@ -456,7 +481,11 @@ def _verdict(
     )
 
 
-def _secrets(report: RunSource, scenarios: Sequence[ScenarioView]) -> int:
+def _secrets(
+    report: RunSource,
+    scenarios: Sequence[ScenarioView],
+    policy_checks: Sequence[PolicyCheckView],
+) -> int:
     """How many declared values this page shows by name instead of by value."""
     texts = [report.description]
     for view in scenarios:
@@ -466,6 +495,8 @@ def _secrets(report: RunSource, scenarios: Sequence[ScenarioView]) -> int:
             texts.extend(note.body for note in step.notes)
         texts.extend(check.reasoning for check in view.checks)
         texts.extend(check.rule for check in view.checks)
+    for check in policy_checks:
+        texts.extend((check.source, check.evidence, check.waiver_reason))
     matched_secret_names = {
         name for text in texts for name in SECRET.findall(text or "")
     }
@@ -492,6 +523,7 @@ def page_of(
 ) -> ReportView:
     """The whole page for one journey report, as values the renderer writes out."""
     scenarios = _scenarios(report, screenshots_href.rstrip("/"))
+    policy_checks = policy_check_views(report)
     finding_views = _findings(report)
     unevidenced = tuple(report.unevidenced_security_rules)
     return ReportView(
@@ -499,11 +531,18 @@ def page_of(
         subject=report.journey_id,
         generated=generated,
         version=version,
-        verdict=_verdict(report, scenarios, len(finding_views), len(unevidenced)),
+        verdict=_verdict(
+            report,
+            scenarios,
+            policy_checks,
+            len(finding_views),
+            len(unevidenced),
+        ),
         tiles=tiles_of(report, usage),
         description=report.description,
-        secrets=_secrets(report, scenarios),
+        secrets=_secrets(report, scenarios, policy_checks),
         scenarios=scenarios,
+        policy_checks=policy_checks,
         findings=finding_views,
         unevidenced=unevidenced,
         artifacts=tuple(artifacts),

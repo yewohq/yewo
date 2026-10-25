@@ -13,6 +13,7 @@ from typing import Optional, Protocol, Sequence
 
 from yewo.agent.run.record import StepRecord
 from yewo.testing.models import (
+    PolicyCheckReport,
     QAIssue,
     ReportStatus,
     RuleVerification,
@@ -99,6 +100,9 @@ class RunSource(Protocol):
 
     @property
     def scenarios(self) -> Sequence[ScenarioSource]: ...
+
+    @property
+    def policy_checks(self) -> Sequence[PolicyCheckReport]: ...
 
     @property
     def unevidenced_security_rules(self) -> Sequence[str]: ...

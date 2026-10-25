@@ -66,7 +66,12 @@ class ScopeSelectionTests(unittest.TestCase):
         outcomes = [
             "The cart shows a subtotal",
             outcome("Tapping Login reaches Location Access"),
-            outcome("The app stays responsive", AssertionScope.RUN_TIMING),
+            ExpectedOutcome(
+                statement="The app launches within the limit",
+                scope=AssertionScope.MEASURED,
+                metric="app_launch_ttid_ms",
+                threshold=800,
+            ),
         ]
 
         on_screen = rules.on_screen_only(outcomes)
@@ -74,8 +79,8 @@ class ScopeSelectionTests(unittest.TestCase):
 
         for index, _ in enumerate(outcomes):
             claims = [bool(on_screen[index]), bool(moved[index])]
-            # A run_timing outcome is claimed by neither, and `rules.unprovable`
-            # is what keeps the gate from demanding it.
+            # A measured outcome is claimed by neither visual selector. The
+            # deterministic measurement judge owns it.
             self.assertLessEqual(sum(claims), 1, f"outcome {index} claimed twice")
 
     def test_an_index_survives_the_blanking_around_it(self):

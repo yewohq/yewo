@@ -162,16 +162,16 @@ class EverythingReachesTheRecordTests(unittest.TestCase):
     reader told to trust one file has to find them in it.
     """
 
-    def _gap(self):
+    def _gap(self, status="UNSUPPORTED", reason="no second account was declared"):
         from yewo.errors import Cause
         from yewo.testing.generator import UncoveredCell
         from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
 
         return UncoveredCell(
             CoverageCell(Category.SECURITY, ScenarioType.ROLE, Priority.P0),
-            "UNSUPPORTED",
+            status,
             Cause.SCENARIO,
-            "no second account was declared",
+            reason,
         )
 
     def _run(self, **kwargs):
@@ -196,6 +196,17 @@ class EverythingReachesTheRecordTests(unittest.TestCase):
             [row["cell"] for row in data["uncovered"]], ["security.role.0"]
         )
         self.assertIn("declared", data["uncovered"][0]["reason"])
+
+    def test_an_uncollectable_metric_is_also_listed_as_an_uncovered_cell(self):
+        gap = self._gap(
+            status="UNVERIFIED",
+            reason="No live collector is available for app_launch_ttid_ms.",
+        )
+
+        _, data = self._run(uncovered=[gap])
+
+        self.assertEqual(data["uncovered"][0]["status"], "UNVERIFIED")
+        self.assertIn("app_launch_ttid_ms", data["uncovered"][0]["reason"])
 
     def test_the_record_and_the_report_hold_the_same_rows(self):
         """Two artifacts of one run that disagree are worse than one."""

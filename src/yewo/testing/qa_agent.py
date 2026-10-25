@@ -23,10 +23,15 @@ from yewo.testing.models import (
     RuleVerification,
     ScenarioReport,
     SensitiveFinding,
+    Measurement,
     VerdictInputs,
 )
 from yewo.agent.device import restoration
-from yewo.testing.judge.capabilities import target_of, unsupported_reason
+from yewo.testing.judge.capabilities import (
+    target_of,
+    unavailable_metric_reason,
+    unsupported_reason,
+)
 from yewo.agent.plan.planner import GROUNDING_COORDINATES
 from yewo.testing.judge import decide
 from yewo.testing.judge.qa_auditor import QAAuditor, ScreenAssessment, ScreenAuditSession
@@ -47,6 +52,7 @@ def _verdict_inputs(
     test_case,
     security_rules,
     all_findings,
+    measurement_samples=(),
 ) -> VerdictInputs:
     """What the judge was given, kept so the verdict can be reached again.
 
@@ -65,6 +71,7 @@ def _verdict_inputs(
         security_rules=list(security_rules),
         sensitive_findings=list(all_findings),
         required_capabilities=list(test_case.required_capabilities),
+        measurements=list(measurement_samples),
         receipts=[
             ReceiptRecord(capability=receipt.capability, confirmed=receipt.confirmed)
             for receipt in run_result.capability_receipts
@@ -190,17 +197,21 @@ class QAAgent:
         # capability this target cannot apply is skipped rather than failing a
         # step inside itself.
         target = target_of(device_control)
-        unsupported = unsupported_reason(test_case, target)
-        if unsupported:
+        preflight_reason = unsupported_reason(test_case, target)
+        preflight_status = ReportStatus.UNSUPPORTED
+        if preflight_reason is None:
+            preflight_reason = unavailable_metric_reason(test_case)
+            preflight_status = ReportStatus.UNVERIFIED
+        if preflight_reason:
             return ScenarioReport(
                 scenario_uuid=test_case.scenario_uuid,
                 test_id=test_case.test_id,
                 scenario_name=test_case.scenario_name,
                 cell=test_case.cell,
-                status=ReportStatus.UNSUPPORTED,
+                status=preflight_status,
                 cause=Cause.SCENARIO.value,
                 duration=round(time.time() - start_time, 2),
-                failure_reason=unsupported,
+                failure_reason=preflight_reason,
             )
 
         # OCR caches are useful within a scenario but are evidence from the
@@ -288,6 +299,7 @@ class QAAgent:
         duration: float,
         security_rules: List[str],
         settle_transitions: bool = True,
+        measurement_samples: Sequence[Measurement] = (),
     ) -> ScenarioReport:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
@@ -336,6 +348,7 @@ class QAAgent:
             required_capabilities=test_case.required_capabilities,
             security_rules=security_rules,
             all_findings=all_findings,
+            measurement_samples=measurement_samples,
         )
 
         return ScenarioReport(
@@ -351,6 +364,7 @@ class QAAgent:
             detected_issues=all_issues,
             steps=list(run_result.steps),
             postcondition_verifications=list(run_result.postcondition_verifications),
+            measurements=list(measurement_samples),
             failure_reason=scrub(failure_reason or "") or None,
             verdict_inputs=_verdict_inputs(
                 run_result,
@@ -360,6 +374,7 @@ class QAAgent:
                 test_case,
                 security_rules,
                 all_findings,
+                measurement_samples,
             ),
         )
 
@@ -436,6 +451,7 @@ class QAAgent:
         security_rules: Sequence[str],
         all_findings: Optional[List[SensitiveFinding]] = None,
         required_capabilities: Sequence = (),
+        measurement_samples: Sequence[Measurement] = (),
     ):
         """The verdict for this scenario, decided in `judge.decide`.
 
@@ -454,4 +470,5 @@ class QAAgent:
             security_rules=security_rules,
             all_findings=all_findings,
             required_capabilities=required_capabilities,
+            measurement_samples=measurement_samples,
         )

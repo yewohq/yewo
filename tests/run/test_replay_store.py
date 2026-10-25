@@ -264,6 +264,28 @@ class ScenarioDigestTests(unittest.TestCase):
             replay_store.scenario_digest(changed, journey_values(PASSWORD)),
         )
 
+    def test_new_optional_outcome_fields_do_not_invalidate_an_old_path(self):
+        """An additive schema field with no value is not a changed scenario."""
+        from pydantic import BaseModel
+
+        class LegacyExpectedOutcome(BaseModel):
+            statement: str
+            scope: str = "current_screen"
+
+        current = self._scenario(PASSWORD)
+        legacy = SimpleNamespace(
+            setup=current.setup,
+            steps=current.steps,
+            expected_outcomes=[
+                LegacyExpectedOutcome(statement=f"The field holds {PASSWORD}")
+            ],
+        )
+
+        self.assertEqual(
+            replay_store.scenario_digest(current, journey_values(PASSWORD)),
+            replay_store.scenario_digest(legacy, journey_values(PASSWORD)),
+        )
+
 
 class ActionBoundsTests(unittest.TestCase):
     """A file is read before it is trusted, so its bounds are the action's."""

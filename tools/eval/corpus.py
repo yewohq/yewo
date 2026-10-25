@@ -34,6 +34,7 @@ from yewo.agent.run.outcomes import DeviceRunResult, RunStatus
 from yewo.errors import Cause
 from yewo.testing.models import (
     ExpectedOutcome,
+    Measurement,
     QAIssue,
     RuleVerification,
     ScenarioStatus,
@@ -176,6 +177,7 @@ class _VerdictFile(BaseModel):
     outcomes: list[ExpectedOutcome] = Field(default_factory=list)
     security_rules: list[str] = Field(default_factory=list)
     required_capabilities: list[CapabilityKind] = Field(default_factory=list)
+    measurements: list[Measurement] = Field(default_factory=list)
 
     _no_slash = field_validator("id")(_plain_name)
 
@@ -370,6 +372,7 @@ def _verdict_fixture(path: Path) -> VerdictFixture:
             "security_rules": read.security_rules,
             "all_findings": read.findings,
             "required_capabilities": read.required_capabilities,
+            "measurement_samples": read.measurements,
         },
         path=path,
         digest=_digest(path.read_bytes()),

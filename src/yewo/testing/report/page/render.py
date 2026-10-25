@@ -34,6 +34,7 @@ from .view import (
     StepView,
     page_of,
 )
+from .policy_checks import PolicyCheckView
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,32 @@ def _unevidenced(markup: HtmlMarkup, rules: Sequence[str]) -> str:
     )
 
 
+def _policy_checks(markup: HtmlMarkup, checks: Sequence[PolicyCheckView]) -> str:
+    """Render run-level checks with their source and evidence."""
+    if not checks:
+        return ""
+    rows = "".join(
+        f'<div class="check"><span class="badge b-{check.tone}">{escape(check.status)}</span>'
+        f'<span class="rule"><span class="mono">{escape(check.check_id)}</span>'
+        f'<span class="check-reasoning">{markup.render_masked_text(check.evidence)} '
+        f'<span class="muted">· {escape(check.platform)} · '
+        f'{markup.render_masked_text(check.source)}</span>'
+        + (
+            f' <span class="muted">· Waiver: '
+            f'{markup.render_masked_text(check.waiver_reason)}</span>'
+            if check.waiver_reason
+            else ""
+        )
+        + "</span></span></div>"
+        for check in checks
+    )
+    return (
+        '<section class="rows" id="policy-checks"><div class="head">'
+        '<h2>Policy Checks</h2><span class="muted">Deterministic checks that apply '
+        f"to the run rather than one scenario</span></div>{rows}</section>"
+    )
+
+
 def _cloud(view: ReportView) -> str:
     if not OFFER_CLOUD or not view.replayable:
         return ""
@@ -366,6 +393,7 @@ def document(view: ReportView, scrubber: Optional[SecretScrubber] = None) -> str
             "".join(_walk(markup, scenario) for scenario in view.scenarios),
             "</div></div>",
             _findings(markup, view.findings),
+            _policy_checks(markup, view.policy_checks),
             _unevidenced(markup, view.unevidenced),
             _cloud(view),
             _footer(view),

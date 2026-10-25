@@ -7,7 +7,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from yewo.errors import ArtifactWriteFailed
-from yewo.testing.models import JourneyReport, ReportStatus, ScenarioReport
+from yewo.testing.models import (
+    JourneyReport,
+    PolicyCheckReport,
+    PolicyCheckStatus,
+    ReportStatus,
+    ScenarioReport,
+)
 from yewo.testing.judge import verdicts
 from yewo.utils.secrets import SecretScrubber
 
@@ -106,6 +112,8 @@ def save_markdown_report(
     for index, scenario in enumerate(report.scenarios, start=1):
         _append_scenario(lines, index, scenario, scrubber)
 
+    _append_policy_checks(lines, report.policy_checks, scrubber)
+
     if report.unevidenced_security_rules:
         lines.append("")
         lines.append("## Security Rules Not Evaluated")
@@ -119,6 +127,38 @@ def save_markdown_report(
     write_atomic(filepath, "\n".join(lines))
     logger.info("Markdown test report successfully written to %s", filepath)
     return filepath
+
+
+def _append_policy_checks(
+    lines: list[str],
+    checks: list[PolicyCheckReport],
+    scrubber: SecretScrubber | None,
+) -> None:
+    """Render run-level checks separately from scenario verification."""
+    if not checks:
+        return
+    icons = {
+        PolicyCheckStatus.PASSED: "✅",
+        PolicyCheckStatus.FAILED: "❌",
+        PolicyCheckStatus.WAIVED: "⚪",
+        PolicyCheckStatus.UNSUPPORTED: "⚠️",
+        PolicyCheckStatus.EVIDENCE_MISSING: "⚠️",
+    }
+    lines.extend(["", "## Policy Checks", ""])
+    for check in checks:
+        lines.extend(
+            [
+                f"### `{check.check_id}` — {icons[check.status]} {check.status.value}",
+                f"* **Platform**: `{check.platform.value}`",
+                f"* **Source**: {_scrub(scrubber, check.source)}",
+                f"* **Evidence**: {_scrub(scrubber, check.evidence)}",
+            ]
+        )
+        if check.waiver_reason:
+            lines.append(
+                f"* **Waiver reason**: {_scrub(scrubber, check.waiver_reason)}"
+            )
+        lines.append("")
 
 
 def _append_scenario(
@@ -196,11 +236,23 @@ def save_junit_report(
         in (ReportStatus.FAILED, ReportStatus.UNVERIFIED, ReportStatus.UNSUPPORTED)
         for s in report.scenarios
     )
+    policy_failures = sum(
+        check.status
+        in (
+            PolicyCheckStatus.FAILED,
+            PolicyCheckStatus.UNSUPPORTED,
+            PolicyCheckStatus.EVIDENCE_MISSING,
+        )
+        for check in report.policy_checks
+    )
+    policy_skipped = sum(
+        check.status is PolicyCheckStatus.WAIVED for check in report.policy_checks
+    )
     attributes = {
-        "tests": str(len(report.scenarios)),
-        "failures": str(failures),
+        "tests": str(len(report.scenarios) + len(report.policy_checks)),
+        "failures": str(failures + policy_failures),
         "errors": str(errors),
-        "skipped": str(report.skipped_count),
+        "skipped": str(report.skipped_count + policy_skipped),
         "time": str(report.total_duration),
     }
     root = ET.Element("testsuites", {"name": "Yewo User Journeys", **attributes})
@@ -215,6 +267,8 @@ def save_junit_report(
     )
     for scenario in report.scenarios:
         _append_junit_case(suite, report, scenario, scrubber)
+    for check in report.policy_checks:
+        _append_junit_policy_check(suite, report, check, scrubber)
 
     content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     write_atomic(filepath, content)
@@ -264,3 +318,55 @@ def _append_junit_case(
         element.text = message
     elif scenario.status == ReportStatus.SKIPPED:
         ET.SubElement(testcase, "skipped", {"message": message})
+
+
+def _append_junit_policy_check(
+    suite,
+    report: JourneyReport,
+    check: PolicyCheckReport,
+    scrubber: SecretScrubber | None,
+) -> None:
+    """Write one run-level check as a visible CI test case."""
+    testcase = ET.SubElement(
+        suite,
+        "testcase",
+        {
+            "name": check.check_id,
+            "classname": f"{safe_artifact_stem(report.journey_id)}.policy",
+            "time": "0",
+        },
+    )
+    details = "\n".join(
+        (
+            f"status={check.status.value}",
+            f"platform={check.platform.value}",
+            f"source={_scrub(scrubber, check.source)}",
+            f"evidence={_scrub(scrubber, check.evidence)}",
+        )
+    )
+    if check.status in (
+        PolicyCheckStatus.FAILED,
+        PolicyCheckStatus.UNSUPPORTED,
+        PolicyCheckStatus.EVIDENCE_MISSING,
+    ):
+        failure = ET.SubElement(
+            testcase,
+            "failure",
+            {
+                "message": _scrub(scrubber, check.evidence),
+                "type": f"YewoPolicyCheck.{check.status.value}",
+            },
+        )
+        failure.text = details
+    elif check.status is PolicyCheckStatus.WAIVED:
+        ET.SubElement(
+            testcase,
+            "skipped",
+            {"message": f"Waived: {_scrub(scrubber, check.waiver_reason)}"},
+        )
+    output = ET.SubElement(testcase, "system-out")
+    output.text = details + (
+        f"\nwaiver_reason={_scrub(scrubber, check.waiver_reason)}"
+        if check.waiver_reason
+        else ""
+    )

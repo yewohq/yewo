@@ -18,7 +18,7 @@ from typing import List, NamedTuple, Optional, Protocol, Sequence
 
 from yewo.agent.run.outcomes import DeviceRunResult
 from yewo.errors import Cause
-from yewo.testing.judge import rules
+from yewo.testing.judge import measurements
 from yewo.testing.judge.capabilities import unconfirmed_capabilities
 from yewo.testing.judge.verdicts import _missing_required_ids, _terminal_outcome
 from yewo.testing.models import (
@@ -27,6 +27,7 @@ from yewo.testing.models import (
     ReportStatus,
     RuleVerification,
     SensitiveFinding,
+    Measurement,
     ScenarioStatus,
 )
 
@@ -68,6 +69,7 @@ def determine_status(
     security_rules: Sequence[str],
     all_findings: Optional[List[SensitiveFinding]] = None,
     required_capabilities: Sequence = (),
+    measurement_samples: Sequence[Measurement] = (),
 ) -> Verdict:
     """What this scenario adds up to.
 
@@ -86,6 +88,13 @@ def determine_status(
     """
     # Feasibility stays the planner's call: it is a statement about whether
     # the agent can proceed, not about whether the app is correct.
+    measured_rule_ids = measurements.measured_rule_ids(required_outcomes)
+    all_verifications[:] = [
+        verification
+        for verification in all_verifications
+        if verification.rule_id not in measured_rule_ids
+    ]
+    all_verifications.extend(measurements.settle(required_outcomes, measurement_samples))
     terminal = _terminal_outcome(
         run_result,
         stop_reason,
@@ -111,16 +120,6 @@ def determine_status(
     # Independence is not lost. The expected outcomes reach the auditor as
     # rules, and the checks below refuse the scenario unless the auditor
     # evidenced every one of them on a screen it judged without the plan.
-    unprovable = rules.unprovable(required_outcomes)
-    if unprovable:
-        return Verdict(
-            ReportStatus.UNVERIFIED,
-            "Nothing recorded during a run can settle these outcomes: "
-            + ", ".join(unprovable)
-            + ". They ask how the app performed, and Yewo measures no part of that.",
-            Cause.SCENARIO,
-        )
-
     # A declared capability that never reached the device leaves every
     # outcome below it describing a state the run never entered.
     unconfirmed = (

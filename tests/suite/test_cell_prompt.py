@@ -206,11 +206,12 @@ class SecretTests(unittest.TestCase):
 
 
 class OutcomeScopeTests(unittest.TestCase):
-    def test_a_timing_outcome_is_forbidden_outright(self):
-        self.assertIn('Never write "run_timing"', _prompt(HAPPY))
+    def test_measured_outcomes_are_not_offered_without_a_live_collector(self):
+        prompt = _prompt(HAPPY)
 
-    def test_the_prompt_does_not_offer_timing_as_a_scope(self):
-        self.assertNotIn('- "run_timing"', _prompt(HAPPY))
+        self.assertIn('Do not write "measured"', prompt)
+        self.assertNotIn("`app_launch_ttid_ms`", prompt)
+        self.assertNotIn("`min_touch_target`", prompt)
 
 
 class DerivedVocabularyTests(unittest.TestCase):

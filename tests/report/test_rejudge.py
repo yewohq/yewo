@@ -229,7 +229,14 @@ class WhatTheReportCarriesTests(unittest.TestCase):
             history=AgentHistory(), capability_receipts=list(receipts),
         )
 
-    def _reported(self, assessment=None, case=None, result=None, outputs=None):
+    def _reported(
+        self,
+        assessment=None,
+        case=None,
+        result=None,
+        outputs=None,
+        measurement_samples=(),
+    ):
         from types import SimpleNamespace
 
         return self._agent()._build_report(
@@ -242,6 +249,7 @@ class WhatTheReportCarriesTests(unittest.TestCase):
             stop_reason=None,
             duration=1.0,
             security_rules=["The card number is masked"],
+            measurement_samples=measurement_samples,
         )
 
     def test_a_report_carries_what_its_verdict_was_decided_from(self):
@@ -320,6 +328,37 @@ class WhatTheReportCarriesTests(unittest.TestCase):
             schema, entries = rejudge.scenarios_in(_written(Path(directory), [entry]))
 
         self.assertEqual(rejudge.verdict_of(entries[0], schema).status, report.status)
+
+    def test_measured_evidence_is_recorded_and_rejudged_without_a_model(self):
+        from yewo.agent.device.platform import Platform
+        from yewo.metrics import MetricSource, MetricUnit
+        from yewo.testing.judge.qa_auditor import ScreenAssessment
+        from yewo.testing.models import ExpectedOutcome, Measurement
+
+        case = self._case()
+        case.expected_outcomes = [ExpectedOutcome(
+            statement="The app launches within the limit",
+            scope="measured",
+            metric="app_launch_ttid_ms",
+            threshold=800,
+        )]
+        report = self._reported(
+            case=case,
+            assessment=ScreenAssessment(screen_name="Home"),
+            measurement_samples=[Measurement(
+                metric="app_launch_ttid_ms",
+                value=700,
+                unit=MetricUnit.MILLISECONDS,
+                source=MetricSource.DEVICE,
+                platform=Platform.IOS,
+                collected_at="2026-10-25T12:00:00Z",
+            )],
+        )
+        entry = json.loads(report.model_dump_json())
+
+        self.assertEqual(report.status, "PASSED")
+        self.assertEqual(report.rule_verifications[0].rule_id, "expected:0")
+        self.assertEqual(rejudge.verdict_of(entry, schema=2).status, "PASSED")
 
 
 if __name__ == "__main__":

@@ -479,7 +479,14 @@ class WhenTheRecordWillNotWriteTests(unittest.TestCase):
         def add(self, _report):
             pass
 
-        def finish(self, status, unevidenced=None, usage=None, duration=None):
+        def finish(
+            self,
+            status,
+            unevidenced=None,
+            policy_checks=None,
+            usage=None,
+            duration=None,
+        ):
             self.unwritten = OSError("disk full")
 
     def test_every_report_is_rewritten_when_the_record_fails(self):

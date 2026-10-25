@@ -16,9 +16,10 @@ Two things it deliberately does not hold.
 - **No resolved value.** An entry keeps `{{rejected_password}}`, not `abc`. A
   lock holding values would hold a credential, and would change with the
   environment rather than with the test.
-- **Nothing derived.** `steps_instructions` and `required_capabilities` are
-  read off the steps by a validator. Storing them would let a stored value
-  disagree with the derivation that produced it.
+- **Nothing derived.** `steps_instructions`, `required_capabilities`, and
+  `required_metrics` are read from the steps or outcomes by a validator.
+  Storing them would let a stored value disagree with the derivation that
+  produced it.
 
 It locks the test, not the outcome. The agent may still walk the same steps
 differently, and the auditor still judges every run.

@@ -130,24 +130,6 @@ def listing(rules: Iterable, kind: str) -> str:
     return "\n".join(format_rules_for_prompt(rules, kind)) or NONE_SPECIFIED
 
 
-def unprovable(outcomes: Iterable) -> List[str]:
-    """Ids of outcomes nothing Yewo records can settle.
-
-    Named rather than counted as missing. An outcome about how long the app
-    took has no evidence anywhere in a run, and reporting it as unevidenced
-    reads as a scenario that fell short rather than one that asked for
-    something no part of this system measures.
-    """
-    from yewo.testing.models import AssertionScope, ExpectedOutcome
-
-    return [
-        rule_id(EXPECTED, index)
-        for index, outcome in enumerate(outcomes or [])
-        if isinstance(outcome, ExpectedOutcome)
-        and outcome.scope is AssertionScope.RUN_TIMING
-    ]
-
-
 def _scoped(outcomes: Iterable, wanted, default: bool) -> List:
     """The outcomes of one scope, keeping every index.
 

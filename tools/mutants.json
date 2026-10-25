@@ -21,11 +21,18 @@
     "replace": "latest[(verification.rule_id, \"\")] = verification"
   },
   {
-    "name": "unprovable-refuses-nothing",
+    "name": "a-lower-is-better-metric-uses-the-best-sample",
     "owner": "judge",
-    "path": "src/yewo/testing/judge/rules.py",
-    "find": "    return [\n        rule_id(EXPECTED, index)\n        for index, outcome in enumerate(outcomes or [])",
-    "replace": "    return [\n        rule_id(EXPECTED, index)\n        for index, outcome in enumerate(())"
+    "path": "src/yewo/testing/judge/measurements.py",
+    "find": "    return max(values) if direction is MetricDirection.LOWER else min(values)",
+    "replace": "    return min(values) if direction is MetricDirection.LOWER else max(values)"
+  },
+  {
+    "name": "a-recorded-verdict-settles-a-measured-outcome",
+    "owner": "judge",
+    "path": "src/yewo/testing/judge/decide.py",
+    "find": "    measured_rule_ids = measurements.measured_rule_ids(required_outcomes)",
+    "replace": "    measured_rule_ids = set()"
   },
   {
     "name": "unconfirmed-capabilities-reports-none",
@@ -304,7 +311,7 @@
     "name": "a-quoted-rule-is-never-matched",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "            rule_id = self._rule_ids_by_statement.get(\n                (verification.rule or \"\").strip()\n            )\n            if rule_id:\n                verification.rule_id = rule_id",
+    "find": "            rule_id = self._rule_ids_by_statement.get((verification.rule or \"\").strip())\n            if rule_id:\n                verification.rule_id = rule_id",
     "replace": "            pass"
   },
   {
@@ -332,29 +339,29 @@
     "name": "an-audit-naming-nothing-is-not-asked-again",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "        if self._audited_rule_ids and not self._any_listed(assessment):",
+    "find": "        if self._audited_rule_ids and not self._every_rule_is_answered(assessment):",
     "replace": "        if False:"
   },
   {
     "name": "an-audit-is-asked-again-without-end",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "            assessment = self._audit_screen_and_normalize(message)\n        assessment.sensitive_findings.extend(",
+    "find": "            assessment = self._audit_screen_and_normalize(messages)\n        assessment.sensitive_findings.extend(",
     "replace": "            while not self._any_listed(assessment):\n                assessment = self._audit_screen_and_normalize(message)\n        assessment.sensitive_findings.extend("
   },
   {
     "name": "an-audit-that-answered-is-asked-again",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "        if self._audited_rule_ids and not self._any_listed(assessment):",
+    "find": "        if self._audited_rule_ids and not self._every_rule_is_answered(assessment):",
     "replace": "        if self._audited_rule_ids:"
   },
   {
     "name": "the-findings-never-reach-the-judge",
     "owner": "gate",
     "path": "src/yewo/testing/qa_agent.py",
-    "find": "            security_rules=security_rules,\n            all_findings=all_findings,\n        )",
-    "replace": "            security_rules=security_rules,\n        )"
+    "find": "            security_rules=security_rules,\n            all_findings=all_findings,\n            measurement_samples=measurement_samples,\n        )",
+    "replace": "            security_rules=security_rules,\n            measurement_samples=measurement_samples,\n        )"
   },
   {
     "name": "a-report-carries-no-record-of-its-inputs",
@@ -390,5 +397,12 @@
     "path": "src/yewo/testing/rejudge.py",
     "find": "    if not isinstance(record, dict) or \"scenarios\" not in record:\n        raise UsageError(f\"{path} does not hold a run record.\")",
     "replace": "    if not isinstance(record, dict) or \"scenarios\" not in record:\n        return 0, []"
+  },
+  {
+    "name": "a-failed-policy-check-is-accepted",
+    "owner": "policy",
+    "path": "src/yewo/policy.py",
+    "find": "    return all(check.status in accepted for check in checks)",
+    "replace": "    return True"
   }
 ]

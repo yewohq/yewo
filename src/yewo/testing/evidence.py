@@ -17,6 +17,8 @@ from yewo.agent.run.outcomes import RunStatus
 from yewo.agent.run.postconditions import PostconditionVerification
 from yewo.agent.run.record import StepRecord
 from yewo.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
+from yewo.metrics import Measurement, Metric
+from yewo.policy import PolicyCheckReport, policy_checks_succeeded
 
 
 # The model writes this one to point at what it reports. The detector's
@@ -262,10 +264,8 @@ class AssertionScope(str, Enum):
     """The run reached a screen, or moved between two. The screens visited
     carry this. A single screenshot does not."""
 
-    RUN_TIMING = "run_timing"
-    """How long the app took, or whether it stayed responsive. Nothing Yewo
-    records measures this today, so an outcome scoped here is reported as
-    unproven rather than counted either way."""
+    MEASURED = "measured"
+    """A named metric sample settles this outcome."""
 
 
 class ExpectedOutcome(BaseModel):
@@ -277,8 +277,23 @@ class ExpectedOutcome(BaseModel):
         description=(
             "Which evidence settles this. 'current_screen' for anything visible "
             "on a single screen. 'transition' for having reached or moved "
-            "between screens. 'run_timing' for speed or responsiveness."
+            "between screens. 'measured' only with a named metric."
         ),
+    )
+    metric: Optional[Metric] = Field(
+        default=None,
+        description="The metric that settles a measured outcome, and no other outcome.",
+        exclude_if=lambda value: value is None,
+    )
+    threshold: Optional[float] = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+        description=(
+            "The inclusive limit for a measured outcome. Its unit and comparison "
+            "direction come from the metric catalogue."
+        ),
+        exclude_if=lambda value: value is None,
     )
 
     @model_validator(mode="before")
@@ -288,6 +303,17 @@ class ExpectedOutcome(BaseModel):
         if isinstance(value, str):
             return {"statement": value}
         return value
+
+    @model_validator(mode="after")
+    def _validate_metric_scope(self) -> "ExpectedOutcome":
+        if self.scope is AssertionScope.MEASURED:
+            if self.metric is None:
+                raise ValueError("A measured outcome must name its metric.")
+            if self.threshold is None:
+                raise ValueError("A measured outcome must name its threshold.")
+        elif self.metric is not None or self.threshold is not None:
+            raise ValueError("Only a measured outcome may name a metric or threshold.")
+        return self
 
 
 class RuleVerification(BaseModel):
@@ -395,6 +421,7 @@ class VerdictInputs(BaseModel):
     security_rules: List[str] = Field(default_factory=list)
     sensitive_findings: List[SensitiveFinding] = Field(default_factory=list)
     required_capabilities: List[CapabilityKind] = Field(default_factory=list)
+    measurements: List[Measurement] = Field(default_factory=list)
     receipts: List[ReceiptRecord] = Field(default_factory=list)
     postcondition_verifications: List[PostconditionVerification] = Field(
         default_factory=list
@@ -441,6 +468,7 @@ class ScenarioReport(BaseModel):
         default_factory=list,
         description="Secret-free local verifications that ran before dependent actions.",
     )
+    measurements: List[Measurement] = Field(default_factory=list)
     failure_reason: Optional[str] = None
     verdict_inputs: Optional[VerdictInputs] = Field(
         default=None,
@@ -481,6 +509,10 @@ class JourneyReport(BaseModel):
     status: JourneyStatus
     total_duration: float = 0.0
     scenarios: List[ScenarioReport] = Field(default_factory=list)
+    policy_checks: List[PolicyCheckReport] = Field(
+        default_factory=list,
+        description="Deterministic run-level checks that do not belong to a scenario.",
+    )
     unevidenced_security_rules: List[str] = Field(
         default_factory=list,
         description=(
@@ -492,3 +524,11 @@ class JourneyReport(BaseModel):
     failed_count: int = 0
     skipped_count: int = 0
     environment: Optional[RunEnvironment] = None
+
+    @model_validator(mode="after")
+    def _validate_policy_check_status(self) -> "JourneyReport":
+        if self.status == ReportStatus.PASSED and not policy_checks_succeeded(
+            self.policy_checks
+        ):
+            raise ValueError("A run with an unsuccessful policy check cannot pass.")
+        return self

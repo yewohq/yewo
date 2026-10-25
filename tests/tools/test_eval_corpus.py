@@ -62,17 +62,36 @@ class VerdictFixtureTests(unittest.TestCase):
         from yewo.testing.models import AssertionScope
 
         fixture = self._loaded(
-            outcomes=[{"statement": "The screen opens quickly", "scope": "run_timing"}]
+            outcomes=[{
+                "statement": "The screen opens quickly",
+                "scope": "measured",
+                "metric": "app_launch_ttid_ms",
+                "threshold": 800,
+            }]
         )
 
         self.assertIs(
-            fixture.arguments["required_outcomes"][0].scope, AssertionScope.RUN_TIMING
+            fixture.arguments["required_outcomes"][0].scope, AssertionScope.MEASURED
         )
 
     def test_the_number_of_screens_judged_is_what_the_fixture_says(self):
         """The judge reads whether any screen was audited, and nothing else of them."""
         self.assertEqual(len(self._loaded(screens_judged=0).arguments["assessments"]), 0)
         self.assertEqual(len(self._loaded(screens_judged=2).arguments["assessments"]), 2)
+
+    def test_measurements_are_built_as_the_judge_receives_them(self):
+        from yewo.testing.models import Measurement
+
+        fixture = self._loaded(measurements=[{
+            "metric": "app_launch_ttid_ms",
+            "value": 700,
+            "unit": "ms",
+            "source": "device",
+            "platform": "ios",
+            "collected_at": "2026-10-25T12:00:00Z",
+        }])
+
+        self.assertIsInstance(fixture.arguments["measurement_samples"][0], Measurement)
 
     def test_a_planner_answer_carries_feasibility_and_its_reason(self):
         fixture = self._loaded(

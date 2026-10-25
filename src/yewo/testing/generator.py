@@ -28,6 +28,7 @@ from yewo.errors import Cause, ProviderUnavailable, cause_of
 from yewo.llm.failures import reportable
 from yewo.llm.llm_client import LLMClient
 from yewo.llm.messages import SystemMessage, TextMessage
+from yewo.metrics import metrics_without_live_collectors
 from yewo.testing import steps
 from yewo.testing.journey_env import substitute
 from yewo.testing.models import (
@@ -89,9 +90,8 @@ Say what has to be visible, and give the evidence that settles each one:
 
 - "current_screen" — true or false from one screenshot. Prefer this always.
 - "transition" — the run reached a screen, or moved between two.
-
-Never write "run_timing". Nothing Yewo records measures time, and one timing
-outcome reports the whole scenario as unproven.
+Do not write "measured". Live metric collection is not connected to scenario
+execution yet. A measured outcome would have no sample and could not pass.
 
 Yewo can read screenshots, on-screen text, and the result of an action. It
 cannot read network traffic, HTTP headers, the app's own logs, an
@@ -168,7 +168,11 @@ class UncoveredCell:
     """
 
     cell: CoverageCell
-    status: Literal[ReportStatus.UNSUPPORTED, ReportStatus.ERROR]
+    status: Literal[
+        ReportStatus.UNSUPPORTED,
+        ReportStatus.ERROR,
+        ReportStatus.UNVERIFIED,
+    ]
     cause: Cause
     reason: str
 
@@ -314,6 +318,25 @@ class ScenarioGenerator:
                     raise
                 suite.uncovered.append(
                     self._failed(cell, cause_of(failure), reportable(failure))
+                )
+                continue
+            unavailable_metrics = metrics_without_live_collectors(
+                outcome.metric
+                for outcome in draft.expected_outcomes
+                if outcome.metric is not None
+            )
+            if unavailable_metrics:
+                metric_names = ", ".join(
+                    metric.value for metric in unavailable_metrics
+                )
+                suite.uncovered.append(
+                    UncoveredCell(
+                        cell,
+                        ReportStatus.UNVERIFIED,
+                        Cause.SCENARIO,
+                        "No live collector is available for required metric(s): "
+                        f"{metric_names}.",
+                    )
                 )
                 continue
             stamped = GeneratedTestCase.of(

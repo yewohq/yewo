@@ -7,10 +7,14 @@ from fakes import device_result, walk
 
 def _outcome(statement, scope=None):
     from yewo.testing.models import AssertionScope, ExpectedOutcome
+    from yewo.metrics import Metric
 
     if scope is None:
         return ExpectedOutcome(statement=statement)
-    return ExpectedOutcome(statement=statement, scope=AssertionScope(scope))
+    fields = {"statement": statement, "scope": AssertionScope(scope)}
+    if fields["scope"] is AssertionScope.MEASURED:
+        fields.update(metric=Metric.APP_LAUNCH_TTID_MS, threshold=800)
+    return ExpectedOutcome(**fields)
 
 
 class ScopeDefaultTests(unittest.TestCase):
@@ -43,14 +47,14 @@ class AuditorScopeTests(unittest.TestCase):
             rules.on_screen_only(
                 [
                     _outcome("CONFIRMING is visible"),
-                    _outcome("The login never hung", "run_timing"),
+                    _outcome("The login opens within the limit", "measured"),
                 ]
             ),
             [],
         )
 
         self.assertIn("CONFIRMING is visible", listing)
-        self.assertNotIn("never hung", listing)
+        self.assertNotIn("within the limit", listing)
 
     def test_an_unasked_outcome_does_not_renumber_the_others(self):
         """A verdict's id is its position, so dropping one moves every later rule."""
@@ -59,7 +63,7 @@ class AuditorScopeTests(unittest.TestCase):
         listing = rules.every_rule(
             rules.on_screen_only(
                 [
-                    _outcome("The login never hung", "run_timing"),
+                    _outcome("The login opens within the limit", "measured"),
                     _outcome("CONFIRMING is visible"),
                 ]
             ),
@@ -69,23 +73,13 @@ class AuditorScopeTests(unittest.TestCase):
         self.assertIn("[expected:1] CONFIRMING is visible", listing)
 
 
-class UnprovableOutcomeTests(unittest.TestCase):
-    """An outcome nothing measures is named, not counted as a shortfall."""
-
-    def test_a_timing_outcome_is_unprovable(self):
-        from yewo.testing.judge import rules
-
-        self.assertEqual(
-            rules.unprovable([_outcome("No hang during login", "run_timing")]),
-            ["expected:0"],
-        )
+class MeasuredOutcomeTests(unittest.TestCase):
+    """A measured outcome needs numeric evidence rather than screen evidence."""
 
     def test_a_screen_outcome_is_provable(self):
-        from yewo.testing.judge import rules
+        self.assertEqual(_outcome("CONFIRMING is visible").scope, "current_screen")
 
-        self.assertEqual(rules.unprovable([_outcome("CONFIRMING is visible")]), [])
-
-    def test_the_scenario_says_what_could_not_be_settled(self):
+    def test_a_missing_sample_is_missing_evidence(self):
         from yewo.testing.qa_agent import QAAgent
 
         status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
@@ -99,10 +93,10 @@ class UnprovableOutcomeTests(unittest.TestCase):
                 )
             ],
             assessments=[__import__("types").SimpleNamespace()],
-            required_outcomes=[_outcome("No hang during login", "run_timing")],
+            required_outcomes=[_outcome("Login opens within the limit", "measured")],
             security_rules=[],
         )
 
         self.assertEqual(status, "UNVERIFIED")
         self.assertIn("expected:0", reason)
-        self.assertIn("measures no part of that", reason)
+        self.assertIn("Required verification evidence is missing", reason)

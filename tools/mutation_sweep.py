@@ -8,12 +8,13 @@
 No third-party mutation engine is configured for this repository; a general
 one would spend most of its time on code where a surviving mutant means
 nothing. This focused sweep holds a written list instead: each entry is a
-defect somebody could really introduce, in the logic that decides a verdict
-or decides whether the gate passes.
+defect somebody could really introduce in verdicts, gate decisions, or other
+safety-critical status aggregation.
 
 A mutant is **caught** when the check that owns it fails. The judge's mutants
 are owned by the eval corpus, so the gate has to fail. The gate's own mutants
-are owned by its tests, so pytest has to fail.
+are owned by its tests. Policy aggregation is owned by the policy contract
+tests. For both, pytest has to fail.
 
 Each worker receives an isolated copy of the files needed by the checks. No
 mutant touches the working tree, and independent workers can run in parallel.
@@ -42,6 +43,9 @@ JUDGE = "judge"
 GATE = "gate"
 """Owned by the gate's own tests: pytest has to fail."""
 
+POLICY = "policy"
+"""Owned by the run-level policy contract tests."""
+
 GATE_TESTS = (
     "tests/tools/test_eval_gate.py",
     "tests/tools/test_eval_tiers.py",
@@ -50,6 +54,8 @@ GATE_TESTS = (
     "tests/report/test_rejudge.py",
     "tests/report/test_manifest.py",
 )
+
+POLICY_TESTS = ("tests/report/test_policy_checks.py",)
 
 WORKSPACE_DIRECTORIES = ("eval", "src", "tests", "tools")
 WORKSPACE_FILES = ("pyproject.toml", "yewo-schema.json")
@@ -86,8 +92,9 @@ def _checked(mutant: Mutant, root: Path) -> subprocess.CompletedProcess:
             text=True,
             env=environment,
         )
+    tests = POLICY_TESTS if mutant.owner == POLICY else GATE_TESTS
     return subprocess.run(
-        [_python(), "-m", "pytest", *GATE_TESTS, "-q"],
+        [_python(), "-m", "pytest", *tests, "-q"],
         cwd=root,
         capture_output=True,
         text=True,

@@ -1,0 +1,38 @@
+{
+  "id": "a-measured-outcome-uses-the-worst-sample",
+  "why": "A fast sample cannot hide a slower sample from the same measured outcome.",
+  "run": {
+    "status": "goal_reached"
+  },
+  "outcomes": [
+    {
+      "statement": "The app launches within 800 milliseconds",
+      "scope": "measured",
+      "metric": "app_launch_ttid_ms",
+      "threshold": 800
+    }
+  ],
+  "measurements": [
+    {
+      "metric": "app_launch_ttid_ms",
+      "value": 700,
+      "unit": "ms",
+      "source": "device",
+      "platform": "ios",
+      "target_kind": "emulator",
+      "collected_at": "2026-10-25T12:00:00Z"
+    },
+    {
+      "metric": "app_launch_ttid_ms",
+      "value": 900,
+      "unit": "ms",
+      "source": "device",
+      "platform": "ios",
+      "target_kind": "emulator",
+      "collected_at": "2026-10-25T12:00:01Z"
+    }
+  ],
+  "expect": {
+    "status": "FAILED"
+  }
+}
