@@ -26,6 +26,7 @@ CONNECTIVITY = {
 ANDROID_PERMISSIONS = {
     "camera": "android.permission.CAMERA",
     "location": "android.permission.ACCESS_FINE_LOCATION",
+    "microphone": "android.permission.RECORD_AUDIO",
     "contacts": "android.permission.READ_CONTACTS",
     "storage": "android.permission.READ_EXTERNAL_STORAGE",
     "notifications": "android.permission.POST_NOTIFICATIONS",
@@ -47,6 +48,7 @@ PERMISSION_UNSET = "unset"
 
 IOS_PRIVACY_SERVICES = {
     "camera": "camera",
+    "microphone": "microphone",
     "photos": "photos",
     "contacts": "contacts",
 }

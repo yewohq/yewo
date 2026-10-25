@@ -7,7 +7,7 @@ with no verb, and a verb with no member. So a new capability reaches the
 generator, and a removed one leaves it.
 
 A verb is not an action. An instruction is prose for the planner, which turns
-"Select the card option" into a tap. So one action carries several verbs, and
+"Select the available option" into a tap. So one action carries several verbs, and
 the map says which action each verb is asking for.
 """
 

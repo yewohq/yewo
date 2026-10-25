@@ -2,15 +2,20 @@ import logging
 import time
 from typing import Optional
 
-from yewo.agent.actuation.actions import Action, ActionPlan, ActionType
+from yewo.agent.actuation.actions import (
+    MAX_WAIT_SECONDS,
+    MIN_WAIT_SECONDS,
+    Action,
+    ActionPlan,
+    ActionType,
+)
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device.capability_controller import CapabilityController
 from yewo.agent.device.receipts import Receipt
+from yewo.agent.run.postconditions import TextEntryReceipt
 
 logger = logging.getLogger(__name__)
 
-MIN_WAIT_SECONDS = 0.1
-MAX_WAIT_SECONDS = 10.0
 MIN_LONG_PRESS_SECONDS = 0.1
 MAX_LONG_PRESS_SECONDS = 10.0
 ALLOWED_KEYCODES = {3, 4, 66, 67}
@@ -22,7 +27,7 @@ class ActionOrchestrator:
         self.capability_controller = CapabilityController(device_control)
         self._scrubber = scrubber
 
-    def execute(self, action: Action) -> Optional[Receipt]:
+    def execute(self, action: Action) -> Optional[Receipt | TextEntryReceipt]:
         """Execute a single Action object. Used by DeviceAgent.
 
         Returns:
@@ -74,7 +79,7 @@ class ActionOrchestrator:
         elif action.type == ActionType.KEY_EVENT and action.key not in ALLOWED_KEYCODES:
             raise ValueError(f"Unsupported key code: {action.key}")
 
-    def _run_action(self, action: Action) -> Optional[Receipt]:
+    def _run_action(self, action: Action) -> Optional[Receipt | TextEntryReceipt]:
         if action.type == ActionType.TARGET_NOT_LISTED:
             raise ValueError(
                 "target_not_listed reports a missing target and has nothing "
@@ -92,7 +97,13 @@ class ActionOrchestrator:
                     "Executing action: %s at (%d, %d) — %s",
                     action.type, coordinates.x, coordinates.y, self._reason(action),
                 )
-                self.device_control.type(action.text, coordinates.x, coordinates.y)
+                typed_text = (
+                    self._scrubber.resolve_model_text(action.text)
+                    if self._scrubber
+                    else action.text
+                )
+                observed = self.device_control.type(typed_text, coordinates.x, coordinates.y)
+                return TextEntryReceipt(observed if isinstance(observed, str) else None)
             case ActionType.CLEAR:
                 coordinates = action.coordinates
                 logger.info(

@@ -77,6 +77,7 @@ def verdict_of(entry: dict, schema: int) -> decide.Verdict:
             failure_reason=entry.get("failure_reason"),
             history=AgentHistory(),
             capability_receipts=inputs.receipts,
+            postcondition_verifications=inputs.postcondition_verifications,
             cause=Cause(entry["cause"]) if entry.get("cause") else None,
         ),
         stop_reason=inputs.stop_reason,

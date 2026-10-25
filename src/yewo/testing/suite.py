@@ -14,8 +14,14 @@ import yaml
 from pydantic import ValidationError
 
 from yewo.config import SETTING_ALIASES, STRUCTURE_KEYS, ConfigError, expand_device
-from yewo.testing.journey_env import resolve, substitute
+from yewo.testing.journey_env import (
+    resolve,
+    secret_displays,
+    substitute,
+    verification_policies,
+)
 from yewo.testing.models import Actor, UserJourney
+from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.testing.taxonomy import DEFAULT_COVERAGE, CoverageCell, index_coverage_cells
 from yewo.schema import CoverageSpec, YewoFile, format_validation_errors
 
@@ -95,23 +101,31 @@ def _cells(coverage_data: Any, yaml_location: str) -> list[CoverageCell]:
     return index_coverage_cells(pairs)
 
 
-def _actors(actors_data: Any, yaml_location: str) -> tuple[dict[str, Actor], dict[str, str]]:
-    """Each declared account, and any secret among their values.
+def _actors(
+    actors_data: Any, yaml_location: str
+) -> tuple[
+    dict[str, Actor],
+    dict[str, str],
+    dict[str, str],
+    dict[str, ValueVerificationPolicy],
+]:
+    """Each actor, its values, and the policies attached to those values.
 
-    An account holds whatever this app signs in with, under the app's own
-    names. A secret is masked under the path the file wrote it at, such as
-    `actors.editor.password`. A name Yewo invented would appear in a report
-    that nobody could trace back to the file.
+    An actor holds the app-specific values that establish its context. A
+    secret is masked under the path the file wrote. A name Yewo invented would
+    appear in a report that nobody could trace back to the file.
 
     Raises:
-        ConfigError: If the block, or an account inside it, is not valid.
+        ConfigError: If the block, or an actor inside it, is not valid.
     """
     if actors_data is None:
-        return {}, {}
+        return {}, {}, {}, {}
     if not isinstance(actors_data, dict):
-        raise ConfigError(f"'actors' in {yaml_location} must be a mapping of name to account.")
+        raise ConfigError(f"'actors' in {yaml_location} must be a mapping of name to actor.")
     actors: dict[str, Actor] = {}
     secrets: dict[str, str] = {}
+    displays: dict[str, str] = {}
+    verifications: dict[str, ValueVerificationPolicy] = {}
     for name, block in actors_data.items():
         if not isinstance(block, dict) or not block:
             raise ConfigError(
@@ -130,19 +144,34 @@ def _actors(actors_data: Any, yaml_location: str) -> tuple[dict[str, Actor], dic
                 for key, value in secret_values.items()
             }
         )
-    return actors, secrets
+        displays.update(
+            {
+                f"actors.{name}.{key}": value
+                for key, value in secret_displays({"env": block}).items()
+            }
+        )
+        verifications.update(
+            {
+                f"actors.{name}.{key}": value
+                for key, value in verification_policies({"env": block}).items()
+            }
+        )
+    return actors, secrets, displays, verifications
 
 
 def _merge_actor_values(values: dict[str, str], actors: dict[str, Actor]) -> dict[str, str]:
     """One namespace of every value a scenario may name.
 
-    An account's values join it under a dotted name, so a step can reach
-    `actors.editor.email` without anything having to know where it came from.
+    An actor's values join it under a dotted name. A step can then name the
+    value without knowing where it came from.
     """
     combined_values = dict(values)
-    for actor, account in actors.items():
+    for actor_name, actor in actors.items():
         combined_values.update(
-            {f"actors.{actor}.{key}": value for key, value in account.values.items()}
+            {
+                f"actors.{actor_name}.{key}": value
+                for key, value in actor.values.items()
+            }
         )
     return combined_values
 
@@ -155,11 +184,13 @@ def _journey(
     actors: Any = None,
     yaml_location: str = "the file",
 ) -> UserJourney:
-    """One test, with the workflow's environment, coverage and accounts behind its own."""
+    """One test with its workflow environment, coverage, and actors."""
     merged = dict(data)
     merged["env"] = {**shared_env, **(data.get("env") or {})}
     declared, secrets, refused = resolve(merged)
-    declared_actors, actor_secrets = _actors(actors, yaml_location)
+    declared_actors, actor_secrets, actor_displays, actor_verifications = _actors(
+        actors, yaml_location
+    )
     values = _merge_actor_values(declared, declared_actors)
     description = data.get("journey", data.get("description", ""))
     return UserJourney(
@@ -170,6 +201,11 @@ def _journey(
             substitute(rule, values) for rule in data.get("security_rules", [])
         ],
         secrets={**secrets, **actor_secrets},
+        secret_displays={**secret_displays(merged), **actor_displays},
+        value_verifications={
+            **verification_policies(merged),
+            **actor_verifications,
+        },
         values=values,
         refused=refused,
         actors=declared_actors,

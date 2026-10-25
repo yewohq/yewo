@@ -62,7 +62,10 @@ class TapCountTests(unittest.TestCase):
         """Grounding changes how a target is named, not what the action does."""
         from yewo.agent.actuation.actions import TapMarkAction
 
-        self.assertEqual(TapMarkAction(mark=3, reason="r", count=5).count, 5)
+        self.assertEqual(
+            TapMarkAction(mark=3, target="Increment button", reason="r", count=5).count,
+            5,
+        )
 
 
 class PlannerVocabularyTests(unittest.TestCase):

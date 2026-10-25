@@ -10,12 +10,14 @@ from yewo.agent.device.platform import Platform
 from yewo.agent.device.readiness import ensure_device_ready
 from yewo.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
 from yewo.agent.perception.blind import for_grounding
-from yewo.agent.plan.planner import GROUNDING_COORDINATES
+from yewo.agent.plan.planner import GROUNDING_MARKS
+from yewo.agent.memory import replay_scenarios
 from yewo.agent.memory.replay import ReplayLedger
+from yewo.agent.memory.replay_store import ValueNames
 from yewo.errors import ProviderUnavailable
 from yewo.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
-from . import lock_file, lock_resolution
+from . import lock_file, lock_resolution, replay_paths
 from .generator import ScenarioGenerator
 from .report.manifest import RunInputs, RunManifest, RunSubject
 from .report import infrastructure
@@ -39,13 +41,22 @@ logger = logging.getLogger(__name__)
 GENERATION = "generator"
 """The call that wrote the suite. It happens once, before any scenario."""
 
-PLANNER = "agent"
-"""Every call a scenario makes: the planner, the auditor and the judges.
+PLANNER = "planner"
+SCREEN_AUDITOR = "screen_auditor"
+TRANSITION_JUDGE = "transition_judge"
+SEMANTIC_GROUNDER = "semantic_grounder"
+SCENARIO_COMPONENTS = (PLANNER, SCREEN_AUDITOR, TRANSITION_JUDGE, SEMANTIC_GROUNDER)
 
-They share one client unless a fast model is configured, so this is as far as
-the call site can tell them apart. What a call asked is in its prompt, and
-which step it belongs to is in the record it nests under.
-"""
+
+def component_for(current: str, answering: Optional[str]) -> str:
+    """Name a call from the answer shape it actually requested."""
+    if current == GENERATION:
+        return GENERATION
+    if answering == "ScreenAssessment":
+        return SCREEN_AUDITOR
+    if answering == "TransitionVerdicts":
+        return TRANSITION_JUDGE
+    return PLANNER
 
 
 def is_session_responsive(device_control) -> bool:
@@ -70,15 +81,9 @@ def tally(reports: List[ScenarioReport]) -> tuple[int, int, int]:
     return passed, len(reports) - passed - skipped, skipped
 
 
-def aggregate_journey_status(
-    passed_count: int, failed_count: int
-) -> JourneyStatus:
+def aggregate_journey_status(passed_count: int, failed_count: int) -> JourneyStatus:
     """A suite passes only when at least one scenario has verified evidence."""
-    return (
-        ReportStatus.PASSED
-        if passed_count > 0 and failed_count == 0
-        else ReportStatus.FAILED
-    )
+    return ReportStatus.PASSED if passed_count > 0 and failed_count == 0 else ReportStatus.FAILED
 
 
 class YewoTestRunner:
@@ -93,24 +98,26 @@ class YewoTestRunner:
         assets_dir: Path = Path("assets"),
         max_steps: int = 40,
         replay: bool = False,
+        durable_replay: bool = True,
+        update_paths: bool = False,
         reuse_app: bool = False,
         keep_app: bool = False,
         settle_time: float = 2.0,
         headless: bool = True,
         fast_model: str = None,
         record_session: bool = True,
-        grounding: str = GROUNDING_COORDINATES,
+        grounding: str = GROUNDING_MARKS,
         journey_file: Optional[Path] = None,
         workflow: str = "",
         locked: bool = False,
         persist_inputs: bool = True,
-        record_secrets: bool = False,
+        allow_secret_exposure: bool = False,
     ):
         self.journey_file = journey_file
         self.workflow = workflow
         self.locked = locked
         self.persist_inputs = persist_inputs
-        self.record_secrets = record_secrets
+        self.allow_secret_exposure = allow_secret_exposure
         self.grounding = grounding
         self.reuse_app = reuse_app
         self.keep_app = keep_app
@@ -121,6 +128,10 @@ class YewoTestRunner:
         self.assets_dir = assets_dir
         self.max_steps = max_steps
         self.replay = replay
+        # On unless a caller turns it off. A saved path only ever
+        # removes planning, and every screen it walks is still read.
+        self.durable_replay = durable_replay
+        self.update_paths = update_paths
         self.settle_time = settle_time
         self.headless = headless
         self.fast_model = fast_model
@@ -128,6 +139,21 @@ class YewoTestRunner:
         self._app: Optional[identity.AppIdentity] = None
         self._device = identity.DeviceIdentity()
         self._git: Optional[identity.GitIdentity] = None
+
+    def _trace_store_for(self, journey):
+        """Build this journey's saved-path store when replay is enabled."""
+        if not self.durable_replay:
+            return None
+        root = self.journey_file.parent if self.journey_file else Path.cwd()
+        return replay_scenarios.build_trace_store(
+            root=root,
+            values=dict(journey.values),
+            verification_policies=dict(journey.value_verifications),
+            environment=self._environment(),
+            grounding=self.grounding,
+            allow_path_creation=not replay_paths.is_ci(),
+            approve_path_update=lambda path: replay_paths.approve_update(path, self.update_paths),
+        )
 
     def _environment(self) -> RunEnvironment:
         """What was in play for this run, so a reader can explain a difference.
@@ -139,9 +165,7 @@ class YewoTestRunner:
         one page.
         """
         if self._app is None:
-            self._app = identity.app_identity(
-                self.app_path, installed=not self.reuse_app
-            )
+            self._app = identity.app_identity(self.app_path, installed=not self.reuse_app)
         if self._git is None:
             self._git = identity.git_identity(
                 self.journey_file.parent if self.journey_file else None
@@ -152,7 +176,9 @@ class YewoTestRunner:
             fast_model=self.fast_model,
             platform=self.platform.value,
             grounding=self.grounding,
-            detector=f"{YOLO_REPO_ID}@{YOLO_REVISION}",
+            detector=(
+                f"{YOLO_REPO_ID}@{YOLO_REVISION}" if self.grounding == GROUNDING_MARKS else None
+            ),
             app=self._app,
             device=self._device,
             git=self._git,
@@ -179,23 +205,23 @@ class YewoTestRunner:
         return lock_file.path_beside(self.journey_file) if self.journey_file else None
 
     def run_journey(self, journey: UserJourney) -> JourneyReport:
-        """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics.
-
-        Raises:
-            UsageError: If `--locked` was asked for and the lock does not
-                hold every declared cell. Raised before anything is opened or
-                written, because the answer is the same either way.
-        """
+        """Run one journey, refusing invalid inputs before opening the device."""
         start_time = time.time()
 
-        # First, because reading a lock costs nothing. A stale lock in CI has
-        # to fail in a second rather than after a device boots.
+        sensitivity.require_safe_secret_policy(journey, self.allow_secret_exposure)
+        if self.durable_replay:
+            replay_paths.validate_path_key(
+                self.journey_file.parent if self.journey_file else Path.cwd()
+            )
+
+        # Read the lock before the device boots. A stale lock in CI must fail
+        # in a second rather than after an emulator starts.
         if self.locked:
             lock_resolution.require_lock(journey, self._lock_path(), self.workflow)
 
         # Nothing masks a video frame, so a journey that types a declared
         # secret on screen is not recorded unless the caller asked for it.
-        refused = sensitivity.recording_refused(journey, self.record_secrets)
+        refused = sensitivity.recording_refused(journey, self.allow_secret_exposure)
         if refused:
             logger.warning("%s", refused)
         record_session = self.record_session and refused is None
@@ -222,6 +248,7 @@ class YewoTestRunner:
             fast_model=self.fast_model,
             replay_ledger=ReplayLedger() if self.replay else None,
             grounding=self.grounding,
+            cache_affinity=session.session_id,
         )
 
         artifact_scrubber = SecretScrubber()
@@ -239,12 +266,15 @@ class YewoTestRunner:
         # said by which entry the call is nested under, and two components
         # share one client when no fast model is configured.
         device_agent.llm.usage_callback = lambda call: usage_tracker.add_call(
-            current_component, call
+            component_for(current_component, call.answering), call
         )
         if device_agent.fast_llm is not device_agent.llm:
             device_agent.fast_llm.usage_callback = lambda call: usage_tracker.add_call(
-                current_component, call
+                component_for(current_component, call.answering), call
             )
+        device_agent.grounding_usage_callback = lambda call: usage_tracker.add_call(
+            SEMANTIC_GROUNDER, call
+        )
         # So each call lands under the step that paid for it. The loop knows
         # which step it is on; the planner that makes the call does not.
         device_agent.step_opened = usage_tracker.mark
@@ -254,7 +284,14 @@ class YewoTestRunner:
         scenario_reports: List[ScenarioReport] = []
         manifest = None
         artifact_scrubber.learn_secrets(journey.secrets)
-        device_agent.scrubber.learn_secrets(journey.secrets)
+        device_agent.scrubber.learn_secrets(
+            journey.secrets,
+            journey.secret_displays,
+            allow_model_exposure=self.allow_secret_exposure,
+        )
+        device_agent.declared_values = dict(journey.values)
+        device_agent.value_verifications = dict(journey.value_verifications)
+        device_agent.value_names = ValueNames(device_agent.declared_values)
 
         try:
             # Both before the model call. Asking adb is cheap and names what is
@@ -263,14 +300,16 @@ class YewoTestRunner:
             # generated suite is paid for before any of the three is known.
             ensure_device_ready(self.platform, self.device_name)
 
-            logger.info(
-                "Initializing emulator and starting remote webdriver session..."
-            )
+            logger.info("Initializing emulator and starting remote webdriver session...")
             device_control = session.start(is_headless=self.headless)
             perception = for_grounding(self.grounding, session)
             # Recorded as soon as the driver answers, so a report written from
             # the finally block still names the target it ran against.
             self._device = identity.device_identity(device_control)
+            # Built here rather than in the constructor, because a path is
+            # only valid for the target that answered, and nothing knows
+            # the target until the driver does.
+            agent._trace_store = self._trace_store_for(journey)
 
             suite = self._suite(journey, device_agent.llm)
             logger.info("Scenarios: %s", suite.note)
@@ -356,9 +395,7 @@ class YewoTestRunner:
                         # need the app that this session was testing.
                         session.close(final=False)
                     except Exception as close_err:
-                        logger.warning(
-                            "Error closing old session during recovery: %s", close_err
-                        )
+                        logger.warning("Error closing old session during recovery: %s", close_err)
 
                     session = DeviceSession(
                         device_name=self.device_name,
@@ -378,7 +415,10 @@ class YewoTestRunner:
                         session.session_id,
                     )
                     device_control = session.start(is_headless=self.headless)
-                    perception = for_grounding(self.grounding, session)
+                    perception = for_grounding(
+                        self.grounding,
+                        session,
+                    )
 
                     usage_tracker.output_dir = session.telemetry_dir
 
@@ -396,14 +436,12 @@ class YewoTestRunner:
                     # The scenario is over, and the next one is not: a rate
                     # limit that has passed by then costs nothing here, and
                     # the device state was restored on the way out.
-                    scen_report = infrastructure.provider_error(
-                        scenario, exc, artifact_scrubber
-                    )
+                    scen_report = infrastructure.provider_error(scenario, exc, artifact_scrubber)
 
                 manifest.record(
                     scenario.test_id,
                     scen_report,
-                    calls=usage_tracker.calls_outside_steps(PLANNER),
+                    calls=usage_tracker.take_calls_outside_steps(SCENARIO_COMPONENTS),
                 )
 
                 scenario_reports.append(scen_report)
@@ -419,9 +457,7 @@ class YewoTestRunner:
                 try:
                     session.checkpoint_recording()
                 except Exception as record_err:
-                    logger.warning(
-                        "Failed to save the scenario recording: %s", record_err
-                    )
+                    logger.warning("Failed to save the scenario recording: %s", record_err)
                 try:
                     session.checkpoint_device_logs()
                 except Exception as log_err:  # noqa: BLE001 - evidence, not the run
@@ -429,9 +465,7 @@ class YewoTestRunner:
 
         except BaseException as e:
             safe_error = artifact_scrubber.scrub(reportable(e))
-            logger.error(
-                "Fatal run interruption (%s): %s", type(e).__name__, safe_error
-            )
+            logger.error("Fatal run interruption (%s): %s", type(e).__name__, safe_error)
             if manifest is not None:
                 manifest.abort(f"Aborted due to run failure/interrupt: {safe_error}")
             infrastructure.record_aborted(scenarios, scenario_reports, e)
@@ -455,9 +489,7 @@ class YewoTestRunner:
 
             # persist reports even on Ctrl+C or mid-run crash
             duration = time.time() - start_time
-            unevidenced = unevidenced_security_rules(
-                journey.security_rules, scenario_reports
-            )
+            unevidenced = unevidenced_security_rules(journey.security_rules, scenario_reports)
             for rule in unevidenced:
                 logger.warning("No scenario evidenced security rule: %s", rule)
             passed_count, failed_count, skipped_count = tally(scenario_reports)

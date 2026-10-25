@@ -1,16 +1,24 @@
 """Replaying transitions the agent has already worked out.
 
-Every scenario starts from a fresh launch, so the same sign-in is planned over
-and over — six model calls and the better part of a minute each time. The
-transitions that worked are remembered here and replayed directly: the taps are
-real, only the deliberation is skipped.
+Every scenario opens after a fresh app launch, so the same opening flow is
+planned again and again. Successful transitions are remembered and replayed
+directly. The taps are real. Only the deliberation is skipped.
 """
 
 import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from yewo.agent.actuation.actions import Action, ActionType, TypeAction
+from yewo.agent.actuation.actions import (
+    Action,
+    ActionType,
+    ClearAction,
+    DoubleTapAction,
+    KeyEventAction,
+    LongPressAction,
+    TapAction,
+    TypeAction,
+)
 from yewo.agent.actuation.orchestrator import ActionOrchestrator
 from yewo.agent.memory.history import ActionEntry, ActionResult
 
@@ -23,6 +31,19 @@ MAX_REPLAY_ACTIONS = 30
 # between screens qualify. Gestures and capability changes are what destructive
 # scenarios are built from, and must never be inherited by another scenario.
 REPLAYABLE_ACTIONS = {ActionType.TAP, ActionType.TYPE, ActionType.KEY_EVENT}
+
+PLACED_ACTIONS = (
+    TypeAction,
+    TapAction,
+    ClearAction,
+    DoubleTapAction,
+    LongPressAction,
+)
+"""The actions that name a point on the screen.
+
+Listed rather than asked for, because the union is closed and a member
+that grew coordinates should be added here on purpose.
+"""
 
 # Back, which is how the agent dismisses the keyboard. Other key events reach
 # system surfaces that have nothing to do with navigating the app.
@@ -78,7 +99,7 @@ class ReplayLedger:
         """Remembers an action that demonstrably moved the app to a new screen."""
         if not from_phash or not to_phash or from_phash == to_phash:
             return
-        if getattr(action, "type", None) not in REPLAYABLE_ACTIONS:
+        if action.type not in REPLAYABLE_ACTIONS:
             return
         if self._match(from_phash) is not None:
             return
@@ -106,15 +127,14 @@ class ReplayLedger:
 def is_replayable(step: ReplayStep, goal_text: str) -> bool:
     """Whether a remembered step is one this scenario actually asked for.
 
-    A tap is not safe by virtue of being a tap — the same gesture submits an
-    order, deletes an account or grants a permission. So a step only replays
-    when this scenario's own instructions name what it touches: the text it
-    types, or the label of the control it taps. Anything the scenario never
-    mentions is somebody else's path, and planning takes over there.
+    A tap is not safe by virtue of being a tap. The same gesture can submit a
+    change, delete data, or grant a permission. A step only replays when this
+    scenario's own instructions name what it touches. They must name the text
+    it types or the label of the control it taps. Planning takes over for
+    anything the scenario never mentions.
     """
     action = step.action
-    action_type = getattr(action, "type", None)
-    if action_type not in REPLAYABLE_ACTIONS:
+    if action.type not in REPLAYABLE_ACTIONS:
         return False
 
     goal = goal_text.lower()
@@ -122,8 +142,8 @@ def is_replayable(step: ReplayStep, goal_text: str) -> bool:
     if isinstance(action, TypeAction):
         return (action.text or "").lower() in goal
 
-    if action_type == ActionType.KEY_EVENT:
-        return getattr(action, "key", None) in REPLAYABLE_KEYCODES
+    if isinstance(action, KeyEventAction):
+        return action.key in REPLAYABLE_KEYCODES
 
     label = (step.target_label or "").strip().lower()
     return bool(label) and label in goal
@@ -131,9 +151,9 @@ def is_replayable(step: ReplayStep, goal_text: str) -> bool:
 
 def target_label(action: Action, elements) -> str:
     """The visible text of the element an action targets, if it has one."""
-    coordinates = getattr(action, "coordinates", None)
-    if coordinates is None or not elements:
+    if not isinstance(action, PLACED_ACTIONS) or not elements:
         return ""
+    coordinates = action.coordinates
     for element in elements:
         box = element.bounding_box
         if (
@@ -156,9 +176,9 @@ def replay_known_path(
 ) -> int:
     """Re-executes transitions already worked out, without consulting the planner.
 
-    Each replayed action is verified against the screen it produced before; the
-    first disagreement hands control back to planning, so a changed app costs
-    one wasted tap rather than a wrong result.
+    Each replayed action is verified against the screen it produced before.
+    The first disagreement hands control back to planning. A changed app then
+    costs one wasted tap rather than a wrong result.
     """
     if not ledger or not len(ledger):
         return 0

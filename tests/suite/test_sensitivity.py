@@ -13,6 +13,7 @@ from yewo.testing.sensitivity import (
     RECORDING,
     Sensitivity,
     declared_for,
+    exposure_policy_refused,
     recording_refused,
 )
 
@@ -113,7 +114,7 @@ class RecordingPolicyTests(unittest.TestCase):
 
         self.assertIsNotNone(refused)
         self.assertIn("password", refused)
-        self.assertIn("--record-secrets", refused)
+        self.assertIn("--allow-secret-exposure", refused)
 
     def test_the_refusal_names_what_was_declared_and_not_its_value(self):
         refused = recording_refused(
@@ -126,5 +127,22 @@ class RecordingPolicyTests(unittest.TestCase):
         self.assertIsNone(
             recording_refused(
                 journey(secrets={"password": "password123"}), opted_in=True
+            )
+        )
+
+
+class ModelExposurePolicyTests(unittest.TestCase):
+    def test_non_hidden_policy_requires_the_explicit_gate(self):
+        refused = exposure_policy_refused(
+            journey(secret_displays={"password": "show"}), opted_in=False
+        )
+
+        self.assertIn("password", refused)
+        self.assertIn("--allow-secret-exposure", refused)
+
+    def test_hidden_policy_needs_no_unsafe_opt_in(self):
+        self.assertIsNone(
+            exposure_policy_refused(
+                journey(secret_displays={"password": "hide"}), opted_in=False
             )
         )

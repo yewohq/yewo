@@ -4,28 +4,28 @@ Guessing at secrets from quoted literals masked button labels and screen names
 far more often than credentials. A journey declares its values instead:
 
     env:
-      email: qa.tester@example.com
-      password:
-        value: ${YEWO_TEST_PASSWORD}
+      query: quarterly report
+      access_code:
+        value: ${YEWO_TEST_ACCESS_CODE}
         secret: true
 
 A plain value is ordinary; mark one secret where it is declared. A top-level
 `secrets:` list of names does the same thing for values declared plainly.
 
 `${VAR}` reads from the environment, so a real credential never has to live in
-a file that gets committed. Journey text refers to a value as `{{email}}`.
+a file that gets committed. Journey text refers to a value as `{{query}}`.
 
 An entry may also mark itself as one this app refuses:
 
     env:
-      rejected_password:
+      rejected_code:
         value: abc
         secret: true
         refused: true
 
 An entry says nothing by default, which is almost every entry: the value is
 meant to work. `refused: true` is a fact about the app that no reading of the
-value could find, such as a password under its own length floor. A scenario
+value could find, such as a code under its own length floor. A scenario
 names the value, and the declaration answers for it, so nothing has to assert
 a refusal it cannot support.
 """
@@ -35,10 +35,13 @@ import os
 import re
 from typing import Dict, FrozenSet, Tuple
 
-PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}")
-"""A name in journey text or in a step, such as `{{actors.editor.email}}`.
+from yewo.utils.secrets import SecretDisplay
+from yewo.agent.run.postconditions import ValueVerificationPolicy
 
-A dot reaches inside a declared account. One namespace then covers every
+PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}")
+"""A name in journey text or in a step, such as `{{actors.reviewer.workspace}}`.
+
+A dot reaches inside a declared actor. One namespace then covers every
 value a scenario may name, so nothing has to know where a name came from.
 """
 ENV_REFERENCE = re.compile(r"\$\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}")
@@ -49,8 +52,8 @@ logger = logging.getLogger(__name__)
 def _expand(name: str, value: str) -> str:
     """Resolves ${VAR} from the environment, refusing to run without it.
 
-    Substituting an empty string would turn a missing password into a
-    blank-password test and report the app as broken for failing it.
+    Substituting an empty string would turn a missing value into a blank-value
+    test and could report the app as broken for failing it.
     """
     missing = [
         match.group(1)
@@ -70,7 +73,16 @@ def _entry(name: str, declared) -> Tuple[str, bool, bool]:
     if not isinstance(declared, dict):
         return _expand(name, str(declared)), False, False
 
-    unexpected = set(declared) - {"value", "secret", "refused"}
+    unexpected = set(declared) - {
+        "value",
+        "secret",
+        "refused",
+        "redaction",
+        "verify_as",
+        "normalizers",
+        "visible_suffix",
+        "masked_length",
+    }
     if unexpected:
         raise ValueError(
             f"env.{name} has unsupported key(s): " + ", ".join(sorted(unexpected))
@@ -113,6 +125,68 @@ def resolve(data: dict) -> Tuple[Dict[str, str], Dict[str, str], FrozenSet[str]]
 
     secrets = {name: values[name] for name in sorted(secret_names) if values[name]}
     return values, secrets, frozenset(refused)
+
+
+def secret_displays(data: dict) -> Dict[str, str]:
+    """Model-facing display policy for each secret declared in this block."""
+    declared = data.get("env") or {}
+    listed = data.get("secrets") or []
+    if isinstance(listed, str):
+        listed = [listed]
+    displays = {str(name): SecretDisplay.HIDE.value for name in listed}
+    for name, entry in declared.items():
+        if not isinstance(entry, dict) or not entry.get("secret", False):
+            continue
+        raw_display = entry.get("redaction", SecretDisplay.HIDE.value)
+        try:
+            displays[str(name)] = SecretDisplay(raw_display).value
+        except ValueError as exc:
+            choices = ", ".join(display.value for display in SecretDisplay)
+            raise ValueError(
+                f"env.{name}.redaction must be one of: {choices}."
+            ) from exc
+    return displays
+
+
+def verification_policies(data: dict) -> Dict[str, ValueVerificationPolicy]:
+    """Local comparison policy for every structured declared value."""
+    declared = data.get("env") or {}
+    policies: Dict[str, ValueVerificationPolicy] = {}
+    for name, entry in declared.items():
+        if not isinstance(entry, dict):
+            continue
+        mode = str(entry.get("verify_as", "auto"))
+        if mode not in ("auto", "exact", "normalized", "masked"):
+            raise ValueError(
+                f"env.{name}.verify_as must be one of: auto, exact, normalized, masked."
+            )
+        normalizers = entry.get("normalizers", [])
+        if not isinstance(normalizers, list):
+            raise ValueError(f"env.{name}.normalizers must be a list.")
+        policy = ValueVerificationPolicy(
+            mode=mode,
+            normalizers=tuple(normalizers),
+            visible_suffix=entry.get("visible_suffix", 0),
+            masked_length=entry.get("masked_length"),
+        )
+        if mode == "exact" and (
+            policy.normalizers or policy.visible_suffix or policy.masked_length is not None
+        ):
+            raise ValueError(
+                f"env.{name} sets comparison options but verify_as is exact."
+            )
+        if mode == "normalized" and not policy.normalizers:
+            raise ValueError(
+                f"env.{name}.normalizers must not be empty when verify_as is normalized."
+            )
+        if mode not in ("auto", "masked") and (
+            policy.visible_suffix or policy.masked_length is not None
+        ):
+            raise ValueError(
+                f"env.{name} sets masking options but verify_as is not auto or masked."
+            )
+        policies[str(name)] = policy
+    return policies
 
 
 def substitute(text: str, values: Dict[str, str]) -> str:

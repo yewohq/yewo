@@ -16,7 +16,7 @@ whoever writes it down.
 """
 
 from enum import Enum
-from typing import Callable, List, Literal, Optional, Protocol
+from typing import Callable, List, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -180,12 +180,28 @@ class CallRow(BaseModel):
         )
 
 
+class StepSource(str, Enum):
+    """Who decided this step, which is what a reader needs to weigh it.
+
+    A replayed step was not planned and its screen was not perceived by a
+    model. A cached step was not even planned in this process. The three
+    are different evidence, and one word for all of them would hide that.
+    """
+
+    MODEL = "model"
+    REPLAY = "replay"
+    CACHE = "cache"
+
+    def __str__(self) -> str:
+        return self.value
+
+
 class StepRecord(BaseModel):
     """One turn of the loop: what was seen, decided, aimed at and done."""
 
     step_uuid: str = Field(default_factory=new_uuid)
     n: int = Field(description="Which step of the scenario this was, from 1.")
-    source: Literal["model", "replay"] = "model"
+    source: StepSource = StepSource.MODEL
     screen_name: str = ""
     phash: Optional[str] = None
 
@@ -232,7 +248,14 @@ class StepLog:
         return len(self.records)
 
     def open(self, n: int) -> StepRecord:
-        """Starts the record for step `n`, counted from one."""
+        """Starts the record for step `n`, counted from one.
+
+        The record already open at `n` is returned rather than a second
+        one. The loop opens a step before it knows whether a saved path
+        or a planner fills it. Both fill it by asking for it again.
+        """
+        if self.records and self.records[-1].n == n:
+            return self.records[-1]
         step_record = StepRecord(n=n)
         self.records.append(step_record)
         return step_record
@@ -259,8 +282,8 @@ class StepLog:
         """Keeps all five of the planner's prose fields, not the reasoning alone.
 
         The screen name is prose too. A model names a screen from what is on
-        it. So a screen that greets an account by name, or shows a value in
-        its title, puts that value in the name it is given.
+        it. A screen can put app data in its title or greeting. That value then
+        appears in the name the model gives the screen.
         """
         step = self.current
         if step is None:
@@ -343,6 +366,43 @@ class StepLog:
             observation=self._scrub(observation),
             error=self._scrub(observation) or None,
         )
+
+    def record_replayed_transition(
+        self,
+        n: int,
+        source: StepSource,
+        screen_name: str,
+        phash: Optional[str],
+        action: PlannedAction,
+        description: str,
+        target: Optional[str],
+        success: bool,
+        observation: Optional[str],
+        took_ms: float,
+    ) -> StepRecord:
+        """Writes the record for a step nothing planned.
+
+        A replayed step has no decision, because no model saw the screen.
+        It has everything else, so a reader counts it, places it in the
+        walk and sees what it aimed at. Left out of the record it would be
+        a tap the report cannot account for.
+        """
+        step = self.open(n)
+        step.source = source
+        step.screen_name = self._scrub(screen_name)
+        step.phash = phash
+        step.action = ActionRecord.of(
+            action,
+            self._scrub(description),
+            self._scrub(target) or None,
+            self._scrub(action.reason) or None,
+        )
+        said = self._scrub(observation)
+        step.outcome = OutcomeRecord(
+            success=success, observation=said, error=None if success else said or None
+        )
+        step.act_ms = took_ms
+        return step
 
     def record_action_duration(self, duration_ms: float) -> None:
         step = self.current

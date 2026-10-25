@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from yewo.agent.device.platform import Platform
-from yewo.agent.plan.planner import GROUNDING_COORDINATES
 from yewo.app_discovery import resolve_app_path
 from yewo.config import SETTINGS, Config
+from yewo.defaults import DEFAULT_GROUNDING
 
 from .runner import YewoTestRunner
 from .suite import Workflow
@@ -21,8 +21,14 @@ from .suite import Workflow
 logger = logging.getLogger(__name__)
 
 
-def as_bool(raw: Any) -> bool:
-    """A setting read as a flag, whichever spelling a file or a variable used."""
+def as_bool(raw: Any, unset: bool = False) -> bool:
+    """A setting read as a flag, whichever spelling a file or a variable used.
+
+    `unset` is what a setting nobody wrote means. Most default to off. One
+    that is on until somebody says otherwise passes True.
+    """
+    if raw is None:
+        return unset
     if isinstance(raw, bool):
         return raw
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
@@ -61,12 +67,19 @@ def runner_for(
         fast_model=setting("fast_model", args.fast_model),
         record_session=(False if args.no_record else as_bool(setting("record", None))),
         replay=bool(args.replay),
+        # The flag only ever says no, so a file may say no as well, and
+        # neither saying anything means yes.
+        durable_replay=args.durable_replay
+        and as_bool(setting("durable_replay", None), True),
+        update_paths=bool(args.update_paths),
         reuse_app=bool(args.reuse_app),
         keep_app=bool(args.keep_app),
-        grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
+        grounding=setting("grounding", args.grounding) or DEFAULT_GROUNDING,
         journey_file=filepath,
         workflow=workflow.name or "",
         locked=bool(args.locked),
         persist_inputs=not bool(args.no_persist_inputs),
-        record_secrets=bool(args.record_secrets),
+        allow_secret_exposure=as_bool(
+            setting("allow_secret_exposure", args.allow_secret_exposure)
+        ),
     )

@@ -31,6 +31,7 @@ from yewo.defaults import (
     DEFAULT_DEVICE,
     DEFAULT_GROUNDING,
     DEFAULT_RECORD,
+    DEFAULT_DURABLE_REPLAY,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL,
     DEFAULT_OUTPUT_DIR,
@@ -76,6 +77,8 @@ BUILT_IN: dict[str, Any] = {
     "headless": False,
     "grounding": DEFAULT_GROUNDING,
     "record": DEFAULT_RECORD,
+    "durable_replay": DEFAULT_DURABLE_REPLAY,
+    "allow_secret_exposure": False,
 }
 
 

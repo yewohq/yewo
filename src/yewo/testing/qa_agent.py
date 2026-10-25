@@ -1,8 +1,4 @@
-"""
-QAAgent — testing layer built on top of DeviceAgent.
-Injects QAPlanner per-scenario and collects QA outputs via the step hook.
-Returns ScenarioReport with all verifications, detected issues, and status.
-"""
+"""The testing layer around DeviceAgent."""
 
 import logging
 import time
@@ -38,17 +34,19 @@ from yewo.testing.qa_planner import QAPlanner, QAStepResponse
 from yewo.errors import Cause, cause_of
 from yewo.testing import steps, taxonomy
 from yewo.testing.judge import transitions
-
-from yewo.agent.actuation.actions import WaitAction
+from yewo.testing.judge.screen_audits import LiveScreenAudits
 
 logger = logging.getLogger(__name__)
 
-LAUNCH_RECHECK_WAIT = 1.5
-
 
 def _verdict_inputs(
-    run_result, stop_reason, qa_outputs, assessments, test_case,
-    security_rules, all_findings,
+    run_result,
+    stop_reason,
+    qa_outputs,
+    assessments,
+    test_case,
+    security_rules,
+    all_findings,
 ) -> VerdictInputs:
     """What the judge was given, kept so the verdict can be reached again.
 
@@ -71,63 +69,8 @@ def _verdict_inputs(
             ReceiptRecord(capability=receipt.capability, confirmed=receipt.confirmed)
             for receipt in run_result.capability_receipts
         ],
+        postcondition_verifications=list(run_result.postcondition_verifications),
     )
-
-
-def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
-    """Withdraws a terminal verdict taken before the app may have finished drawing.
-
-    A launching app shows an empty screen for a moment, which reads as both
-    crashed and infeasible. One more step costs little. A false crash report
-    costs a red build.
-
-    The response's own action has to be withdrawn too. It is almost always
-    `done`, and the run loop acts on it the moment this returns. Clearing the
-    verdict alone would change the label and nothing else.
-
-    Returns whether a verdict was withdrawn.
-    """
-    if not first_look:
-        return False
-
-    deferred = False
-    if any(i.issue_type == "crash_screen" for i in assessment.detected_issues):
-        logger.warning("Crash screen on the first look — re-checking next step.")
-        assessment.detected_issues = [
-            i for i in assessment.detected_issues if i.issue_type != "crash_screen"
-        ]
-        deferred = True
-    if not step_response.is_scenario_feasible:
-        logger.warning("Infeasible on the first look — re-checking next step.")
-        step_response.is_scenario_feasible = True
-        deferred = True
-
-    if deferred:
-        # Whatever the action was, it was chosen from the same screen the
-        # verdict came from. Acting on it would trust a reading we just said
-        # not to trust — and `done` would end the run before the second look.
-        step_response.action = WaitAction(
-            duration=LAUNCH_RECHECK_WAIT,
-            reason="Looking again before judging a screen the app may still be drawing.",
-        )
-    return deferred
-
-
-def _seen_at(assessments, step: int) -> None:
-    """Records which step each issue was found after.
-
-    An auditor is shown one screen and does not know where in a walk it
-    sits, so the run stamps it. Without this a report can only match on
-    the screen name. That finds the first visit to a screen rather than
-    the visit that saw the defect.
-
-    An issue already stamped keeps its step. A closing look repeats what
-    an earlier look returned, and the earlier step is the true one.
-    """
-    for assessment in assessments:
-        for issue in assessment.detected_issues:
-            if issue.step is None:
-                issue.step = step
 
 
 class QAAgent:
@@ -136,6 +79,13 @@ class QAAgent:
     One QAAgent serves every scenario in a journey, so the model clients are
     built once. Each scenario gets its own QAPlanner and its own QAAuditor,
     because each carries state that must not reach the next scenario.
+    """
+
+    _trace_store = None
+    """Where a judged path is kept between runs.
+
+    A class default, so an agent built without __init__ still answers
+    the question a scenario asks of it. None is durable replay off.
     """
 
     def __init__(
@@ -151,8 +101,13 @@ class QAAgent:
         fast_model: str = None,
         replay_ledger: Optional[ReplayLedger] = None,
         grounding: str = GROUNDING_COORDINATES,
+        trace_store=None,
+        cache_affinity: Optional[str] = None,
     ):
         self._grounding = grounding
+        # Where a judged path is kept between runs. None turns durable
+        # replay off, which is what --no-replay gives this.
+        self._trace_store = trace_store
 
         self._device_agent = DeviceAgent(
             model=model,
@@ -162,6 +117,8 @@ class QAAgent:
             replay_ledger=replay_ledger,
             grounding=grounding,
         )
+        self._device_agent.llm.set_cache_affinity(cache_affinity)
+        self._device_agent.fast_llm.set_cache_affinity(cache_affinity)
         self._fast_llm: LLMClient = self._device_agent.fast_llm
 
     def _step_budget(self, test_case: GeneratedTestCase) -> int:
@@ -188,7 +145,6 @@ class QAAgent:
         start_time = time.time()
 
         qa_outputs: List[QAStepResponse] = []
-        assessments: List[ScreenAssessment] = []
         stop_reason: dict = {"value": None}  # mutable so the nested hook can write out
 
         # Only what one screen can settle is put to the auditor. Asked whether
@@ -200,40 +156,22 @@ class QAAgent:
             scrubber=self._device_agent.scrubber,
         )
 
-        audit_session = ScreenAuditSession(auditor)
+        replay = self._build_replay(test_case)
+        screen_audits = LiveScreenAudits(ScreenAuditSession(auditor))
 
         def step_hook(step_response: DeviceStepResponse, snapshot) -> Optional[bool]:
             if not isinstance(step_response, QAStepResponse):
                 return None
 
             qa_outputs.append(step_response)
-            # The screen is audited by something that was not told the plan, so
-            # a verdict here is capable of contradicting the action above it.
-            fresh = audit_session.audit_snapshot(snapshot)
-            for assessment in fresh:
-                assessment.screen_name = (
-                    assessment.screen_name or step_response.current_screen
-                )
-            _seen_at(fresh, len(qa_outputs))
-            assessments.extend(fresh)
-
-            if fresh and _defer_first_look(
-                step_response, fresh[-1], len(qa_outputs) == 1
-            ):
-                # The withdrawal promised another look; this is what keeps it.
-                audit_session.request_repeat_audit()
+            screen_audits.label_latest(step_response.current_screen)
+            if screen_audits.apply_launch_recheck(step_response):
                 return None
 
-            if any(
-                issue.issue_type == "crash_screen"
-                for assessment in fresh
-                for issue in assessment.detected_issues
-            ):
-                logger.error("App crash screen detected — stopping scenario.")
-                stop_reason["value"] = "App crashed: crash screen detected."
-                return False
-
             if not step_response.is_scenario_feasible:
+                if len(qa_outputs) == 1:
+                    screen_audits.defer_first_infeasible(step_response)
+                    return None
                 logger.warning(
                     "Scenario flagged infeasible: %s",
                     self._device_agent.scrubber.scrub(step_response.infeasibility_reason),
@@ -276,16 +214,19 @@ class QAAgent:
             grounding=self._grounding,
         )
 
-        replay = self._device_agent.replay_ledger
-        # Replay skips perception and auditing on the screens it walks, so a
-        # cell whose claims apply mid-navigation must not use it.
-        audits_every_screen = taxonomy.audits_every_screen(
-            test_case.category, test_case.scenario_type
+        in_run_ledger = self._device_agent.replay_ledger
+        # The in-run ledger walks screens without reading them. A security
+        # rule becomes required only once a screen reported it applicable,
+        # so a screen it skipped takes that rule out of the required set
+        # and a violation there passes. Durable replay audits what it
+        # arrives at, which is why only this one is dropped.
+        audits_every_screen = taxonomy.must_audit_every_screen(
+            test_case.category, test_case.scenario_type, security_rules
         )
         if audits_every_screen:
-            # Replayed screens are never perceived or audited, which is the
-            # whole point of these scenarios.
             self._device_agent.replay_ledger = None
+
+        self._device_agent.durable_replay = replay
 
         step_budget = self._step_budget(test_case)
         logger.info(
@@ -311,28 +252,31 @@ class QAAgent:
                     perception=perception,
                     session_dir=session_dir,
                     session_trail=session_trail,
+                    observation_hook=screen_audits.observe,
+                    before_action_hook=screen_audits.before_action,
                     step_hook=step_hook,
                     planner_override=qa_planner,
                     max_steps=step_budget,
                     setup=test_case.setup,
                 )
         finally:
-            self._device_agent.replay_ledger = replay
+            self._device_agent.replay_ledger = in_run_ledger
 
-        # Nothing ever leaves the screen a scenario ended on, so it is read here.
-        last = audit_session.finalize_audit()
-        _seen_at(last, len(qa_outputs))
-        assessments.extend(last)
+        # Nothing ever leaves the screen a scenario ended on, so read it here.
+        screen_audits.finalize()
+        stop_reason["value"] = stop_reason["value"] or screen_audits.stop_reason
 
-        return self._build_report(
+        report = self._build_report(
             test_case=test_case,
             run_result=run_result,
             qa_outputs=qa_outputs,
-            assessments=assessments,
+            assessments=screen_audits.assessments,
             stop_reason=stop_reason["value"],
             duration=time.time() - start_time,
             security_rules=security_rules,
         )
+        self._save_trace(test_case, replay, report)
+        return report
 
     def _build_report(
         self,
@@ -343,6 +287,7 @@ class QAAgent:
         stop_reason: Optional[str],
         duration: float,
         security_rules: List[str],
+        settle_transitions: bool = True,
     ) -> ScenarioReport:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
@@ -371,13 +316,14 @@ class QAAgent:
                 all_issues.append(issue)
                 logger.info(
                     "QA issue [%s/%s] on '%s': %s",
-                    issue.severity, issue.issue_type,
-                    assessment.screen_name, issue.description,
+                    issue.severity,
+                    issue.issue_type,
+                    assessment.screen_name,
+                    issue.description,
                 )
 
-        all_verifications.extend(
-            self._settled_transitions(test_case, assessments)
-        )
+        if settle_transitions:
+            all_verifications.extend(self._settled_transitions(test_case, assessments))
 
         status, failure_reason, cause = self._determine_status(
             run_result=run_result,
@@ -404,10 +350,16 @@ class QAAgent:
             rule_verifications=all_verifications,
             detected_issues=all_issues,
             steps=list(run_result.steps),
+            postcondition_verifications=list(run_result.postcondition_verifications),
             failure_reason=scrub(failure_reason or "") or None,
             verdict_inputs=_verdict_inputs(
-                run_result, stop_reason, qa_outputs, assessments,
-                test_case, security_rules, all_findings,
+                run_result,
+                stop_reason,
+                qa_outputs,
+                assessments,
+                test_case,
+                security_rules,
+                all_findings,
             ),
         )
 
@@ -443,6 +395,34 @@ class QAAgent:
                 reportable(exc),
             )
             return []
+
+    def _build_replay(self, test_case: GeneratedTestCase):
+        """The path an earlier run saved for this scenario, if there is one.
+
+        None when durable replay is off, or when nothing saved one. None
+        too when this run's identity does not match the path's.
+
+        The path supplies actions only. This run's screen hook independently
+        earns all evidence used by its verdict.
+        """
+        if self._trace_store is None:
+            return None
+
+        identity = self._trace_store.resolve_identity(test_case)
+        if identity is None:
+            return None
+
+        return self._trace_store.build_replay(identity)
+
+    def _save_trace(self, test_case, replay, report) -> None:
+        """Writes the path this scenario walked, once it has been judged.
+
+        Only after a pass. A path to a failure is a path to a result already
+        known, and walking it again would spend a run reaching it.
+        """
+        if self._trace_store is None or replay is None:
+            return
+        self._trace_store.save_trace(test_case, replay, report.status)
 
     def _determine_status(
         self,

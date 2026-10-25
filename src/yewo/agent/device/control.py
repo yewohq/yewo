@@ -51,6 +51,15 @@ def _listed_udid(device_name: str) -> Optional[str]:
 class DeviceControl:
     """Wrapper for executing gesture actions and capturing state from mobile devices."""
 
+    screen_width = 0
+    screen_height = 0
+    """The size the driver reported, once it has answered.
+
+    Class-level so the field always exists. Zero means nothing has asked
+    the device yet. A caller that keys on size reads that as unknown,
+    rather than as a device one pixel wide.
+    """
+
     def __init__(
         self,
         device_name: str,
@@ -307,6 +316,11 @@ class DeviceControl:
         else:
             self.__focus_field(x, y, "TYPE")
             self.driver.switch_to.active_element.send_keys(text)
+        return self.focus.value()
+
+    def read_focused_field(self):
+        """Read the active field after the app has settled."""
+        return self.focus.reading()
 
     def clear(self, x, y):
         try:

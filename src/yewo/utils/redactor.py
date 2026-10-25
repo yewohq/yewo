@@ -1,14 +1,12 @@
 """Masking the values a journey declared sensitive, in text Yewo persists.
 
-A journey names its values in `env` and says which of them are secret. That
-declaration is the only thing Yewo masks. Guessing at a value from its shape,
-or from the label beside it, hid text nobody asked to hide and made reports
-unreadable where the value was ordinary.
+A journey names its values in `env` and says which are secret. Yewo masks only
+that declared content. Guessing from a value's shape hid ordinary text and
+made reports unreadable.
 
-Nothing here runs on what the planner reads. It sees the screen as it is: it
-has to recognise the field captioned "Password" to type into it, and it cannot
-audit a rule about an exposed card number while card numbers are hidden from
-it.
+This module owns persisted text. Model-bound placeholder substitution and
+screenshot masking are separate transport operations owned by SecretScrubber
+and RedactedImages.
 """
 
 
@@ -22,8 +20,8 @@ def safe_text(text, scrubber=None) -> str:
 def scrub_elements(elements, scrubber):
     """Masks declared secrets in detected element text, for persisted copies only.
 
-    Never call this on elements headed for the planner. It reads the screen to
-    navigate it and to audit it; both break if the text is altered first.
+    Model-bound elements are masked when their rendered prompt is assembled.
+    This mutation remains restricted to persisted copies.
     """
     for element in elements or []:
         if element.text:

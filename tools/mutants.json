@@ -248,7 +248,7 @@
     "name": "an-impossible-run-status-is-accepted",
     "owner": "gate",
     "path": "src/yewo/agent/run/outcomes.py",
-    "find": "RunStatus = Literal[\n    \"goal_reached\", \"step_limit\", \"loop_detected\", \"hook_stop\", \"exception\"\n]",
+    "find": "RunStatus = Literal[\n    \"goal_reached\",\n    \"step_limit\",\n    \"loop_detected\",\n    \"hook_stop\",\n    \"postcondition_stop\",\n    \"exception\",\n]",
     "replace": "RunStatus = str"
   },
   {
@@ -339,8 +339,8 @@
     "name": "an-audit-is-asked-again-without-end",
     "owner": "gate",
     "path": "src/yewo/testing/judge/qa_auditor.py",
-    "find": "            assessment = self._audit_screen_and_normalize(message)\n        self._scrub_assessment(assessment)",
-    "replace": "            while not self._any_listed(assessment):\n                assessment = self._audit_screen_and_normalize(message)\n        self._scrub_assessment(assessment)"
+    "find": "            assessment = self._audit_screen_and_normalize(message)\n        assessment.sensitive_findings.extend(",
+    "replace": "            while not self._any_listed(assessment):\n                assessment = self._audit_screen_and_normalize(message)\n        assessment.sensitive_findings.extend("
   },
   {
     "name": "an-audit-that-answered-is-asked-again",

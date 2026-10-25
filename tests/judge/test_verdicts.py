@@ -6,6 +6,18 @@ from fakes import walk
 
 from yewo.testing.report import infrastructure
 from types import SimpleNamespace
+from yewo.agent.memory.history import AgentHistory
+from yewo.agent.run.outcomes import DeviceRunResult
+
+
+def run_result(status="goal_reached", reason=None, cause=None):
+    return DeviceRunResult(
+        status=status,
+        steps_executed=0,
+        failure_reason=reason,
+        history=AgentHistory(),
+        cause=cause,
+    )
 
 
 class VerdictTests(unittest.TestCase):
@@ -15,13 +27,11 @@ class VerdictTests(unittest.TestCase):
         return QAAgent.__new__(QAAgent)
 
     def _result(self, status="goal_reached", reason=None, cause=None):
-        return SimpleNamespace(status=status, failure_reason=reason, cause=cause)
+        return run_result(status, reason, cause)
 
     def _output(self, feasible=True):
         """What the planner answers: whether it can proceed."""
-        return SimpleNamespace(
-            is_scenario_feasible=feasible, infeasibility_reason=None
-        )
+        return SimpleNamespace(is_scenario_feasible=feasible, infeasibility_reason=None)
 
     def _assessment(self):
         """What the auditor answers: rules and defects, never the plan's goal."""
@@ -122,9 +132,7 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual((status, reason), ("PASSED", None))
 
     def test_harness_exception_is_distinct_from_app_failure(self):
-        status, _reason = self._verdict(
-            run_result=self._result("exception", "connection refused")
-        )
+        status, _reason = self._verdict(run_result=self._result("exception", "connection refused"))
 
         self.assertEqual(status, "ERROR")
 
@@ -136,8 +144,8 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(aggregate_journey_status(1, 1), "FAILED")
 
 
-class FirstLookTests(unittest.TestCase):
-    """Verdicts read off a screen that may still be painting are withdrawn once."""
+class PlannerRecheckTests(unittest.TestCase):
+    """A first planner verdict can still be retried while the app paints."""
 
     def _response(self, feasible=True):
         return SimpleNamespace(
@@ -145,72 +153,19 @@ class FirstLookTests(unittest.TestCase):
             action=SimpleNamespace(type="done", reason="stop"),
         )
 
-    def _assessment(self, crash=False):
-        from yewo.testing.models import QAIssue
-
-        issues = []
-        if crash:
-            issues.append(
-                QAIssue(
-                    issue_type="crash_screen",
-                    severity="critical",
-                    description="Blank screen",
-                    current_screen="Blank Screen",
-                )
-            )
-        return SimpleNamespace(detected_issues=issues)
-
-    def test_a_crash_on_the_first_look_is_withdrawn(self):
-        from yewo.testing.qa_agent import _defer_first_look
-
-        response, assessment = self._response(), self._assessment(crash=True)
-
-        self.assertTrue(_defer_first_look(response, assessment, first_look=True))
-        self.assertEqual(assessment.detected_issues, [])
-        self.assertEqual(response.action.type, "wait")
-
-    def test_a_crash_seen_later_stands(self):
-        from yewo.testing.qa_agent import _defer_first_look
-
-        response, assessment = self._response(), self._assessment(crash=True)
-
-        self.assertFalse(_defer_first_look(response, assessment, first_look=False))
-        self.assertEqual(len(assessment.detected_issues), 1)
-
     def test_infeasibility_on_the_first_look_is_withdrawn(self):
-        from yewo.testing.qa_agent import _defer_first_look
+        from unittest.mock import Mock
 
-        response, assessment = self._response(feasible=False), self._assessment()
+        from yewo.testing.judge.screen_audits import LiveScreenAudits
 
-        self.assertTrue(_defer_first_look(response, assessment, first_look=True))
-        self.assertTrue(response.is_scenario_feasible)
-        self.assertEqual(response.action.type, "wait")
+        session = Mock()
+        response = self._response(feasible=False)
+        LiveScreenAudits(session).defer_first_infeasible(response)
 
-    def test_infeasibility_seen_later_stands(self):
-        from yewo.testing.qa_agent import _defer_first_look
-
-        response, assessment = self._response(feasible=False), self._assessment()
-
-        self.assertFalse(_defer_first_look(response, assessment, first_look=False))
-        self.assertFalse(response.is_scenario_feasible)
-
-    def test_a_healthy_first_look_is_left_alone(self):
-        from yewo.testing.qa_agent import _defer_first_look
-
-        response, assessment = self._response(), self._assessment()
-
-        self.assertFalse(_defer_first_look(response, assessment, first_look=True))
-        self.assertEqual(response.action.type, "done")
-
-    def test_withdrawing_a_verdict_replaces_the_done_that_came_with_it(self):
-        """Clearing the verdict alone changes the label. The loop still acts on `done`."""
         from yewo.agent.actuation.actions import ActionType
-        from yewo.testing.qa_agent import _defer_first_look
 
-        response, assessment = self._response(), self._assessment(crash=True)
-
-        _defer_first_look(response, assessment, first_look=True)
-
+        session.request_repeat_audit.assert_called_once_with()
+        self.assertTrue(response.is_scenario_feasible)
         self.assertEqual(response.action.type, ActionType.WAIT)
         self.assertGreater(response.action.duration, 0)
 
@@ -233,16 +188,12 @@ class VerificationAggregationTests(unittest.TestCase):
         from yewo.testing.qa_agent import QAAgent
 
         values = {
-            "run_result": SimpleNamespace(status="goal_reached", failure_reason=None),
+            "run_result": run_result(),
             "stop_reason": None,
             "all_verifications": [],
             "all_issues": [],
-            "qa_outputs": [
-                SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)
-            ],
-            "assessments": [
-                SimpleNamespace(rule_verifications=[], detected_issues=[])
-            ],
+            "qa_outputs": [SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)],
+            "assessments": [SimpleNamespace(rule_verifications=[], detected_issues=[])],
             "required_outcomes": [],
             "security_rules": [],
         }
@@ -298,9 +249,7 @@ class VerificationAggregationTests(unittest.TestCase):
     def test_a_rule_passed_where_it_could_not_apply_is_not_evidence(self):
         status, reason = self._verdict(
             required_outcomes=["Order is confirmed"],
-            all_verifications=[
-                self._verification("expected:0", "passed", applicable=False)
-            ],
+            all_verifications=[self._verification("expected:0", "passed", applicable=False)],
         )
 
         self.assertEqual(status, "UNVERIFIED")
@@ -331,9 +280,7 @@ class SecurityScopingTests(VerificationAggregationTests):
     def test_a_rule_applicable_but_never_passed_is_required(self):
         status, reason = self._verdict(
             security_rules=["Card is masked on checkout"],
-            all_verifications=[
-                self._verification("security:0", "untested", applicable=True)
-            ],
+            all_verifications=[self._verification("security:0", "untested", applicable=True)],
         )
 
         self.assertEqual(status, "UNVERIFIED")
@@ -393,7 +340,9 @@ class SecurityCoverageTests(unittest.TestCase):
             self._scenario([("Card masked", "security:1", "passed", True)]),
         ]
 
-        self.assertEqual(self._unevidenced(["Password masked", "Card masked"], scenarios), ["Password masked"])
+        self.assertEqual(
+            self._unevidenced(["Password masked", "Card masked"], scenarios), ["Password masked"]
+        )
 
     def test_a_pass_where_the_rule_could_not_apply_is_not_coverage(self):
         scenarios = [self._scenario([("Card masked", "security:0", "passed", False)])]
@@ -408,7 +357,6 @@ class SecurityCoverageTests(unittest.TestCase):
 
 class AbortReportingTests(unittest.TestCase):
     """A run that dies before any scenario exists must not look like a pass."""
-
 
     def test_generation_failure_is_reported_as_a_failed_test(self):
         reports = []
@@ -522,13 +470,11 @@ class EvidenceReachesTheGateTests(unittest.TestCase):
         from yewo.testing.qa_agent import QAAgent
 
         status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
-            run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
+            run_result=run_result(),
             stop_reason=None,
             all_verifications=verifications,
             all_issues=[],
-            qa_outputs=[
-                SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)
-            ],
+            qa_outputs=[SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)],
             assessments=[SimpleNamespace(rule_verifications=[], detected_issues=[])],
             required_outcomes=required,
             security_rules=[],

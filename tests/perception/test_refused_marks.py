@@ -34,12 +34,17 @@ class RefusedMarkTests(unittest.TestCase):
     def _type(self):
         from yewo.agent.actuation.actions import TypeMarkAction
 
-        return TypeMarkAction(mark=17, text="4111222233334444", reason="card")
+        return TypeMarkAction(
+            mark=17,
+            target="Card number field",
+            text="4111222233334444",
+            reason="card",
+        )
 
     def _tap(self):
         from yewo.agent.actuation.actions import TapMarkAction
 
-        return TapMarkAction(mark=17, reason="open it")
+        return TapMarkAction(mark=17, target="Card number field", reason="open it")
 
     def test_typing_into_a_refused_mark_never_reaches_the_device(self):
         unresolved, resolved = self._resolve(self._type(), refuses_text=True)
@@ -98,9 +103,7 @@ class RefusalRecordingTests(unittest.TestCase):
                     type="yolo_detection",
                     confidence=0.9,
                     text="",
-                    bounding_box=BoundingBox(
-                        x_min=b[0], y_min=b[1], x_max=b[2], y_max=b[3]
-                    ),
+                    bounding_box=BoundingBox(x_min=b[0], y_min=b[1], x_max=b[2], y_max=b[3]),
                 ),
             )
             for n, b in enumerate(boxes, 1)
@@ -163,7 +166,9 @@ class RefusalRecordingTests(unittest.TestCase):
         from yewo.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
-        refuse_mark(ctx.text_strikes, ctx.refused_marks, "screenA", 99, self._marks_at((10, 20, 30, 40)))
+        refuse_mark(
+            ctx.text_strikes, ctx.refused_marks, "screenA", 99, self._marks_at((10, 20, 30, 40))
+        )
 
         self.assertEqual(ctx.refused_marks, {})
         self.assertEqual(ctx.text_strikes, {})
@@ -324,25 +329,19 @@ class ElementIdentityTests(unittest.TestCase):
             type="yolo_detection",
             confidence=0.9,
             text="",
-            bounding_box=BoundingBox(
-                x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]
-            ),
+            bounding_box=BoundingBox(x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]),
         )
 
     def test_the_same_box_is_the_same_element(self):
         from yewo.agent.grounding.marks import is_same_element
 
-        self.assertTrue(
-            is_same_element(self._element((10, 300, 200, 340)), (10, 300, 200, 340))
-        )
+        self.assertTrue(is_same_element(self._element((10, 300, 200, 340)), (10, 300, 200, 340)))
 
     def test_a_detector_nudging_the_box_is_still_the_same_element(self):
         """Detections wobble by a pixel or two between passes."""
         from yewo.agent.grounding.marks import is_same_element
 
-        self.assertTrue(
-            is_same_element(self._element((11, 301, 201, 341)), (10, 300, 200, 340))
-        )
+        self.assertTrue(is_same_element(self._element((11, 301, 201, 341)), (10, 300, 200, 340)))
 
     def test_a_neighbour_that_merely_touches_is_a_different_element(self):
         """A stacked form puts real fields right against each other.
@@ -352,13 +351,9 @@ class ElementIdentityTests(unittest.TestCase):
         """
         from yewo.agent.grounding.marks import is_same_element
 
-        self.assertFalse(
-            is_same_element(self._element((10, 330, 200, 370)), (10, 300, 200, 340))
-        )
+        self.assertFalse(is_same_element(self._element((10, 330, 200, 370)), (10, 300, 200, 340)))
 
     def test_an_unrelated_box_is_a_different_element(self):
         from yewo.agent.grounding.marks import is_same_element
 
-        self.assertFalse(
-            is_same_element(self._element((10, 900, 200, 940)), (10, 300, 200, 340))
-        )
+        self.assertFalse(is_same_element(self._element((10, 900, 200, 940)), (10, 300, 200, 340)))

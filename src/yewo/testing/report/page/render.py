@@ -43,11 +43,8 @@ SECRET = re.compile(r"\{\{([A-Za-z0-9_.-]+)\}\}")
 OFFER_CLOUD = False
 """Whether the page offers Yewo Cloud at its foot.
 
-Off, because the offer names a thing Yewo cannot do yet. `ReplayLedger`
-holds a run's paths in memory and persists none of them. No step a run
-recorded can be repeated by the next run. Durable replay is A9 in the plan.
-Turn this on with it, and the offer becomes true of the report in front of
-the reader.
+Off because the offer promises shared history, build comparison and pull
+request reporting. Local durable replay provides none of those Cloud features.
 """
 
 CLOUD = "https://yewo.dev/cloud"

@@ -1,9 +1,10 @@
 """Accounting for security rules across a whole journey.
 
-Scoping a rule to the scenarios that can reach it stops a sign-in test being
-failed for not evidencing a checkout rule. Taken alone that leaves a hole: a
-rule no scenario ever reaches disappears quietly. The suite closes it — every
-rule has to be evidenced by at least one scenario, or be named as unevidenced.
+Scoping a rule to the scenarios that can reach it stops one scenario from
+failing because it cannot evidence an unrelated screen rule. Taken alone that
+leaves a hole: a rule no scenario ever reaches disappears quietly. The suite
+closes it. Every rule must be evidenced by at least one scenario or be named as
+unevidenced.
 """
 
 from typing import Iterable, List

@@ -39,11 +39,11 @@ class YewoCLI:
         parser.add_argument(
             "--grounding",
             choices=list(GROUNDINGS),
-            help="How the planner names a target. 'coordinates' is the "
-            "default. 'marks' numbers every detected element on the screenshot, "
-            "and the planner picks a number. Yewo checks that number against "
-            "the detected set before anything runs. 'describe' detects nothing, "
-            "and the planner names its target in words.",
+            help="How the planner names a target. 'marks' is the default. It "
+            "numbers every detected element on the screenshot, and the planner "
+            "picks a number. Yewo checks that number against the detected set "
+            "before anything runs. 'describe' names the target in words and "
+            "uses visual grounding to place it.",
         )
         parser.add_argument(
             "--reuse-app",
@@ -82,11 +82,12 @@ class YewoCLI:
             "says that two runs asked the same thing, and keeps no model input",
         )
         parser.add_argument(
-            "--record-secrets",
-            action="store_true",
-            help="Record the screen even for a journey that declares secrets. "
-            "Nothing masks a video frame, so a declared value typed on screen is "
-            "in the recording",
+            "--allow-secret-exposure",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Allow declared secrets in model input and screen recordings. "
+            "Off by default. Reports, logs, traces and saved screenshots remain "
+            "scrubbed or redacted",
         )
         parser.add_argument(
             "--locked",
@@ -100,6 +101,20 @@ class YewoCLI:
             help="Re-execute navigation already worked out in an earlier scenario instead of "
             "re-planning it. Faster, but replayed screens are not perceived or audited",
         )
+        parser.add_argument(
+            "--no-durable-replay",
+            dest="durable_replay",
+            action="store_false",
+            help="Plan every scenario from the start, rather than re-walking a path a "
+            "passing run saved. This disables local path and verdict reuse",
+        )
+        parser.add_argument(
+            "--update-paths",
+            action="store_true",
+            help="Accept changed local replay paths after a passing run. CI is always "
+            "read-only, even when this flag is present",
+        )
+        parser.set_defaults(durable_replay=True)
         return parser
 
     def run(self, args_list: Optional[List[str]] = None) -> int:

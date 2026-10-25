@@ -27,3 +27,8 @@ test_models/
 
 # Eval sweeps: one run of the screen corpus, kept local like any other run
 sweeps/
+
+# Legacy local replay caches and temporary files used while replacing a path.
+**/.yewo/replay/
+**/.yewo/replay-key
+**/.yewo/paths/**/*.part

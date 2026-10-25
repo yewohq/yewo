@@ -47,6 +47,8 @@ def run_goal(
         keep_device=keep_device,
         reuse_app=reuse_app,
     )
+    agent.llm.set_cache_affinity(session.session_id)
+    agent.fast_llm.set_cache_affinity(session.session_id)
     agent.record_prompts(
         PromptStore(
             session.prompts_dir,
@@ -56,9 +58,7 @@ def run_goal(
     )
     # A goal run costs the same per call as a journey run, and left
     # unattributed its prompts would be files nothing points at.
-    usage = LLMUsageTracker(
-        output_dir=session.telemetry_dir, scrubber=agent.scrubber
-    )
+    usage = LLMUsageTracker(output_dir=session.telemetry_dir, scrubber=agent.scrubber)
     agent.llm.usage_callback = lambda call: usage.add_call(AGENT, call)
     if agent.fast_llm is not agent.llm:
         agent.fast_llm.usage_callback = lambda call: usage.add_call(AGENT, call)
@@ -108,9 +108,7 @@ def _manifest(session, agent, goal: str, platform: Platform, device_control):
             model=agent.llm.model,
             platform=platform.value,
             grounding=agent.grounding,
-            app=identity.app_identity(
-            session.app_path, installed=not session.reuse_app
-        ),
+            app=identity.app_identity(session.app_path, installed=not session.reuse_app),
             device=identity.device_identity(device_control),
             git=identity.git_identity(),
             ci=identity.ci_identity(),

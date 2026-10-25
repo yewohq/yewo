@@ -307,7 +307,6 @@ class OneDeclarationTests(unittest.TestCase):
         import typing
 
         from yewo.agent.grounding import (
-            GROUNDING_COORDINATES,
             GROUNDING_DESCRIBE,
             GROUNDING_MARKS,
         )
@@ -315,9 +314,8 @@ class OneDeclarationTests(unittest.TestCase):
         from yewo.schema import Grounding as GroundingLiteral
 
         self.assertEqual(set(GROUNDINGS), set(typing.get_args(GroundingLiteral)))
-        self.assertEqual(
-            {GROUNDING_COORDINATES, GROUNDING_MARKS, GROUNDING_DESCRIBE}, set(GROUNDINGS)
-        )
+        self.assertEqual({GROUNDING_MARKS, GROUNDING_DESCRIBE}, set(GROUNDINGS))
+        self.assertNotIn("coordinates", GROUNDINGS)
 
     def test_the_defaults_are_values_the_schema_allows(self):
         from yewo.config import BUILT_IN, coerce

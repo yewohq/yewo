@@ -14,10 +14,12 @@ are built here rather than at each exit.
 
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 from yewo.errors import Cause
 from yewo.agent.memory.history import AgentHistory
+from yewo.agent.actuation.actions import Action
 from yewo.agent.plan.schema import DeviceStepResponse, DoneAction
 from yewo.agent.step.observation import PerceptionSnapshot
 from yewo.agent.memory.trail import SessionTrail
@@ -35,8 +37,28 @@ word for what the screen holds.
 """
 
 
+class ObservationDirective(Enum):
+    """What a screen reader requires before this turn may act."""
+
+    CONTINUE = "continue"
+    PLAN = "plan"
+    STOP = "stop"
+
+
+ObservationHookFn = Callable[[PerceptionSnapshot, int], Optional[ObservationDirective]]
+"""Called on every observed screen, before cache selection or planning."""
+
+BeforeActionHookFn = Callable[[Action, int], Optional[ObservationDirective]]
+"""Called before an action that may require the pending screen to be audited."""
+
+
 RunStatus = Literal[
-    "goal_reached", "step_limit", "loop_detected", "hook_stop", "exception"
+    "goal_reached",
+    "step_limit",
+    "loop_detected",
+    "hook_stop",
+    "postcondition_stop",
+    "exception",
 ]
 """How a walk can end.
 
@@ -71,6 +93,9 @@ class DeviceRunResult:
     and no reader has to decide what an unrecognised string means.
     """
 
+    postcondition_verifications: list = field(default_factory=list)
+    """Secret-free results from checks performed before dependent actions."""
+
 
 def flush_trail(
     session_trail: Optional[SessionTrail],
@@ -78,6 +103,16 @@ def flush_trail(
 ) -> None:
     if session_trail and current_phash:
         session_trail.flush_transition(current_phash)
+
+
+def log_recovery_cost(ctx: "RunContext") -> None:
+    """Record model calls used to rescue screens outside the step count."""
+    if ctx.recovery_looks:
+        logger.info(
+            "Recovery was used on %d screen(s), costing %d extra model call(s).",
+            len(ctx.recovered),
+            ctx.recovery_looks,
+        )
 
 
 def loop_detected(
@@ -94,6 +129,7 @@ def loop_detected(
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
         steps=list(ctx.steps.records),
+        postcondition_verifications=list(ctx.postcondition_verifications),
     )
 
 
@@ -111,6 +147,7 @@ def step_limit(
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
         steps=list(ctx.steps.records),
+        postcondition_verifications=list(ctx.postcondition_verifications),
     )
 
 
@@ -167,6 +204,44 @@ def hook_stop(
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
         steps=list(ctx.steps.records),
+        postcondition_verifications=list(ctx.postcondition_verifications),
+    )
+
+
+def observation_stop(
+    ctx: "RunContext",
+    session_trail: Optional[SessionTrail],
+    current_phash: Optional[str],
+) -> DeviceRunResult:
+    """Stop before another cached or planned action reaches the device."""
+    flush_trail(session_trail, current_phash)
+    return DeviceRunResult(
+        status="hook_stop",
+        steps_executed=ctx.steps_executed,
+        failure_reason="Execution stopped by screen audit before the next action.",
+        history=ctx.history,
+        capability_receipts=ctx.capability_receipts,
+        steps=list(ctx.steps.records),
+        postcondition_verifications=list(ctx.postcondition_verifications),
+    )
+
+
+def postcondition_stop(
+    ctx: "RunContext",
+    session_trail: Optional[SessionTrail],
+    current_phash: Optional[str],
+) -> DeviceRunResult:
+    """Stop before a dependent action when current-run evidence is unsafe."""
+    flush_trail(session_trail, current_phash)
+    latest = ctx.postcondition_verifications[-1]
+    return DeviceRunResult(
+        status="postcondition_stop",
+        steps_executed=ctx.steps_executed,
+        failure_reason=latest.reason,
+        history=ctx.history,
+        capability_receipts=ctx.capability_receipts,
+        steps=list(ctx.steps.records),
+        postcondition_verifications=list(ctx.postcondition_verifications),
     )
 
 
@@ -177,9 +252,7 @@ def goal_reached(
     current_phash: Optional[str],
     ctx: "RunContext",
 ) -> Optional[DeviceRunResult]:
-    satisfied = stop_when_satisfied and getattr(
-        step_response, "goal_satisfied", False
-    )
+    satisfied = stop_when_satisfied and getattr(step_response, "goal_satisfied", False)
     if not isinstance(step_response.action, DoneAction) and not satisfied:
         return None
 
@@ -196,4 +269,5 @@ def goal_reached(
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
         steps=list(ctx.steps.records),
+        postcondition_verifications=list(ctx.postcondition_verifications),
     )

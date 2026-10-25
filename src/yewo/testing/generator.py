@@ -27,7 +27,7 @@ from yewo.agent.actuation.actions import CapabilityKind
 from yewo.errors import Cause, ProviderUnavailable, cause_of
 from yewo.llm.failures import reportable
 from yewo.llm.llm_client import LLMClient
-from yewo.llm.messages import TextMessage
+from yewo.llm.messages import SystemMessage, TextMessage
 from yewo.testing import steps
 from yewo.testing.journey_env import substitute
 from yewo.testing.models import (
@@ -53,35 +53,19 @@ logger = logging.getLogger(__name__)
 GENERATION_ATTEMPTS = 3
 
 TYPES_NEEDING_ANOTHER_ACTOR = frozenset({ScenarioType.ROLE})
-"""Scenario types that cannot be written with one account.
+"""Scenario types that cannot compare behavior with only one actor.
 
-One actor cannot show that a second actor is kept out of its data. A cell of
-this type with no declared actor is reported rather than answered with a
-scenario that proves nothing.
+A role cell needs another declared actor to make the comparison meaningful.
+Without one, the cell is reported instead of producing a scenario that proves
+nothing.
 """
 
 
-PROMPT = """Write one test scenario for the coverage cell below.
+PROMPT = """Write one test scenario from the app context and coverage cell.
 
-### The app, as a user walks it
+Write a scenario of the requested shape, about the requested concern, and
+nothing else. Yewo covers every other cell in its own call.
 
-"{description}"
-
-### The cell
-
-Category: {category} — {category_meaning}
-Scenario type: {scenario_type} — {type_meaning}
-
-Write a scenario of that shape, about that concern, and nothing else. Yewo
-covers every other cell in its own call.
-
-### The values you may enter
-
-An `enter` step names one of these. Never write a value of your own, because
-only the file knows what this app does with a value.
-
-{lines}
-{rules}
 ### The steps
 
 Give the steps in order. Each one is:
@@ -116,6 +100,24 @@ no outcome that needs one of those.
 
 Yewo writes its own outcome for every value the file says this app
 refuses. A step entering one needs no claim from you.
+"""
+
+CELL_CONTEXT = """### The app, as a user walks it
+
+"{description}"
+
+### The cell
+
+Category: {category} — {category_meaning}
+Scenario type: {scenario_type} — {type_meaning}
+
+### The values you may enter
+
+An `enter` step names one of these. Never write a value of your own, because
+only the file knows what this app does with a value.
+
+{lines}
+{rules}
 """
 
 RULES = """
@@ -197,8 +199,8 @@ def _scrubbed_journey_description(journey: UserJourney) -> str:
     masking happens here rather than where the journey is loaded.
     """
     scrubber = SecretScrubber()
-    scrubber.learn_secrets(journey.secrets)
-    return scrubber.scrub(journey.description)
+    scrubber.learn_secrets(journey.secrets, journey.secret_displays)
+    return scrubber.for_model(journey.description)
 
 
 def _value_lines(journey: UserJourney) -> str:
@@ -208,7 +210,7 @@ def _value_lines(journey: UserJourney) -> str:
         if name in journey.refused:
             value_note = "this app refuses this value"
         elif name.startswith("actors."):
-            value_note = f"belongs to the account '{name.split('.')[1]}'"
+            value_note = f"declared for actor '{name.split('.')[1]}'"
         else:
             value_note = "a value that is meant to work"
         lines.append(f"- {name} — {value_note}")
@@ -345,8 +347,7 @@ class ScenarioGenerator:
                 cell,
                 ReportStatus.UNSUPPORTED,
                 Cause.SCENARIO,
-                "A role scenario needs a second account. Declare one under "
-                "'actors'.",
+                "A role scenario needs another declared actor. Add one under 'actors'.",
             )
         return None
 
@@ -363,13 +364,17 @@ class ScenarioGenerator:
         Raises:
             Exception: Whatever the last attempt raised, once none are left.
         """
-        message = TextMessage(content=self._prompt(journey, cell))
+        stable_prompt, cell_context = self._prompt_sections(journey, cell)
+        messages = [
+            SystemMessage(content=stable_prompt),
+            TextMessage(content=cell_context),
+        ]
         context = _requirements(cell, journey)
         last_error: Exception | None = None
         for attempt in range(GENERATION_ATTEMPTS):
             try:
                 return self.llm.generate_response(
-                    messages=[message],
+                    messages=messages,
                     response_model=ScenarioDraft,
                     context=context,
                 )
@@ -392,8 +397,16 @@ class ScenarioGenerator:
 
     def _prompt(self, journey: UserJourney, cell: CoverageCell) -> str:
         """What the model is told about one cell."""
+        stable_prompt, cell_context = self._prompt_sections(journey, cell)
+        return stable_prompt + cell_context
+
+    def _prompt_sections(
+        self, journey: UserJourney, cell: CoverageCell
+    ) -> tuple[str, str]:
+        """The reusable policy and the cell-specific input it applies to."""
         rules = journey.security_rules if cell.category is Category.SECURITY else []
-        return PROMPT.format(
+        stable_prompt = PROMPT.format(actions=", ".join(sorted(ACTION_VERBS)))
+        cell_context = CELL_CONTEXT.format(
             description=_scrubbed_journey_description(journey),
             category=cell.category.value,
             category_meaning=describe(cell.category),
@@ -403,5 +416,5 @@ class ScenarioGenerator:
             rules=RULES.format(rules="\n".join(f"- {rule}" for rule in rules))
             if rules
             else "",
-            actions=", ".join(sorted(ACTION_VERBS)),
         )
+        return stable_prompt, cell_context

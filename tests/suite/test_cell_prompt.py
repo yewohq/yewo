@@ -6,6 +6,8 @@ one app, and no invitation to invent a value.
 """
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from yewo.agent.actuation.actions import CapabilityKind
 from yewo.testing.generator import CAPABILITY_BY_CATEGORY, ScenarioGenerator, _requirements
@@ -73,6 +75,18 @@ class CellIdentityTests(unittest.TestCase):
         for kind in ScenarioType:
             self.assertTrue(describe(kind), kind)
 
+    def test_reusable_policy_is_separate_from_cell_context(self):
+        llm = SimpleNamespace(generate_response=Mock(return_value=object()))
+        generator = ScenarioGenerator(llm)
+
+        generator._draft(_journey(), HAPPY)
+
+        messages = llm.generate_response.call_args.kwargs["messages"]
+        self.assertEqual(messages[0].role, "system")
+        self.assertNotIn("qa.tester@example.com", messages[0].content)
+        self.assertEqual(messages[1].role, "user")
+        self.assertIn("$PASSWORD", messages[1].content)
+
 
 class ValueTests(unittest.TestCase):
     def test_every_declared_name_is_offered(self):
@@ -104,20 +118,23 @@ class ValueTests(unittest.TestCase):
         self.assertNotIn("floor5", prompt)
         self.assertNotIn("qa@example.com", prompt.split("### The values")[1])
 
-    def test_an_account_value_is_offered_by_reference_and_never_resolved(self):
-        """The leak this closes put a secret tenant address into the prompt."""
+    def test_an_actor_value_is_offered_by_reference_and_never_resolved(self):
+        """The model receives an actor value's name and never its contents."""
         journey = _journey(
             values={
-                "email": "qa@example.com",
-                "actors.editor.email": "secret-tenant@corp.example",
+                "query": "release notes",
+                "actors.reviewer.workspace": "confidential-workspace",
             },
-            actors={"editor": Actor(values={"email": "secret-tenant@corp.example"})},
+            actors={
+                "reviewer": Actor(values={"workspace": "confidential-workspace"})
+            },
         )
 
         prompt = _prompt(SECURITY, journey)
 
-        self.assertIn("actors.editor.email", prompt)
-        self.assertNotIn("secret-tenant@corp.example", prompt)
+        self.assertIn("actors.reviewer.workspace — declared for actor 'reviewer'", prompt)
+        self.assertNotIn("confidential-workspace", prompt)
+        self.assertNotIn("account", prompt.lower())
 
     def test_the_prompt_never_asks_for_a_value_of_the_models_own(self):
         """It used to forbid that and then ask for malformed values anyway."""
@@ -164,6 +181,12 @@ class RequirementTests(unittest.TestCase):
 
 
 class SecurityRuleTests(unittest.TestCase):
+    def test_security_cells_are_not_limited_to_secrets_or_refused_values(self):
+        self.assertEqual(
+            describe(Category.SECURITY),
+            "whether the app satisfies its declared security rules",
+        )
+
     def test_a_security_cell_is_given_the_rules(self):
         """Reaching the screen where a rule can break is navigation."""
         self.assertIn(RULE, _prompt(SECURITY))
@@ -179,7 +202,7 @@ class SecretTests(unittest.TestCase):
         prompt = _prompt(NEGATIVE)
 
         self.assertNotIn(PASSWORD, prompt)
-        self.assertIn("{{password}}", prompt)
+        self.assertIn("$PASSWORD", prompt)
 
 
 class OutcomeScopeTests(unittest.TestCase):

@@ -95,6 +95,39 @@ class InlineSecretTests(unittest.TestCase):
         self.assertEqual(values["password"], "hunter2")
         self.assertEqual(secrets, {"password": "hunter2"})
 
+    def test_a_secret_can_choose_its_model_display(self):
+        from yewo.testing.journey_env import secret_displays
+
+        displays = secret_displays(
+            {
+                "env": {
+                    "card": {
+                        "value": "4111222233334444",
+                        "secret": True,
+                        "redaction": "last4",
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(displays, {"card": "last4"})
+
+    def test_an_unknown_secret_display_is_rejected(self):
+        from yewo.testing.journey_env import secret_displays
+
+        with self.assertRaises(ValueError):
+            secret_displays(
+                {
+                    "env": {
+                        "password": {
+                            "value": "hunter2",
+                            "secret": True,
+                            "redaction": "sometimes",
+                        }
+                    }
+                }
+            )
+
     def test_an_inline_value_defaults_to_ordinary(self):
         _, secrets, _ = self._resolve({"env": {"note": {"value": "visible"}}})
 
@@ -124,6 +157,49 @@ class InlineSecretTests(unittest.TestCase):
             self._resolve({"env": {"password": {"value": "x", "secrets": True}}})
 
         self.assertIn("secrets", str(caught.exception))
+
+
+class ValueVerificationPolicyTests(unittest.TestCase):
+    def test_an_app_can_declare_its_own_mask_and_normalization(self):
+        from yewo.testing.journey_env import verification_policies
+
+        policies = verification_policies(
+            {
+                "env": {
+                    "account_reference": {
+                        "value": "AB-1234",
+                        "verify_as": "masked",
+                        "normalizers": ["hyphens", "case"],
+                        "visible_suffix": 2,
+                        "masked_length": 6,
+                    }
+                }
+            }
+        )
+
+        policy = policies["account_reference"]
+        self.assertEqual(policy.mode, "masked")
+        self.assertEqual(policy.normalizers, ("hyphens", "case"))
+        self.assertEqual(policy.visible_suffix, 2)
+        self.assertEqual(policy.masked_length, 6)
+
+    def test_comparison_options_require_a_compatible_mode(self):
+        from yewo.testing.journey_env import verification_policies
+
+        with self.assertRaises(ValueError) as caught:
+            verification_policies(
+                {
+                    "env": {
+                        "reference": {
+                            "value": "A1",
+                            "verify_as": "exact",
+                            "visible_suffix": 1,
+                        }
+                    }
+                }
+            )
+
+        self.assertIn("verify_as is exact", str(caught.exception))
 
 
 class MissingEnvTests(unittest.TestCase):

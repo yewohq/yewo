@@ -17,6 +17,8 @@ blocking every type in such an app.
 
 import logging
 import time
+from dataclasses import dataclass
+from typing import Optional
 
 from yewo.defaults import FOCUS_POLL_INTERVAL, FOCUS_POLL_TIMEOUT
 from yewo.errors import ActionRejected, TargetNotInteractive
@@ -24,6 +26,15 @@ from yewo.errors import ActionRejected, TargetNotInteractive
 logger = logging.getLogger(__name__)
 
 FULL_SCREEN_SHARE = 0.8
+
+
+@dataclass(frozen=True)
+class FocusedFieldReading:
+    """The active element's value and current on-screen bounds."""
+
+    value: Optional[str]
+    bounds: Optional[tuple[int, int, int, int]]
+    is_secure: Optional[bool] = None
 
 NO_TEXT = (
     "did not reach the target you chose. The cursor did not move, so that "
@@ -114,6 +125,92 @@ class Focus:
     def rect(self):
         """The focused element's bounds, for comparing focus before and after."""
         return self._rect()
+
+    def value(self):
+        """The focused field's current text, or None when the driver cannot prove it.
+
+        The platform driver owns these attributes.  They are stronger evidence
+        than OCR because they come from the exact element whose focus was
+        checked before typing.  An empty string is retained: it proves the
+        field is empty rather than that the read was unavailable.
+        """
+        element = self.element()
+        if element is None:
+            return None
+        return self._value_of(element)
+
+    @staticmethod
+    def _value_of(element):
+        """Normalize one driver element's text at the driver boundary."""
+        for name in ("value", "text"):
+            try:
+                observed = element.get_attribute(name)
+            except Exception:  # noqa: BLE001 - driver boundary
+                continue
+            if isinstance(observed, str):
+                return observed
+        try:
+            observed = element.text
+        except Exception:  # noqa: BLE001 - driver boundary
+            return None
+        return observed if isinstance(observed, str) else None
+
+    def reading(self) -> FocusedFieldReading:
+        """Read value and bounds from the same active element."""
+        element = self.element()
+        if element is None:
+            return FocusedFieldReading(value=None, bounds=None)
+        try:
+            rect = element.rect
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            logger.debug("Could not read focused element bounds: %s", exc)
+            rect = None
+        bounds = None
+        if isinstance(rect, dict):
+            x = rect.get("x")
+            y = rect.get("y")
+            width = rect.get("width")
+            height = rect.get("height")
+            if (
+                isinstance(x, (int, float))
+                and isinstance(y, (int, float))
+                and isinstance(width, (int, float))
+                and isinstance(height, (int, float))
+            ):
+                bounds = (round(x), round(y), round(x + width), round(y + height))
+        return FocusedFieldReading(
+            value=self._value_of(element),
+            bounds=bounds,
+            is_secure=self._secure_state_of(element),
+        )
+
+    @staticmethod
+    def _secure_state_of(element) -> Optional[bool]:
+        """Normalize platform secure-field attributes at the driver boundary."""
+        for name in ("password", "secure"):
+            try:
+                observed = element.get_attribute(name)
+            except Exception:  # noqa: BLE001 - driver boundary
+                continue
+            if isinstance(observed, bool):
+                return observed
+            if isinstance(observed, str):
+                normalized = observed.strip().casefold()
+                if normalized in ("true", "1"):
+                    return True
+                if normalized in ("false", "0"):
+                    return False
+        for name in ("type", "className"):
+            try:
+                observed = element.get_attribute(name)
+            except Exception:  # noqa: BLE001 - driver boundary
+                continue
+            if not isinstance(observed, str):
+                continue
+            normalized = observed.strip().casefold()
+            if normalized == "password" or "securetextfield" in normalized:
+                return True
+        return None
 
     def assert_at(self, x, y, action: str, before=None, layout_moved=False) -> None:
         """Raises unless the tap put the cursor somewhere the text can go.

@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from fakes import device_result
 from yewo.testing.judge import transitions
 from yewo.testing.models import AssertionScope, ExpectedOutcome, RuleVerification
 
@@ -35,7 +36,7 @@ def verdicts(*answers):
 
 def asked(llm):
     (messages, _model), _ = llm.generate_response.call_args
-    return messages[0].content
+    return "\n".join(message.content for message in messages)
 
 
 class ScopeSelectionTests(unittest.TestCase):
@@ -119,6 +120,17 @@ class SettlingTests(unittest.TestCase):
 
         sent = asked(llm)
         self.assertLess(sent.index(SIGN_IN), sent.index(LOCATION))
+
+    def test_reusable_policy_is_separate_from_run_specific_context(self):
+        llm = verdicts(("expected:0", "passed", LOCATION))
+
+        self._settle(llm, [outcome("Login reaches Location Access")], [SIGN_IN, LOCATION])
+
+        (messages, _model), _ = llm.generate_response.call_args
+        self.assertEqual(messages[0].role, "system")
+        self.assertNotIn(SIGN_IN, messages[0].content)
+        self.assertEqual(messages[1].role, "user")
+        self.assertIn(SIGN_IN, messages[1].content)
 
     def test_one_visit_read_twice_is_named_once(self):
         """The auditor reads a screen on arrival and on departure."""
@@ -204,7 +216,7 @@ class GateIntegrationTests(unittest.TestCase):
         from yewo.testing.qa_agent import QAAgent
 
         status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
-            run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
+            run_result=device_result(),
             stop_reason=None,
             all_verifications=verifications,
             all_issues=[],

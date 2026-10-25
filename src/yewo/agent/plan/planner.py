@@ -25,7 +25,9 @@ from yewo.agent.grounding import (  # noqa: F401 - re-exported for callers
     GROUNDING_MARKS,
 )
 from yewo.llm.llm_client import LLMClient
-from yewo.llm.messages import MultiPartMessage
+from yewo.llm.messages import Message, MultiPartMessage, SystemMessage
+from yewo.agent.artifacts.redaction import RedactedImages
+from yewo.utils.secrets import SECRET_MASK_GUIDANCE, SecretScrubber
 
 logger = logging.getLogger(__name__)
 
@@ -55,57 +57,58 @@ Each action must have a `type` field set to one of:
 MARKS_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap an element. Fields: `type`, `mark` (int), `reason`, and optional `count` (int) and `interval_ms` (int).
-- "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `reason`.
-- "clear": Clear a text field. Fields: `type`, `mark` (int), `reason`.
-- "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `reason`.
-- "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `reason`.
+- "tap": Tap an element. Fields: `type`, `mark` (int), `target` (description), `reason`, and optional `count` (int) and `interval_ms` (int).
+- "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `target` (description), `reason`.
+- "clear": Clear a text field. Fields: `type`, `mark` (int), `target` (description), `reason`.
+- "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `target` (description), `reason`.
+- "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `target` (description), `reason`.
 - "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like and roughly where), `reason`."""
 COORDINATE_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`, and optional `count` (int) and `interval_ms` (int).
-- "type": Type text into a field. Fields: `type`, `text`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "clear": Clear a text field. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "double_tap": Double-tap. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` as {"x": int, "y": int}, `reason`."""
+- "tap": Tap at coordinates. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`, and optional `count` (int) and `interval_ms` (int).
+- "type": Type text into a field. Fields: `type`, `text`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
+- "clear": Clear a text field. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
+- "double_tap": Double-tap. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
+- "long_press": Long press. Fields: `type`, `duration` (float seconds), `target` (description), `coordinates` as {"x": int, "y": int}, `reason`."""
 
 DESCRIBE_CONSTRAINTS = """
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. Nothing on this screen is listed or numbered. Name your target in `target`, describing it as you would point it out to someone looking at the screen: "the Email Address input field", "the Login button".
+2. Nothing on this screen is listed or numbered. Name your target in `target`. Describe it as you would point it out: "the Search input field", "the Save button".
 3. Describe the thing itself: the words on it, the symbol on it, its shape, its colour. Say where it sits if that helps — "in the top right".
 4. Do not describe it by what is beside it. Naming a neighbour returns both: asking for the tick "opposite the back arrow" gives back the whole header bar instead of the tick.
-5. Do not identify it by its position in a sequence. "The second Add button" means nothing to what finds it, because that reads the picture rather than a list. Say what makes that one different — "the Add button on the Burger Palace card".
+5. Do not identify it by its position in a sequence. The grounder reads the picture, not a list. Say what makes it different: "the blue Add button with the plus symbol".
 6. The target must be visible on the screen in front of you. Do not name something you remember from an earlier screen, and do not name something you expect to appear.
 7. "type" focuses the field itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-8. The soft keyboard blocks taps on anything behind it. If your next target is in the lower part of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
-9. If the history shows a description was not found, describe the same thing by a different feature of itself: the symbol on it, its shape, its colour, the words it carries. Do not make the description longer by adding what surrounds it. A short description of the thing beats a long one about its neighbourhood.
-10. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
-11. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
+8. The soft keyboard blocks taps on anything behind it. Dismiss it with key_event 4 before you target a lower-screen control. On Android, back dismisses the keyboard without leaving the app.
+9. If a description was not found, describe the same thing by a different visible feature. Use its symbol, shape, colour, or words. Do not add details about its surroundings.
+10. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
+11. When a step asks for repeated taps, send one tap action with that `count`. Never count taps across steps. The screen may not show how many landed.
 """
 MARKS_CONSTRAINTS = """
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. Every element on the screenshot carries a number. Name the number in `mark`. Never send coordinates — they are not accepted.
-3. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-4. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
-5. The soft keyboard blocks taps on anything behind it. If your next target is in the lower region (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
-6. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+2. Every element on the screenshot carries a number. Name the number in `mark`. Also describe that same element in `target`. Never send coordinates — they are not accepted.
+3. Use "type" and "clear" only on the actual editable field. A caption, summary value, read-only value, or label with the same words is not the field. If the field is hidden by the keyboard or is not numbered, dismiss the keyboard with key_event 4 or use "target_not_listed". Never type into a same-named label as a substitute.
+4. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+5. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
+6. The soft keyboard blocks taps on anything behind it. Dismiss the keyboard with key_event 4 before targeting a lower-screen control. On Android, back dismisses the soft keyboard without leaving the app.
+7. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 8. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
-7. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
+9. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
 """
 COORDINATE_CONSTRAINTS = """
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
-3. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
-5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
-6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
-7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only. They are not a coordinate source.
-8. After any event that changes the layout — keyboard opening or closing, navigation, a modal, a scroll — treat the next element list as a new layout and re-read every coordinate from it.
-9. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
+2. Every targeted action MUST provide `target`. Describe the control by its own visible text, symbol, shape, or colour.
+3. For "type", you MUST provide `text`, `target`, AND `coordinates` of the target field.
+4. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+5. The soft keyboard blocks taps on anything behind it. Dismiss it with key_event 4 before you target a lower-screen control. On Android, back dismisses the keyboard without leaving the app. Then use the fresh screenshot for coordinates.
+6. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
+7. Read coordinates from the CURRENT screenshot. Never reuse coordinates from an older screenshot.
+8. Re-read coordinates after any layout change. This includes keyboard changes, navigation, modals, and scrolling.
+9. When a step asks for repeated taps, send one tap action with that `count`. Never count taps yourself across steps. The screen may not show how many landed.
 """
 
 RESPONSE_INSTRUCTIONS = """
@@ -114,7 +117,7 @@ RESPONSE_INSTRUCTIONS = """
 2. Set `evaluation_previous_goal`: honestly assess whether your PREVIOUS action succeeded, failed, or is uncertain. Leave empty on the first step.
 3. Set `observation`: describe only what is currently visible.
 4. Set `reasoning`: explain why the chosen action is the best next step.
-5. Set `goal_satisfied` True when the goal's outcome is already visible on this screen, and put the evidence in `goal_evidence`. Judge the goal as stated: a post-login onboarding or permission screen still means a sign-in goal is met.
+5. Set `goal_satisfied` True when the goal's stated outcome is already visible, and put that evidence in `goal_evidence`. Follow-on UI does not undo an outcome that the current screen still proves.
 6. Set `action`: choose exactly ONE action. If the goal is fully complete, use `done`.
 7. Set `external_navigation` to True if the action will temporarily leave the app.
 """
@@ -130,10 +133,14 @@ KEYBOARD_HIDDEN = (
 
 PROMPT = """You are an AI agent controlling a mobile app to achieve a goal.
 Your job is to execute the steps below by interacting with the app one action at a time.
+"""
 
+GOAL_SECTION = """
 ### Goal / Instructions
 {goal}
+"""
 
+CURRENT_STATE_SECTION = """
 ### Current UI Elements Detected {heading}
 {targets}
 {keyboard}
@@ -163,13 +170,13 @@ TARGET_CONSTRAINTS = {
     GROUNDING_MARKS: MARKS_CONSTRAINTS,
 }
 TARGET_HEADINGS = {
+    GROUNDING_COORDINATES: "(nothing is detected — use the screenshot)",
     GROUNDING_DESCRIBE: "(nothing is detected — name what you want)",
     GROUNDING_MARKS: "(numbered on the screenshot)",
 }
 
 NO_TARGETS_LISTED = (
-    "Nothing on this screen has been detected or numbered. "
-    "Describe what you want to act on."
+    "Nothing on this screen has been detected or numbered. Describe what you want to act on."
 )
 
 
@@ -183,11 +190,39 @@ class DevicePlanner:
         self,
         llm_client: LLMClient,
         grounding: str = GROUNDING_COORDINATES,
+        scrubber: Optional[SecretScrubber] = None,
     ):
         self.llm = llm_client
         # "marks" offers numbered elements and no coordinates, so a target the
         # planner cannot find becomes a refusal rather than an invented point.
         self.grounding = grounding
+        self._scrubber = scrubber or SecretScrubber()
+        self._model_images = RedactedImages(self._scrubber)
+
+    def _model_messages(
+        self,
+        stable_prompt: str,
+        current_state: str,
+        image: bytes,
+        gui_elements,
+    ) -> list[Message]:
+        """Keep the reusable prefix separate from changing state and pixels.
+
+        Provider prompt caches operate on a prefix. A screenshot made its whole
+        multipart message a changing cache block. Text before the image did not
+        remain stable when it was in that message.
+        """
+        stable = SystemMessage(
+            content=self._scrubber.for_model(
+                f"{stable_prompt.rstrip()}\n\n### Yewo screenshot masks\n"
+                f"{SECRET_MASK_GUIDANCE}"
+            )
+        )
+        current = MultiPartMessage()
+        current.add_text(self._scrubber.for_model(current_state))
+        current.add_text("Current screenshot (newest):")
+        current.add_image(self._model_images.redact_model_image(image, gui_elements or []))
+        return [stable, current]
 
     def plan_step(
         self,
@@ -209,7 +244,7 @@ class DevicePlanner:
         else:
             goal_lines = goal or []
 
-        prompt = self._build_prompt(
+        stable_prompt, current_state = self._build_prompt_sections(
             goal_lines=goal_lines,
             gui_elements=gui_elements,
             history=history,
@@ -221,14 +256,13 @@ class DevicePlanner:
             screen_height=screen_height,
         )
 
-        message = MultiPartMessage()
-        message.add_text("Current screenshot (newest):")
-        message.add_image(current_image_bytes)
-        message.add_text(prompt)
+        messages = self._model_messages(
+            stable_prompt, current_state, current_image_bytes, gui_elements
+        )
 
         logger.info("Querying DevicePlanner for next step...")
         response: DeviceStepResponse = self.llm.generate_response(
-            [message], self.step_response_model()
+            messages, self.step_response_model()
         )
 
         return response
@@ -258,31 +292,57 @@ class DevicePlanner:
         marks: Optional[list] = None,
         screen_height: int = 0,
     ) -> str:
+        stable_prompt, current_state = self._build_prompt_sections(
+            goal_lines=goal_lines,
+            gui_elements=gui_elements,
+            history=history,
+            trail=trail,
+            drift_warning=drift_warning,
+            loop_nudge=loop_nudge,
+            keyboard_open=keyboard_open,
+            marks=marks,
+            screen_height=screen_height,
+        )
+        return stable_prompt + current_state
+
+    def _build_prompt_sections(
+        self,
+        goal_lines: List[str],
+        gui_elements,
+        history: str,
+        trail: Optional[str],
+        drift_warning: Optional[str],
+        loop_nudge: Optional[str],
+        keyboard_open: Optional[bool] = None,
+        marks: Optional[list] = None,
+        screen_height: int = 0,
+    ) -> tuple[str, str]:
         keyboard = ""
         if keyboard_open is True:
             keyboard = KEYBOARD_VISIBLE
         elif keyboard_open is False:
             keyboard = KEYBOARD_HIDDEN
 
-        prompt = PROMPT.format(
-            goal="\n".join(f"- {step}" for step in goal_lines),
+        stable_prompt = (
+            PROMPT
+            + self._action_vocabulary()
+            + self._action_constraints()
+            + RESPONSE_INSTRUCTIONS
+            + GOAL_SECTION.format(goal="\n".join(f"- {step}" for step in goal_lines))
+        )
+        current_state = CURRENT_STATE_SECTION.format(
             heading=self._target_heading(),
             targets=self.format_targets(gui_elements, marks, screen_height),
             keyboard=keyboard,
             history=history or "No actions executed yet.",
         )
         if drift_warning:
-            prompt += DRIFT_SECTION.format(drift=drift_warning)
+            current_state += DRIFT_SECTION.format(drift=drift_warning)
         if trail:
-            prompt += TRAIL_SECTION.format(trail=trail)
+            current_state += TRAIL_SECTION.format(trail=trail)
         if loop_nudge:
-            prompt += LOOP_SECTION.format(nudge=loop_nudge)
-        return (
-            prompt
-            + self._action_vocabulary()
-            + self._action_constraints()
-            + RESPONSE_INSTRUCTIONS
-        )
+            current_state += LOOP_SECTION.format(nudge=loop_nudge)
+        return stable_prompt, current_state
 
     ROW_BAND = 60
     DUPLICATE_OVERLAP = 0.9
@@ -358,7 +418,7 @@ class DevicePlanner:
 
     def format_targets(self, elements, marks=None, screen_height: int = 0) -> str:
         """The element list for the prompt, in whichever form the mode calls for."""
-        if self.grounding == GROUNDING_DESCRIBE:
+        if self.grounding in (GROUNDING_COORDINATES, GROUNDING_DESCRIBE):
             return NO_TARGETS_LISTED
         if self.grounding == GROUNDING_MARKS:
             from yewo.agent.grounding import marks as marks_module

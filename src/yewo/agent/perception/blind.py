@@ -25,8 +25,9 @@ class BlindPerception:
     annotated image is the raw one, because nothing was drawn on it.
     """
 
-    def __init__(self, device_session):
+    def __init__(self, device_session, mode: str = "describe"):
         self.device_session = device_session
+        self.mode = mode
         self.current_hash: Optional["imagehash.ImageHash"] = None
         self.last_scan_info: Optional[ScanInfo] = None
         self._prev_hash: Optional["imagehash.ImageHash"] = None
@@ -39,15 +40,11 @@ class BlindPerception:
         png = self.device_session.device_control.get_screenshot()
         raw = Image.open(io.BytesIO(png))
 
-        self._prev_hash, self.current_hash = self.current_hash, imagehash.phash(
-            raw, hash_size=16
-        )
-        distance = (
-            self.current_hash - self._prev_hash if self._prev_hash is not None else None
-        )
+        self._prev_hash, self.current_hash = self.current_hash, imagehash.phash(raw, hash_size=16)
+        distance = self.current_hash - self._prev_hash if self._prev_hash is not None else None
         width, height = raw.size
         self.last_scan_info = ScanInfo(
-            mode="describe",
+            mode=self.mode,
             reason=reason_for(distance),
             phash=str(self.current_hash),
             phash_distance=distance,
@@ -67,6 +64,8 @@ def for_grounding(grounding: str, device_session):
     from yewo.agent.grounding import GROUNDING_DESCRIBE
     from yewo.agent.perception.screen import ScreenPerception
 
-    if grounding == GROUNDING_DESCRIBE:
-        return BlindPerception(device_session)
+    from yewo.agent.grounding import GROUNDING_COORDINATES
+
+    if grounding in (GROUNDING_COORDINATES, GROUNDING_DESCRIBE):
+        return BlindPerception(device_session, grounding)
     return ScreenPerception(device_session)

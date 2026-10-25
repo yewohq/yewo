@@ -18,8 +18,21 @@ STEP_BUDGET_FLOOR = 15
 STEP_BUDGET_PER_INSTRUCTION = 2
 DEFAULT_SETTLE_TIME = 2.0
 DEFAULT_APP_PATH = None
-DEFAULT_GROUNDING = "coordinates"
+DEFAULT_GROUNDING = "marks"
+"""How the planner names a target.
+
+Marks numbers every detected element and accepts only a number back. The
+point comes from the detection rather than from the model, so a tap cannot
+land somewhere nothing was found.
+"""
 DEFAULT_RECORD = True
+
+DEFAULT_DURABLE_REPLAY = True
+"""Re-walk a path a passing run saved, rather than planning it again.
+
+The path reuses action knowledge only. Every run audits its own screens and
+earns a fresh verdict. Drift returns the affected action to the planner.
+"""
 
 # A cold emulator boot regularly exceeds Appium's 60s default.
 AVD_LAUNCH_TIMEOUT_MS = 180_000

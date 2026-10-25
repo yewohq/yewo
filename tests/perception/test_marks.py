@@ -14,9 +14,7 @@ class MarkTests(unittest.TestCase):
             type="yolo_detection",
             confidence=0.9,
             text=text,
-            bounding_box=BoundingBox(
-                x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]
-            ),
+            bounding_box=BoundingBox(x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]),
         )
 
     def _screen(self):
@@ -37,9 +35,7 @@ class MarkTests(unittest.TestCase):
     def test_repeat_detections_get_one_number(self):
         from yewo.agent.grounding.marks import build
 
-        doubled = self._screen() + [
-            self._el("Text", "Credit / Debit Card", (381, 661, 501, 701))
-        ]
+        doubled = self._screen() + [self._el("Text", "Credit / Debit Card", (381, 661, 501, 701))]
 
         self.assertEqual(len(build(doubled)), len(build(self._screen())))
 
@@ -116,7 +112,6 @@ class MarkLegibilityTests(unittest.TestCase):
         self.assertGreater(large.size, small.size)
         self.assertGreaterEqual(large.size, 30)
 
-
     def test_every_glyph_the_badges_use_is_in_the_font(self):
         """A glyph the face lacks draws as an empty box, which names nothing."""
         from PIL import Image, ImageDraw
@@ -186,7 +181,7 @@ class UnresolvedMarkTests(unittest.TestCase):
     def _action(self):
         from yewo.agent.actuation.actions import TapMarkAction
 
-        return TapMarkAction(mark=47, reason="continue")
+        return TapMarkAction(mark=47, target="Continue button", reason="continue")
 
     def test_an_unresolved_mark_can_be_described(self):
         from yewo.agent.step import narration
@@ -198,7 +193,9 @@ class UnresolvedMarkTests(unittest.TestCase):
         from yewo.agent.memory.loop_detector import RollingLoopDetector
 
         same = RollingLoopDetector.hash_action(self._action())
-        other = RollingLoopDetector.hash_action(TapMarkAction(mark=48, reason="continue"))
+        other = RollingLoopDetector.hash_action(
+            TapMarkAction(mark=48, target="Continue button", reason="continue")
+        )
 
         self.assertEqual(same, RollingLoopDetector.hash_action(self._action()))
         self.assertNotEqual(same, other)
@@ -225,9 +222,7 @@ class NestCollapseTests(unittest.TestCase):
             type="yolo_detection",
             confidence=0.9,
             text=text,
-            bounding_box=BoundingBox(
-                x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]
-            ),
+            bounding_box=BoundingBox(x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]),
         )
 
     def _field(self):
@@ -300,6 +295,8 @@ class ListRowTests(NestCollapseTests):
         ]
 
         self.assertEqual(len(build(labelled, screen_area=1080 * 2400)), 2)
+
+
 class KeyboardBandTests(unittest.TestCase):
     """The strip with no numbers has to say why it has no numbers."""
 
@@ -327,7 +324,7 @@ class KeyboardBandTests(unittest.TestCase):
         self.assertIsNone(keyboard_band([], 1080))
 
     def test_a_wide_key_inside_the_band_is_absorbed(self):
-        """"?123" and "space" are too long for the label rule but sit among the keys."""
+        """ "?123" and "space" are too long for the label rule but sit among the keys."""
         from yewo.agent.perception.keyboard import split_keyboard
 
         elements = [

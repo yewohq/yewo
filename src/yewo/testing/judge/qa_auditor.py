@@ -17,18 +17,29 @@ finished: that needs the goal, and withholding the goal is the point.
 """
 
 import logging
+from functools import partial
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from yewo.agent.artifacts.redaction import RedactedImages
 from yewo.agent.perception import elements
 from yewo.llm.llm_client import LLMClient
-from yewo.llm.messages import MultiPartMessage
+from yewo.llm.messages import Message, MultiPartMessage, SystemMessage
 from yewo.testing.judge import rules
-from yewo.testing.models import IssueKind, QAIssue, RuleVerification, SensitiveFinding
-from functools import partial
-
+from yewo.testing.models import (
+    IssueKind,
+    QAIssue,
+    Rendering,
+    RuleVerification,
+    SensitiveFinding,
+)
 from yewo.utils.redactor import safe_text
+from yewo.utils.secrets import (
+    AppValueRendering,
+    SECRET_MASK_GUIDANCE,
+    SecretScrubber,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +48,7 @@ class ScreenAssessment(BaseModel):
     """What one look at one screen says about the rules."""
 
     screen_name: str = Field(
-        ..., description="Descriptive name of the screen, e.g. 'Login Screen'."
+        ..., description="Descriptive name of the screen from its visible content."
     )
     rule_verifications: List[RuleVerification] = Field(
         default_factory=list,
@@ -88,78 +99,75 @@ class ScreenAssessment(BaseModel):
         return normalized
 
 
+PROMPT = """You audit one screenshot of a mobile app.
 
-PROMPT = """You are auditing one screenshot of a mobile app.
-
-You are not driving the app and you do not know what it was asked to do. Judge
-only what this screen shows.
+You do not drive the app. You do not know the plan, action history, or expected
+next screen. Judge only this screenshot and local device evidence supplied with
+it.
 
 ### Rules to audit
 {rules}
 
 ### How to answer
-1. `screen_name`: what this screen is, from what is on it.
-2. `rule_verifications`: one entry per rule above, copying its bracketed id into
-   `rule_id`.
-   - "passed" means you can see this screen satisfying the rule, now.
-   - "failed" means you can see this screen breaking it, now. A rule is not
-     failed because a field could show something once it is filled, because a
-     label suggests a value might appear beside it, or because the layout
-     could expose something under other conditions. Report what is rendered,
-     not what the design permits. If the violating content is not on the
-     screen in front of you, the rule is not failed.
-   - "untested" means this screen does not show you either way. A rule about a
-     screen you are not looking at is "untested", never "failed".
-   - `applicable` is false when this screen holds nothing the rule could apply
-     to, such as a rule about a field this screen does not have. Pair it with
-     "untested". Never mark a rule passed because its subject is absent, and
-     never from what you expect a field to do once it is filled. Judge the
-     pixels in front of you.
-   - `reasoning`: what you saw, not what you infer.
-3. `detected_issues`: visual defects on this screen — clipped or overlapping
-   text, layout overflow stripes, or a blank or crashed screen. Each needs a
-   `severity`.
-4. `sensitive_findings`: one entry for every place a value the rules above
-   treat as sensitive could be on this screen. Say what is there, not what
-   could be there:
-   - "value" only when you can read the real characters. Copy them into
+1. Set `screen_name` from visible content.
+2. Return one `rule_verifications` entry for every listed rule. Copy its
+   bracketed id into `rule_id`.
+   - Use "passed" only when visible evidence satisfies the rule now.
+   - Use "failed" only when visible evidence contradicts the rule now.
+   - Use "untested" when this screenshot cannot decide the rule.
+   - Set `applicable` false when the rule's subject is absent from this screen.
+     Pair false with "untested".
+   - An empty subject can be applicable and untested.
+   - Never turn an absent subject into a pass or failure.
+   - State visible evidence in `reasoning`. Do not infer earlier or later state.
+3. Put visible app defects in `detected_issues`.
+   - Report clipping only when app content is visibly cut off.
+   - Report overlap only when app-rendered items visibly cover each other.
+   - Report overflow only when content or an overflow indicator exceeds bounds.
+   - Report a crash only when visible failure UI identifies one.
+   - A splash, progress indicator, skeleton, or loading message is loading UI.
+     It is not a crash.
+   - A plain screen can be blank. Pixels alone do not prove that the app hung.
+4. Use `sensitive_findings` only for subjects the listed rules treat as
+   sensitive.
+   - Use "value" for readable characters and copy only visible characters into
      `quoted`.
-   - "masked" when dots, bullets or asterisks stand in for them.
-   - "label_only" when there is a caption and nothing beside it.
-   - "absent" when the screen holds no such field at all.
-   A caption is not a value. An empty field is not a value.
+   - Use "masked" when replacement glyphs stand in for a value.
+   - Use "label_only" when the location is visible but no value is rendered.
+   - Use "absent" when the subject does not appear on this screen.
+   - Never reconstruct or guess hidden characters.
+
+{secret_mask_guidance}
+If a `yewo_secret_mask` covers evidence needed for a rule and no local device
+evidence resolves it, mark that rule "untested".
+
+Judge only the rules listed above. Do not invent requirements for a particular
+kind of app. Do not infer behavior from a control's name, an icon, a disabled
+state, or a possible future action.
 """
 
 
 ENTERING = elements.ARRIVALS
 """Scan reasons that mean a different screen, rather than the same one working.
 
-A layout shift is fewer than half the previous elements still matching, which
-is how a crash screen or a modal arrives when it happens to resemble what it
-replaced. Typing reports stable or ocr_refresh: the fingerprint moves, the
-screen does not.
+A layout shift has fewer than half the previous elements still matching. This
+is how a crash screen or modal can arrive when it resembles the prior screen.
+Typing reports stable or ocr_refresh. The fingerprint moves, but the screen
+does not.
 """
 
 
 class ScreenAuditSession:
-    """Decides when a screen is worth auditing, rather than auditing each step.
+    """Audit every observed screen state once during its current visit.
 
-    Twice per screen: once on arrival, and once on the state it is left in.
-    Arrival is what catches a crash or a blank screen while there is still a
-    scenario to stop. The parting look is what catches a value that appeared
-    while the screen was being filled in, which is where a secret leaks.
-
-    The steps between are the same screen being worked. A cache keyed on the
-    fingerprint reuses nothing there, because every keystroke moves it.
-
-    A defect that appears and is gone again before the screen is left goes
-    unseen. That is the trade: a transient is worth less than the six-fold
-    saving, and the states that matter are both still covered.
+    A reading is the post-action state of the preceding turn. Auditing it when
+    it is observed keeps the verdict in front of every later action. Exact
+    duplicate fingerprints are assessed once per visit, while a changed field
+    or keyboard state gets its own assessment.
     """
 
     def __init__(self, auditor: "QAAuditor"):
         self._auditor = auditor
-        self._pending: Optional[tuple] = None
         self._visit: set = set()
         self._forced = False
 
@@ -172,34 +180,43 @@ class ScreenAuditSession:
         """
         self._forced = True
 
-    def audit_snapshot(self, snapshot) -> List[ScreenAssessment]:
-        """Assessments to act on now. Empty while a screen is merely worked."""
+    def audit_snapshot(
+        self, snapshot, prepared_model_image: Optional[bytes] = None
+    ) -> List[ScreenAssessment]:
+        """Assess this exact post-action state before another action runs."""
         reason = snapshot.scan_info.reason if snapshot.scan_info else "navigation"
-        fresh: List[ScreenAssessment] = []
+        if prepared_model_image is None and hasattr(self._auditor, "prepare_model_image"):
+            prepared_model_image = self._auditor.prepare_model_image(
+                snapshot.raw_img_bytes, snapshot.gui_elements
+            )
 
         if self._forced:
             self._forced = False
             self._visit.discard(snapshot.current_phash)
-            fresh.extend(self._audit_once(snapshot.raw_img_bytes, snapshot.current_phash))
         elif reason in ENTERING:
-            if self._pending is not None:
-                fresh.extend(self._audit_once(*self._pending))
-            # A visit ends here. Coming back to this screen later is a new one,
-            # and gets judged again rather than being answered from memory.
             self._visit = set()
-            fresh.extend(self._audit_once(snapshot.raw_img_bytes, snapshot.current_phash))
-
-        self._pending = (snapshot.raw_img_bytes, snapshot.current_phash)
-        return fresh
+        return self._audit_once(
+            snapshot.raw_img_bytes,
+            snapshot.current_phash,
+            snapshot.gui_elements,
+            prepared_model_image,
+        )
 
     def finalize_audit(self) -> List[ScreenAssessment]:
-        """The screen the scenario ended on, which nothing else will leave."""
-        if self._pending is None:
-            return []
-        last, self._pending = self._pending, None
-        return self._audit_once(*last)
+        """Every observed state is already audited."""
+        return []
 
-    def _audit_once(self, screenshot: bytes, screen_id: Optional[str]) -> List[ScreenAssessment]:
+    def audit_pending(self) -> List[ScreenAssessment]:
+        """Compatibility hook. Observation already crossed the audit barrier."""
+        return []
+
+    def _audit_once(
+        self,
+        screenshot: bytes,
+        screen_id: Optional[str],
+        gui_elements,
+        prepared_model_image: Optional[bytes] = None,
+    ) -> List[ScreenAssessment]:
         """One assessment per screen state, per visit to that screen.
 
         A screen left exactly as it was found is read twice, on arrival and on
@@ -207,15 +224,24 @@ class ScreenAuditSession:
         answers, and reporting that answer would count every rule on that
         screen twice.
 
-        Per visit, not per run. A scenario that comes back to a screen is
-        asking about it again, and a verdict withheld because the same screen
-        was judged earlier leaves the rule looking untested.
+        This scope is per visit, not per run. A scenario that returns to a
+        screen asks about it again. Withholding the new verdict would leave
+        the rule looking untested.
         """
         if screen_id is not None and screen_id in self._visit:
             return []
         if screen_id is not None:
             self._visit.add(screen_id)
-        return [self._auditor.audit(screenshot, screen_id)]
+        if prepared_model_image is None:
+            return [self._auditor.audit(screenshot, screen_id, gui_elements)]
+        return [
+            self._auditor.audit(
+                screenshot,
+                screen_id,
+                gui_elements,
+                prepared_model_image=prepared_model_image,
+            )
+        ]
 
 
 class QAAuditor:
@@ -227,22 +253,34 @@ class QAAuditor:
         # rule it answers even though only some of them are asked about.
         on_screen = rules.on_screen_only(expected_outcomes)
         self._rules = rules.every_rule(on_screen, security_rules)
-        self._audited_rule_ids = rules.listed_ids(
-            on_screen, rules.EXPECTED
-        ) | rules.listed_ids(security_rules, rules.SECURITY)
-        self._rule_ids_by_statement = rules.map_statements_to_rule_ids(
-            on_screen, security_rules
+        self._audited_rule_ids = rules.listed_ids(on_screen, rules.EXPECTED) | rules.listed_ids(
+            security_rules, rules.SECURITY
         )
-        self._scrubber = scrubber
+        self._rule_ids_by_statement = rules.map_statements_to_rule_ids(on_screen, security_rules)
+        self._security_rules_by_id = {
+            rules.rule_id(rules.SECURITY, index): str(rule)
+            for index, rule in enumerate(security_rules)
+        }
+        self._scrubber = scrubber or SecretScrubber()
+        self._model_images = RedactedImages(self._scrubber)
         self._by_screen: dict[str, ScreenAssessment] = {}
 
-    def audit(self, screenshot: bytes, screen_id: Optional[str]) -> ScreenAssessment:
+    def prepare_model_image(self, screenshot: bytes, gui_elements=()) -> bytes:
+        """Return the secret-safe image for this exact screen reading."""
+        return self._model_images.redact_model_image(screenshot, gui_elements)
+
+    def audit(
+        self,
+        screenshot: bytes,
+        screen_id: Optional[str],
+        gui_elements=(),
+        prepared_model_image: Optional[bytes] = None,
+    ) -> ScreenAssessment:
         """What this screen shows. Asks once per distinct screen.
 
-        A screen that did not change cannot give a different answer, so an
-        identical fingerprint reuses the answer. The match is exact on purpose.
-        A looser one would reuse an assessment across the small change the
-        auditor exists to catch — a value appearing in a field that was empty.
+        An unchanged screen cannot give a different answer. An identical
+        fingerprint therefore reuses the answer. The match is exact. A looser
+        match could miss a value appearing in a field that was empty.
 
         Expect few hits. Typing changes the fingerprint, so a form pays per
         step.
@@ -251,30 +289,131 @@ class QAAuditor:
             logger.debug("Screen %s was audited already. Reusing it.", screen_id[:12])
             return self._copy_assessment(self._by_screen[screen_id])
 
-        message = MultiPartMessage()
-        message.add_text("The screen to audit:")
-        message.add_image(screenshot)
-        message.add_text(PROMPT.format(rules=self._rules))
+        prompt = PROMPT.format(
+            rules=self._rules,
+            secret_mask_guidance=SECRET_MASK_GUIDANCE,
+        )
+        stable = SystemMessage(content=self._scrubber.for_model(prompt))
+        current = MultiPartMessage()
+        current.add_text(self._current_evidence_text())
+        current.add_image(
+            prepared_model_image
+            if prepared_model_image is not None
+            else self.prepare_model_image(screenshot, gui_elements)
+        )
+        messages: list[Message] = [stable, current]
 
         logger.info("Auditing the current screen against the rules...")
-        assessment = self._audit_screen_and_normalize(message)
-        if self._audited_rule_ids and not self._any_listed(assessment):
-            # Every rule on this screen would otherwise report unevidenced,
-            # and the scenario would fail on evidence the app had given.
-            logger.warning("The audit named none of the rules it was given. Asking again.")
-            assessment = self._audit_screen_and_normalize(message)
+        assessment = self._audit_screen_and_normalize(messages)
+        if self._audited_rule_ids and not self._every_rule_is_answered(assessment):
+            # A partial answer silently loses evidence for whichever rule was
+            # omitted. The final gate can then fail a screen the model actually
+            # saw, so give one fresh answer a chance to satisfy the contract.
+            logger.warning("The audit did not answer every rule it was given. Asking again.")
+            assessment = self._audit_screen_and_normalize(messages)
+        assessment.sensitive_findings.extend(self._local_secret_exposures(gui_elements, screen_id))
+        self._discard_unsupported_secret_passes(assessment)
         self._scrub_assessment(assessment)
 
         if screen_id:
             self._by_screen[screen_id] = assessment
         return self._copy_assessment(assessment)
 
-    def _audit_screen_and_normalize(self, message: MultiPartMessage) -> ScreenAssessment:
+    def _current_evidence_text(self) -> str:
+        """Describe secret-free local facts beside the changing screenshot."""
+        if not isinstance(self._scrubber, SecretScrubber):
+            return "The screen to audit:"
+        renderings = self._scrubber.app_renderings()
+        measured = [
+            (label, rendering)
+            for label, rendering in renderings.items()
+            if rendering is not AppValueRendering.UNKNOWN
+        ]
+        if not measured:
+            return "The screen to audit:"
+        lines = [
+            "Local device evidence for this screenshot:",
+            "Yewo measured these app-rendered fields before adding transport masks.",
+        ]
+        lines.extend(
+            f"- {label}: app_rendering={rendering.value}"
+            for label, rendering in measured
+        )
+        lines.append("The screen to audit:")
+        return "\n".join(lines)
+
+    def _discard_unsupported_secret_passes(self, assessment: ScreenAssessment) -> None:
+        """Do not let an empty field or transport mask prove a secret rule."""
+        if not isinstance(self._scrubber, SecretScrubber):
+            return
+        local_renderings = self._scrubber.app_renderings()
+        for verification in assessment.rule_verifications:
+            if verification.status != "passed":
+                continue
+            statement = self._security_rules_by_id.get(verification.rule_id or "")
+            declared_names = self._scrubber.declared_names_in(statement)
+            if not declared_names:
+                continue
+            if self._has_masking_evidence(
+                declared_names,
+                local_renderings,
+                assessment.sensitive_findings,
+            ):
+                continue
+            verification.status = "untested"
+            verification.reasoning = (
+                "The rule concerns a declared value, but this screen contains no "
+                "app-rendered masking evidence for it. An empty field or a Yewo "
+                "transport mask does not prove the rule."
+            )
+
+    def _has_masking_evidence(
+        self,
+        declared_names: tuple[str, ...],
+        local_renderings: dict[str, AppValueRendering],
+        findings: list[SensitiveFinding],
+    ) -> bool:
+        """Whether local or unobscured visual evidence shows app masking."""
+        for name in declared_names:
+            label = self._scrubber.model_label_for_name(name)
+            if label and local_renderings.get(label) is AppValueRendering.MASKED:
+                return True
+            if label and label in local_renderings:
+                continue
+            for finding in findings:
+                finding_names = self._scrubber.declared_names_in(
+                    f"{finding.field} {finding.quoted}"
+                )
+                if name in finding_names and finding.rendering is Rendering.MASKED:
+                    return True
+        return False
+
+    def _audit_screen_and_normalize(self, messages: list[Message]) -> ScreenAssessment:
         """One answer, with each verdict matched to the rule it is about."""
-        assessment: ScreenAssessment = self._llm.generate_response([message], ScreenAssessment)
+        assessment: ScreenAssessment = self._llm.generate_response(messages, ScreenAssessment)
         self._resolve_rule_ids_from_statements(assessment)
         self._filter_unlisted_verifications(assessment)
         return assessment
+
+    def _local_secret_exposures(self, gui_elements, screen_id) -> list[SensitiveFinding]:
+        """Exact declared values OCR found before the model receives a masked image."""
+        findings = []
+        known: set[tuple[str, Rendering]] = set()
+        for element in gui_elements or ():
+            for label in self._scrubber.declared_labels_in(element.text):
+                identity = (label, Rendering.VALUE)
+                if identity in known:
+                    continue
+                known.add(identity)
+                findings.append(
+                    SensitiveFinding(
+                        field=label,
+                        rendering=Rendering.VALUE,
+                        quoted=label,
+                        screen_name=screen_id,
+                    )
+                )
+        return findings
 
     def _resolve_rule_ids_from_statements(self, assessment: ScreenAssessment) -> None:
         """Fills the id for a verdict that quoted its rule and left the id out.
@@ -286,20 +425,20 @@ class QAAuditor:
         which blames the run for an answer it was given.
         """
         for verification in assessment.rule_verifications:
-            if verification.rule_id:
+            if verification.rule_id in self._audited_rule_ids:
                 continue
-            rule_id = self._rule_ids_by_statement.get(
-                (verification.rule or "").strip()
-            )
+            rule_id = self._rule_ids_by_statement.get((verification.rule or "").strip())
             if rule_id:
                 verification.rule_id = rule_id
 
-    def _any_listed(self, assessment: ScreenAssessment) -> bool:
-        """Whether any verdict names a rule this screen was shown."""
-        return any(
-            verification.rule_id in self._audited_rule_ids
+    def _every_rule_is_answered(self, assessment: ScreenAssessment) -> bool:
+        """Whether the answer contains a verdict for every listed rule."""
+        answered = {
+            verification.rule_id
             for verification in assessment.rule_verifications
-        )
+            if verification.rule_id in self._audited_rule_ids
+        }
+        return self._audited_rule_ids <= answered
 
     def _filter_unlisted_verifications(self, assessment: ScreenAssessment) -> None:
         """Drops verdicts naming a rule this screen was never shown.

@@ -47,7 +47,8 @@ class RollingLoopDetector:
         self._action_window: deque[str] = deque(maxlen=window_size)
         self._last_page_hash: Optional[str] = None
         self._stagnant_count: int = 0
-        self._terminated: bool = False
+        self._action_repetition_terminated: bool = False
+        self._page_stagnation_terminated: bool = False
 
     def check(
         self, action_hash: Optional[str], page_hash: Optional[str]
@@ -58,10 +59,11 @@ class RollingLoopDetector:
                 self._stagnant_count += 1
             else:
                 self._stagnant_count = 0
+                self._page_stagnation_terminated = False
             self._last_page_hash = page_hash
 
         if self._stagnant_count >= _STAGNANT_THRESHOLD:
-            self._terminated = True
+            self._page_stagnation_terminated = True
             return None
 
         if action_hash is not None:
@@ -69,7 +71,7 @@ class RollingLoopDetector:
             repeat_count = sum(1 for h in self._action_window if h == action_hash)
 
             if repeat_count >= _TERMINATE_AT:
-                self._terminated = True
+                self._action_repetition_terminated = True
                 return None
 
             for threshold in (_NUDGE_STRONG, _NUDGE_MEDIUM, _NUDGE_SOFT):
@@ -82,7 +84,7 @@ class RollingLoopDetector:
         return None
 
     def terminated(self) -> bool:
-        return self._terminated
+        return self._action_repetition_terminated or self._page_stagnation_terminated
 
     @staticmethod
     def hash_action(action) -> str:

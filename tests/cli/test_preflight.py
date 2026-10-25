@@ -9,8 +9,7 @@ class GroundingRequirementTests(unittest.TestCase):
         from yewo.preflight import packages_for
 
         with mock.patch("yewo.preflight.missing_vision_packages", return_value=["ultralytics"]):
-            for mode in ("coordinates", "marks"):
-                self.assertIn("vision", packages_for(mode)[0])
+            self.assertIn("vision", packages_for("marks")[0])
 
     def test_a_mode_that_names_its_target_needs_no_detector(self):
         from yewo.preflight import packages_for

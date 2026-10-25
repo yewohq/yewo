@@ -1,7 +1,8 @@
 """Which half of the loop owns an answer, and when an answer still counts."""
 
 import unittest
-from types import SimpleNamespace
+
+from fakes import device_result
 
 
 class AuditorOwnershipTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class CrashRankingTests(unittest.TestCase):
         from yewo.testing.judge.verdicts import _terminal_outcome
 
         values = {
-            "run_result": SimpleNamespace(status="hook_stop", failure_reason=None),
+            "run_result": device_result(status="hook_stop"),
             "stop_reason": "Scenario is infeasible: the screen cannot be reached",
             "verifications": [],
             "issues": [
@@ -175,7 +176,7 @@ class ExposureEvidenceTests(unittest.TestCase):
         from yewo.testing.judge.verdicts import _terminal_outcome
 
         return _terminal_outcome(
-            run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
+            run_result=device_result(),
             stop_reason=None,
             verifications=[],
             issues=issues,

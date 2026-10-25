@@ -267,10 +267,10 @@ def describe(marks: List[Mark], height: int) -> str:
     the model can echo back, and an echoed coordinate cannot be told from a
     guessed one.
 
-    Never the detected text either. The model already sees the screen the words
-    are printed on, and our OCR reads English only, so a label here can be
-    confidently wrong in a way the screenshot is not. The numbers are listed
-    because the planner may answer only with a number from this list.
+    Never include the detected text either. The model already sees the screen
+    that contains the words. Our OCR reads English only, so its label can be
+    wrong when the screenshot is correct. The numbers are listed because the
+    planner may answer only with a number from this list.
 
     A mark that already refused text says so. Nothing on screen separates a
     field from a picture of one, so the only evidence is having tried.
@@ -457,14 +457,13 @@ def refuse_mark(
     """Records a failure to put text somewhere, and bans the place on the second.
 
     Focus that did not move proves the tap reached nothing focusable. It does
-    not prove the element holds no text: a tap into the padding of a real field
-    does the same. Banning on one failure can make a genuine password field
-    untypable for the rest of the screen, so the first failure only leaves a
-    mark against the place.
+    not prove the element holds no text. A tap into a real field's padding has
+    the same result. Banning after one failure can hide a genuine editable
+    field for the rest of the screen. The first failure only marks the place.
 
-    Kept by place rather than by number. Numbers are handed out in reading
-    order over whatever the detector returned, so they do not survive a
-    detection appearing or disappearing between two looks at one screen.
+    The failure is kept by place rather than by number. Numbers follow the
+    detector's reading order. They can change when a detection appears or
+    disappears between two observations of one screen.
     """
     mark = find(element_marks, index) if index is not None else None
     if phash is None or mark is None:

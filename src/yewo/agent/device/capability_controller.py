@@ -12,6 +12,7 @@ for, and for a device the driver answers about but cannot change.
 """
 
 import logging
+import mimetypes
 import os
 from typing import Callable, Optional
 
@@ -48,6 +49,21 @@ from yewo.agent.device.simctl_control import SimctlControl
 from yewo.errors import ActionRejected, DeviceUnavailable
 
 logger = logging.getLogger(__name__)
+
+
+def _android_media_directory(local_path: str) -> str:
+    """Select Android's public collection from the file's media type."""
+    media_type, _ = mimetypes.guess_type(local_path)
+    if media_type:
+        category = media_type.split("/", 1)[0]
+        if category == "audio":
+            return "Music"
+        if category == "video":
+            return "Movies"
+        if category == "image":
+            return "Pictures"
+    return "Download"
+
 
 def _format_capability_label(capability: Capability) -> str:
     """A capability as a reader needs it, with the variant it chose.
@@ -502,7 +518,8 @@ class CapabilityController:
         if self.platform == Platform.IOS:
             SimctlControl.add_media(target, capability.local_path)
         else:
-            destination = f"/sdcard/Pictures/{os.path.basename(capability.local_path)}"
+            directory = _android_media_directory(capability.local_path)
+            destination = f"/sdcard/{directory}/{os.path.basename(capability.local_path)}"
             AdbControl.push_file(target, capability.local_path, destination)
             AdbControl.scan_media_file(target, destination)
 

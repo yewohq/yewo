@@ -3,6 +3,7 @@ LiteLLM wrapper client for communicating with LLMs (e.g. Gemini via OpenRouter).
 Supports standard messaging and structured output via Pydantic schemas.
 """
 
+import hashlib
 import json
 import logging
 import time
@@ -21,17 +22,11 @@ logger = logging.getLogger(__name__)
 
 STRUCTURED_ATTEMPTS = 2
 
-# Which provider answers decides whether a structured answer carries content.
-# A response can match the schema and hold nothing. Fallbacks stay off so a
-# route to another provider fails loudly, rather than spending a device on a
-# suite nothing can judge.
-PROVIDER_PREFERENCE = {"order": ["together"], "allow_fallbacks": False}
-
 Answer = TypeVar("Answer", bound=BaseModel)
 
 
 class LLMClient:
-    """Client for making calls to the OpenRouter/LiteLLM completion API."""
+    """Client for making provider-neutral calls through the LiteLLM SDK."""
 
     def __init__(
         self,
@@ -39,6 +34,7 @@ class LLMClient:
         usage_callback=None,
         wait: Callable[[float], None] = time.sleep,
         prompt_store: Optional[PromptStore] = None,
+        cache_affinity: Optional[str] = None,
     ):
         """Initializes the LLM client.
 
@@ -49,11 +45,26 @@ class LLMClient:
                 exercises the backoff without spending the time.
             prompt_store: Where to record what each call asked. None records
                 nothing, which is what a client built outside a run gets.
+            cache_affinity: Stable identity for calls in one run. OpenRouter
+                uses it for sticky routing to the endpoint holding a prompt
+                cache. Direct providers apply their own cache policy.
         """
         self._model = model
         self.usage_callback = usage_callback
         self._wait = wait
         self.prompt_store = prompt_store
+        self.set_cache_affinity(cache_affinity)
+
+    def set_cache_affinity(self, identity: Optional[str]) -> None:
+        """Route this client's related calls to one prompt-cache location.
+
+        A digest keeps filesystem paths, device names, and other caller-owned
+        identities out of provider metadata. It is also safely below the
+        provider's 256-character session-id limit.
+        """
+        self._cache_affinity = (
+            f"yewo-{hashlib.sha256(identity.encode('utf-8')).hexdigest()}" if identity else None
+        )
 
     @overload
     def generate_response(self, messages: list[Message]) -> str: ...
@@ -70,7 +81,9 @@ class LLMClient:
 
     @overload
     def generate_response(
-        self, messages: list[Message], response_model: type[Answer],
+        self,
+        messages: list[Message],
+        response_model: type[Answer],
         context: dict | None = ...,
     ) -> Answer: ...
 
@@ -109,8 +122,7 @@ class LLMClient:
             except ValidationError as exc:
                 last_error = exc
                 logger.warning(
-                    "Model response did not match %s. Attempt %d of %d, with "
-                    "%d validation errors.",
+                    "Model response did not match %s. Attempt %d of %d, with %d validation errors.",
                     response_model.__name__ if response_model else "schema",
                     attempt + 1,
                     STRUCTURED_ATTEMPTS,
@@ -161,8 +173,7 @@ class LLMClient:
                     break
                 pause = failures.BACKOFF_SECONDS[attempt_number - 1]
                 logger.warning(
-                    "The provider did not answer (%s). Attempt %d of %d, "
-                    "waiting %.0fs.",
+                    "The provider did not answer (%s). Attempt %d of %d, waiting %.0fs.",
                     described,
                     attempt_number,
                     failures.ATTEMPTS,
@@ -185,11 +196,23 @@ class LLMClient:
         kwargs: dict = {
             "model": self._model,
             "messages": [m.to_dict() for m in messages],
-            "extra_body": {
-                "plugins": [{"id": "response-healing"}],
-                "provider": PROVIDER_PREFERENCE,
-            },
         }
+
+        # These are OpenRouter request fields, not generic LiteLLM fields.
+        # Direct providers receive only the standard request that LiteLLM
+        # translates for their API.
+        if self._model.startswith("openrouter/"):
+            extra_body: dict[str, object] = {
+                "plugins": [{"id": "response-healing"}]
+            }
+            if self._cache_affinity:
+                extra_body.update(
+                    {
+                        "session_id": self._cache_affinity,
+                        "prompt_cache_key": self._cache_affinity,
+                    }
+                )
+            kwargs["extra_body"] = extra_body
         if response_model:
             kwargs["response_format"] = {
                 "type": "json_schema",
@@ -202,9 +225,7 @@ class LLMClient:
 
         # Recorded before the call, so a question that was never answered is
         # still a question this run can be shown to have asked.
-        asked = (
-            self.prompt_store.store_messages(messages) if self.prompt_store else None
-        )
+        asked = self.prompt_store.store_messages(messages) if self.prompt_store else None
 
         response = litellm.completion(**kwargs)
 
@@ -235,7 +256,5 @@ class LLMClient:
         stripped = (content or "").strip()
         if stripped.startswith("```"):
             lines = stripped.splitlines()
-            stripped = "\n".join(
-                lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
-            )
+            stripped = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         return response_model.model_validate_json(stripped, context=context)

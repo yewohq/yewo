@@ -2,7 +2,7 @@
 
 import unittest
 
-from fakes import walk
+from fakes import device_result, walk
 
 
 def _outcome(statement, scope=None):
@@ -89,9 +89,7 @@ class UnprovableOutcomeTests(unittest.TestCase):
         from yewo.testing.qa_agent import QAAgent
 
         status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
-            run_result=__import__("types").SimpleNamespace(
-                status="goal_reached", failure_reason=None
-            ),
+            run_result=device_result(),
             stop_reason=None,
             all_verifications=[],
             all_issues=[],

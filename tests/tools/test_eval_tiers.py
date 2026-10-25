@@ -84,7 +84,7 @@ class _FakeAuditor:
         self._answers = answers
         self._looks = looks
 
-    def audit(self, screenshot: bytes, screen_id):
+    def audit(self, screenshot: bytes, screen_id, gui_elements=()):
         from yewo.testing.judge.qa_auditor import ScreenAssessment
         from yewo.testing.models import RuleVerification
 

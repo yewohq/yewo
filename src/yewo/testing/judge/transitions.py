@@ -1,6 +1,6 @@
 """Settling the outcomes that are about where the run went, not what it saw.
 
-"Tapping Login reaches the Location Access screen" is true of a journey, not
+"Tapping Continue reaches the confirmation screen" is true of a journey, not
 of a screenshot, so the auditor is never asked it. What answers it is the
 order of screens the run passed through.
 
@@ -15,23 +15,16 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from yewo.llm.llm_client import LLMClient
-from yewo.llm.messages import TextMessage
+from yewo.llm.messages import SystemMessage, TextMessage
 from yewo.testing.judge import rules
 from yewo.testing.models import RuleVerification
 
 logger = logging.getLogger(__name__)
 
-PROMPT = """You are given the screens a test run passed through, in order, and
-a list of claims about reaching screens. Judge each claim against the order.
-
-### Screens visited, in order
-{screens}
-
-### Claims to judge
-{claims}
+PROMPT = """You judge claims about the order of screens in a test run.
 
 ### How to answer
-1. `verdicts`: one entry per claim above, copying its bracketed id into
+1. `verdicts`: one entry per listed claim, copying its bracketed id into
    `rule_id`.
    - "passed" means the order of screens shows this claim holding. A claim
      that one screen is reached from another needs both, in that order.
@@ -44,6 +37,13 @@ a list of claims about reaching screens. Judge each claim against the order.
 3. Screen names are written by a reader who did not know what was expected, so
    they will not match the words of a claim. Match them on what they describe,
    not on wording.
+"""
+
+RUN_CONTEXT = """### Screens visited, in order
+{screens}
+
+### Claims to judge
+{claims}
 """
 
 
@@ -94,8 +94,11 @@ def settle(
 
     numbered = "\n".join(f"{index}. {name}" for index, name in enumerate(screens, 1))
     logger.info("Judging %d screen(s) against the transitions the scenario expects.", len(screens))
-    message = TextMessage(content=PROMPT.format(screens=numbered, claims=claims))
-    answer: TransitionVerdicts = llm.generate_response([message], TransitionVerdicts)
+    messages = [
+        SystemMessage(content=PROMPT),
+        TextMessage(content=RUN_CONTEXT.format(screens=numbered, claims=claims)),
+    ]
+    answer: TransitionVerdicts = llm.generate_response(messages, TransitionVerdicts)
 
     # This judge is shown expected outcomes and nothing else, so an answer
     # naming a bare index names one of them.

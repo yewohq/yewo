@@ -138,7 +138,6 @@ class LifecycleOwnershipTests(unittest.TestCase):
         session._appium_service.start.assert_not_called()
         self.assertFalse(session._owns_appium)
 
-
 class LaunchPaintTests(unittest.TestCase):
     """A debug build can draw nothing for a second or two after am start."""
 

@@ -35,8 +35,12 @@ class ProviderShapeTests(unittest.TestCase):
     def test_a_verdict_that_gives_only_an_id_still_names_its_rule(self):
         """An id names a rule as well as its words do."""
         kept = self._verdicts(
-            {"rule_id": "expected:0", "status": "untested", "applicable": False,
-             "reasoning": "No sign-in UI is rendered here."}
+            {
+                "rule_id": "expected:0",
+                "status": "untested",
+                "applicable": False,
+                "reasoning": "No sign-in UI is rendered here.",
+            }
         )
 
         self.assertEqual(kept.rule_verifications[0].rule_id, "expected:0")
@@ -48,9 +52,7 @@ class ProviderShapeTests(unittest.TestCase):
             {"rule": "expected:1", "status": "fail", "reasoning": "not masked"},
         )
 
-        self.assertEqual(
-            [v.status for v in kept.rule_verifications], ["passed", "failed"]
-        )
+        self.assertEqual([v.status for v in kept.rule_verifications], ["passed", "failed"])
 
     def test_a_status_that_is_not_one_of_the_three_is_refused(self):
         """A verdict is the thing being recorded, so guessing at one invents it."""
@@ -81,9 +83,7 @@ class FindingShapeTests(unittest.TestCase):
     def test_a_type_that_names_a_rendering_is_the_rendering(self):
         from yewo.testing.models import Rendering
 
-        finding = self._finding(
-            type="masked", location="Card preview", quoted="•••• 4444"
-        )
+        finding = self._finding(type="masked", location="Card preview", quoted="•••• 4444")
 
         self.assertIs(finding.rendering, Rendering.MASKED)
         self.assertEqual(finding.field, "Card preview")
@@ -117,34 +117,49 @@ class FindingShapeTests(unittest.TestCase):
 
 
 class ProviderRoutingTests(unittest.TestCase):
-    """Which provider answers decides whether the answer carries content.
+    """Provider-specific fields must not leak into another provider's API."""
 
-    A response can match the schema and hold nothing, so the pin is what keeps
-    a run on a provider that answers with content. A pin that never reaches the
-    request buys nothing, so the request is what these read.
-    """
-
-    def _send(self):
+    def _send(self, model="openrouter/test/model", cache_affinity=None):
         from types import SimpleNamespace
         from unittest import mock
 
         from yewo.llm.llm_client import LLMClient
         from yewo.llm.messages import TextMessage
 
-        answer = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
-        )
+        answer = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
         with mock.patch("litellm.completion", return_value=answer) as completion:
-            LLMClient(model="openrouter/test/model").generate_response(
-                [TextMessage(content="hi")]
-            )
-        return completion.call_args.kwargs["extra_body"]
+            LLMClient(
+                model=model, cache_affinity=cache_affinity
+            ).generate_response([TextMessage(content="hi")])
+        return completion.call_args.kwargs
 
-    def test_every_call_names_the_provider_it_wants(self):
-        self.assertEqual(self._send()["provider"]["order"], ["together"])
+    def test_openrouter_receives_its_response_healing_plugin(self):
+        self.assertEqual(
+            self._send()["extra_body"]["plugins"], [{"id": "response-healing"}]
+        )
 
-    def test_a_route_elsewhere_fails_rather_than_answering(self):
-        self.assertFalse(self._send()["provider"]["allow_fallbacks"])
+    def test_openrouter_is_not_pinned_to_one_upstream_provider(self):
+        self.assertNotIn("provider", self._send()["extra_body"])
 
-    def test_the_pin_does_not_displace_the_healing_plugin(self):
-        self.assertEqual(self._send()["plugins"], [{"id": "response-healing"}])
+    def test_a_run_identity_sets_both_cache_routes_without_exposing_it(self):
+        body = self._send(cache_affinity="run-with-private-path")["extra_body"]
+
+        self.assertEqual(body["session_id"], body["prompt_cache_key"])
+        self.assertRegex(body["session_id"], r"^yewo-[0-9a-f]{64}$")
+        self.assertNotIn("private-path", body["session_id"])
+
+    def test_a_call_outside_a_run_sends_no_cache_route(self):
+        body = self._send()["extra_body"]
+
+        self.assertNotIn("session_id", body)
+        self.assertNotIn("prompt_cache_key", body)
+
+    def test_direct_providers_receive_no_openrouter_fields(self):
+        for model in (
+            "openai/example-model",
+            "anthropic/example-model",
+            "gemini/example-model",
+        ):
+            request = self._send(model=model, cache_affinity="run")
+
+            self.assertNotIn("extra_body", request, model)

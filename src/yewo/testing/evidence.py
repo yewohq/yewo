@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from yewo.agent.actuation.actions import CapabilityKind
 from yewo.agent.run.outcomes import RunStatus
+from yewo.agent.run.postconditions import PostconditionVerification
 from yewo.agent.run.record import StepRecord
 from yewo.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
 
@@ -311,10 +312,10 @@ class RuleVerification(BaseModel):
         One rejected verdict takes the whole assessment with it, and the
         verdicts beside it were answers to other rules.
 
-        The id is the part the gate needs, and the gate matches it whole, so
-        it is read out of whichever field holds it and out of whatever else
-        was written around it. It stands in for `rule` when only the id was
-        given: an id names its rule as well as the words do.
+        The gate needs the id and matches it whole. The id is read from any
+        field that holds it and from surrounding text. It stands in for `rule`
+        when only the id was given. An id names its rule as well as the words
+        do.
 
         An unrecognised status is left alone to be refused. A verdict is the
         thing being recorded, and guessing at one invents evidence.
@@ -395,6 +396,9 @@ class VerdictInputs(BaseModel):
     sensitive_findings: List[SensitiveFinding] = Field(default_factory=list)
     required_capabilities: List[CapabilityKind] = Field(default_factory=list)
     receipts: List[ReceiptRecord] = Field(default_factory=list)
+    postcondition_verifications: List[PostconditionVerification] = Field(
+        default_factory=list
+    )
 
 
 class ScenarioReport(BaseModel):
@@ -432,6 +436,10 @@ class ScenarioReport(BaseModel):
     steps: List[StepRecord] = Field(
         default_factory=list,
         description="What each step of this scenario did, in order.",
+    )
+    postcondition_verifications: List[PostconditionVerification] = Field(
+        default_factory=list,
+        description="Secret-free local verifications that ran before dependent actions.",
     )
     failure_reason: Optional[str] = None
     verdict_inputs: Optional[VerdictInputs] = Field(

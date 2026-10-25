@@ -80,9 +80,7 @@ class StepLogTests(unittest.TestCase):
 
         decision = log.records[0].decision
         self.assertEqual(decision.reasoning, "the goal is to sign in")
-        self.assertEqual(
-            decision.evaluation_previous_goal, "Success — the app opened"
-        )
+        self.assertEqual(decision.evaluation_previous_goal, "Success — the app opened")
         self.assertEqual(decision.observation, "An email field and a password field")
         self.assertEqual(decision.current_screen, "Sign in")
         self.assertFalse(decision.goal_satisfied)
@@ -142,7 +140,7 @@ class StepLogTests(unittest.TestCase):
         log.record_grounding(
             "marks",
             SimpleNamespace(ok=False, observation="mark 9 is not listed", unmatched=True),
-            TapMarkAction(mark=9, reason="open the menu"),
+            TapMarkAction(mark=9, target="Menu button", reason="open the menu"),
         )
         log.record_blocked_action(
             TapAction(coordinates=Coordinates(x=1, y=2), reason="open the menu"),
@@ -162,7 +160,7 @@ class StepLogTests(unittest.TestCase):
         log.record_grounding(
             "marks",
             SimpleNamespace(ok=True, observation="matched", unmatched=False),
-            TapMarkAction(mark=3, reason="tap Checkout"),
+            TapMarkAction(mark=3, target="Checkout button", reason="tap Checkout"),
         )
 
         self.assertIsNone(log.records[0].grounding.refusal)
@@ -266,9 +264,7 @@ class CallAttributionTests(unittest.TestCase):
             tracker.mark(None)
             tracker.add_call("scenario:TS_1", self._call())
 
-            counted = len(step.calls) + len(
-                tracker.calls_outside_steps("scenario:TS_1")
-            )
+            counted = len(step.calls) + len(tracker.calls_outside_steps("scenario:TS_1"))
 
         self.assertEqual(counted, tracker.totals.total_calls)
 
@@ -296,9 +292,7 @@ class ScreenNameTests(unittest.TestCase):
         log.open(1)
         log.planned(planned(current_screen="Signed in as password123"), 1.0)
 
-        self.assertEqual(
-            log.records[0].screen_name, log.records[0].decision.current_screen
-        )
+        self.assertEqual(log.records[0].screen_name, log.records[0].decision.current_screen)
 
 
 class TargetLabelTests(unittest.TestCase):
@@ -358,8 +352,13 @@ class ComponentTests(unittest.TestCase):
             return CallRow.of(
                 "agent",
                 CallRecord(
-                    model="m", served_model="m", generation_id="g", attempt=1,
-                    finish_reason="stop", latency_ms=1.0, cost=0.0,
+                    model="m",
+                    served_model="m",
+                    generation_id="g",
+                    attempt=1,
+                    finish_reason="stop",
+                    latency_ms=1.0,
+                    cost=0.0,
                     answering=answering,
                 ),
             )
@@ -376,8 +375,13 @@ class ComponentTests(unittest.TestCase):
         row = CallRow.of(
             "agent",
             CallRecord(
-                model="m", served_model="m", generation_id="g", attempt=1,
-                finish_reason="stop", latency_ms=1.0, cost=0.0,
+                model="m",
+                served_model="m",
+                generation_id="g",
+                attempt=1,
+                finish_reason="stop",
+                latency_ms=1.0,
+                cost=0.0,
             ),
         )
 

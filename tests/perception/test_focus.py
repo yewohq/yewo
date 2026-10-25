@@ -40,6 +40,9 @@ class Field:
     def send_keys(self, text):
         self.driver.typed.append(text)
 
+    def get_attribute(self, name):
+        return self.driver.attributes.get(name)
+
 
 class FakeDriver:
     """A driver whose focus is one rect, or nothing."""
@@ -47,6 +50,7 @@ class FakeDriver:
     def __init__(self, rect=None):
         self.rect = rect
         self.typed: list = []
+        self.attributes: dict = {}
 
     @property
     def switch_to(self):
@@ -168,6 +172,35 @@ class AssertAtTests(unittest.TestCase):
         whole = {"x": 0, "y": 0, "width": SCREEN[0], "height": SCREEN[1]}
 
         self._focus(whole).assert_at(*POINT, "TYPE", before=whole)
+
+
+class FocusedFieldReadingTests(unittest.TestCase):
+    def test_android_password_attribute_is_normalized(self):
+        driver = FakeDriver(rect=BEFORE_KEYBOARD)
+        driver.attributes = {"value": "••••••", "password": "true"}
+
+        reading = Focus(driver, screen_area=SCREEN[0] * SCREEN[1]).reading()
+
+        self.assertTrue(reading.is_secure)
+
+    def test_ios_secure_field_type_is_normalized(self):
+        driver = FakeDriver(rect=BEFORE_KEYBOARD)
+        driver.attributes = {
+            "value": "••••••",
+            "type": "XCUIElementTypeSecureTextField",
+        }
+
+        reading = Focus(driver, screen_area=SCREEN[0] * SCREEN[1]).reading()
+
+        self.assertTrue(reading.is_secure)
+
+    def test_unknown_secure_state_is_not_guessed(self):
+        driver = FakeDriver(rect=BEFORE_KEYBOARD)
+        driver.attributes = {"value": "text"}
+
+        reading = Focus(driver, screen_area=SCREEN[0] * SCREEN[1]).reading()
+
+        self.assertIsNone(reading.is_secure)
 
 
 class WaitForTests(unittest.TestCase):

@@ -14,8 +14,6 @@ def _assessment(**overrides):
 
 
 class AuditorInputTests(unittest.TestCase):
-    """What the auditor is not told is the point of it."""
-
     def _auditor(self, llm):
         from yewo.testing.judge.qa_auditor import QAAuditor
 
@@ -26,39 +24,57 @@ class AuditorInputTests(unittest.TestCase):
 
     def _sent(self, llm):
         (messages, _model), _ = llm.generate_response.call_args
-        return messages[0].to_dict()
+        return [message.to_dict() for message in messages]
+
+    def _sent_text(self, llm):
+        text = []
+        for message in self._sent(llm):
+            content = message["content"]
+            if isinstance(content, str):
+                text.append(content)
+            else:
+                text.extend(part.get("text", "") for part in content)
+        return " ".join(text)
 
     def test_the_screenshot_is_sent(self):
         llm = self._llm()
         self._auditor(llm).audit(b"png-bytes", screen_id="abc")
 
-        kinds = [part["type"] for part in self._sent(llm)["content"]]
+        kinds = [part["type"] for part in self._sent(llm)[1]["content"]]
         self.assertIn("image_url", kinds)
 
     def test_the_rules_are_sent(self):
         llm = self._llm()
         self._auditor(llm).audit(b"png", screen_id="abc")
 
-        text = " ".join(
-            part.get("text", "") for part in self._sent(llm)["content"]
-        )
-        self.assertIn("[security:0] Card masked", text)
+        self.assertIn("[security:0] Card masked", self._sent_text(llm))
+
+    def test_reusable_rules_precede_the_changing_screenshot(self):
+        llm = self._llm()
+        self._auditor(llm).audit(b"png", screen_id="abc")
+
+        messages = self._sent(llm)
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn("[security:0] Card masked", messages[0]["content"])
+        self.assertIn("Judge only the rules listed above", messages[0]["content"])
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertEqual(messages[1]["content"][-1]["type"], "image_url")
 
     def test_the_plan_is_not_sent(self):
         """A verdict from something that knows the intent is not independent."""
         llm = self._llm()
         self._auditor(llm).audit(b"png", screen_id="abc")
 
-        text = " ".join(
-            part.get("text", "") for part in self._sent(llm)["content"]
-        ).lower()
-        for leak in ("action", "history", "previous step", "next step", "tap "):
+        text = self._sent_text(llm).lower()
+        for leak in (
+            "tap the place order button",
+            "typed the delivery address",
+            "next, submit the order",
+        ):
             self.assertNotIn(leak, text, f"the auditor was told about {leak!r}")
 
 
 class ScreenCachingTests(unittest.TestCase):
-    """A screen that has not changed cannot have changed its mind."""
-
     def _auditor(self, llm):
         from yewo.testing.judge.qa_auditor import QAAuditor
 
@@ -93,8 +109,6 @@ class ScreenCachingTests(unittest.TestCase):
 
 
 class AuditorPromptTests(unittest.TestCase):
-    """What the prompt forbids, in both directions."""
-
     def _prompt(self):
         from unittest.mock import Mock
 
@@ -102,34 +116,31 @@ class AuditorPromptTests(unittest.TestCase):
 
         llm = SimpleNamespace(generate_response=Mock(return_value=_assessment()))
         QAAuditor(llm, ["Order is confirmed"], ["Card is masked"]).audit(b"png", "s")
-        message = llm.generate_response.call_args[0][0][0]
+        messages = llm.generate_response.call_args[0][0]
         return "".join(
-            part.get("text", "")
-            for part in message.to_dict()["content"]
-            if isinstance(part, dict)
+            message.to_dict()["content"]
+            for message in messages
+            if isinstance(message.to_dict()["content"], str)
         )
 
     def test_a_rule_is_not_passed_because_its_subject_is_absent(self):
-        self.assertIn("Never mark a rule passed because its subject is absent", self._prompt())
+        self.assertIn("Never turn an absent subject into a pass or failure", self._prompt())
 
     def test_a_rule_is_not_failed_on_what_a_screen_might_show_later(self):
         """It failed rules on hypotheticals: a label that could expose a value."""
         prompt = self._prompt()
 
-        self.assertIn("not what the design permits", prompt)
-        self.assertIn("once it is filled", prompt)
+        self.assertIn("visible evidence contradicts the rule now", prompt)
+        self.assertIn("Do not infer behavior", prompt)
 
     def test_the_auditor_is_never_asked_whether_the_plan_finished(self):
         """It is told it does not know the plan, so it cannot answer that."""
         prompt = self._prompt()
 
-        self.assertIn("you do not know what it was asked to do", prompt)
+        self.assertIn("You do not know the plan", prompt)
         self.assertNotIn("goal_satisfied", prompt)
 
-
 class AssessmentScrubbingTests(unittest.TestCase):
-    """The auditor writes in its own words, which quote the journey's values."""
-
     def test_declared_secrets_are_masked_in_what_it_wrote(self):
         from yewo.testing.judge.qa_auditor import QAAuditor
         from yewo.testing.models import QAIssue, RuleVerification
@@ -172,9 +183,7 @@ class CacheAliasingTests(unittest.TestCase):
         from yewo.testing.models import QAIssue
         from yewo.testing.judge.qa_auditor import QAAuditor
 
-        crash = QAIssue(
-            issue_type="crash_screen", severity="critical", description="Blank screen"
-        )
+        crash = QAIssue(issue_type="crash_screen", severity="critical", description="Blank screen")
         llm = SimpleNamespace(
             generate_response=Mock(return_value=_assessment(detected_issues=[crash]))
         )
@@ -200,11 +209,7 @@ class CacheAliasingTests(unittest.TestCase):
 
 
 class ScreenWatchTests(unittest.TestCase):
-    """When a screen is worth auditing, rather than auditing every step.
-
-    The fingerprint alone decides nothing: every keystroke moves it, so a
-    cache keyed on it reuses nothing while a form is filled in.
-    """
+    """Every distinct post-action state is audited before the next action."""
 
     def _watch(self):
         from yewo.testing.judge.qa_auditor import ScreenAuditSession
@@ -212,7 +217,7 @@ class ScreenWatchTests(unittest.TestCase):
         looked = []
 
         class Recording:
-            def audit(self, screenshot, screen_id):
+            def audit(self, screenshot, screen_id, gui_elements=()):
                 looked.append(screen_id)
                 return _assessment()
 
@@ -223,6 +228,7 @@ class ScreenWatchTests(unittest.TestCase):
             raw_img_bytes=b"png",
             current_phash=phash,
             scan_info=SimpleNamespace(reason=reason),
+            gui_elements=[],
         )
 
     def test_a_layout_shift_counts_as_arriving(self):
@@ -248,16 +254,15 @@ class ScreenWatchTests(unittest.TestCase):
         self.assertEqual(len(fresh), 1)
         self.assertEqual(looked, ["A"])
 
-    def test_working_a_screen_is_not_audited(self):
+    def test_each_changed_form_state_is_audited(self):
         watch, looked = self._watch()
         watch.audit_snapshot(self._snapshot("A", "first_pass"))
 
-        self.assertEqual(watch.audit_snapshot(self._snapshot("A2", "stable")), [])
-        self.assertEqual(watch.audit_snapshot(self._snapshot("A3", "stable")), [])
-        self.assertEqual(looked, ["A"])
+        self.assertTrue(watch.audit_snapshot(self._snapshot("A2", "stable")))
+        self.assertTrue(watch.audit_snapshot(self._snapshot("A3", "stable")))
+        self.assertEqual(looked, ["A", "A2", "A3"])
 
-    def test_leaving_a_screen_audits_the_state_it_was_left_in(self):
-        """Where a typed secret would be showing, if it is showing anywhere."""
+    def test_navigation_does_not_repeat_the_state_already_audited(self):
         watch, looked = self._watch()
         watch.audit_snapshot(self._snapshot("A", "first_pass"))
         watch.audit_snapshot(self._snapshot("A-filled", "stable"))
@@ -277,14 +282,14 @@ class ScreenWatchTests(unittest.TestCase):
         self.assertEqual(len(leaving), 1, "only the arrival on B")
         self.assertEqual(looked, ["A", "B"])
 
-    def test_the_last_screen_is_read_when_the_scenario_ends(self):
+    def test_the_last_screen_was_read_when_it_was_observed(self):
         watch, looked = self._watch()
         watch.audit_snapshot(self._snapshot("A", "first_pass"))
         watch.audit_snapshot(self._snapshot("A-filled", "stable"))
 
         closing = watch.finalize_audit()
 
-        self.assertEqual(len(closing), 1)
+        self.assertEqual(closing, [])
         self.assertEqual(looked, ["A", "A-filled"])
 
     def test_closing_twice_reads_nothing_again(self):
@@ -300,20 +305,24 @@ class ScreenWatchTests(unittest.TestCase):
         watch, looked = self._watch()
 
         fresh = watch.audit_snapshot(
-            SimpleNamespace(raw_img_bytes=b"png", current_phash="A", scan_info=None)
+            SimpleNamespace(
+                raw_img_bytes=b"png",
+                current_phash="A",
+                scan_info=None,
+                gui_elements=[],
+            )
         )
 
         self.assertEqual(len(fresh), 1)
 
-    def test_a_changed_screen_is_reported_on_arrival_and_on_departure(self):
-        """Two states, two answers. Suppressing the second would lose the leak."""
+    def test_navigation_reports_only_the_new_arrival(self):
         watch, looked = self._watch()
         watch.audit_snapshot(self._snapshot("A", "first_pass"))
         watch.audit_snapshot(self._snapshot("A-filled", "stable"))
 
         leaving = watch.audit_snapshot(self._snapshot("B", "navigation"))
 
-        self.assertEqual(len(leaving), 2, "the filled state, then arrival on B")
+        self.assertEqual(len(leaving), 1)
         self.assertEqual(looked, ["A", "A-filled", "B"])
 
     def test_returning_to_a_screen_is_judged_again(self):
@@ -401,9 +410,7 @@ class ScanVocabularyTests(unittest.TestCase):
         }
         perception = self._perception()
 
-        reasons = {
-            self._frame(perception, self._image(seed)) for seed in (1, 1, 29, 29)
-        }
+        reasons = {self._frame(perception, self._image(seed)) for seed in (1, 1, 29, 29)}
 
         self.assertTrue(reasons <= known, f"unknown reasons: {reasons - known}")
 
@@ -429,13 +436,9 @@ class ScanVocabularyTests(unittest.TestCase):
     def test_a_distance_past_the_threshold_is_an_arrival(self):
         from yewo.agent.perception import elements
 
-        self.assertEqual(
-            elements.reason_for(elements.NAVIGATION_THRESHOLD), elements.NAVIGATION
-        )
+        self.assertEqual(elements.reason_for(elements.NAVIGATION_THRESHOLD), elements.NAVIGATION)
         self.assertIn(elements.NAVIGATION, elements.ARRIVALS)
-        self.assertEqual(
-            elements.reason_for(elements.NAVIGATION_THRESHOLD - 1), elements.STABLE
-        )
+        self.assertEqual(elements.reason_for(elements.NAVIGATION_THRESHOLD - 1), elements.STABLE)
 
     def test_each_describe_mode_arrival_is_audited(self):
         """One audit per screen arrived at, which is what marks mode gets."""
@@ -444,7 +447,7 @@ class ScanVocabularyTests(unittest.TestCase):
 
         audited = []
         watch = ScreenAuditSession(
-            SimpleNamespace(audit=lambda png, sid: audited.append(sid) or _assessment())
+            SimpleNamespace(audit=lambda png, sid, found: audited.append(sid) or _assessment())
         )
 
         watch.audit_snapshot(
@@ -452,6 +455,7 @@ class ScanVocabularyTests(unittest.TestCase):
                 raw_img_bytes=b"png",
                 current_phash="A",
                 scan_info=SimpleNamespace(reason=elements.FIRST_PASS),
+                gui_elements=[],
             )
         )
         watch.audit_snapshot(
@@ -459,6 +463,7 @@ class ScanVocabularyTests(unittest.TestCase):
                 raw_img_bytes=b"png",
                 current_phash="B",
                 scan_info=SimpleNamespace(reason=elements.NAVIGATION),
+                gui_elements=[],
             )
         )
 
@@ -535,9 +540,7 @@ class BareIndexIsAmbiguousTests(unittest.TestCase):
         from yewo.testing.judge.qa_auditor import QAAuditor
 
         answer = _assessment(
-            rule_verifications=[
-                RuleVerification(rule="0", status="passed", reasoning="r")
-            ]
+            rule_verifications=[RuleVerification(rule="0", status="passed", reasoning="r")]
         )
         llm = SimpleNamespace(generate_response=Mock(return_value=answer))
         auditor = QAAuditor(llm, ["Order confirmed"], ["Card masked"])

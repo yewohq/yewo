@@ -85,27 +85,11 @@ def write_reports(
     scrubber: Optional[SecretScrubber] = None,
     usage: Optional[dict] = None,
     label: Optional[str] = None,
-    record_failure: Optional[Callable[[str, ArtifactWriteFailed], None]] = None,
 ) -> List[Failure]:
-    """Writes all three into this run's directory, and returns what would not write.
-
-    A report that will not write fails the run. The reports that did write
-    said the run passed. So they are written again once the failure is on
-    the report. Without the second pass a reader holds a green JUnit file, a
-    green page, and a record that says FAILED.
-
-    `record_failure` puts one failure on the report. It is called between the
-    two passes, so the rewrite carries what it did.
-    """
+    """Writes a checkpoint copy of all reports and returns any failures."""
     output_dir = session.telemetry_dir if session is not None else assets_dir
     writers = _writers(report, output_dir, session, scrubber, usage, label)
-    wrote, failures = _attempt(writers)
-    if not failures or record_failure is None:
-        return failures
-
-    for name, failure in failures:
-        record_failure(name, failure)
-    _rewrite(writers, wrote)
+    _, failures = _attempt(writers)
     return failures
 
 

@@ -1,8 +1,8 @@
 """Turning a run and its evidence into one word about the scenario.
 
 Nothing here touches a device or a model. It reads what a run recorded and
-decides what that adds up to, so the ranking between a crash, an infeasible
-stop and missing evidence lives in one place.
+decides what that adds up to. The ranking between a crash, an infeasible stop,
+and missing evidence lives in one place.
 """
 
 import logging
@@ -17,6 +17,10 @@ from yewo.testing.models import (
     ReportStatus,
     RuleVerification,
     ScenarioStatus,
+)
+from yewo.agent.run.postconditions import (
+    VerificationClassification,
+    VerificationStatus,
 )
 
 if TYPE_CHECKING:
@@ -40,6 +44,21 @@ def _terminal_outcome(
     # defect, whatever else the planner concluded about being able to proceed.
     if any(issue.issue_type == "crash_screen" for issue in issues):
         return ReportStatus.FAILED, "App crashed: crash screen detected.", None
+
+    latest_postconditions = {}
+    for verification in run_result.postcondition_verifications:
+        latest_postconditions[verification.value_name] = verification
+    failed_postcondition = next(
+        (
+            verification
+            for verification in latest_postconditions.values()
+            if verification.status is VerificationStatus.FAILED
+            and verification.classification is VerificationClassification.APPLICATION
+        ),
+        None,
+    )
+    if failed_postcondition is not None:
+        return ReportStatus.FAILED, failed_postcondition.reason, None
     if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
         return ReportStatus.SKIPPED, stop_reason, Cause.SCENARIO
     if run_result.status == "exception":
@@ -50,6 +69,17 @@ def _terminal_outcome(
         )
     if run_result.status in ("loop_detected", "step_limit"):
         return ReportStatus.UNVERIFIED, run_result.failure_reason, Cause.AGENT
+    agent_entry_failure = next(
+        (
+            verification
+            for verification in latest_postconditions.values()
+            if verification.status is VerificationStatus.FAILED
+            and verification.classification is VerificationClassification.AGENT_ACTION
+        ),
+        None,
+    )
+    if agent_entry_failure is not None:
+        return ReportStatus.UNVERIFIED, agent_entry_failure.reason, Cause.AGENT
     critical = next(
         (
             issue
@@ -64,6 +94,16 @@ def _terminal_outcome(
     violated = _violated_security_rule(verifications)
     if violated:
         return ReportStatus.FAILED, f"Security rule violated: {violated.rule}", None
+    unverified_postcondition = next(
+        (
+            verification
+            for verification in latest_postconditions.values()
+            if verification.status is VerificationStatus.UNVERIFIED
+        ),
+        None,
+    )
+    if unverified_postcondition is not None:
+        return ReportStatus.UNVERIFIED, unverified_postcondition.reason, Cause.EVIDENCE
     # Security rules never reach this. _violated_security_rule above fails on
     # one anywhere, so what is left here is an expected outcome, which is a
     # claim about the screen it names and not about any other.
@@ -93,11 +133,11 @@ EXPOSURE = "sensitive_data_exposure"
 def _unsupported_exposure(issue, findings) -> bool:
     """Whether an exposure claim has no reading of the screen behind it.
 
-    The auditor answers twice about a screen: in prose, where it may call a
-    bare "CVV:" caption a plain-text CVV, and as a reading of each sensitive
-    field, where it must choose between a legible value, a mask, a caption and
-    nothing. The reading is the evidence. A claim the reading does not support
-    is reported and does not fail the scenario.
+    The auditor answers twice about a screen. Its prose can mistake a bare
+    field caption for a visible value. Its structured reading must distinguish
+    a legible value, a mask, a caption, and an absent field. The structured
+    reading is the evidence. An unsupported prose claim remains reported but
+    does not fail the scenario.
 
     With no reading at all there is nothing to weigh, so the claim stands.
     """
@@ -184,8 +224,8 @@ def per_rule(verifications: List[RuleVerification]) -> dict:
 def _violated_security_rule(verifications: List[RuleVerification]):
     """A security rule failing anywhere is a violation, however the run ended.
 
-    Unlike an expected outcome, these describe what must never happen: a
-    password exposed at step 4 stays exposed, whatever step 9 shows.
+    Unlike an expected outcome, these describe what must never happen. A
+    sensitive value exposed at step 4 stays exposed, whatever step 9 shows.
     """
     return next(
         (
@@ -208,7 +248,7 @@ def _missing_required_ids(
     The two kinds are judged differently because they mean different things.
 
     An expected outcome is evidenced once a screen ended on a pass for it. Many
-    outcomes can only be seen in passing — a field accepts a long address, and
+    outcomes can only be seen in passing. A field accepts a long value, and
     the next screen has no such field. A later "failed" about the same screen
     takes the evidence away, because the outcome stopped holding where it could
     be seen. A later "failed" about a different screen does not: the outcome

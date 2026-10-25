@@ -301,3 +301,21 @@ class AnsweredShapeTests(unittest.TestCase):
 
         self.assertEqual(kept[0].answering, "Verdict")
         self.assertIsNotNone(kept[0].schema_sha256)
+
+
+class ScenarioComponentTests(unittest.TestCase):
+    def test_answer_shapes_separate_planning_from_fresh_verification(self):
+        from yewo.testing.runner import (
+            PLANNER,
+            SCREEN_AUDITOR,
+            TRANSITION_JUDGE,
+            component_for,
+        )
+
+        self.assertEqual(component_for(PLANNER, "QAStepResponse"), PLANNER)
+        self.assertEqual(
+            component_for(PLANNER, "ScreenAssessment"), SCREEN_AUDITOR
+        )
+        self.assertEqual(
+            component_for(PLANNER, "TransitionVerdicts"), TRANSITION_JUDGE
+        )

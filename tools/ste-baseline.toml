@@ -2,11 +2,6 @@
 # A changed finding is new debt even when a file's total stays the same.
 
 [[files]]
-path = "src/yewo/agent/actuation/actions.py"
-count = 5
-digest = "63009c555550d938b99fbe66634d7fa071407995afb478db2f22e5f19fd29284"
-
-[[files]]
 path = "src/yewo/agent/artifacts/redaction.py"
 count = 1
 digest = "4cf03158710026afbc3cbad302c26200cd938e2654f2fc83b8ddbee47133918b"
@@ -72,16 +67,6 @@ count = 3
 digest = "62bfd39a2d2927cff95347fa7290e7d385fa4595dd54fbbef1327bf18edd9342"
 
 [[files]]
-path = "src/yewo/agent/grounding/marks.py"
-count = 3
-digest = "18df370e35d172acbf7056efeabee6e24cb73c09d08e0bb0e6160e8db997a148"
-
-[[files]]
-path = "src/yewo/agent/memory/replay.py"
-count = 5
-digest = "ce0928c69f7e1c6f2e28647d444ad0b45293aec8d10124058ecc8323114ba97d"
-
-[[files]]
 path = "src/yewo/agent/memory/stall.py"
 count = 2
 digest = "47dbd86653e2a5f4dce5d368778fc6baf112ba2f7e76babf084f25495c7d33c2"
@@ -90,11 +75,6 @@ digest = "47dbd86653e2a5f4dce5d368778fc6baf112ba2f7e76babf084f25495c7d33c2"
 path = "src/yewo/agent/perception/elements.py"
 count = 1
 digest = "b364c9c979c5fbaa2d2870caeb86d1f4db8d264d34a9e387b2d174d41c141740"
-
-[[files]]
-path = "src/yewo/agent/plan/planner.py"
-count = 5
-digest = "c9fc63fbaddc4ceb91e535166088374815101972914609e5de406e895931b8b8"
 
 [[files]]
 path = "src/yewo/agent/run/context.py"
@@ -127,11 +107,6 @@ count = 2
 digest = "813fb7241b43c17a82ab342e128c23e96abc0cc19180fa15fb0f8011a7e57811"
 
 [[files]]
-path = "src/yewo/schema.py"
-count = 1
-digest = "99c36c1eb01c766ad2a81b8af938c6307c6779c86efeb058ffa95dfe2a7e1b5a"
-
-[[files]]
 path = "src/yewo/setup/environment.py"
 count = 1
 digest = "a83cf0b2060554349c98e0e889f664ebb884e47726d90745bc51e70b02ac606c"
@@ -142,19 +117,9 @@ count = 1
 digest = "50aa92c5f55acd7e6cdac85fad40ff4ee7e80b35b882f946ab6e4b9d063cde0a"
 
 [[files]]
-path = "src/yewo/testing/evidence.py"
-count = 1
-digest = "d5588dcb5c9233507ef2519a026ebb6dea13a533c22b2f87c3a710fc048555cf"
-
-[[files]]
 path = "src/yewo/testing/journey_env.py"
 count = 1
 digest = "ac1c5b0503e71406b55e2acda58a71baee932d9913a5b934c1bc75e24f1327ac"
-
-[[files]]
-path = "src/yewo/testing/judge/qa_auditor.py"
-count = 3
-digest = "060bf0ddc63807ff6df0ff5adcb5d104974a2ce00cd8e0f54e1d21d542b862ae"
 
 [[files]]
 path = "src/yewo/testing/judge/rules.py"
@@ -165,16 +130,6 @@ digest = "eb3d5a28a2b8eaa62b29244049bfff4e6cd6cf35304d494db1660657792ddb07"
 path = "src/yewo/testing/judge/transitions.py"
 count = 1
 digest = "e4f06b26267a854bf8de09da0cd09bdd4164f19f94f76719be9a09d1408cc0fd"
-
-[[files]]
-path = "src/yewo/testing/judge/verdicts.py"
-count = 2
-digest = "831d1e79450f452e1599acc0f1e1be18128d612f053ee76ced461859340de11d"
-
-[[files]]
-path = "src/yewo/testing/qa_agent.py"
-count = 1
-digest = "98cb5256255bda98059f9733713d571f132d2cd9de13db762a52c7611d00c955"
 
 [[files]]
 path = "src/yewo/testing/qa_planner.py"
@@ -190,16 +145,6 @@ digest = "f1a8c92b2b741bf2abb00a97f094f935b10dd28c5f65e1c470385806d73b008d"
 path = "src/yewo/utils/jev_deps.py"
 count = 1
 digest = "2939721a8013f63431a0417900cea5cbf8f5f0fea2f015ddaa8c3420d687c91f"
-
-[[files]]
-path = "src/yewo/utils/redactor.py"
-count = 3
-digest = "a75c26c301c7095f22627000bf8d4a50852b7b131c4218da1ba4a63e5ba146ec"
-
-[[files]]
-path = "src/yewo/utils/secrets.py"
-count = 3
-digest = "e0273ef7961f532e7941d451061b1fdf30849076e42ebda1755bab6b3e534693"
 
 [[files]]
 path = "src/yewo/utils/vision_deps.py"

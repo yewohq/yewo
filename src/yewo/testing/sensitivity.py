@@ -33,6 +33,7 @@ from enum import Enum
 from typing import Optional
 
 from yewo.testing.models import UserJourney
+from yewo.errors import UsageError
 
 
 class Sensitivity(str, Enum):
@@ -170,5 +171,30 @@ def recording_refused(journey: UserJourney, opted_in: bool) -> Optional[str]:
     named = ", ".join(sorted(journey.secrets))
     return (
         f"Journey '{journey.id}' declares secrets ({named}), and a recording "
-        f"is not masked. No video is kept. Pass --record-secrets to keep one."
+        "is not masked. No video is kept. Pass --allow-secret-exposure to "
+        "permit secrets in the recording and model input."
     )
+
+
+def exposure_policy_refused(journey: UserJourney, opted_in: bool) -> Optional[str]:
+    """Why a model-facing secret policy needs explicit unsafe consent."""
+    exposed = sorted(
+        name
+        for name, display in journey.secret_displays.items()
+        if display != "hide"
+    )
+    if opted_in or not exposed:
+        return None
+    return (
+        "These secrets request model exposure: "
+        + ", ".join(exposed)
+        + ". Pass --allow-secret-exposure to allow `last4` or `show`, or set "
+        "their redaction policy to `hide`."
+    )
+
+
+def require_safe_secret_policy(journey: UserJourney, opted_in: bool) -> None:
+    """Reject a model-exposure policy without an explicit unsafe opt-in."""
+    refusal = exposure_policy_refused(journey, opted_in)
+    if refusal:
+        raise UsageError(refusal)

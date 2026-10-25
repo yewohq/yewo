@@ -60,6 +60,65 @@
           "title": "Secret",
           "type": "boolean"
         },
+        "redaction": {
+          "default": "hide",
+          "description": "How much of this value an external model may receive.",
+          "enum": [
+            "hide",
+            "last4",
+            "show"
+          ],
+          "title": "Redaction",
+          "type": "string"
+        },
+        "verify_as": {
+          "default": "auto",
+          "description": "How local post-action checks may recognize this value. Auto accepts an exact value or an observed masked representation.",
+          "enum": [
+            "auto",
+            "exact",
+            "normalized",
+            "masked"
+          ],
+          "title": "Verify As",
+          "type": "string"
+        },
+        "normalizers": {
+          "description": "Transformations permitted before local value comparison.",
+          "items": {
+            "enum": [
+              "whitespace",
+              "hyphens",
+              "case",
+              "currency",
+              "grouping"
+            ],
+            "type": "string"
+          },
+          "title": "Normalizers",
+          "type": "array"
+        },
+        "visible_suffix": {
+          "default": 0,
+          "description": "Characters that may remain visible at the end of a masked value.",
+          "minimum": 0,
+          "title": "Visible Suffix",
+          "type": "integer"
+        },
+        "masked_length": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required displayed length for a masked value. Defaults to input length.",
+          "title": "Masked Length"
+        },
         "refused": {
           "default": false,
           "description": "True where this app refuses the value, which is a fact about the app that no reading of the value could find. A scenario about a refusal names one of these, and the declaration answers for it.",
@@ -356,7 +415,6 @@
           "anyOf": [
             {
               "enum": [
-                "coordinates",
                 "marks",
                 "describe"
               ],
@@ -367,7 +425,7 @@
             }
           ],
           "default": null,
-          "description": "How the planner names a target.",
+          "description": "How the planner names a target. Marks selects a detected element. describe places a target from its visible description.",
           "title": "Grounding"
         },
         "max_steps": {
@@ -433,6 +491,32 @@
           "default": null,
           "description": "Another spelling of 'record'.",
           "title": "Record Session"
+        },
+        "durable_replay": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Re-walk a path a passing run saved, instead of planning it again. Unlike 'replay', which reuses a path inside one run, this one outlives the run. On by default. Each run audits its own screens. Drift returns only the affected action to the planner.",
+          "title": "Durable Replay"
+        },
+        "allow_secret_exposure": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Allow declared secrets in model input and screen recordings. Off by default. Stored reports and artifacts stay protected.",
+          "title": "Allow Secret Exposure"
         },
         "env": {
           "additionalProperties": {
@@ -589,7 +673,7 @@
             }
           ],
           "default": null,
-          "description": "Other accounts a role scenario signs in as, by name. Each holds whatever this app signs in with, under names you choose.",
+          "description": "Named personas or role contexts for role scenarios. Each holds app-specific values under names you choose.",
           "title": "Actors"
         }
       },
@@ -712,7 +796,6 @@
       "anyOf": [
         {
           "enum": [
-            "coordinates",
             "marks",
             "describe"
           ],
@@ -723,7 +806,7 @@
         }
       ],
       "default": null,
-      "description": "How the planner names a target.",
+      "description": "How the planner names a target. Marks selects a detected element. describe places a target from its visible description.",
       "title": "Grounding"
     },
     "max_steps": {
@@ -789,6 +872,32 @@
       "default": null,
       "description": "Another spelling of 'record'.",
       "title": "Record Session"
+    },
+    "durable_replay": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Re-walk a path a passing run saved, instead of planning it again. Unlike 'replay', which reuses a path inside one run, this one outlives the run. On by default. Each run audits its own screens. Drift returns only the affected action to the planner.",
+      "title": "Durable Replay"
+    },
+    "allow_secret_exposure": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Allow declared secrets in model input and screen recordings. Off by default. Stored reports and artifacts stay protected.",
+      "title": "Allow Secret Exposure"
     },
     "env": {
       "additionalProperties": {
@@ -960,7 +1069,7 @@
         }
       ],
       "default": null,
-      "description": "Other accounts a role scenario signs in as, by name. Each holds whatever this app signs in with, under names you choose.",
+      "description": "Named personas or role contexts for role scenarios. Each holds app-specific values under names you choose.",
       "title": "Actors"
     }
   },

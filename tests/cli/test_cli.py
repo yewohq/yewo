@@ -55,7 +55,7 @@ class ExitCodeTests(unittest.TestCase):
 
     def test_a_setting_yewo_config_does_not_know_is_not_looked_up_there(self):
         """grounding comes from a flag or the journey, or falls back to the default."""
-        from yewo.agent.plan.planner import GROUNDING_COORDINATES
+        from yewo.agent.plan.planner import GROUNDING_MARKS
         from yewo.testing.cli import YewoCLI
         from yewo.testing.models import JourneyReport
 
@@ -76,9 +76,7 @@ class ExitCodeTests(unittest.TestCase):
             runner_class.return_value.run_journey.return_value = report
             cli.run(["j.yaml"])
 
-        self.assertEqual(
-            runner_class.call_args.kwargs["grounding"], GROUNDING_COORDINATES
-        )
+        self.assertEqual(runner_class.call_args.kwargs["grounding"], GROUNDING_MARKS)
 
     def test_the_suite_result_decides_the_code(self):
         from yewo.testing.cli import YewoCLI
@@ -102,6 +100,105 @@ class ExitCodeTests(unittest.TestCase):
             ):
                 runner_class.return_value.run_journey.return_value = report(status)
                 self.assertEqual(cli.run(["j.yaml"]), expected)
+
+    def test_update_paths_is_explicit(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.models import JourneyReport
+
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+        with (
+            patch("yewo.testing.cli.load_workflows", return_value=[_workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            YewoCLI().run(["j.yaml", "--update-paths"])
+
+        self.assertTrue(runner_class.call_args.kwargs["update_paths"])
+
+    def test_secret_exposure_is_off_unless_explicitly_allowed(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.models import JourneyReport
+
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+        with (
+            patch("yewo.testing.cli.load_workflows", return_value=[_workflow()]),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            YewoCLI().run(["j.yaml", "--allow-secret-exposure"])
+
+        self.assertTrue(runner_class.call_args.kwargs["allow_secret_exposure"])
+
+    def test_secret_exposure_can_be_allowed_by_workflow_yaml(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.models import JourneyReport
+
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+        with (
+            patch(
+                "yewo.testing.cli.load_workflows",
+                return_value=[_workflow(allow_secret_exposure=True)],
+            ),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            YewoCLI().run(["j.yaml"])
+
+        self.assertTrue(runner_class.call_args.kwargs["allow_secret_exposure"])
+
+    def test_command_line_secret_exposure_wins_over_yaml(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.models import JourneyReport
+
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+        with (
+            patch(
+                "yewo.testing.cli.load_workflows",
+                return_value=[_workflow(allow_secret_exposure=False)],
+            ),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            YewoCLI().run(["j.yaml", "--allow-secret-exposure"])
+
+        self.assertTrue(runner_class.call_args.kwargs["allow_secret_exposure"])
+
+    def test_command_line_can_restore_safe_behavior_over_yaml(self):
+        from yewo.testing.cli import YewoCLI
+        from yewo.testing.models import JourneyReport
+
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+        with (
+            patch(
+                "yewo.testing.cli.load_workflows",
+                return_value=[_workflow(allow_secret_exposure=True)],
+            ),
+            patch("yewo.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("yewo.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("yewo.testing.wiring.YewoTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            YewoCLI().run(["j.yaml", "--no-allow-secret-exposure"])
+
+        self.assertFalse(runner_class.call_args.kwargs["allow_secret_exposure"])
 
 
 class ConfigFileTests(unittest.TestCase):
@@ -132,6 +229,15 @@ class ConfigFileTests(unittest.TestCase):
             settings = read_file(path)
 
         self.assertEqual(settings, {"platform": "ios", "max_steps": 7})
+
+    def test_project_yaml_can_allow_secret_exposure(self):
+        from yewo.config import load_config
+
+        path = self._write("allow_secret_exposure: true\n")
+
+        config = load_config(path.parent)
+
+        self.assertTrue(config.get("allow_secret_exposure"))
 
 
 class ReuseAppFlagTests(unittest.TestCase):

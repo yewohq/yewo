@@ -8,6 +8,8 @@ a scenario, and all three want a different answer.
 import unittest
 from types import SimpleNamespace
 
+from fakes import device_result
+
 from yewo.errors import (
     ArtifactWriteFailed,
     Cause,
@@ -58,9 +60,7 @@ class VerdictCauseTests(unittest.TestCase):
         from yewo.testing.qa_agent import QAAgent
 
         values = {
-            "run_result": SimpleNamespace(
-                status="goal_reached", failure_reason=None, cause=None
-            ),
+            "run_result": device_result(),
             "stop_reason": None,
             "all_verifications": [],
             "all_issues": [],
@@ -75,7 +75,7 @@ class VerdictCauseTests(unittest.TestCase):
         return QAAgent.__new__(QAAgent)._determine_status(**values)
 
     def _run(self, status, cause=None):
-        return SimpleNamespace(status=status, failure_reason="why", cause=cause)
+        return device_result(status=status, failure_reason="why", cause=cause)
 
     def test_an_error_carries_the_cause_the_run_recorded(self):
         status, _reason, cause = self._verdict(
@@ -176,12 +176,10 @@ class RecordedCauseTests(unittest.TestCase):
         self.assertIn("Cause", str(field.type))
 
     def test_the_gate_reports_the_cause_the_run_recorded(self):
-        from types import SimpleNamespace
-
         from yewo.testing.judge.verdicts import _terminal_outcome
 
         status, _reason, cause = _terminal_outcome(
-            run_result=SimpleNamespace(
+            run_result=device_result(
                 status="exception", failure_reason="boom", cause=Cause.DEVICE
             ),
             stop_reason=None,
@@ -194,14 +192,10 @@ class RecordedCauseTests(unittest.TestCase):
         self.assertIs(cause, Cause.DEVICE)
 
     def test_a_run_that_recorded_nothing_reports_unknown(self):
-        from types import SimpleNamespace
-
         from yewo.testing.judge.verdicts import _terminal_outcome
 
         _status, _reason, cause = _terminal_outcome(
-            run_result=SimpleNamespace(
-                status="exception", failure_reason="boom", cause=None
-            ),
+            run_result=device_result(status="exception", failure_reason="boom"),
             stop_reason=None,
             verifications=[],
             issues=[],

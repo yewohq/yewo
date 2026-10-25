@@ -150,12 +150,12 @@ class SetupMode(str, Enum):
         return {
             SetupMode.CLEAR_DATA: (
                 "The app's data was cleared before this scenario, so it is in the "
-                "state a first install would be in. Any sign-in, permission or "
-                "saved data from earlier scenarios is gone."
+                "state a first install would be in. Any session, permission, or "
+                "saved app data from earlier scenarios is gone."
             ),
             SetupMode.RELAUNCH: (
                 "The app was restarted before this scenario. Its stored data is "
-                "unchanged, so a sign-in or saved data from an earlier scenario "
+                "unchanged, so a session or saved app data from an earlier scenario "
                 "may still be in place."
             ),
             SetupMode.PRESERVE: (

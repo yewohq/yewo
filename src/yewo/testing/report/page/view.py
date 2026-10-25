@@ -86,10 +86,10 @@ class CheckView:
     """One rule, as the judge settled it.
 
     Not one row per answer. The auditor answers every rule on every screen.
-    A rule about the order screen is answered on the cart too, where the
-    honest answer is "no". Rendering those as results turns a scenario that
-    passed into a page of failures. The verdict took one answer per rule,
-    and that is the one shown.
+    A rule about one screen is also answered on unrelated screens, where the
+    honest answer is "no". Rendering those answers as results turns a passing
+    scenario into a page of failures. The verdict selected one answer per
+    rule. This view shows that answer.
     """
 
     rule: str
@@ -346,10 +346,9 @@ def _build_finding_view(
 def _format_observed_notes(findings: int, unevidenced: int) -> str:
     """What a passing run still has to say about what it saw.
 
-    A run can reach every outcome it was given and still have watched the
-    app render a card number in plain text. It can leave a security rule
-    no screen could answer. "Nothing to report" above a page that lists
-    either one is the page contradicting itself.
+    A run can reach every outcome and still observe exposed sensitive data.
+    It can leave a security rule that no screen could answer. "Nothing to
+    report" above a page that lists either condition contradicts the page.
     """
     notes = []
     if findings:

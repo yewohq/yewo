@@ -38,7 +38,7 @@ class Receipt:
     private: bool = False
     """Whether the states here are content rather than a device setting.
 
-    A clipboard carries whatever was copied, which can be a password or a
+    A clipboard carries whatever was copied, which can be a secret or a
     token. Such a receipt still decides whether the capability worked, and it
     reports that without putting the value in a log line or a report.
     """

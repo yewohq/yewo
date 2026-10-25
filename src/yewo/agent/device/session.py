@@ -15,6 +15,7 @@ from appium.webdriver.appium_service import AppiumService
 
 from yewo.agent.artifacts.layout import RunLayout, attach_run_log, detach_run_log
 from yewo.agent.device.adb_control import AdbControl
+from yewo.agent.device.appium_runtime import resolve_appium_runtime
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device import device_logs
 from yewo.agent.device.platform import Platform
@@ -155,7 +156,19 @@ class DeviceSession(DeviceRecording):
         if self._appium_service.is_running:
             logger.info("Appium already running")
             return
-        logger.info("Starting Appium...")
+        runtime = resolve_appium_runtime()
+        logger.info(
+            "Starting Appium %s with Node at %s...",
+            runtime.appium_version,
+            runtime.node_binary,
+        )
+        self._appium_args.update(
+            {
+                "node": str(runtime.node_binary),
+                "main_script": str(runtime.appium_script),
+                "env": runtime.environment,
+            }
+        )
         self._appium_service.start(**self._appium_args)
         if not self._appium_service.is_running:
             raise RuntimeError(f"Appium failed to start. See {self.layout.appium_log}")

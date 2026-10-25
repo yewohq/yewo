@@ -4,19 +4,18 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from yewo.agent.actuation.actions import Action, DescribeAction, MarksAction
+from yewo.agent.actuation.actions import DescribeAction, MarksAction
+from yewo.agent.actuation.coordinate_actions import CoordinateAction
 
 
 class DoneAction(BaseModel):
     """Signals that the goal is complete or that execution cannot continue."""
 
     type: Literal["done"] = "done"
-    reason: str = Field(
-        ..., description="Why the goal is complete, or why execution must stop."
-    )
+    reason: str = Field(..., description="Why the goal is complete, or why execution must stop.")
 
 
-DeviceAction = Annotated[Action | DoneAction, Field(discriminator="type")]
+DeviceAction = Annotated[CoordinateAction | DoneAction, Field(discriminator="type")]
 MarksDeviceAction = Annotated[MarksAction | DoneAction, Field(discriminator="type")]
 DescribeDeviceAction = Annotated[DescribeAction | DoneAction, Field(discriminator="type")]
 
@@ -26,14 +25,14 @@ class DeviceStepResponse(BaseModel):
 
     current_screen: str = Field(
         ...,
-        description="Descriptive name of the current screen/page (e.g. 'Login Screen', 'Home Feed').",
+        description="Descriptive name of the current screen or page, based on visible content.",
     )
     evaluation_previous_goal: str = Field(
         default="",
         description=(
             "Brief honest assessment of whether the previous action succeeded, failed, or produced "
             "an uncertain result. Empty string on the very first step. "
-            "Examples: 'Success — screen navigated to Home', "
+            "Examples: 'Success — the requested screen opened', "
             "'Failed — button did not respond', "
             "'Uncertain — field unchanged but masked content cannot be confirmed visually'."
         ),
@@ -50,8 +49,8 @@ class DeviceStepResponse(BaseModel):
         default=False,
         description=(
             "True when the goal's stated outcome is observable on the current screen, before "
-            "any further action. Judge the goal only — ignore follow-on work such as onboarding "
-            "or permission prompts."
+            "any further action. Judge only the stated outcome. Follow-on UI does not undo "
+            "evidence that remains visible."
         ),
     )
     goal_evidence: str = Field(
@@ -66,7 +65,7 @@ class DeviceStepResponse(BaseModel):
         default=False,
         description=(
             "Set True if this action is expected to temporarily navigate outside the SUT app "
-            "(e.g. opening a browser link, system dialog, or external payment screen)."
+            "(for example, opening a browser link, document picker, or system dialog)."
         ),
     )
 

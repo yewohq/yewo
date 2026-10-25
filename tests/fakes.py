@@ -34,11 +34,32 @@ from yewo.agent.actuation.actions import (
 from yewo.agent.device import capability_receipts
 from yewo.agent.device.capability_controller import CapabilityController
 from yewo.agent.device.platform import Platform
+from yewo.agent.memory.history import AgentHistory
+from yewo.agent.run.outcomes import DeviceRunResult
 from yewo.agent.step.observation import PerceptionSnapshot
 from yewo.agent.perception.elements import BoundingBox, GUIElement
 from yewo.agent.grounding.marks import Mark
 
 STAMP = "2026-01-01T00:00:00"
+
+
+def device_result(
+    status="goal_reached",
+    failure_reason=None,
+    cause=None,
+    capability_receipts=(),
+    postcondition_verifications=(),
+) -> DeviceRunResult:
+    """Build the real result object consumed by the verdict boundary."""
+    return DeviceRunResult(
+        status=status,
+        steps_executed=0,
+        failure_reason=failure_reason,
+        history=AgentHistory(),
+        cause=cause,
+        capability_receipts=list(capability_receipts),
+        postcondition_verifications=list(postcondition_verifications),
+    )
 
 
 class FakeClock:
@@ -385,8 +406,15 @@ def suite_run(
             self.asked = session_calls if session_calls is not None else []
 
         def start(self, **_):
+            # A real control reports its size once the driver answers, and
+            # a saved path is only valid for the size it was learned on.
             return SimpleNamespace(
-                platform=None, serial=None, os_version=None, model="Pixel 8"
+                platform=None,
+                serial=None,
+                os_version=None,
+                model="Pixel 8",
+                screen_width=1080,
+                screen_height=2400,
             )
 
         def checkpoint_recording(self):

@@ -182,12 +182,16 @@ class AgentWiringTests(unittest.TestCase):
     def _agent(self, grounder=None):
         from types import SimpleNamespace
 
+        from yewo.agent.grounding.runtime import GroundingModels
         from yewo.agent.run.agent import DeviceAgent
 
         agent = DeviceAgent.__new__(DeviceAgent)
         agent.llm = SimpleNamespace(prompt_store=None)
         agent.fast_llm = SimpleNamespace(prompt_store=None)
         agent.grounder = grounder
+        agent.grounding_models = GroundingModels(
+            "coordinates", grounder, usage_callback=None
+        )
         return agent
 
     def test_both_completion_clients_are_told(self):

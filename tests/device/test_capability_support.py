@@ -7,7 +7,7 @@ target lacks is skipped before it spends a step finding out.
 
 import unittest
 
-from fakes import walk
+from fakes import device_result, walk
 from types import SimpleNamespace
 from unittest import mock
 
@@ -470,11 +470,7 @@ class DeclaredCapabilityGateTests(unittest.TestCase):
             for name, observed in receipts
         ]
         return QAAgent.__new__(QAAgent)._determine_status(
-            run_result=SimpleNamespace(
-                status="goal_reached",
-                failure_reason=None,
-                capability_receipts=made,
-            ),
+            run_result=device_result(capability_receipts=made),
             stop_reason=None,
             all_verifications=[],
             all_issues=[],

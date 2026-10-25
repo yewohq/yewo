@@ -12,7 +12,7 @@ its own evidence.
 import logging
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from yewo.agent.device.launch import SetupMode
 from yewo.agent.plan.planner import (
@@ -31,19 +31,23 @@ from yewo.agent.plan.planner import (
     TRAIL_SECTION,
 )
 from yewo.llm.llm_client import LLMClient
-from yewo.llm.messages import MultiPartMessage
 
 logger = logging.getLogger(__name__)
 
 
 PROMPT = """You control a mobile app for one test scenario.
 Execute the scenario instructions in order. You do not judge the result.
-{setup}
 Read the screen in front of you to find where you are. Do not assume a screen.
+"""
+
+SCENARIO_SECTION = """
+{setup}
 
 ### Scenario Instructions
 {instructions}
+"""
 
+CURRENT_STATE_SECTION = """
 ### Current UI Elements Detected {heading}
 {targets}
 {keyboard}
@@ -111,9 +115,7 @@ class QAStepResponse(DeviceStepResponse):
     )
     goal_evidence: str = Field(
         default="",
-        description=(
-            "The visible state the app ended on. Empty while `goal_satisfied` is false."
-        ),
+        description=("The visible state the app ended on. Empty while `goal_satisfied` is false."),
     )
     action: DeviceAction = Field(
         ...,
@@ -136,6 +138,11 @@ class QAStepResponse(DeviceStepResponse):
         description="Detailed reason why the scenario is infeasible. None if feasible.",
     )
 
+    @model_validator(mode="after")
+    def _validate_infeasibility_reason(self) -> "QAStepResponse":
+        if not self.is_scenario_feasible and not (self.infeasibility_reason or "").strip():
+            raise ValueError("infeasibility_reason must explain why the scenario is infeasible.")
+        return self
 
 
 class MarksQAStepResponse(QAStepResponse):
@@ -167,14 +174,10 @@ class QAPlanner(DevicePlanner):
         scrubber=None,
         grounding: str = GROUNDING_COORDINATES,
     ):
-        super().__init__(llm_client, grounding)
+        super().__init__(llm_client, grounding, scrubber=scrubber)
         # The setup state, and not the scenario. A GeneratedTestCase carries
         # the assertions, so holding one would put them a prompt edit away.
         self._setup = setup
-        from yewo.utils.secrets import SecretScrubber
-
-        # Shared with the device agent so a value declared once is masked everywhere.
-        self._scrubber = scrubber or SecretScrubber()
 
     def step_response_model(self):
         """The QA schema the model answers in, matched to the grounding mode.
@@ -208,7 +211,7 @@ class QAPlanner(DevicePlanner):
         else:
             goal_lines = goal or []
 
-        prompt = self._build_qa_prompt(
+        stable_prompt, current_state = self._build_qa_prompt_sections(
             goal_lines=goal_lines,
             gui_elements=gui_elements,
             history=history,
@@ -220,15 +223,12 @@ class QAPlanner(DevicePlanner):
             screen_height=screen_height,
         )
 
-        message = MultiPartMessage()
-        message.add_text("Current screenshot (newest):")
-        message.add_image(current_image_bytes)
-        message.add_text(prompt)
+        messages = self._model_messages(
+            stable_prompt, current_state, current_image_bytes, gui_elements
+        )
 
         logger.info("Querying QAPlanner for the next action...")
-        response: QAStepResponse = self.llm.generate_response(
-            [message], self.step_response_model()
-        )
+        response: QAStepResponse = self.llm.generate_response(messages, self.step_response_model())
 
         def clean(text):
             return safe_text(text, self._scrubber)
@@ -252,9 +252,43 @@ class QAPlanner(DevicePlanner):
         marks: Optional[list] = None,
         screen_height: int = 0,
     ) -> str:
-        prompt = PROMPT.format(
-            setup=self._setup.describe(),
-            instructions="\n".join(f"- {step}" for step in goal_lines),
+        stable_prompt, current_state = self._build_qa_prompt_sections(
+            goal_lines=goal_lines,
+            gui_elements=gui_elements,
+            history=history,
+            trail=trail,
+            drift_warning=drift_warning,
+            loop_nudge=loop_nudge,
+            keyboard_open=keyboard_open,
+            marks=marks,
+            screen_height=screen_height,
+        )
+        return stable_prompt + current_state
+
+    def _build_qa_prompt_sections(
+        self,
+        goal_lines: List[str],
+        gui_elements,
+        history: str,
+        trail: Optional[str],
+        drift_warning: Optional[str],
+        loop_nudge: Optional[str],
+        keyboard_open: Optional[bool] = None,
+        marks: Optional[list] = None,
+        screen_height: int = 0,
+    ) -> tuple[str, str]:
+        stable_prompt = (
+            PROMPT
+            + FEASIBILITY
+            + self._action_vocabulary()
+            + self._action_constraints()
+            + RESPONSE_INSTRUCTIONS
+            + SCENARIO_SECTION.format(
+                setup=self._setup.describe(),
+                instructions="\n".join(f"- {step}" for step in goal_lines),
+            )
+        )
+        current_state = CURRENT_STATE_SECTION.format(
             heading=self._target_heading(),
             targets=self.format_targets(gui_elements, marks, screen_height),
             keyboard=(
@@ -265,12 +299,9 @@ class QAPlanner(DevicePlanner):
             history=history or "No actions executed yet.",
         )
         if drift_warning:
-            prompt += DRIFT_SECTION.format(drift=drift_warning)
+            current_state += DRIFT_SECTION.format(drift=drift_warning)
         if trail:
-            prompt += TRAIL_SECTION.format(trail=trail)
+            current_state += TRAIL_SECTION.format(trail=trail)
         if loop_nudge:
-            prompt += LOOP_SECTION.format(nudge=loop_nudge)
-        prompt += FEASIBILITY
-        prompt += self._action_vocabulary() + self._action_constraints()
-        prompt += RESPONSE_INSTRUCTIONS
-        return prompt
+            current_state += LOOP_SECTION.format(nudge=loop_nudge)
+        return stable_prompt, current_state

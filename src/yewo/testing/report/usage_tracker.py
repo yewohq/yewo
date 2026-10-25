@@ -189,6 +189,13 @@ class LLMUsageTracker:
         """
         return list(self._outside.get(component, []))
 
+    def take_calls_outside_steps(self, components: tuple[str, ...]) -> list[CallRow]:
+        """Remove and return scenario-level calls for the named components."""
+        taken = []
+        for component in components:
+            taken.extend(self._outside.pop(component, []))
+        return taken
+
     def summary(self) -> dict:
         """What was spent, without the per-component breakdown.
 

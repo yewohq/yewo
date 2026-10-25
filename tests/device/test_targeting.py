@@ -47,9 +47,7 @@ class StalenessTests(unittest.TestCase):
 
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
 
-        self.assertFalse(
-            target_moved(before, before, self._tap(30, 30), [self._element()])
-        )
+        self.assertFalse(target_moved(before, before, self._tap(30, 30), [self._element()]))
 
     def test_a_target_that_moved_is_stale(self):
         from yewo.agent.step.staleness import target_moved
@@ -57,9 +55,7 @@ class StalenessTests(unittest.TestCase):
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
         after = self._png("white")
 
-        self.assertTrue(
-            target_moved(before, after, self._tap(30, 30), [self._element()])
-        )
+        self.assertTrue(target_moved(before, after, self._tap(30, 30), [self._element()]))
 
     def test_change_elsewhere_on_screen_is_ignored(self):
         """A banner landing in the corner must not throw away a good plan."""
@@ -69,9 +65,7 @@ class StalenessTests(unittest.TestCase):
         after = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
         after = self._with_patch(after, (100, 300, 190, 390), (255, 0, 0))
 
-        self.assertFalse(
-            target_moved(before, after, self._tap(30, 30), [self._element()])
-        )
+        self.assertFalse(target_moved(before, after, self._tap(30, 30), [self._element()]))
 
     def test_a_point_outside_every_element_still_gets_checked(self):
         from yewo.agent.step.staleness import target_moved
@@ -88,16 +82,12 @@ class StalenessTests(unittest.TestCase):
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
         after = self._png("black")
 
-        self.assertFalse(
-            target_moved(before, after, KeyEventAction(key=4, reason="back"), [])
-        )
+        self.assertFalse(target_moved(before, after, KeyEventAction(key=4, reason="back"), []))
 
     def test_an_unreadable_screenshot_does_not_strand_the_run(self):
         from yewo.agent.step.staleness import target_moved
 
-        self.assertFalse(
-            target_moved(b"not a png", b"nor this", self._tap(30, 30), [])
-        )
+        self.assertFalse(target_moved(b"not a png", b"nor this", self._tap(30, 30), []))
 
 
 class TargetDecisionTests(unittest.TestCase):
@@ -120,23 +110,21 @@ class TargetDecisionTests(unittest.TestCase):
         from yewo.agent.step.targeting import evaluate
 
         decision = evaluate(
-            TapMarkAction(mark=1, reason="continue"),
+            TapMarkAction(mark=1, target="Continue button", reason="continue"),
             self._snapshot(self._marks()),
             self._device(),
         )
 
         self.assertTrue(decision.ok)
         self.assertIsInstance(decision.action, TapAction)
-        self.assertEqual(
-            (decision.action.coordinates.x, decision.action.coordinates.y), (20, 30)
-        )
+        self.assertEqual((decision.action.coordinates.x, decision.action.coordinates.y), (20, 30))
 
     def test_a_number_that_names_nothing_stops_the_step(self):
         from yewo.agent.actuation.actions import TapMarkAction
         from yewo.agent.step.targeting import evaluate
 
         decision = evaluate(
-            TapMarkAction(mark=47, reason="continue"),
+            TapMarkAction(mark=47, target="Continue button", reason="continue"),
             self._snapshot(self._marks()),
             self._device(),
         )
@@ -197,9 +185,7 @@ class TargetDecisionTests(unittest.TestCase):
 
         device = self._device()
 
-        decision = evaluate(
-            KeyEventAction(key=4, reason="back"), self._snapshot(), device
-        )
+        decision = evaluate(KeyEventAction(key=4, reason="back"), self._snapshot(), device)
 
         self.assertTrue(decision.ok)
         device.get_screenshot.assert_not_called()
@@ -210,7 +196,7 @@ class TargetDecisionTests(unittest.TestCase):
         from yewo.agent.step.targeting import evaluate
 
         decision = evaluate(
-            TapMarkAction(mark=1, reason="continue"),
+            TapMarkAction(mark=1, target="Continue button", reason="continue"),
             self._snapshot(self._marks()),
             self._device(png=fakes.solid_png("black")),
         )
@@ -228,7 +214,7 @@ class TargetDecisionTests(unittest.TestCase):
         )
 
         decision = evaluate(
-            TapMarkAction(mark=1, reason="continue"),
+            TapMarkAction(mark=1, target="Continue button", reason="continue"),
             self._snapshot(self._marks()),
             device,
         )
@@ -241,7 +227,7 @@ class TargetDecisionTests(unittest.TestCase):
         from yewo.agent.step.targeting import evaluate
 
         decision = evaluate(
-            TapMarkAction(mark=1, reason="continue"),
+            TapMarkAction(mark=1, target="Continue button", reason="continue"),
             self._snapshot(self._marks()),
             self._device(png=b""),
         )
@@ -254,7 +240,7 @@ class TargetDecisionTests(unittest.TestCase):
         from yewo.agent.actuation.actions import TapMarkAction
         from yewo.agent.step.targeting import evaluate
 
-        proposed = TapMarkAction(mark=1, reason="continue")
+        proposed = TapMarkAction(mark=1, target="Continue button", reason="continue")
 
         decision = evaluate(proposed, self._snapshot(self._marks()), self._device())
 
@@ -340,9 +326,7 @@ class GroundingContractTests(unittest.TestCase):
         orchestrator._scrubber = None
 
         with self.assertRaises(ValueError) as caught:
-            orchestrator._run_action(
-                TargetNotListedAction(description="blue button", reason="r")
-            )
+            orchestrator._run_action(TargetNotListedAction(description="blue button", reason="r"))
 
         self.assertIn("nothing to", str(caught.exception))
 

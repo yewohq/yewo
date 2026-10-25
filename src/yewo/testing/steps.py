@@ -54,7 +54,7 @@ class ActionStep(BaseModel):
 
     kind: Literal["action"] = "action"
     instruction: str = Field(
-        description="One action on one control, such as 'Tap the Login button.'"
+        description="One action on one control, such as 'Tap the Save button.'"
     )
 
     @model_validator(mode="after")

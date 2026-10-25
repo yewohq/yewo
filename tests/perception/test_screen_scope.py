@@ -8,6 +8,8 @@ names still decides it.
 import unittest
 from types import SimpleNamespace
 
+from fakes import device_result
+
 
 class CrossedOnWhichScreenTests(unittest.TestCase):
     """`applicable` is the auditor's own claim, and nothing can check it.
@@ -32,7 +34,7 @@ class CrossedOnWhichScreenTests(unittest.TestCase):
         from yewo.testing.qa_agent import QAAgent
 
         status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
-            run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
+            run_result=device_result(),
             stop_reason=None,
             all_verifications=verifications,
             all_issues=[],

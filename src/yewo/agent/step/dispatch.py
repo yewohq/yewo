@@ -16,6 +16,8 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from yewo.agent.actuation.orchestrator import ActionOrchestrator
+from yewo.agent.actuation.actions import TypeAction
+from yewo.agent.device.receipts import Receipt
 from yewo.agent.grounding import marks
 from yewo.agent.memory.history import ActionEntry
 from yewo.agent.memory.replay import ReplayLedger, target_label
@@ -24,6 +26,7 @@ from yewo.agent.perception import settle
 from yewo.agent.plan.schema import DeviceStepResponse
 from yewo.agent.step import narration
 from yewo.agent.step.observation import PerceptionSnapshot
+from yewo.agent.run.postconditions import TextEntryReceipt, pending_for
 from yewo.errors import TargetNotInteractive
 from yewo.utils.secrets import SecretScrubber
 
@@ -55,8 +58,16 @@ def execute(
     last_external_nav = ctx.last_external_nav
     try:
         receipt = ActionOrchestrator(device_control, scrubber).execute(action)
-        if receipt is not None:
+        if isinstance(receipt, Receipt):
             ctx.capability_receipts.append(receipt)
+        if isinstance(action, TypeAction) and isinstance(receipt, TextEntryReceipt):
+            ctx.pending_entered_value = pending_for(
+                action,
+                ctx.value_names,
+                ctx.declared_values,
+                receipt.observed,
+                verification_policies=ctx.value_verifications,
+            )
         last_external_nav = step_response.external_navigation
         ctx.stall.action_dispatched()
     except TargetNotInteractive as exc:

@@ -1,5 +1,6 @@
 """What Yewo asks the model, and what it records about the answer."""
 
+import json
 import unittest
 
 from fakes import qa_prompt, walk
@@ -29,7 +30,12 @@ class ProviderNormalizationTests(unittest.TestCase):
                 "current_screen": "Login",
                 "observation": "Login form",
                 "reasoning": "Focus email",
-                "action": {"type": "tap", "coordinates": [10, 20], "reason": "focus"},
+                "action": {
+                    "type": "tap",
+                    "coordinates": [10, 20],
+                    "target": "Search field",
+                    "reason": "focus",
+                },
             }
         )
 
@@ -63,7 +69,7 @@ class PlannerAgreementTests(unittest.TestCase):
 
         planner = DevicePlanner.__new__(DevicePlanner)
         return planner._build_prompt(
-            goal_lines=["Sign in"],
+            goal_lines=["Open the requested screen"],
             gui_elements=None,
             history="",
             trail=None,
@@ -84,6 +90,32 @@ class PlannerAgreementTests(unittest.TestCase):
         for prompt in (self._device_prompt(), self._qa_prompt()):
             self.assertIn("do not spend a separate", prompt)
             self.assertNotIn("Step A: tap", prompt)
+
+    def test_marks_typing_requires_the_actual_editable_field(self):
+        from yewo.agent.plan.planner import MARKS_CONSTRAINTS
+
+        self.assertIn("only on the actual editable field", MARKS_CONSTRAINTS)
+        self.assertIn("same-named label", MARKS_CONSTRAINTS)
+        self.assertIn("target_not_listed", MARKS_CONSTRAINTS)
+
+    def test_the_shared_planner_contract_assumes_no_app_domain(self):
+        from yewo.agent.plan.schema import DeviceStepResponse
+
+        contract = self._device_prompt() + json.dumps(
+            DeviceStepResponse.model_json_schema()
+        )
+
+        for assumption in ("login", "sign-in", "post-login", "home feed", "onboarding"):
+            self.assertNotIn(assumption, contract.lower(), assumption)
+
+    def test_reusable_instructions_precede_changing_screen_state(self):
+        for prompt in (self._device_prompt(), self._qa_prompt()):
+            self.assertLess(
+                prompt.index("### Response Instructions"), prompt.index("### Current UI Elements")
+            )
+            self.assertLess(
+                prompt.index("### Allowed Action Types"), prompt.index("### Action History")
+            )
 
 
 class RunnerWiringTests(unittest.TestCase):
@@ -122,9 +154,7 @@ class VisionWeightsTests(unittest.TestCase):
 
         description = QAIssue.model_json_schema()["$defs"]["BoundingBox"]["description"]
 
-        self.assertEqual(
-            description, "Represents coordinates highlighting a visual issue."
-        )
+        self.assertEqual(description, "Represents coordinates highlighting a visual issue.")
 
 
 def _element(x_min, y_min, x_max, y_max, text=""):
@@ -242,9 +272,7 @@ class StepBudgetTests(unittest.TestCase):
         return agent
 
     def _case(self, instruction_count):
-        return SimpleNamespace(
-            steps_instructions=["Tap the Next button."] * instruction_count
-        )
+        return SimpleNamespace(steps_instructions=["Tap the Next button."] * instruction_count)
 
     def test_short_scenarios_get_the_floor(self):
         self.assertEqual(self._agent(40)._step_budget(self._case(5)), 15)
@@ -371,9 +399,7 @@ class ScenarioGenerationTests(unittest.TestCase):
         suite = generator.generate_suite(self._journey(first, second))
 
         self.assertEqual([s.cell for s in suite.scenarios], ["security.negative.0"])
-        self.assertEqual(
-            [gap.cell.key for gap in suite.uncovered], ["functional.happy_path.0"]
-        )
+        self.assertEqual([gap.cell.key for gap in suite.uncovered], ["functional.happy_path.0"])
         self.assertEqual(client.generate_response.call_count, 4)
 
     def test_a_response_that_never_matches_the_schema_blames_the_provider(self):
@@ -485,7 +511,7 @@ class ScenarioGenerationTests(unittest.TestCase):
         )
 
     def test_a_cell_needing_an_undeclared_actor_is_not_asked_for(self):
-        """A second account cannot be guessed, so the cell is reported rather than faked."""
+        """A second actor cannot be guessed, so the cell is reported rather than faked."""
         from yewo.errors import Cause
         from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
 

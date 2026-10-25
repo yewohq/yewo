@@ -46,6 +46,12 @@ class AgentHistory:
         if self._entries and reaction:
             self._entries[-1].reaction = reaction
 
+    def mark_last_failed(self, observation: str) -> None:
+        """Replace the latest action's provisional device outcome."""
+        if self._entries:
+            self._entries[-1].result.success = False
+            self._entries[-1].result.observation = observation
+
     def format_for_prompt(self) -> str:
         if not self._entries:
             return "No actions executed yet."

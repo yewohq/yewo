@@ -17,6 +17,7 @@ category, so the file carries that too.
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Sequence
 
 
 class Category(str, Enum):
@@ -53,7 +54,7 @@ class ScenarioType(str, Enum):
 CATEGORY_DESCRIPTIONS: dict[Category, str] = {
     Category.FUNCTIONAL: "whether the feature does what the journey says it does",
     Category.INPUT: "what the app does with the values a user enters",
-    Category.SECURITY: "whether a secret stays hidden, and whether a refusal holds",
+    Category.SECURITY: "whether the app satisfies its declared security rules",
     Category.ACCESSIBILITY: "whether a control can be read, named and hit",
     Category.PERFORMANCE: "how fast the app answered, and whether it stayed responsive",
     Category.NETWORK: "what the app does when the connection changes or goes away",
@@ -115,6 +116,25 @@ TYPES_AUDITED_EVERYWHERE = frozenset(
 An out-of-order tap and an unscripted one both act where no assertion
 expected them, so every screen has to be read.
 """
+
+
+def must_audit_every_screen(
+    category: Category,
+    scenario_type: ScenarioType,
+    security_rules: Sequence[str] = (),
+) -> bool:
+    """Whether every screen this scenario walks has to be audited.
+
+    A security rule is only required once some screen reported it as
+    applicable. So a screen nobody audits takes its rules out of the
+    required set, and a violation there passes. Security rules are declared
+    per journey, so this is true of nearly every scenario and not only of
+    the cells below.
+
+    Separate from the actions. A scenario may replay the walk and still
+    audit what the walk arrives at. What it may never do is skip both.
+    """
+    return bool(security_rules) or audits_every_screen(category, scenario_type)
 
 
 def audits_every_screen(category: Category, scenario_type: ScenarioType) -> bool:

@@ -12,9 +12,7 @@ class DecisionCredentialTests(unittest.TestCase):
         from yewo.llm.credentials import missing_credentials
 
         with mock.patch.dict("os.environ", {}, clear=True):
-            self.assertEqual(
-                missing_credentials("typesafe/jev-1.14.0"), ["TYPESAFE_API_KEY"]
-            )
+            self.assertEqual(missing_credentials("typesafe/jev-1.14.0"), ["TYPESAFE_API_KEY"])
 
     def test_that_key_satisfies_it(self):
         from yewo.llm.credentials import missing_credentials
@@ -277,9 +275,7 @@ class VendorContractTests(unittest.TestCase):
         import typesafe_sdk
 
         with self.assertRaises(typesafe_sdk.TypeSafeRateLimitError):
-            client.system_one(
-                state="", questions={"q": {"type": "boolean", "prompt": "is it?"}}
-            )
+            client.system_one(state="", questions={"q": {"type": "boolean", "prompt": "is it?"}})
         return len(asked)
 
     def test_the_sdk_retries_on_its_own_unless_told_not_to(self):
@@ -290,9 +286,7 @@ class VendorContractTests(unittest.TestCase):
         """So Yewo's own three attempts are three requests, and not nine."""
         from typesafe_sdk import RetryPolicy
 
-        self.assertEqual(
-            self._requests_for_a_rate_limit(RetryPolicy(max_retries=0)), 1
-        )
+        self.assertEqual(self._requests_for_a_rate_limit(RetryPolicy(max_retries=0)), 1)
 
     def test_the_grounder_builds_its_client_with_that_policy(self):
         """One owner for the retry policy, and `call_with_retry` is it."""
@@ -375,8 +369,11 @@ class PlannerSchemaTests(unittest.TestCase):
 
         for planner_class in (DevicePlanner, QAPlanner):
             answered = self._models(planner_class)
-            self.assertEqual(self._target_field(answered["coordinates"]), {"coordinates"})
-            self.assertEqual(self._target_field(answered["marks"]), {"mark"})
+            self.assertEqual(
+                self._target_field(answered["coordinates"]),
+                {"coordinates", "target"},
+            )
+            self.assertEqual(self._target_field(answered["marks"]), {"mark", "target"})
             self.assertEqual(self._target_field(answered["describe"]), {"target"})
 
     def test_the_two_planners_never_share_a_schema(self):
@@ -388,3 +385,19 @@ class PlannerSchemaTests(unittest.TestCase):
         for mode in device:
             self.assertIsNot(device[mode], qa[mode], f"{mode} shares a schema")
             self.assertIn("is_scenario_feasible", qa[mode].model_fields)
+
+    def test_infeasibility_requires_a_reason(self):
+        from pydantic import ValidationError
+
+        from yewo.agent.plan.schema import DoneAction
+        from yewo.testing.qa_planner import QAStepResponse
+
+        with self.assertRaises(ValidationError):
+            QAStepResponse(
+                current_screen="Login",
+                observation="The login form is visible.",
+                reasoning="Continue the scenario.",
+                action=DoneAction(reason="Stop."),
+                is_scenario_feasible=False,
+                infeasibility_reason="",
+            )

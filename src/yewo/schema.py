@@ -1,8 +1,8 @@
 """The shape of a yewo.yaml.
 
-One file holds the settings and the tests, so a typo in it can mean either a
-setting that does nothing or a test that never runs. Every key is declared and
-every value constrained, and anything else stops the run naming the key.
+One file holds the settings and the tests. A typo can mean either a setting
+that does nothing or a test that never runs. Every key is declared and every
+value is constrained. Anything else stops the run and names the key.
 
 These models describe the file. `config.py` resolves the settings from them
 and `suite.py` turns the rest into workflows, so one declaration answers for
@@ -18,10 +18,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from yewo.testing.taxonomy import Category, Priority, ScenarioType
 
 PLATFORMS = ("android", "ios")
-GROUNDINGS = ("coordinates", "marks", "describe")
+GROUNDINGS = ("marks", "describe")
 
 Platform = Literal["android", "ios"]
-Grounding = Literal["coordinates", "marks", "describe"]
+Grounding = Literal["marks", "describe"]
 
 
 class StrictModel(BaseModel):
@@ -48,6 +48,33 @@ class DeclaredValue(StrictModel):
 
     value: str
     secret: bool = False
+    redaction: Literal["hide", "last4", "show"] = Field(
+        default="hide",
+        description="How much of this value an external model may receive.",
+    )
+    verify_as: Literal["auto", "exact", "normalized", "masked"] = Field(
+        default="auto",
+        description=(
+            "How local post-action checks may recognize this value. Auto accepts "
+            "an exact value or an observed masked representation."
+        ),
+    )
+    normalizers: list[
+        Literal["whitespace", "hyphens", "case", "currency", "grouping"]
+    ] = Field(
+        default_factory=list,
+        description="Transformations permitted before local value comparison.",
+    )
+    visible_suffix: int = Field(
+        default=0,
+        ge=0,
+        description="Characters that may remain visible at the end of a masked value.",
+    )
+    masked_length: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Required displayed length for a masked value. Defaults to input length.",
+    )
     refused: bool = Field(
         default=False,
         description=(
@@ -77,7 +104,11 @@ class Settings(StrictModel):
         default=None, description="Cheaper model for per-step planning."
     )
     grounding: Optional[Grounding] = Field(
-        default=None, description="How the planner names a target."
+        default=None,
+        description=(
+            "How the planner names a target. Marks selects a detected element. "
+            "describe places a target from its visible description."
+        ),
     )
     max_steps: Optional[int] = Field(default=None, ge=1)
     settle_time: Optional[float] = Field(default=None, ge=0)
@@ -85,6 +116,22 @@ class Settings(StrictModel):
     record: Optional[bool] = Field(default=None, description="Record the screen during the run.")
     record_session: Optional[bool] = Field(
         default=None, description="Another spelling of 'record'."
+    )
+    durable_replay: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Re-walk a path a passing run saved, instead of planning it "
+            "again. Unlike 'replay', which reuses a path inside one run, "
+            "this one outlives the run. On by default. Each run audits its "
+            "own screens. Drift returns only the affected action to the planner."
+        ),
+    )
+    allow_secret_exposure: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Allow declared secrets in model input and screen recordings. "
+            "Off by default. Stored reports and artifacts stay protected."
+        ),
     )
 
 
@@ -139,8 +186,8 @@ class WorkflowSpec(Settings):
     actors: Optional[dict[str, dict[str, EnvValue]]] = Field(
         default=None,
         description=(
-            "Other accounts a role scenario signs in as, by name. Each holds "
-            "whatever this app signs in with, under names you choose."
+            "Named personas or role contexts for role scenarios. Each holds "
+            "app-specific values under names you choose."
         ),
     )
 
@@ -166,8 +213,8 @@ class YewoFile(Settings):
     actors: Optional[dict[str, dict[str, EnvValue]]] = Field(
         default=None,
         description=(
-            "Other accounts a role scenario signs in as, by name. Each holds "
-            "whatever this app signs in with, under names you choose."
+            "Named personas or role contexts for role scenarios. Each holds "
+            "app-specific values under names you choose."
         ),
     )
 

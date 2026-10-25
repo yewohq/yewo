@@ -1,10 +1,9 @@
 from enum import Enum
-from typing import Annotated, Any, ClassVar, Literal, get_args, get_origin
+from typing import Annotated, Any, ClassVar, Literal, Optional, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 
-# --- Basic Building Blocks ---
 class Coordinates(BaseModel):
     x: int = Field(..., description="The x coordinate in pixels.")
     y: int = Field(..., description="The y coordinate in pixels.")
@@ -41,9 +40,9 @@ class ActionType(str, Enum):
 class CapabilityKind(str, Enum):
     """The device states a scenario can ask for.
 
-    The value is the discriminator of the matching model below, so adding a
-    capability means adding a model and a member, and the planner vocabulary
-    and the dispatch both follow from the union.
+    The value selects the matching model below. Adding a capability means
+    adding a model and a member. The planner vocabulary and dispatch then
+    follow from the union.
     """
 
     LOCATION = "location"
@@ -64,10 +63,10 @@ class CapabilityKind(str, Enum):
 class CapabilityModel(BaseModel):
     """A capability, which takes the fields it declares and no others.
 
-    Extra fields are refused rather than dropped. The prompt tells the model to
-    send only what a capability lists, and without this that is advice: a stale
-    `parameters` object validates, disappears, and the capability runs on its
-    defaults as though it had been asked for.
+    Extra fields are refused rather than dropped. The prompt tells the model
+    to send only the listed fields. Without enforcement, a stale `parameters`
+    object disappears during validation. The capability then runs on defaults
+    that the scenario did not request.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -114,9 +113,7 @@ class LocaleCapability(CapabilityModel):
 
 class PermissionCapability(CapabilityModel):
     kind: Literal[CapabilityKind.PERMISSION] = CapabilityKind.PERMISSION
-    permission: Literal[
-        "camera", "location", "notifications", "photos", "contacts", "storage"
-    ]
+    permission: Literal["camera", "location", "microphone", "notifications", "photos", "contacts", "storage"]
     grant: bool
 
     @property
@@ -241,14 +238,13 @@ def capability_vocabulary() -> str:
         lines.append("   - {" + ", ".join(fields) + "}")
     return "\n".join(lines)
 
-# --- Action Definitions ---
-
 
 class TypeAction(BaseModel):
     type: Literal[ActionType.TYPE] = ActionType.TYPE
     text: str = Field(default="", description="The text of the action.")
-    coordinates: Coordinates = Field(
-        ..., description="The screen coordinates to move to."
+    coordinates: Coordinates = Field(..., description="The screen coordinates to move to.")
+    target: Optional[str] = Field(
+        default=None, description="A semantic description of the target field."
     )
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
@@ -260,6 +256,9 @@ MAX_TAP_COUNT = 20
 class TapAction(BaseModel):
     type: Literal[ActionType.TAP] = ActionType.TAP
     coordinates: Coordinates = Field(..., description="The screen coordinates to tap.")
+    target: Optional[str] = Field(
+        default=None, description="A semantic description of the target control."
+    )
     count: int = Field(
         default=1,
         ge=1,
@@ -284,24 +283,27 @@ class ClearAction(BaseModel):
     coordinates: Coordinates = Field(
         ..., description="The screen coordinates of the text field to clear."
     )
+    target: Optional[str] = Field(
+        default=None, description="A semantic description of the target field."
+    )
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
 class DoubleTapAction(BaseModel):
     type: Literal[ActionType.DOUBLE_TAP] = ActionType.DOUBLE_TAP
-    coordinates: Coordinates = Field(
-        ..., description="The screen coordinates to double tap."
+    coordinates: Coordinates = Field(..., description="The screen coordinates to double tap.")
+    target: Optional[str] = Field(
+        default=None, description="A semantic description of the target control."
     )
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
 class LongPressAction(BaseModel):
     type: Literal[ActionType.LONG_PRESS] = ActionType.LONG_PRESS
-    duration: float = Field(
-        ..., description="The duration of the long press in seconds."
-    )
-    coordinates: Coordinates = Field(
-        ..., description="The screen coordinates to long press."
+    duration: float = Field(..., description="The duration of the long press in seconds.")
+    coordinates: Coordinates = Field(..., description="The screen coordinates to long press.")
+    target: Optional[str] = Field(
+        default=None, description="A semantic description of the target control."
     )
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
@@ -348,10 +350,12 @@ class TargetNotListedAction(BaseModel):
     """
 
     type: Literal[ActionType.TARGET_NOT_LISTED] = ActionType.TARGET_NOT_LISTED
-    description: str = Field(
-        ..., description="What the target looks like and roughly where it is."
-    )
+    description: str = Field(..., description="What the target looks like and roughly where it is.")
     reason: str = Field(..., description="What you were trying to achieve.")
+
+
+MIN_WAIT_SECONDS = 0.1
+MAX_WAIT_SECONDS = 10.0
 
 
 class WaitAction(BaseModel):
@@ -400,6 +404,17 @@ def _retargeted(
         if field_name != "coordinates"
     }
     fields[target] = definition
+    if target != "target":
+        fields["target"] = (
+            str,
+            Field(
+                ...,
+                description=(
+                    "What the numbered target is, described by its own visible "
+                    "text, symbol, shape, or colour."
+                ),
+            ),
+        )
     variant = create_model(name, __base__=RetargetedAction, **fields)
     variant.coordinate_form = model
     return variant
@@ -408,7 +423,7 @@ def _retargeted(
 def _marks_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
     """The same action with coordinates removed and `mark` required.
 
-    Marks mode is enforced by the schema rather than by prose plus a check
+    Marks mode is enforced by the schema rather than by prose alone
     afterwards. An optional field is one the model may omit — and it does,
     intermittently, which turns every omission into a wasted step. A field it
     cannot omit and a field that does not exist leave nothing to get wrong.
@@ -424,8 +439,8 @@ def _marks_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
 def _describe_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
     """The same action with coordinates replaced by a description of the target.
 
-    Built like the marks variant, for the same reason: a field the model
-    cannot omit and a field that does not exist leave nothing to get wrong.
+    This uses the same structure as the marks variant. A required field and an
+    absent field leave nothing for the model to get wrong.
     """
     return _retargeted(
         model,
@@ -456,7 +471,6 @@ ClearDescribeAction = _describe_variant(ClearAction, "ClearDescribeAction")
 DoubleTapDescribeAction = _describe_variant(DoubleTapAction, "DoubleTapDescribeAction")
 LongPressDescribeAction = _describe_variant(LongPressAction, "LongPressDescribeAction")
 
-
 # Actions that touch a specific place, and so need a target resolved first.
 TARGETED_ACTIONS = frozenset(
     {
@@ -474,7 +488,6 @@ TARGETED_ACTIONS = frozenset(
 TEXT_FIELD_ACTIONS = frozenset({ActionType.TYPE, ActionType.CLEAR})
 
 
-# --- The Union of All Actions ---
 Action = Annotated[
     TypeAction
     | TapAction
@@ -487,7 +500,7 @@ Action = Annotated[
     | ClearAction
     | WaitAction
     | TargetNotListedAction,
-    Field(discriminator="type")
+    Field(discriminator="type"),
 ]
 
 
@@ -524,16 +537,13 @@ MarksAction = Annotated[
 ]
 
 
-# --- The Final Output Schema ---
 class ActionPlan(BaseModel):
-    instruction: str = Field(
-        ..., description="The normalized instruction to achieve the goal."
-    )
+    instruction: str = Field(..., description="The normalized instruction to achieve the goal.")
     actions: list[Action] = Field(
         ...,
         description="The sequence of machine-executable actions to achieve the goal.",
     )
     external_navigation: bool = Field(
         default=False,
-        description="Set to True if the next step is expected to temporarily navigate outside the SUT app (e.g., opening an external browser page, map, system dialog, or payment screen).",
+        description="Set to True if the next step is expected to leave the SUT app temporarily. Examples include a browser, map, document picker, or system dialog.",
     )

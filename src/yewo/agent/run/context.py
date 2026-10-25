@@ -12,6 +12,12 @@ from yewo.agent.grounding import marks
 from yewo.agent.memory.loop_detector import RollingLoopDetector
 from yewo.agent.memory.stall import Stall
 from yewo.agent.run.record import StepLog
+from yewo.agent.memory.replay_store import ValueNames
+from yewo.agent.run.postconditions import (
+    PendingEnteredValue,
+    PostconditionVerification,
+    ValueVerificationPolicy,
+)
 
 
 @dataclass
@@ -77,3 +83,12 @@ class RunContext:
 
     Held by place, not by number: see marks.is_same_element.
     """
+
+    declared_values: dict[str, str] = field(default_factory=dict)
+    value_verifications: dict[str, ValueVerificationPolicy] = field(default_factory=dict)
+    value_names: ValueNames = field(default_factory=ValueNames)
+    pending_entered_value: Optional[PendingEnteredValue] = None
+    postcondition_verifications: list[PostconditionVerification] = field(default_factory=list)
+    postcondition_blocked: bool = False
+    postcondition_recovery_required: bool = False
+    observation_blocked: bool = False

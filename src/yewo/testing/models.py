@@ -16,6 +16,7 @@ from typing import Dict, FrozenSet, List, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
 from yewo.agent.actuation.actions import CapabilityKind
+from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.agent.device.launch import SetupMode  # noqa: F401
 from yewo.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
 
@@ -44,18 +45,15 @@ from yewo.testing.evidence import (  # noqa: F401
 
 
 class Actor(BaseModel):
-    """Another account a scenario signs in as.
+    """A named persona or role context used by a scenario.
 
-    A role scenario shows that one actor cannot reach another's data, and one
-    account cannot show that.
-
-    The names inside are the app's, not Yewo's. An app may sign in with an
-    email, a phone number, a tenant, a PIN or a token. A fixed pair of names
-    would fit one kind of app only.
+    A role scenario compares what different actors may see, reach, or do. The
+    values inside are the app's, not Yewo's. They can establish any context
+    the declared journey needs.
     """
 
     values: Dict[str, str] = Field(
-        description="Whatever this app signs this account in with, by name."
+        description="App-specific values that establish this actor's context, by name."
     )
 
 
@@ -69,8 +67,16 @@ class UserJourney(BaseModel):
         default_factory=dict,
         description=(
             "Name-to-value pairs the journey declared sensitive. Masked by name "
-            "in written artifacts, never withheld from the planner."
+            "in artifacts and replaced with placeholders before model calls."
         ),
+    )
+    secret_displays: Dict[str, str] = Field(
+        default_factory=dict,
+        description="How much of each declared value an external model may receive.",
+    )
+    value_verifications: Dict[str, ValueVerificationPolicy] = Field(
+        default_factory=dict,
+        description="How each declared value may be represented for local verification.",
     )
     values: Dict[str, str] = Field(
         default_factory=dict,
@@ -89,7 +95,7 @@ class UserJourney(BaseModel):
     )
     actors: Dict[str, "Actor"] = Field(
         default_factory=dict,
-        description="Other accounts a role scenario may sign in as, by name.",
+        description="Named personas or role contexts available to role scenarios.",
     )
     coverage: List[CoverageCell] = Field(
         default_factory=lambda: list(DEFAULT_COVERAGE),

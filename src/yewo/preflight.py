@@ -8,7 +8,6 @@ missing things cost one message rather than two boot cycles.
 from typing import Optional
 
 from yewo.agent.grounding import (
-    GROUNDING_COORDINATES,
     GROUNDING_DESCRIBE,
     GROUNDING_MARKS,
 )
@@ -21,7 +20,7 @@ from yewo.utils.jev_deps import missing_jev_packages
 from yewo.utils.vision_deps import INSTALL_HINT as VISION_HINT
 from yewo.utils.vision_deps import missing_vision_packages
 
-DETECTED_GROUNDING = frozenset({GROUNDING_COORDINATES, GROUNDING_MARKS})
+DETECTED_GROUNDING = frozenset({GROUNDING_MARKS})
 """Modes that choose a target from detected elements, and so need a detector."""
 
 CREDENTIAL_HINT = "Add them to a .env file in this directory, or export them."

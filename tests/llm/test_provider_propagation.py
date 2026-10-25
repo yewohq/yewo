@@ -40,7 +40,7 @@ def device_run(failure):
          mock.patch.object(DeviceAgent, "_run_step", side_effect=failure), \
          mock.patch("yewo.agent.run.agent.restart_app"), \
          mock.patch("yewo.agent.run.agent.replay_known_path"), \
-         mock.patch.object(DeviceAgent, "_log_recovery_cost"):
+         mock.patch("yewo.agent.run.outcomes.log_recovery_cost"):
         return agent.run(
             goal="Open the app.",
             device_control=SimpleNamespace(screen_height=800),
@@ -105,7 +105,9 @@ class PropagationTests(unittest.TestCase):
 
         generator = self._generator(ProviderUnavailable("spent"))
 
-        with mock.patch.object(ScenarioGenerator, "_prompt", return_value="ask"), \
+        with mock.patch.object(
+            ScenarioGenerator, "_prompt_sections", return_value=("policy", "input")
+        ), \
              self.assertRaises(ProviderUnavailable):
             generator._draft(self._journey(), self._cell())
 
@@ -118,7 +120,9 @@ class PropagationTests(unittest.TestCase):
         mismatch = ValidationError.from_exception_data("ScenarioDraft", [])
         generator = self._generator(mismatch)
 
-        with mock.patch.object(ScenarioGenerator, "_prompt", return_value="ask"), \
+        with mock.patch.object(
+            ScenarioGenerator, "_prompt_sections", return_value=("policy", "input")
+        ), \
              self.assertRaises(ValidationError):
             generator._draft(self._journey(), self._cell())
 

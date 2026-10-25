@@ -12,6 +12,7 @@ deliberately rather than as a side effect of testing.
 import argparse
 import logging
 from pathlib import Path
+from uuid import uuid4
 
 from yewo.app_discovery import resolve_journey_file
 from yewo.cli.console import Console
@@ -80,7 +81,9 @@ def run(args: argparse.Namespace, config: Config) -> int:
         return 2
 
     target = lock_file.path_beside(Path(path))
-    generator = ScenarioGenerator(LLMClient(model=model))
+    generator = ScenarioGenerator(
+        LLMClient(model=model, cache_affinity=f"lock-{uuid4()}")
+    )
     uncovered = 0
 
     for workflow in workflows:

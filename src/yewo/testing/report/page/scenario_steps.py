@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
-from yewo.agent.run.record import StepRecord
+from yewo.agent.run.record import StepRecord, StepSource
 from yewo.testing.models import ReportStatus
 
 from .summary_tiles import seconds
@@ -130,8 +130,15 @@ def _chips(step: StepRecord, recovered: bool = False) -> Tuple[StatusChip, ...]:
     scenario's own result.
     """
     chips: List[StatusChip] = []
-    if step.source == "replay":
-        chips.append(StatusChip("Replayed", "muted"))
+    # A reader weighs these differently. A replayed step was walked by this
+    # run already. A cached one was walked by a run that is over, so what
+    # stands behind it is the match, not a planner that saw the screen.
+    if step.source == StepSource.MODEL:
+        chips.append(StatusChip("Used AI", "muted"))
+    if step.source == StepSource.REPLAY:
+        chips.append(StatusChip("Replayed this run", "muted"))
+    if step.source == StepSource.CACHE:
+        chips.append(StatusChip("Replayed from path", "muted"))
     if step.grounding is not None and not step.grounding.resolved:
         label = "Target not on screen" if step.grounding.unmatched else "Not sent"
         chips.append(StatusChip(label, "warn"))

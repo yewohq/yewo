@@ -6,6 +6,9 @@ everything after that point is shared.
 """
 
 GROUNDING_COORDINATES = "coordinates"
+"""Deprecated. The planner answers with a point of its own, and nothing
+checks that point against what was detected. Marks mode answers the same
+question and refuses an answer that names nothing."""
 GROUNDING_MARKS = "marks"
 GROUNDING_DESCRIBE = "describe"
 
@@ -17,7 +20,6 @@ from yewo.agent.grounding.placement import (  # noqa: E402
 )
 
 __all__ = [
-    "GROUNDING_COORDINATES",
     "GROUNDING_DESCRIBE",
     "GROUNDING_MARKS",
     "MAX_SCREEN_FRACTION",

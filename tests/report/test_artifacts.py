@@ -170,7 +170,7 @@ class ArtifactSafetyTests(unittest.TestCase):
         safe = RedactedImages(scrubber).redact_artifact_image(
             image, [self._element("4111222233334444")]
         )
-        self.assertEqual(safe.getpixel((4, 5)), (0, 0, 0))
+        self.assertEqual(safe.getpixel((4, 5)), (47, 58, 43))
         self.assertEqual(image.getpixel((4, 5)), (255, 255, 255))
 
     def test_ordinary_labels_are_never_covered(self):

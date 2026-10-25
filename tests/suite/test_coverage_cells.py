@@ -214,44 +214,49 @@ class JourneyValueTests(unittest.TestCase):
         self.assertEqual(journey.secrets["rejected_password"], "other-secret")
         self.assertIn("rejected_password", journey.refused)
 
-    def test_another_account_is_declared_beside_env(self):
-        """An account is a pair, so it is not a value in 'env'."""
+    def test_another_actor_is_declared_beside_env(self):
+        """An actor groups its context values outside the shared environment."""
         path = _file(
             "actors:\n"
-            "  editor:\n"
-            "    username: editor@example.com\n"
-            "    password: {value: editor-secret, secret: true}\n" + JOURNEY
+            "  reviewer:\n"
+            "    workspace: draft-library\n"
+            "    access_code: {value: reviewer-secret, secret: true}\n" + JOURNEY
         )
 
         journey = load_workflows(path)[0].journeys[0]
 
         self.assertEqual(
-            journey.actors["editor"].values,
-            {"username": "editor@example.com", "password": "editor-secret"},
+            journey.actors["reviewer"].values,
+            {"workspace": "draft-library", "access_code": "reviewer-secret"},
         )
 
-    def test_an_account_holds_whatever_this_app_signs_in_with(self):
-        """Not a username and a password. An app may use a phone and a PIN."""
+    def test_an_actor_holds_whatever_establishes_its_context(self):
         path = _file(
             "actors:\n"
-            "  editor:\n"
-            "    phone: '+445550101'\n"
-            "    pin: {value: '4821', secret: true}\n" + JOURNEY
+            "  reviewer:\n"
+            "    workspace: draft-library\n"
+            "    access_code: {value: '4821', secret: true}\n" + JOURNEY
         )
 
         journey = load_workflows(path)[0].journeys[0]
 
-        self.assertEqual(sorted(journey.actors["editor"].values), ["phone", "pin"])
+        self.assertEqual(
+            sorted(journey.actors["reviewer"].values),
+            ["access_code", "workspace"],
+        )
 
-    def test_an_account_value_joins_the_one_namespace_under_a_dotted_name(self):
+    def test_an_actor_value_joins_the_one_namespace_under_a_dotted_name(self):
         """A step names it like any other value, so nothing tracks where it came from."""
         path = _file(
-            "actors:\n  editor:\n    email: editor@example.com\n" + JOURNEY
+            "actors:\n  reviewer:\n    workspace: draft-library\n" + JOURNEY
         )
 
         journey = load_workflows(path)[0].journeys[0]
 
-        self.assertEqual(journey.values["actors.editor.email"], "editor@example.com")
+        self.assertEqual(
+            journey.values["actors.reviewer.workspace"],
+            "draft-library",
+        )
 
     def test_an_actor_secret_is_masked_under_the_path_the_file_wrote(self):
         """A name Yewo invented reads back in a report nobody can trace."""
@@ -266,18 +271,18 @@ class JourneyValueTests(unittest.TestCase):
 
         self.assertEqual(journey.secrets["actors.editor.password"], "editor-secret")
 
-    def test_an_account_with_no_values_is_refused(self):
-        path = _file("actors:\n  editor: {}\n" + JOURNEY)
+    def test_an_actor_with_no_values_is_refused(self):
+        path = _file("actors:\n  reviewer: {}\n" + JOURNEY)
 
-        with self.assertRaisesRegex(ConfigError, "actors.editor"):
+        with self.assertRaisesRegex(ConfigError, "actors.reviewer"):
             load_workflows(path)
 
-    def test_a_workflow_adds_its_own_accounts_to_the_file(self):
+    def test_a_workflow_adds_its_own_actors_to_the_file(self):
         path = _file(
-            "actors:\n  reader:\n    username: reader@example.com\n"
+            "actors:\n  reader:\n    workspace: published-library\n"
             "workflows:\n"
-            "  checkout:\n"
-            "    actors:\n      editor:\n        username: editor@example.com\n"
+            "  documents:\n"
+            "    actors:\n      editor:\n        workspace: draft-library\n"
             "    journeys:\n"
             "      - {id: j1, journey: A user opens the app.}\n"
         )

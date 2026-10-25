@@ -12,6 +12,8 @@ under that name would never be committed, and would never ship.
 from functools import lru_cache
 from importlib import resources
 
+from yewo.brand import mark_svg
+
 
 @lru_cache(maxsize=None)
 def stylesheet() -> str:
@@ -44,10 +46,13 @@ ICONS = {
 """One mark per tone, each labelled, so a reader who cannot see colour reads it."""
 
 MARKS = {
-    "logo": '<svg width="21" height="19" viewBox="18 21 52 47" aria-hidden="true">'
-    '<g transform="translate(0,-2)" fill="none" stroke-linecap="round" stroke-linejoin="round">'
-    '<path d="M49 27 L62 50 Q72 66 54 66 H34 Q16 66 26 50 L35 35" stroke="var(--logo)" stroke-width="7"/>'
-    '<path d="M35 35 L39 28" stroke="var(--clay)" stroke-width="7"/></g></svg>',
+    "logo": mark_svg(
+        21,
+        19,
+        foreground="var(--logo)",
+        accent="var(--clay)",
+        stroke_width=7,
+    ),
     "lock": '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
     'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',

@@ -14,6 +14,7 @@ from yewo.agent.actuation.actions import (
 from yewo.agent.memory.history import ActionEntry, ActionResult
 from yewo.agent.grounding import GROUNDING_DESCRIBE
 from yewo.agent.grounding.description import resolve_description
+from yewo.agent.perception.elements import BoundingBox
 from yewo.agent.grounding.marks import resolve_mark
 from yewo.agent.step.staleness import has_target, target_moved
 from yewo.errors import ObservationUnavailable
@@ -86,6 +87,8 @@ class Decision:
     """What the planner said it was looking for, when no number named it."""
     action: Optional[Action] = None
     """The action to run instead, once a number has been turned into a point."""
+    target_bounds: Optional[BoundingBox] = None
+    """The grounded target box, available when describe mode placed it."""
 
 
 USABLE = Decision()
@@ -132,11 +135,12 @@ def evaluate(
         )
 
     if grounding == GROUNDING_DESCRIBE:
-        unresolved, resolved = resolve_description(
+        unresolved, resolved, target_bounds = resolve_description(
             action, grounder, snapshot.raw_img_bytes
         )
     else:
         unresolved, resolved = resolve_mark(action, snapshot.marks, grounding)
+        target_bounds = None
     if unresolved:
         return Decision(ok=False, observation=unresolved)
     action = resolved or action
@@ -145,4 +149,4 @@ def evaluate(
     if stale:
         return Decision(ok=False, observation=stale)
 
-    return Decision(action=action)
+    return Decision(action=action, target_bounds=target_bounds)

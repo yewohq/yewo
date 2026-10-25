@@ -70,6 +70,25 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(client.generate_response.call_count, 1)
         self.assertTrue(any("yewo.lock" in line for line in said))
 
+    def test_lock_generation_has_one_cache_affinity_for_the_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "yewo.yaml"
+            path.write_text(YAML)
+            client = SimpleNamespace(generate_response=Mock(return_value=draft()))
+            args = SimpleNamespace(
+                journey_file=str(path), model=None, workflow=None, refresh=False
+            )
+
+            with (
+                patch.object(command, "require_lock"),
+                patch("yewo.llm.llm_client.LLMClient", return_value=client) as constructor,
+                patch.object(command.Console, "write"),
+            ):
+                command.run(args, load_config())
+
+        affinity = constructor.call_args.kwargs["cache_affinity"]
+        self.assertTrue(affinity.startswith("lock-"))
+
     def test_locking_again_asks_for_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             self._run(directory, [draft()])

@@ -87,6 +87,34 @@ class DriverFirstTests(unittest.TestCase):
         )
         adb.set_app_permission.assert_not_called()
 
+    def test_a_microphone_permission_uses_the_platform_permission(self):
+        self._run(PermissionCapability(permission="microphone", grant=True))
+
+        self.assertEqual(
+            self.driver.asked("changePermissions"),
+            {
+                "permissions": ["android.permission.RECORD_AUDIO"],
+                "appPackage": PACKAGE,
+                "action": "grant",
+            },
+        )
+
+    def test_injected_media_uses_the_matching_android_collection(self):
+        cases = {
+            "/tmp/photo.png": "/sdcard/Pictures/photo.png",
+            "/tmp/clip.mp4": "/sdcard/Movies/clip.mp4",
+            "/tmp/tone.wav": "/sdcard/Music/tone.wav",
+            "/tmp/sample.bin": "/sdcard/Download/sample.bin",
+        }
+        for local_path, destination in cases.items():
+            with self.subTest(local_path=local_path), mock.patch.object(
+                capability_controller.os.path, "exists", return_value=True
+            ):
+                adb, _ = self._run(MediaInjectCapability(local_path=local_path))
+
+            adb.push_file.assert_called_once_with(SERIAL, local_path, destination)
+            adb.scan_media_file.assert_called_once_with(SERIAL, destination)
+
     def test_a_deep_link_is_one_call_on_either_platform(self):
         self._run(DeeplinkCapability(url="app://cart"))
 
@@ -235,6 +263,16 @@ class AppIdentityTests(unittest.TestCase):
         self.assertEqual(
             driver.asked("setPermission"),
             {"access": {"camera": "yes"}, "bundleId": BUNDLE},
+        )
+
+    def test_a_microphone_permission_uses_the_ios_privacy_service(self):
+        driver, _ = self._run(
+            PermissionCapability(permission="microphone", grant=True)
+        )
+
+        self.assertEqual(
+            driver.asked("setPermission"),
+            {"access": {"microphone": "yes"}, "bundleId": BUNDLE},
         )
 
     def test_stopping_the_app_reaches_it_by_its_bundle_id(self):
