@@ -53,6 +53,7 @@ class SetupExecutionTests(unittest.TestCase):
     """Each mode has to do what it says, or the contract is another assumption."""
 
     def _run(self, mode):
+        from yewo.agent.memory.replay_store import ValueNames
         from yewo.agent.run.agent import DeviceAgent
 
         from yewo.utils.secrets import SecretScrubber
@@ -62,16 +63,20 @@ class SetupExecutionTests(unittest.TestCase):
         agent._default_fast_planner = Mock()
         agent.scrubber = SecretScrubber()
         agent.step_opened = None
+        agent.max_steps = 1
+        agent.declared_values = {}
+        agent.value_verifications = {}
+        agent.value_names = ValueNames()
         calls = []
 
         # The run is cut short once setup is done. Only the setup matters.
         with (
             patch(
-                "yewo.agent.run.agent.clear_app_data",
+                "yewo.agent.run.task.clear_app_data",
                 lambda _d: calls.append("clear") or True,
             ),
-            patch("yewo.agent.run.agent.restart_app", lambda _d: calls.append("restart")),
-            patch("yewo.agent.run.agent.replay_known_path", side_effect=RuntimeError("stop")),
+            patch("yewo.agent.run.task.restart_app", lambda _d: calls.append("restart")),
+            patch("yewo.agent.run.task.replay_known_path", side_effect=RuntimeError("stop")),
             contextlib.suppress(Exception),
         ):
                 DeviceAgent.run(

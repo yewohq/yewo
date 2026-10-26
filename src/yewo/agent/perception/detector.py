@@ -27,6 +27,16 @@ YOLO_FILENAME = "best.pt"
 YOLO_REVISION = "287f12d1ee2413bbe217fc321483a9931e0e5317"
 OCR_LANGUAGES = ["en"]
 
+DETECTION_IMAGE_SIZE = 768
+"""Longest side the screenshot is scaled to before detection.
+
+Ultralytics defaults to 640. A tall phone screenshot scaled to that leaves a
+30px control about 23px wide, and a grid of them is then found only in part.
+Lowering the confidence threshold does not recover them, because the misses
+are not low-confidence detections. The model was trained at 640, so this is
+raised only as far as small controls require.
+"""
+
 
 class ImageDescriptor:
     def __init__(self):
@@ -54,7 +64,7 @@ class ImageDescriptor:
         thickness: int = 2,
     ) -> tuple[list[GUIElement], Image.Image]:
         image = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        result = self.yolo(image)[0]
+        result = self.yolo(image, imgsz=DETECTION_IMAGE_SIZE)[0]
         names = result.names if hasattr(result, "names") else self.names
         gui_elements = self._get_yolo_gui_elements(result, names)
 

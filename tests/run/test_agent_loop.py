@@ -6,11 +6,9 @@ from unittest.mock import Mock, patch
 
 from yewo.agent.perception import settle
 from yewo.agent.run import outcomes
-from yewo.agent.run.agent import (
-    AgentHistory,
-    RollingLoopDetector,
-    RunContext,
-)
+from yewo.agent.memory.history import AgentHistory
+from yewo.agent.memory.loop_detector import RollingLoopDetector
+from yewo.agent.run.context import RunContext
 
 
 class SettleTests(unittest.TestCase):

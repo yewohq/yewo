@@ -51,10 +51,10 @@ def action_result(
             f"(text may have been entered. A masked field cannot be confirmed by sight)"
         )
     elif t in (ActionType.TAP.value, ActionType.DOUBLE_TAP.value):
-        coords = action.coordinates
         obs = (
-            f"{t} at ({coords.x}, {coords.y}) — screen unchanged "
-            f"(tap may have missed, button may be obscured, or no navigation was triggered)"
+            f"{t} delivered to the device. The screen did not change. "
+            "An unchanged screen is not evidence that the app ignored this input. "
+            "The app may have changed state that is not visible."
         )
     elif t == ActionType.KEY_EVENT.value:
         obs = f"key_event {action.key} sent — screen unchanged"
@@ -114,16 +114,18 @@ def describe(action) -> str:
 
     t = action.type.value if hasattr(action.type, "value") else str(action.type)
 
-    coords = getattr(action, "coordinates", None)
+    fields = action.model_dump()
+    coords = fields.get("coordinates")
+    mark = fields.get("mark")
     # An unresolved mark has no point to report, so name the number instead.
     where = (
-        f"({coords.x}, {coords.y})"
+        f"({coords['x']}, {coords['y']})"
         if coords is not None
-        else f"element {getattr(action, 'mark', '?')}"
+        else f"element {mark if mark is not None else '?'}"
     )
 
     if t == ActionType.TYPE.value:
-        desc = f"type {getattr(action, 'text', '')!r} at {where}"
+        desc = f"type {fields.get('text', '')!r} at {where}"
     elif t in (
         ActionType.TAP.value,
         ActionType.DOUBLE_TAP.value,
@@ -142,7 +144,17 @@ def describe(action) -> str:
     else:
         desc = t
 
-    reason = getattr(action, "reason", "")
+    target = fields.get("target")
+    if target and t in (
+        ActionType.TYPE.value,
+        ActionType.TAP.value,
+        ActionType.DOUBLE_TAP.value,
+        ActionType.LONG_PRESS.value,
+        ActionType.CLEAR.value,
+    ):
+        desc += f" targeting {target!r}"
+
+    reason = fields.get("reason", "")
     if reason:
         desc += f" (reason: {reason})"
     return desc

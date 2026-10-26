@@ -10,6 +10,15 @@ class RetargetedAction(BaseModel):
 
     coordinate_form: ClassVar[type[BaseModel]]
 
+    @property
+    def count(self) -> int:
+        """Model-facing taps are one action; other variants ignore this value."""
+        return 1
+
+    @property
+    def interval_ms(self) -> int:
+        return 0
+
 
 def _retargeted(
     model: type[BaseModel],

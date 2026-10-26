@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,14 @@ from yewo.errors import DeviceUnavailable
 from yewo.utils.subprocess_runner import run_command, SubprocessRunError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class VisualFeedbackSettings:
+    """Android developer overlays that alter the pixels seen by the agent."""
+
+    pointer_location: Optional[bool]
+    tap_highlights: Optional[bool]
 
 
 class AdbControl:
@@ -301,6 +310,23 @@ class AdbControl:
         logger.info("Pointer location %s", 'enabled' if enabled else 'disabled')
 
     @staticmethod
+    def read_visual_feedback(serial: str) -> VisualFeedbackSettings:
+        """Read feedback settings before a visual session changes them."""
+
+        def read_boolean(name: str) -> Optional[bool]:
+            value = AdbControl.ask(serial, "settings", "get", "system", name)
+            if value == "1":
+                return True
+            if value == "0":
+                return False
+            return None
+
+        return VisualFeedbackSettings(
+            pointer_location=read_boolean("pointer_location"),
+            tap_highlights=read_boolean("show_touches"),
+        )
+
+    @staticmethod
     def enable_feedback(serial: str, pointer_location: bool, tap_highlights: bool):
         """Configures device gesture feedback preferences in Developer Settings.
 
@@ -317,6 +343,14 @@ class AdbControl:
         """Disables all system pointer tracking and touch highlights on the device."""
         AdbControl.toggle_pointer_location(serial, False)
         AdbControl.toggle_tap_highlights(serial, False)
+
+    @staticmethod
+    def restore_visual_feedback(serial: str, settings: VisualFeedbackSettings) -> None:
+        """Restore only settings that Android reported before the session."""
+        if settings.pointer_location is not None:
+            AdbControl.toggle_pointer_location(serial, settings.pointer_location)
+        if settings.tap_highlights is not None:
+            AdbControl.toggle_tap_highlights(serial, settings.tap_highlights)
 
     @staticmethod
     def avd_name(serial: str) -> Optional[str]:

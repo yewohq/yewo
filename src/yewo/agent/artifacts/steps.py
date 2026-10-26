@@ -11,6 +11,7 @@ The scan dump goes beside them, which keeps a step's screenshots and the
 reading they came from together.
 """
 
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -92,9 +93,29 @@ class StepArtifacts:
         session_dir.mkdir(parents=True, exist_ok=True)
         marked = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_marks.png"
         self.images.save_redacted_bytes(
-            planner_view, snapshot.gui_elements, marked
+            planner_view,
+            getattr(snapshot, "planner_elements", None)
+            if getattr(snapshot, "planner_elements", None) is not None
+            else snapshot.gui_elements,
+            marked,
         )
         return marked.name
+
+    def save_refinement(
+        self, session_dir: Path, step: int, snapshot: PerceptionSnapshot
+    ) -> dict[str, str]:
+        """Persist how a magnified planner view maps to the full screenshot."""
+        if snapshot.refinement is None:
+            return {}
+        session_dir.mkdir(parents=True, exist_ok=True)
+        path = session_dir / (
+            f"step{step + 1:03d}_{snapshot.timestamp}_refinement.json"
+        )
+        path.write_text(
+            json.dumps(snapshot.refinement, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return {"refinement": path.name}
 
     def save_action(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot, action

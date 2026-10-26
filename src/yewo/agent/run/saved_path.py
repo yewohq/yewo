@@ -5,12 +5,13 @@ The loop asks how many steps it no longer has to plan, and starts there.
 """
 
 import logging
-from yewo.agent.actuation.actions import TapAction, TypeAction
+from yewo.agent.actuation.actions import PlannerTapAction, TapAction, TypeAction
 from yewo.agent.memory import replay_match, replay_walk
 from yewo.agent.memory.history import ActionEntry, ActionResult
 from yewo.agent.memory.loop_detector import RollingLoopDetector
 from yewo.agent.run.record import StepSource
 from yewo.agent.run.outcomes import (
+    GOAL_REACHED,
     BeforeActionHookFn,
     DeviceRunResult,
     ObservationDirective,
@@ -327,7 +328,11 @@ def record_planned_step(agent, action, snapshot, ctx, screen_description: str) -
     if outcome is not None and not outcome.success:
         replay.close_learning_segment(snapshot, agent.scrubber.scrub(screen_description))
         return
-    target_description = action.target if isinstance(action, (TapAction, TypeAction)) else None
+    target_description = (
+        action.target
+        if isinstance(action, (TapAction, PlannerTapAction, TypeAction))
+        else None
+    )
     arrival_ms = round(record.act_ms or 0) if record is not None else 0
     replay.record_step(
         action,
@@ -415,7 +420,7 @@ def cached_path_result(agent, ctx, session_trail, phash: str | None) -> DeviceRu
     flush_trail(session_trail, phash)
     logger.info("Saved path completed the scenario without a planner call.")
     return DeviceRunResult(
-        status="goal_reached",
+        status=GOAL_REACHED,
         steps_executed=ctx.steps_executed,
         failure_reason=None,
         history=ctx.history,

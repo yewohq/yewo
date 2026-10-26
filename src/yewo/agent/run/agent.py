@@ -12,8 +12,7 @@ from yewo.agent.plan.planner import (
     DevicePlanner,
     DeviceStepResponse,
 )
-from yewo.agent.memory.history import AgentHistory
-from yewo.agent.device.launch import SetupMode, clear_app_data, restart_app
+from yewo.agent.device.launch import SetupMode
 from yewo.agent.run import observing, outcomes, postconditions, record, saved_path
 from yewo.agent.run.outcomes import DeviceRunResult, ObservationHookFn, StepHookFn
 from yewo.agent.perception import settle
@@ -26,7 +25,7 @@ from yewo.agent.memory.loop_detector import RollingLoopDetector
 from yewo.agent.run.context import RunContext
 from yewo.agent.memory import stall
 from yewo.agent.memory.stall import STALL_LIMIT_MESSAGE
-from yewo.agent.memory.replay import ReplayLedger, replay_known_path, target_label
+from yewo.agent.memory.replay import ReplayLedger, target_label
 from yewo.agent.memory.replay_store import ValueNames
 from yewo.agent.step import targeting
 from yewo.utils.secrets import SecretScrubber
@@ -34,8 +33,7 @@ from yewo.agent.perception import keyboard
 from yewo.agent.artifacts.redaction import RedactedImages
 from yewo.agent.perception.screen import ScreenPerception
 from yewo.agent.memory.trail import SessionTrail
-from yewo.errors import Cause, DeviceUnavailable, cause_of
-from yewo.llm.failures import reportable
+from yewo.agent.run.task import DeviceTask
 from yewo.llm.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -147,115 +145,59 @@ class DeviceAgent:
         planner_override: Optional[DevicePlanner] = None,
         max_steps: Optional[int] = None,
         setup: SetupMode = SetupMode.RELAUNCH,
+        replay: bool = True,
     ) -> DeviceRunResult:
         """Run until the goal, a safety boundary, the limit, or an exception."""
-        planner = planner_override or self._default_fast_planner
-        if isinstance(self.scrubber, SecretScrubber):
-            self.scrubber.clear_protected_regions()
-        session_dir.mkdir(parents=True, exist_ok=True)
-        ctx = RunContext(
-            history=AgentHistory(),
-            loop_detector=RollingLoopDetector(),
-            steps=record.StepLog(self.scrubber.scrub),
-            screen_height=getattr(device_control, "screen_height", None),
-            declared_values=dict(self.declared_values),
-            value_verifications=dict(self.value_verifications),
-            value_names=self.value_names,
+        task = self.start_task(
+            goal=goal,
+            device_control=device_control,
+            perception=perception,
+            session_dir=session_dir,
+            session_trail=session_trail,
+            observation_hook=observation_hook,
+            before_action_hook=before_action_hook,
+            step_hook=step_hook,
+            planner_override=planner_override,
+            max_steps=max_steps,
+            setup=setup,
+            replay=replay,
         )
+        result = task.result
+        while result is None:
+            result = task.step()
+        return result
 
-        try:
-            # Establish the state the caller asked for, rather than describing
-            # a state to the planner and hoping the device agrees.
-            if setup is SetupMode.CLEAR_DATA and not clear_app_data(device_control):
-                raise DeviceUnavailable(
-                    "The requested clean app state was not applied."
-                )
-            if setup is not SetupMode.PRESERVE:
-                restart_app(device_control)
-            replay_known_path(
-                ledger=self.replay_ledger,
-                device_control=device_control,
-                goal=goal,
-                history=ctx.history,
-                quick_phash=settle.quick_phash,
-                settle=lambda control: settle.settle(control, self.settle_time),
-                scrubber=self.scrubber,
-            )
-            self._step_limit = max_steps or self.max_steps
-            for step in range(self._step_limit):
-                result = self._run_step(
-                    step=step,
-                    goal=goal,
-                    planner=planner,
-                    device_control=device_control,
-                    perception=perception,
-                    session_dir=session_dir,
-                    session_trail=session_trail,
-                    observation_hook=observation_hook,
-                    before_action_hook=before_action_hook,
-                    step_hook=step_hook,
-                    ctx=ctx,
-                )
-                if result is not None:
-                    saved_path.record_arrival(
-                        self,
-                        device_control,
-                        perception,
-                        session_trail,
-                        ctx,
-                        observation_hook,
-                    )
-                    if ctx.postcondition_blocked:
-                        result = outcomes.postcondition_stop(
-                            ctx, session_trail, ctx.current_phash
-                        )
-                    outcomes.log_recovery_cost(ctx)
-                    return result
-
-            completed_from_path = saved_path.record_arrival(
-                self,
-                device_control,
-                perception,
-                session_trail,
-                ctx,
-                observation_hook,
-            )
-            if ctx.postcondition_blocked:
-                outcomes.log_recovery_cost(ctx)
-                return outcomes.postcondition_stop(ctx, session_trail, ctx.current_phash)
-            if completed_from_path:
-                result = saved_path.cached_path_result(self, ctx, session_trail, ctx.current_phash)
-                if result is not None:
-                    outcomes.log_recovery_cost(ctx)
-                    return result
-            outcomes.log_recovery_cost(ctx)
-            return outcomes.step_limit(self._step_limit, ctx, session_trail)
-
-        except Exception as exc:
-            if cause_of(exc) is Cause.PROVIDER:
-                # Not a result. The run reached no state worth judging, and
-                # the suite decides what a service that stopped answering
-                # means. Read by cause rather than by type, so a refused key
-                # leaves the same way a spent one does. Device state is
-                # restored as this leaves.
-                raise
-            safe_error = self.scrubber.scrub(reportable(exc))
-            logger.error("Device agent run failed (%s): %s", type(exc).__name__, safe_error)
-            outcomes.log_recovery_cost(ctx)
-            return DeviceRunResult(
-                status="exception",
-                steps_executed=ctx.steps_executed,
-                failure_reason=f"Execution exception: {safe_error}",
-                history=ctx.history,
-                steps=list(ctx.steps.records),
-                cause=cause_of(exc),
-                postcondition_verifications=list(ctx.postcondition_verifications),
-            )
-        finally:
-            # A call made after the last step is not charged to it. The
-            # auditor and the route judge both answer once the loop is over.
-            if self.step_opened is not None:
-                self.step_opened(None)
+    def start_task(
+        self,
+        goal: str | list[str],
+        device_control,
+        perception: ScreenPerception,
+        session_dir: Path,
+        session_trail: Optional[SessionTrail] = None,
+        observation_hook: Optional[ObservationHookFn] = None,
+        before_action_hook: Optional[outcomes.BeforeActionHookFn] = None,
+        step_hook: Optional[StepHookFn] = None,
+        planner_override: Optional[DevicePlanner] = None,
+        max_steps: Optional[int] = None,
+        setup: SetupMode = SetupMode.RELAUNCH,
+        replay: bool = True,
+    ) -> DeviceTask:
+        """Open a goal that a benchmark can advance one turn at a time."""
+        return DeviceTask(
+            agent=self,
+            goal=goal,
+            device_control=device_control,
+            perception=perception,
+            session_dir=session_dir,
+            session_trail=session_trail,
+            observation_hook=observation_hook,
+            before_action_hook=before_action_hook,
+            step_hook=step_hook,
+            planner=planner_override,
+            max_steps=max_steps,
+            setup=setup,
+            replay=replay,
+        )
 
     def _open_record(self, ctx: RunContext, step: int) -> None:
         """Starts this step's record, and says which step a call belongs to.
@@ -342,7 +284,9 @@ class DeviceAgent:
             return ending
 
         started = time.perf_counter()
-        step_response = self._plan(step, goal, planner, snapshot, session_dir, session_trail, ctx)
+        step_response = self._plan(
+            step, goal, planner, perception, snapshot, session_dir, session_trail, ctx
+        )
         ctx.steps.planned(step_response, observing.elapsed_ms(started))
 
         ending = self._ending_after_planning(step_response, snapshot, session_trail, step_hook, ctx)
@@ -391,13 +335,16 @@ class DeviceAgent:
         )
 
     def _plan(
-        self, step, goal, planner, snapshot, session_dir, session_trail, ctx
+        self, step, goal, planner, perception, snapshot, session_dir, session_trail, ctx
     ) -> DeviceStepResponse:
         """Numbers the targets, asks for an action, and records what came back."""
         # Saved before the model is called, so a planning failure still leaves
         # the image the planner was given.
-        observation.number_targets(snapshot, ctx, self.grounding)
+        observation.number_targets(snapshot, ctx, self.grounding, perception)
         ctx.steps.files({"marked": self.artifacts.save_planner_view(session_dir, step, snapshot)})
+        refinement_files = self.artifacts.save_refinement(session_dir, step, snapshot)
+        if isinstance(refinement_files, dict):
+            ctx.steps.files(refinement_files)
 
         nudge, ctx.pending_loop_nudge = ctx.pending_loop_nudge, None
         step_response = self._plan_step(
@@ -460,6 +407,19 @@ class DeviceAgent:
                 session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_not_listed.png",
                 snapshot,
             )
+            region = getattr(action, "region", None)
+            key = (snapshot.current_phash or "", decision.target or "", region or "")
+            if (
+                region
+                and not ctx.keyboard_open
+                and snapshot.current_phash
+                and key not in ctx.refined_targets
+            ):
+                ctx.refined_targets.add(key)
+                ctx.pending_visual_refinement = (snapshot.current_phash, region)
+                logger.info(
+                    "Will inspect the %s region more closely on the next look.", region
+                )
         if stall.reveal_behind_keyboard(device_control, snapshot, ctx):
             return None
         ctx.stall.record_blocked(snapshot.current_phash)
@@ -507,6 +467,7 @@ class DeviceAgent:
             scrubber=self.scrubber,
             replay_ledger=self.replay_ledger,
             settle_time=self.settle_time,
+            requested_action=step_response.action,
         )
         ctx.steps.record_action_duration(observing.elapsed_ms(started))
         saved_path.record_planned_step(self, action, snapshot, ctx, step_response.current_screen)
@@ -533,9 +494,18 @@ class DeviceAgent:
     ) -> DeviceStepResponse:
         # A keyboard commonly resizes the app and moves every field, so plan
         # from the current scan. Pre-keyboard coordinates are stale.
-        gui_elements = keyboard.annotate_keyboard_keys(
-            snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
+        planner_elements = (
+            getattr(snapshot, "planner_elements", None)
+            if getattr(snapshot, "planner_elements", None) is not None
+            else snapshot.gui_elements
         )
+        planner_height = getattr(snapshot, "planner_screen_height", None) or ctx.screen_height
+        gui_elements = keyboard.annotate_keyboard_keys(
+            planner_elements, ctx.keyboard_open, planner_height
+        )
+        view_note = getattr(snapshot, "view_note", None)
+        if view_note:
+            loop_nudge = "\n".join(filter(None, [view_note, loop_nudge]))
         return planner.plan_step(
             goal=goal,
             gui_elements=gui_elements,
@@ -545,6 +515,6 @@ class DeviceAgent:
             loop_nudge=loop_nudge,
             current_image_bytes=snapshot.planner_img_bytes,
             marks=snapshot.marks,
-            screen_height=ctx.screen_height or 0,
+            screen_height=planner_height or 0,
             keyboard_open=ctx.keyboard_open,
         )

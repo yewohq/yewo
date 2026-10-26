@@ -127,6 +127,7 @@ class AppStateApplicationTests(unittest.TestCase):
 
     def test_a_failed_clear_does_not_continue_as_a_clean_scenario(self):
         from yewo.agent.memory.history import AgentHistory
+        from yewo.agent.memory.replay_store import ValueNames
         from yewo.agent.run.agent import DeviceAgent
         from yewo.utils.secrets import SecretScrubber
 
@@ -135,9 +136,13 @@ class AppStateApplicationTests(unittest.TestCase):
         agent._default_fast_planner = Mock()
         agent.scrubber = SecretScrubber()
         agent.step_opened = None
+        agent.max_steps = 1
+        agent.declared_values = {}
+        agent.value_verifications = {}
+        agent.value_names = ValueNames()
         with (
-            patch("yewo.agent.run.agent.clear_app_data", return_value=False),
-            patch("yewo.agent.run.agent.restart_app") as restart,
+            patch("yewo.agent.run.task.clear_app_data", return_value=False),
+            patch("yewo.agent.run.task.restart_app") as restart,
         ):
             result = DeviceAgent.run(
                 agent,

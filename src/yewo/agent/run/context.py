@@ -34,6 +34,13 @@ class RunContext:
     last_action_type: Optional[str] = None
     screen_height: Optional[int] = None
     pending_loop_nudge: Optional[str] = None
+    unchanged_tap_attempts: dict[tuple[str, str, int, int], int] = field(
+        default_factory=dict
+    )
+    """Delivered taps by stable screen and coarse device point."""
+    pending_visual_refinement: Optional[tuple[str, str]] = None
+    refined_targets: set[tuple[str, str, str]] = field(default_factory=set)
+    """Bound one crop retry to each screen, target description, and region."""
     stall: Stall = field(default_factory=Stall)
     """Steps in a row that never reached the device, and where."""
 

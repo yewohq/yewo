@@ -14,7 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from yewo.errors import ProviderUnavailable
 
-from . import failures, prompts, usage
+from . import failures, prompt_cache, prompts, usage
 from .prompts import PromptStore
 from .messages import Message, TextMessage
 
@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 STRUCTURED_ATTEMPTS = 2
 
 Answer = TypeVar("Answer", bound=BaseModel)
+
+JSON_INSTRUCTION = (
+    "Return only one JSON object matching the requested fields and action instructions. "
+    "Do not wrap it in prose."
+)
 
 
 class LLMClient:
@@ -47,7 +52,8 @@ class LLMClient:
                 nothing, which is what a client built outside a run gets.
             cache_affinity: Stable identity for calls in one run. OpenRouter
                 uses it for sticky routing to the endpoint holding a prompt
-                cache. Direct providers apply their own cache policy.
+                cache. It does not ask for caching; a provider that caches
+                only on request is marked in the message payload instead.
         """
         self._model = model
         self.usage_callback = usage_callback
@@ -193,9 +199,19 @@ class LLMClient:
         attempt: int = 1,
         context: dict | None = None,
     ) -> str | BaseModel:
+        request_messages = list(messages)
+        if response_model:
+            # One contract is used through every LiteLLM route. Native schema
+            # grammars differ in supported keywords and complexity ceilings;
+            # Yewo instead asks every model for JSON and validates the same
+            # Pydantic model locally, with one corrective retry on mismatch.
+            request_messages.append(TextMessage(content=JSON_INSTRUCTION))
+
         kwargs: dict = {
             "model": self._model,
-            "messages": [m.to_dict() for m in messages],
+            "messages": prompt_cache.mark_cacheable_prefix(
+                [m.to_dict() for m in request_messages], self._model
+            ),
         }
 
         # These are OpenRouter request fields, not generic LiteLLM fields.
@@ -213,19 +229,11 @@ class LLMClient:
                     }
                 )
             kwargs["extra_body"] = extra_body
-        if response_model:
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_model.__name__,
-                    "schema": response_model.model_json_schema(),
-                    "strict": False,
-                },
-            }
-
         # Recorded before the call, so a question that was never answered is
         # still a question this run can be shown to have asked.
-        asked = self.prompt_store.store_messages(messages) if self.prompt_store else None
+        asked = (
+            self.prompt_store.store_messages(request_messages) if self.prompt_store else None
+        )
 
         response = litellm.completion(**kwargs)
 

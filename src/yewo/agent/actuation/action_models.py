@@ -332,6 +332,31 @@ class TapAction(BaseModel):
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
+class PlannerTapAction(BaseModel):
+    """One planner-selected tap followed by a fresh observation.
+
+    Counted taps remain available to replay and other deterministic callers
+    through ``TapAction``. They are deliberately absent from the model-facing
+    schema: a planner cannot know that repeated taps still address the same
+    control after the first transition.
+    """
+
+    type: Literal[ActionType.TAP] = ActionType.TAP
+    coordinates: Coordinates = Field(..., description="The screen coordinates to tap.")
+    target: Optional[str] = Field(
+        default=None, description="A semantic description of the target control."
+    )
+    reason: str = Field(..., description="How the action helps achieve the goal.")
+
+    @property
+    def count(self) -> int:
+        return 1
+
+    @property
+    def interval_ms(self) -> int:
+        return 0
+
+
 class ClearAction(BaseModel):
     type: Literal[ActionType.CLEAR] = ActionType.CLEAR
     coordinates: Coordinates = Field(
@@ -405,6 +430,17 @@ class TargetNotListedAction(BaseModel):
 
     type: Literal[ActionType.TARGET_NOT_LISTED] = ActionType.TARGET_NOT_LISTED
     description: str = Field(..., description="What the target looks like and roughly where it is.")
+    region: Literal[
+        "upper_left",
+        "upper_center",
+        "upper_right",
+        "middle_left",
+        "middle_center",
+        "middle_right",
+        "lower_left",
+        "lower_center",
+        "lower_right",
+    ] = Field(..., description="The coarse screen region to inspect more closely.")
     reason: str = Field(..., description="What you were trying to achieve.")
 
 
@@ -423,16 +459,21 @@ class WaitAction(BaseModel):
 
 
 TypeMarkAction = marks_variant(TypeAction, "TypeMarkAction")
-TapMarkAction = marks_variant(TapAction, "TapMarkAction")
+TapMarkAction = marks_variant(PlannerTapAction, "TapMarkAction")
 ClearMarkAction = marks_variant(ClearAction, "ClearMarkAction")
 DoubleTapMarkAction = marks_variant(DoubleTapAction, "DoubleTapMarkAction")
 LongPressMarkAction = marks_variant(LongPressAction, "LongPressMarkAction")
 
 TypeDescribeAction = describe_variant(TypeAction, "TypeDescribeAction")
-TapDescribeAction = describe_variant(TapAction, "TapDescribeAction")
+TapDescribeAction = describe_variant(PlannerTapAction, "TapDescribeAction")
 ClearDescribeAction = describe_variant(ClearAction, "ClearDescribeAction")
 DoubleTapDescribeAction = describe_variant(DoubleTapAction, "DoubleTapDescribeAction")
 LongPressDescribeAction = describe_variant(LongPressAction, "LongPressDescribeAction")
+
+# A numbered/described tap resolves into the stable internal action used by
+# dispatch and replay. Its count remains the internal default of one.
+TapMarkAction.coordinate_form = TapAction
+TapDescribeAction.coordinate_form = TapAction
 
 # Actions that touch a specific place, and so need a target resolved first.
 TARGETED_ACTIONS = frozenset(

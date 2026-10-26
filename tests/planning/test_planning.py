@@ -7,12 +7,10 @@ from fakes import qa_prompt, walk
 
 from types import SimpleNamespace
 from unittest.mock import Mock
-from yewo.agent.run.agent import (
-    AgentHistory,
-    DeviceAgent,
-    RollingLoopDetector,
-    RunContext,
-)
+from yewo.agent.memory.history import AgentHistory
+from yewo.agent.memory.loop_detector import RollingLoopDetector
+from yewo.agent.run.agent import DeviceAgent
+from yewo.agent.run.context import RunContext
 
 
 SENTINEL_OUTCOME = "the sign-in screen remains visible"
@@ -90,6 +88,11 @@ class PlannerAgreementTests(unittest.TestCase):
         for prompt in (self._device_prompt(), self._qa_prompt()):
             self.assertIn("do not spend a separate", prompt)
             self.assertNotIn("Step A: tap", prompt)
+
+    def test_delivered_taps_count_even_when_the_pixels_repeat(self):
+        for prompt in (self._device_prompt(), self._qa_prompt()):
+            self.assertIn("count every tap recorded as delivered once", prompt)
+            self.assertIn("pixels repeated", prompt)
 
     def test_marks_typing_requires_the_actual_editable_field(self):
         from yewo.agent.plan.planner import MARKS_CONSTRAINTS

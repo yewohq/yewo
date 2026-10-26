@@ -240,6 +240,46 @@ class ResponseReadingTests(unittest.TestCase):
         self.assertEqual(record.prompt_image_tokens, 4)
         self.assertEqual(record.reasoning_tokens, 11)
 
+    def test_a_cache_write_anthropic_spelled_its_own_way_is_counted(self):
+        """Reading one spelling recorded zero writes on every cached run.
+
+        The write is the expensive half of a prompt cache, so a zero there
+        reads as caching that never engaged.
+        """
+        record = self._record(
+            usage={"prompt_tokens_details": {"cache_creation_tokens": 3559}}
+        )
+
+        self.assertEqual(record.cache_write_tokens, 3559)
+
+    def test_a_provider_reported_cost_is_kept_without_repricing_it(self):
+        from unittest.mock import patch
+
+        with patch("yewo.llm.usage.completion_cost") as calculated:
+            record = self._record(usage={"cost": 0.0123})
+
+        self.assertEqual(record.cost, 0.0123)
+        calculated.assert_not_called()
+
+    def test_litellm_prices_a_call_whose_provider_reports_no_cost(self):
+        from unittest.mock import patch
+
+        with patch("yewo.llm.usage.completion_cost", return_value=0.0456):
+            record = self._record()
+
+        self.assertEqual(record.cost, 0.0456)
+
+    def test_an_unpriced_model_stays_unknown_without_losing_the_call(self):
+        from unittest.mock import patch
+
+        with patch(
+            "yewo.llm.usage.completion_cost",
+            side_effect=RuntimeError("model has no price"),
+        ):
+            record = self._record()
+
+        self.assertIsNone(record.cost)
+
 
 class AnsweredShapeTests(unittest.TestCase):
     """Which component made a call, where two of them share one client.

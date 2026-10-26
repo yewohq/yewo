@@ -6,7 +6,7 @@ import unittest
 from fakes import FakeClock, walk
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, PropertyMock, patch
+from unittest.mock import MagicMock, Mock, PropertyMock, call, patch
 
 
 from yewo.errors import ObservationUnavailable
@@ -91,6 +91,23 @@ class DeviceFailureTests(unittest.TestCase):
             AdbControl.enable_feedback("emulator-5554", True, True)
 
         self.assertIn("toggle pointer location", str(raised.exception))
+
+    def test_visual_feedback_reads_both_android_settings(self):
+        from yewo.agent.device.adb_control import AdbControl, VisualFeedbackSettings
+
+        with patch.object(AdbControl, "ask", side_effect=["1", "0"]) as ask:
+            settings = AdbControl.read_visual_feedback("emulator-5554")
+
+        self.assertEqual(settings, VisualFeedbackSettings(True, False))
+        self.assertEqual(
+            ask.call_args_list,
+            [
+                call(
+                    "emulator-5554", "settings", "get", "system", "pointer_location"
+                ),
+                call("emulator-5554", "settings", "get", "system", "show_touches"),
+            ],
+        )
 
     def test_an_unreadable_screen_is_reported_as_such(self):
         from yewo.agent.device.control import DeviceControl

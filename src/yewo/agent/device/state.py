@@ -9,6 +9,7 @@ from typing import Optional
 
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.platform import Platform
+from yewo.agent.device.scope import DeviceScope
 from yewo.utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,8 @@ class DeviceState:
 
     def is_still_in_sut(self) -> bool:
         """Checks if the device is currently focused on the target app under test (SUT)."""
+        if self.control.scope is DeviceScope.DEVICE:
+            return True
         try:
             if self.control.platform == Platform.ANDROID:
                 return self.control.driver.current_package == self.control.app_id
@@ -155,6 +158,8 @@ class DeviceState:
 
     def recover_to_sut(self) -> None:
         """Attempts to recover the focus back to the target app under test (SUT) after drift."""
+        if self.control.scope is DeviceScope.DEVICE:
+            return
         logger.info(
             "Context drift detected. Attempting to recover focus back to the target app..."
         )

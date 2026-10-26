@@ -14,11 +14,12 @@ from uuid import uuid4
 from appium.webdriver.appium_service import AppiumService
 
 from yewo.agent.artifacts.layout import RunLayout, attach_run_log, detach_run_log
-from yewo.agent.device.adb_control import AdbControl
+from yewo.agent.device.adb_control import AdbControl, VisualFeedbackSettings
 from yewo.agent.device.appium_runtime import resolve_appium_runtime
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device import device_logs
 from yewo.agent.device.platform import Platform
+from yewo.agent.device.scope import DeviceScope
 from yewo.agent.device.recording import DeviceRecording
 from yewo.agent.device.simctl_control import SimctlControl
 from yewo.devices.discovery import RUNNING, ios_devices, resolve
@@ -30,10 +31,13 @@ logger = logging.getLogger(__name__)
 class DeviceSession(DeviceRecording):
     """Manages the startup/teardown of the Appium server and mobile device driver session."""
 
+    scope = DeviceScope.APP
+    _visual_feedback_before_run: Optional[VisualFeedbackSettings] = None
+
     def __init__(
         self,
         device_name: str,
-        app_path: str,
+        app_path: Optional[str],
         record_session: bool = False,
         session_dir: Path = Path("sessions"),
         platform: Platform = Platform.ANDROID,
@@ -42,6 +46,7 @@ class DeviceSession(DeviceRecording):
         reuse_app: bool = False,
         keep_app: bool = False,
         installed_by_run: Optional[bool] = None,
+        scope: DeviceScope = DeviceScope.APP,
     ):
         """Initializes a DeviceSession.
 
@@ -73,11 +78,20 @@ class DeviceSession(DeviceRecording):
         self.keep_device = keep_device
         self.reuse_app = reuse_app
         self.keep_app = keep_app
+        self.scope = scope
+        self._visual_feedback_before_run = None
         self._installed_by_run: Optional[bool] = installed_by_run
         self._ios_simulator_udid: Optional[str] = None
         self._ios_simulator_was_running = False
         # Run all preflight checks before touching any hardware
-        if self.platform == Platform.IOS:
+        if scope is DeviceScope.DEVICE:
+            if platform is not Platform.ANDROID:
+                raise ValueError("Device-scoped sessions currently support Android only.")
+            if app_path is not None:
+                raise ValueError("A device-scoped session does not accept an app path.")
+        elif not app_path:
+            raise ValueError("An app-scoped session requires an app path.")
+        elif self.platform == Platform.IOS:
             run_ios_preflight(app_path)
         else:
             run_android_preflight(app_path)
@@ -192,7 +206,11 @@ class DeviceSession(DeviceRecording):
         cannot be asked, and an adb call that fails answers nothing — neither
         is evidence that the app arrived with this run.
         """
-        if self.platform != Platform.ANDROID or self._installed_by_run is not None:
+        if (
+            self.scope is DeviceScope.DEVICE
+            or self.platform != Platform.ANDROID
+            or self._installed_by_run is not None
+        ):
             return
         self._installed_by_run = False
         serial = AdbControl.resolve_emulator_serial(self.device_name)
@@ -220,11 +238,15 @@ class DeviceSession(DeviceRecording):
             keep_device=self.keep_device,
             reuse_app=self.reuse_app,
             server_url=self._appium_url,
+            scope=self.scope,
         )
         if self.platform == Platform.ANDROID:
             serial = self.device_control.serial or self.device_name
+            self._visual_feedback_before_run = AdbControl.read_visual_feedback(serial)
             AdbControl.enable_feedback(
-                serial=serial, pointer_location=False, tap_highlights=True
+                serial=serial,
+                pointer_location=False,
+                tap_highlights=self.scope is DeviceScope.APP,
             )
         time.sleep(6)
         self._device_logs.start(self.device_control.driver)
@@ -268,7 +290,7 @@ class DeviceSession(DeviceRecording):
         one that could not be saved is the only copy there is. What earlier
         runs abandoned is cleared at the next session's start instead.
         """
-        if self.platform != Platform.ANDROID or not final:
+        if self.scope is DeviceScope.DEVICE or self.platform != Platform.ANDROID or not final:
             return
         serial = (self.device_control.serial if self.device_control else None) or (
             AdbControl.resolve_emulator_serial(self.device_name)
@@ -322,6 +344,7 @@ class DeviceSession(DeviceRecording):
                 self._save_device_logs()
             except Exception as e:  # noqa: BLE001 - evidence must not cost the teardown
                 logger.warning("Failed to save the device log: %s", e)
+        self._restore_visual_feedback()
         self._clean_device(final=final)
         if self.device_control:
             try:
@@ -343,3 +366,19 @@ class DeviceSession(DeviceRecording):
                 self._owns_appium = False
         if hasattr(self, "_file_handler"):
             detach_run_log(self._file_handler)
+
+    def _restore_visual_feedback(self) -> None:
+        settings = self._visual_feedback_before_run
+        if self.platform != Platform.ANDROID or settings is None:
+            return
+        serial = (
+            self.device_control.serial
+            if self.device_control is not None and self.device_control.serial
+            else self.device_name
+        )
+        try:
+            AdbControl.restore_visual_feedback(serial, settings)
+        except Exception as exc:  # noqa: BLE001 - cleanup must continue
+            logger.warning("Failed to restore Android visual feedback: %s", exc)
+        finally:
+            self._visual_feedback_before_run = None

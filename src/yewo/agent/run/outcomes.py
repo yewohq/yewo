@@ -66,6 +66,14 @@ Named because three places hold one of them: the result a walk returns, the
 record that keeps it, and the corpus that asserts on it.
 """
 
+GOAL_REACHED: RunStatus = "goal_reached"
+"""The only ending that means the goal was met.
+
+Named because a benchmark harness has to tell this ending from an exhausted
+budget, and a bare string at that boundary cannot be checked against the
+vocabulary above.
+"""
+
 
 @dataclass
 class DeviceRunResult:
@@ -263,7 +271,7 @@ def goal_reached(
     logger.info("Goal reached: %s", reason)
     flush_trail(session_trail, current_phash)
     return DeviceRunResult(
-        status="goal_reached",
+        status=GOAL_REACHED,
         steps_executed=ctx.steps_executed,
         failure_reason=None,
         history=ctx.history,

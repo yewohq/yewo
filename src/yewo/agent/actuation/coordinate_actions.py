@@ -12,7 +12,7 @@ from yewo.agent.actuation.actions import (
     KeyEventAction,
     LongPressAction,
     SwipeAction,
-    TapAction,
+    PlannerTapAction,
     TargetNotListedAction,
     TypeAction,
     WaitAction,
@@ -38,7 +38,7 @@ def _build_coordinate_action(model: type[BaseModel], name: str) -> type[BaseMode
 
 
 TypeCoordinateAction = _build_coordinate_action(TypeAction, "TypeCoordinateAction")
-TapCoordinateAction = _build_coordinate_action(TapAction, "TapCoordinateAction")
+TapCoordinateAction = _build_coordinate_action(PlannerTapAction, "TapCoordinateAction")
 ClearCoordinateAction = _build_coordinate_action(ClearAction, "ClearCoordinateAction")
 DoubleTapCoordinateAction = _build_coordinate_action(DoubleTapAction, "DoubleTapCoordinateAction")
 LongPressCoordinateAction = _build_coordinate_action(LongPressAction, "LongPressCoordinateAction")

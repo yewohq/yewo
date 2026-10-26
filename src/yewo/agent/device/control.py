@@ -19,6 +19,7 @@ from yewo.agent.device.focus import Focus
 from yewo.agent.device.diagnostics import diagnose_avd_launch
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.ios_app import bundle_identifier
+from yewo.agent.device.scope import DeviceScope
 from yewo.defaults import (
     AVD_LAUNCH_TIMEOUT_MS,
     IDLE_SESSION_TIMEOUT_SECONDS,
@@ -52,6 +53,7 @@ def _listed_udid(device_name: str) -> Optional[str]:
 class DeviceControl:
     """Wrapper for executing gesture actions and capturing state from mobile devices."""
 
+    scope = DeviceScope.APP
     screen_width = 0
     screen_height = 0
     """The size the driver reported, once it has answered.
@@ -64,13 +66,14 @@ class DeviceControl:
     def __init__(
         self,
         device_name: str,
-        app_path: str,
+        app_path: Optional[str],
         adb_control: AdbControl = None,
         is_headless: bool = False,
         platform: Platform = Platform.ANDROID,
         keep_device: bool = False,
         reuse_app: bool = False,
         server_url: str = "http://localhost:4723",
+        scope: DeviceScope = DeviceScope.APP,
     ):
         self.platform = platform
         self.device_name = device_name
@@ -88,8 +91,15 @@ class DeviceControl:
         self.serial: Optional[str] = None
         self.keep_device = keep_device
         self.reuse_app = reuse_app
+        self.scope = scope
         self.server_url = server_url
+        if scope is DeviceScope.DEVICE and platform is not Platform.ANDROID:
+            raise DeviceUnavailable("Device-scoped sessions currently support Android only.")
+        if scope is DeviceScope.APP and not app_path:
+            raise DeviceUnavailable("An app-scoped session requires an app path.")
         if platform == Platform.IOS:
+            if app_path is None:
+                raise DeviceUnavailable("An iOS app-scoped session requires an app path.")
             options = XCUITestOptions()
             options.platform_name = "iOS"
             options.automation_name = "XCUITest"
@@ -111,29 +121,46 @@ class DeviceControl:
             options.set_capability("appium:useNewWDA", True)
             self.adb_control = None
         else:
-            self._device_was_running = bool(
-                AdbControl.resolve_emulator_serial(device_name)
-            )
+            existing_serial = AdbControl.resolve_emulator_serial(device_name)
+            self._device_was_running = bool(existing_serial)
             options = UiAutomator2Options()
-            options.app = app_path
             options.platform_name = "Android"
             options.device_name = device_name
-            options.is_headless = is_headless
-            options.avd = device_name
-            options.avd_launch_timeout = AVD_LAUNCH_TIMEOUT_MS
-            options.avd_ready_timeout = AVD_LAUNCH_TIMEOUT_MS
             options.new_command_timeout = IDLE_SESSION_TIMEOUT_SECONDS
-            options.set_capability("appium:enforceAppInstall", not reuse_app)
-            if keep_device:
-                self._skip_redundant_setup(options)
+            # UiAutomation suppresses other accessibility services by default.
+            # Yewo can share a device with a benchmark, screen reader, or other
+            # accessibility-backed observer, so keep those services active.
+            options.set_capability(
+                "appium:disableSuppressAccessibilityService", True
+            )
             self.adb_control = adb_control
             adb_runner = adb_control if adb_control is not None else AdbControl
-            package_id, _ = adb_runner.get_apk_info(app_path)
-            self.package_id = package_id
-            options.app_package = package_id
-            options.app_activity = adb_runner.resolve_launch_activity(
-                app_path, package_id, AdbControl.resolve_emulator_serial(device_name)
-            )
+            if scope is DeviceScope.DEVICE:
+                if not existing_serial:
+                    raise DeviceUnavailable(
+                        f"The Android target '{device_name}' is not running. Start it before attaching."
+                    )
+                options.udid = existing_serial
+                options.no_reset = True
+                self.keep_device = True
+                self.reuse_app = True
+            else:
+                if app_path is None:
+                    raise DeviceUnavailable("An Android app-scoped session requires an app path.")
+                options.app = app_path
+                options.is_headless = is_headless
+                options.avd = device_name
+                options.avd_launch_timeout = AVD_LAUNCH_TIMEOUT_MS
+                options.avd_ready_timeout = AVD_LAUNCH_TIMEOUT_MS
+                options.set_capability("appium:enforceAppInstall", not reuse_app)
+                if keep_device:
+                    self._skip_redundant_setup(options)
+                package_id, _ = adb_runner.get_apk_info(app_path)
+                self.package_id = package_id
+                options.app_package = package_id
+                options.app_activity = adb_runner.resolve_launch_activity(
+                    app_path, package_id, existing_serial
+                )
 
         self.driver = self._start_session(options)
         self.device_info = self._init_device_info()
@@ -232,7 +259,7 @@ class DeviceControl:
             value = capabilities.get(name)
             if isinstance(value, str) and value:
                 return value
-        if self.platform == Platform.IOS:
+        if self.platform == Platform.IOS and self.app_path:
             return bundle_identifier(self.app_path)
         return self.package_id
 
@@ -319,11 +346,6 @@ class DeviceControl:
             self.__tap_screen(x, y)
         else:
             self.driver.tap([(x, y)])
-
-
-
-
-
     def __focus_field(self, x, y, action: str) -> None:
         """Puts the cursor in the field at (x, y), or refuses the action.
 
@@ -479,10 +501,9 @@ class DeviceControl:
         start_x, start_y = self._driver_point(start_x, start_y)
         end_x, end_y = self._driver_point(end_x, end_y)
         touch = PointerInput("touch", "finger")
-        builder = ActionBuilder(self.driver, mouse=touch)
+        builder = ActionBuilder(self.driver, mouse=touch, duration=duration_ms)
         builder.pointer_action.move_to_location(start_x, start_y)
         builder.pointer_action.pointer_down()
-        builder.pointer_action.pause(duration_ms / 1000)
         builder.pointer_action.move_to_location(end_x, end_y)
         builder.pointer_action.release()
         builder.perform()
@@ -508,11 +529,12 @@ class DeviceControl:
                 if interrupted:
                     logger.info("The Android target already stopped after the interruption.")
                 return
-            try:
-                AdbControl.disable_feedback(serial)
-            except Exception as e:
-                log = logger.info if interrupted else logger.warning
-                log("Failed to disable feedback: %s", e)
+            if self.scope is DeviceScope.APP:
+                try:
+                    AdbControl.disable_feedback(serial)
+                except Exception as e:
+                    log = logger.info if interrupted else logger.warning
+                    log("Failed to disable feedback: %s", e)
             if self.keep_device or getattr(self, "_device_was_running", False):
                 logger.info("Leaving '%s' running for the next run.", self.device_name)
                 return

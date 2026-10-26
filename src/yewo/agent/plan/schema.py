@@ -55,7 +55,11 @@ class DeviceStepResponse(BaseModel):
     )
     goal_evidence: str = Field(
         default="",
-        description="What on the current screen shows the goal is met. Empty unless goal_satisfied.",
+        description=(
+            "What on the current screen shows the goal is met. Name the stated outcome you "
+            "can see. A changed screen and a pressed control are not the outcome. Empty "
+            "unless goal_satisfied."
+        ),
     )
     action: DeviceAction = Field(
         ...,

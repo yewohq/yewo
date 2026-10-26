@@ -12,6 +12,8 @@ stays one number.
 from dataclasses import dataclass, field
 from typing import Optional
 
+from litellm.cost_calculator import completion_cost
+
 
 @dataclass(frozen=True)
 class CallRecord:
@@ -92,6 +94,19 @@ def _count(block: dict, name: str) -> int:
     return value if isinstance(value, int) else 0
 
 
+def _first_count(block: dict, *names: str) -> int:
+    """A token count one provider reports under a name another does not use.
+
+    Read in the order given, so the first name is the one a record is meant to
+    carry and the rest are the spellings a provider actually sends.
+    """
+    for name in names:
+        value = (block or {}).get(name)
+        if isinstance(value, int) and value:
+            return value
+    return 0
+
+
 def _optional_count(block: dict, name: str) -> Optional[int]:
     """A token count a provider may not break out at all.
 
@@ -106,6 +121,25 @@ def _milliseconds(block: dict, name: str) -> Optional[float]:
     """A duration the provider may not report, as a number or None."""
     value = (block or {}).get(name)
     return float(value) if isinstance(value, (int, float)) else None
+
+
+def _completion_cost(response, usage: dict) -> Optional[float]:
+    """Read a reported cost or ask LiteLLM to price the completed call.
+
+    Provider usage blocks do not consistently include money. LiteLLM owns the
+    provider and model price mapping, so Yewo does not duplicate either here.
+    An unknown model stays unknown rather than breaking an otherwise valid run.
+    """
+    reported = usage.get("cost")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        return float(reported)
+    try:
+        calculated = completion_cost(completion_response=response)
+    except Exception:  # noqa: BLE001 - optional telemetry at an SDK boundary
+        return None
+    if isinstance(calculated, (int, float)) and not isinstance(calculated, bool):
+        return float(calculated)
+    return None
 
 
 def record(
@@ -139,12 +173,16 @@ def record(
         attempt=attempt,
         finish_reason=response.choices[0].finish_reason,
         latency_ms=_milliseconds(hidden, "_response_ms"),
-        cost=usage.get("cost"),
+        cost=_completion_cost(response, usage),
         prompt_tokens=_count(usage, "prompt_tokens"),
         completion_tokens=_count(usage, "completion_tokens"),
         total_tokens=_count(usage, "total_tokens"),
         cached_tokens=_count(prompt_details, "cached_tokens"),
-        cache_write_tokens=_count(prompt_details, "cache_write_tokens"),
+        # Anthropic reports a write as cache_creation_tokens, so reading only
+        # the first spelling recorded zero for every cached run.
+        cache_write_tokens=_first_count(
+            prompt_details, "cache_write_tokens", "cache_creation_tokens"
+        ),
         reasoning_tokens=_count(completion_details, "reasoning_tokens"),
         prompt_image_tokens=_optional_count(prompt_details, "image_tokens"),
         prompt_text_tokens=_optional_count(prompt_details, "text_tokens"),

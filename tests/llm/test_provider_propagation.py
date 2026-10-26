@@ -38,8 +38,8 @@ def device_run(failure):
 
     with tempfile.TemporaryDirectory() as directory, \
          mock.patch.object(DeviceAgent, "_run_step", side_effect=failure), \
-         mock.patch("yewo.agent.run.agent.restart_app"), \
-         mock.patch("yewo.agent.run.agent.replay_known_path"), \
+         mock.patch("yewo.agent.run.task.restart_app"), \
+         mock.patch("yewo.agent.run.task.replay_known_path"), \
          mock.patch("yewo.agent.run.outcomes.log_recovery_cost"):
         return agent.run(
             goal="Open the app.",

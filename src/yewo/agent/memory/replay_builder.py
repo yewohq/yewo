@@ -7,6 +7,7 @@ from yewo.agent.actuation.actions import (
     Action,
     ActionType,
     KeyEventAction,
+    PlannerTapAction,
     SwipeAction,
     TapAction,
     TypeAction,
@@ -32,6 +33,8 @@ from yewo.agent.perception.elements import BoundingBox, GUIElement, ScanInfo
 
 logger = logging.getLogger(__name__)
 
+TAP_ACTIONS = (TapAction, PlannerTapAction)
+
 
 def _build_cached_action(
     action: Action,
@@ -55,7 +58,7 @@ def _build_cached_action(
             value_name=name,
             postconditions=(postcondition,) if postcondition is not None else (),
         )
-    if isinstance(action, TapAction):
+    if isinstance(action, TAP_ACTIONS):
         return CachedAction(
             kind=ActionType.TAP.value,
             target=anchor,
@@ -91,7 +94,7 @@ def _successful_target_bounds(
     """Return learned target geometry, including detector-free action points."""
     if anchor is not None:
         return anchor.bounds
-    if not isinstance(action, (TapAction, TypeAction)) or scan is None:
+    if not isinstance(action, (*TAP_ACTIONS, TypeAction)) or scan is None:
         return None
     point = action.coordinates
     point_box = BoundingBox(
@@ -181,13 +184,13 @@ def build_trace(
             target_descriptions[position - 1]
             if target_descriptions and position - 1 < len(target_descriptions)
             else action.target
-            if isinstance(action, (TapAction, TypeAction))
+            if isinstance(action, (*TAP_ACTIONS, TypeAction))
             else None
         )
-        if isinstance(action, (TapAction, TypeAction)) and action.target != described:
+        if isinstance(action, (*TAP_ACTIONS, TypeAction)) and action.target != described:
             action = action.model_copy(update={"target": described})
         target = _resolve_target_anchor(action, detected_anchors, before_scan)
-        if isinstance(action, (TapAction, TypeAction)) and target is None and not described:
+        if isinstance(action, (*TAP_ACTIONS, TypeAction)) and target is None and not described:
             logger.info(
                 "Replay path learning stopped at step %d: no unique named target contains the action point.",
                 position,
@@ -247,7 +250,7 @@ def _resolve_target_anchor(
     action, anchors: Sequence[ElementAnchor], scan
 ) -> Optional[ElementAnchor]:
     """Resolve the unique innermost anchor that contains the action point."""
-    if not isinstance(action, (TapAction, TypeAction)) or not anchors:
+    if not isinstance(action, (*TAP_ACTIONS, TypeAction)) or not anchors:
         return None
     if scan.screen_width <= 0 or scan.screen_height <= 0:
         return None

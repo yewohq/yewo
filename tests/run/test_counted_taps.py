@@ -58,18 +58,17 @@ class TapCountTests(unittest.TestCase):
     def test_no_interval_means_no_waiting_between_taps(self):
         self.assertEqual(self._interval_waits(_tap(count=4), 0.0), [])
 
-    def test_the_marks_variant_can_count_too(self):
-        """Grounding changes how a target is named, not what the action does."""
+    def test_the_marks_variant_is_always_one_observed_tap(self):
         from yewo.agent.actuation.actions import TapMarkAction
 
-        self.assertEqual(
-            TapMarkAction(mark=3, target="Increment button", reason="r", count=5).count,
-            5,
-        )
+        action = TapMarkAction(mark=3, target="Increment button", reason="r")
+
+        self.assertEqual(action.count, 1)
+        self.assertNotIn("count", action.model_json_schema()["properties"])
 
 
 class PlannerVocabularyTests(unittest.TestCase):
-    def test_both_groundings_offer_the_count(self):
+    def test_planner_groundings_offer_only_one_tap_at_a_time(self):
         from yewo.agent.plan.planner import GROUNDING_MARKS, DevicePlanner
 
         for grounding in (GROUNDING_MARKS, "coordinates"):
@@ -77,5 +76,5 @@ class PlannerVocabularyTests(unittest.TestCase):
             planner.grounding = grounding
             offered = planner._action_vocabulary() + planner._action_constraints()
 
-            self.assertIn("`count`", offered, grounding)
-            self.assertIn("Never count taps yourself", offered, grounding)
+            self.assertNotIn("`count`", offered, grounding)
+            self.assertIn("exactly one tap", offered, grounding)

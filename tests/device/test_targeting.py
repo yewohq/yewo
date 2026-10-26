@@ -144,7 +144,11 @@ class TargetDecisionTests(unittest.TestCase):
         from yewo.agent.step.targeting import evaluate
 
         decision = evaluate(
-            TargetNotListedAction(description="blue button at the bottom", reason="r"),
+            TargetNotListedAction(
+                description="blue button at the bottom",
+                region="lower_center",
+                reason="r",
+            ),
             self._snapshot(self._marks()),
             self._device(),
         )
@@ -326,7 +330,11 @@ class GroundingContractTests(unittest.TestCase):
         orchestrator._scrubber = None
 
         with self.assertRaises(ValueError) as caught:
-            orchestrator._run_action(TargetNotListedAction(description="blue button", reason="r"))
+            orchestrator._run_action(
+                TargetNotListedAction(
+                    description="blue button", region="lower_center", reason="r"
+                )
+            )
 
         self.assertIn("nothing to", str(caught.exception))
 

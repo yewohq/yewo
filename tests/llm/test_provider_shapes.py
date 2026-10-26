@@ -6,8 +6,23 @@ twice for it. Every shape here came back from a live run.
 """
 
 import unittest
+from typing import Annotated, Literal
+from types import SimpleNamespace
+from unittest import mock
 
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
+
+
+class FirstAction(BaseModel):
+    type: Literal["first"]
+
+
+class SecondAction(BaseModel):
+    type: Literal["second"]
+
+
+class StructuredAnswer(BaseModel):
+    action: Annotated[FirstAction | SecondAction, Field(discriminator="type")]
 
 
 class ProviderShapeTests(unittest.TestCase):
@@ -163,3 +178,29 @@ class ProviderRoutingTests(unittest.TestCase):
             request = self._send(model=model, cache_affinity="run")
 
             self.assertNotIn("extra_body", request, model)
+
+    def _send_structured(self, model):
+        from yewo.llm.llm_client import LLMClient
+        from yewo.llm.messages import TextMessage
+
+        answer = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"action":{"type":"first"}}'))]
+        )
+        with mock.patch("litellm.completion", return_value=answer) as completion:
+            LLMClient(model=model).generate_response(
+                [TextMessage(content="choose")], StructuredAnswer
+            )
+        return completion.call_args.kwargs
+
+    def test_every_provider_uses_the_same_locally_validated_json_contract(self):
+        for model in (
+            "anthropic/example-model",
+            "openai/example-model",
+            "openrouter/example-model",
+        ):
+            request = self._send_structured(model)
+
+            self.assertNotIn("response_format", request, model)
+            self.assertIn(
+                "Return only one JSON object", request["messages"][-1]["content"], model
+            )

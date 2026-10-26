@@ -136,8 +136,8 @@ class ReplayRunCase(unittest.TestCase):
         self.session = self.root / "session"
 
         for target in (
-            "yewo.agent.run.agent.restart_app",
-            "yewo.agent.run.agent.clear_app_data",
+            "yewo.agent.run.task.restart_app",
+            "yewo.agent.run.task.clear_app_data",
         ):
             patched = patch(target)
             patched.start()

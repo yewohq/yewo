@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING, Optional
 
 from yewo.agent.actuation.orchestrator import ActionOrchestrator
-from yewo.agent.actuation.actions import TypeAction
+from yewo.agent.actuation.actions import ActionType, TypeAction
 from yewo.agent.device.receipts import Receipt
 from yewo.agent.grounding import marks
 from yewo.agent.memory.history import ActionEntry
@@ -47,6 +47,7 @@ def execute(
     scrubber: SecretScrubber,
     replay_ledger: Optional[ReplayLedger],
     settle_time: float,
+    requested_action=None,
 ) -> bool:
     """Touches the device once, and writes down what happened.
 
@@ -92,6 +93,8 @@ def execute(
         action, snapshot.current_phash, post_phash, error
     )
     action_desc = narration.describe(action)
+    planned_action = requested_action or action
+    planned_desc = narration.describe(planned_action)
     label = target_label(action, snapshot.gui_elements)
 
     ctx.steps.record_action(action, action_desc, action_result, label)
@@ -101,10 +104,43 @@ def execute(
             snapshot.current_phash, action, post_phash, action_desc, label
         )
     ctx.history.append(
-        ActionEntry(step_num=step + 1, action_desc=action_desc, result=action_result)
+        ActionEntry(step_num=step + 1, action_desc=planned_desc, result=action_result)
     )
     if session_trail:
-        session_trail.record_action(action_desc)
+        session_trail.record_action(planned_desc)
+
+    _record_unchanged_tap(ctx, action, snapshot.current_phash, post_phash, error)
 
     ctx.last_action_type = action.type
     return last_external_nav
+
+
+UNCHANGED_TAP_NUDGE = (
+    "This visual target received {attempts} delivered taps on the same unchanged "
+    "screen. No visible effect was observed. Hidden app state may have changed. "
+    "Do not claim that the taps failed. Continue to the next logical action. "
+    "Repeat this target only when the goal explicitly requires repeated taps."
+)
+
+
+def _record_unchanged_tap(ctx, action, pre_phash, post_phash, error) -> None:
+    """Add evidence after two taps without forbidding a valid repeated action."""
+    if (
+        error is not None
+        or action.type not in (ActionType.TAP, ActionType.DOUBLE_TAP)
+        or not pre_phash
+        or pre_phash != post_phash
+    ):
+        return
+
+    point = action.coordinates
+    key = (pre_phash, action.type.value, point.x // 40, point.y // 40)
+    attempts = ctx.unchanged_tap_attempts.get(key, 0) + 1
+    ctx.unchanged_tap_attempts[key] = attempts
+    if attempts < 2:
+        return
+
+    advisory = UNCHANGED_TAP_NUDGE.format(attempts=attempts)
+    ctx.pending_loop_nudge = "\n".join(
+        part for part in (ctx.pending_loop_nudge, advisory) if part
+    )

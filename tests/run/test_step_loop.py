@@ -175,7 +175,11 @@ class LoopRecordTests(unittest.TestCase):
     def test_an_unlisted_target_is_recorded_as_a_step_that_reached_nothing(self):
         from yewo.agent.actuation.actions import TargetNotListedAction
 
-        step = self._run_one(TargetNotListedAction(description="a Pay button", reason="pay"))[0]
+        step = self._run_one(
+            TargetNotListedAction(
+                description="a Pay button", region="lower_center", reason="pay"
+            )
+        )[0]
 
         self.assertFalse(step.grounding.resolved)
         self.assertTrue(step.grounding.unmatched)
@@ -263,9 +267,9 @@ class MarkerLifetimeTests(unittest.TestCase):
         agent.step_opened = marked.append
 
         with (
-            patch("yewo.agent.run.agent.restart_app"),
+            patch("yewo.agent.run.task.restart_app"),
             patch(
-                "yewo.agent.run.agent.replay_known_path",
+                "yewo.agent.run.task.replay_known_path",
                 side_effect=RuntimeError("stop here"),
             ),
         ):
@@ -293,9 +297,9 @@ class MarkerLifetimeTests(unittest.TestCase):
         agent.step_opened = marked.append
 
         with (
-            patch("yewo.agent.run.agent.restart_app"),
+            patch("yewo.agent.run.task.restart_app"),
             patch(
-                "yewo.agent.run.agent.replay_known_path",
+                "yewo.agent.run.task.replay_known_path",
                 side_effect=ProviderUnavailable("spent"),
             ),
             self.assertRaises(ProviderUnavailable),

@@ -2,6 +2,10 @@
 
 import unittest
 
+# A phone screenshot. Collapsing reads a container's size against the screen,
+# so a fixture without one treats every box as a full-page region.
+SCREEN_AREA = 1080 * 2400
+
 
 class MarkTests(unittest.TestCase):
     """The number drawn on the screenshot and the number in the prompt must agree."""
@@ -38,6 +42,71 @@ class MarkTests(unittest.TestCase):
         doubled = self._screen() + [self._el("Text", "Credit / Debit Card", (381, 661, 501, 701))]
 
         self.assertEqual(len(build(doubled)), len(build(self._screen())))
+
+    def test_a_label_found_twice_leaves_its_button_one_number(self):
+        """A nested repeat overlaps unevenly, so an even-overlap test keeps it.
+
+        Two labels inside one box read as a row, and a row keeps its parts
+        numbered separately. The button then offers three numbers, two of
+        which point at text rather than at the control.
+        """
+        from yewo.agent.grounding.marks import build
+
+        button = [
+            self._el("View", "", (361, 1751, 508, 1830)),
+            self._el("Text", "Clear", (386, 1770, 482, 1813)),
+            self._el("Text", "Clear", (385, 1765, 499, 1816)),
+        ]
+
+        numbered = build(button, screen_area=SCREEN_AREA)
+
+        self.assertEqual(len(numbered), 1)
+        self.assertEqual(numbered[0].element.text, "Clear")
+
+    def test_a_rule_found_twice_along_its_length_gets_one_number(self):
+        """A shift along a long edge costs an even-overlap test most of its score.
+
+        Both boxes cover nearly all of the shorter one, and they are the same
+        size, so they are one divider rather than a divider inside something.
+        """
+        from yewo.agent.grounding.marks import build
+
+        shifted = [
+            self._el("Line", "", (148, 455, 834, 466)),
+            self._el("Line", "", (259, 456, 938, 466)),
+        ]
+
+        self.assertEqual(len(build(shifted, screen_area=SCREEN_AREA)), 1)
+
+    def test_two_separate_controls_of_one_kind_keep_their_numbers(self):
+        """Side by side, they share no area, whatever their class and size."""
+        from yewo.agent.grounding.marks import build
+
+        side_by_side = [
+            self._el("View", "", (100, 100, 180, 180)),
+            self._el("View", "", (200, 100, 280, 180)),
+        ]
+
+        self.assertEqual(len(build(side_by_side, screen_area=SCREEN_AREA)), 2)
+
+    def test_an_untexted_box_inside_another_is_folded_not_dropped(self):
+        """Dropping one of the pair loses whichever of the two it keeps.
+
+        A container and the part inside it are folded by `_collapse_nests`
+        instead, which keeps the container's outline and takes only the touch
+        point from the part.
+        """
+        from yewo.agent.grounding.marks import build
+
+        nested = [
+            self._el("View", "", (100, 100, 900, 900)),
+            self._el("Line", "", (120, 120, 880, 130)),
+        ]
+
+        numbered = build(nested, screen_area=SCREEN_AREA)
+
+        self.assertEqual(len(numbered), 1)
+        self.assertEqual(numbered[0].element.bounding_box.x_max, 900)
 
     def test_the_offered_list_carries_no_coordinates(self):
         """A coordinate here is one the model can echo back as if it saw it."""
@@ -88,42 +157,6 @@ class MarkTests(unittest.TestCase):
         self.assertIn("`mark` (int)", vocabulary)
         self.assertIn("target_not_listed", vocabulary)
         self.assertNotIn('"x": int', vocabulary)
-
-
-class MarkLegibilityTests(unittest.TestCase):
-    """A number the model cannot read is worse than no number at all.
-
-    The planner answers with an index, so an unreadable badge does not fail. It
-    comes back as a wrong element, which reads as an app defect.
-    """
-
-    def test_the_font_ships_with_the_package(self):
-        """A system font path differs per platform, and containers carry none."""
-        from yewo.agent.grounding.marks import FONT_PATH
-
-        self.assertTrue(FONT_PATH.is_file(), f"{FONT_PATH} is not in the package")
-
-    def test_the_badge_font_scales_with_the_screenshot(self):
-        """A bitmap face ignores the size and leaves the numbers illegible."""
-        from yewo.agent.grounding.marks import _font
-
-        small, large = _font(800), _font(2400)
-
-        self.assertGreater(large.size, small.size)
-        self.assertGreaterEqual(large.size, 30)
-
-    def test_every_glyph_the_badges_use_is_in_the_font(self):
-        """A glyph the face lacks draws as an empty box, which names nothing."""
-        from PIL import Image, ImageDraw
-
-        from yewo.agent.grounding.marks import _font
-
-        font = _font(2400)
-        draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-
-        for label in [str(number) for number in range(10)] + ["KEYBOARD"]:
-            left, _, right, _ = draw.textbbox((0, 0), label, font=font)
-            self.assertGreater(right - left, 0, f"{label!r} drew no pixels")
 
 
 class KeyboardMarkTests(unittest.TestCase):
@@ -205,7 +238,9 @@ class UnresolvedMarkTests(unittest.TestCase):
         from yewo.agent.actuation.actions import TargetNotListedAction
         from yewo.agent.memory.loop_detector import RollingLoopDetector
 
-        action = TargetNotListedAction(description="blue button", reason="r")
+        action = TargetNotListedAction(
+            description="blue button", region="lower_center", reason="r"
+        )
 
         self.assertIn("target_not_listed", narration.describe(action))
         self.assertTrue(RollingLoopDetector.hash_action(action))
@@ -260,6 +295,30 @@ class NestCollapseTests(unittest.TestCase):
         page = [self._el("View", "", (0, 0, 1080, 2400)), *self._field()]
 
         self.assertGreater(len(build(page, screen_area=1080 * 2400)), 1)
+
+    def test_a_toolbar_wrapper_uses_the_inner_named_control_box(self):
+        """A broad bottom bar must not become the outline for its MOVE child."""
+        from yewo.agent.grounding.marks import build
+
+        elements = [
+            self._el("View", "", (121, 2206, 1079, 2399)),
+            self._el("View", "", (299, 2227, 534, 2320)),
+            self._el("Text", "MOVE", (354, 2250, 483, 2298)),
+            self._el("View", "", (38, 2218, 281, 2322)),
+            self._el("Text", "CANCEL", (72, 2248, 243, 2300)),
+        ]
+
+        move = next(
+            mark
+            for mark in build(elements, screen_area=1080 * 2400)
+            if mark.element.text == "MOVE"
+        )
+
+        self.assertEqual(
+            tuple(move.element.bounding_box),
+            (299, 2227, 534, 2320),
+        )
+        self.assertEqual(move.center, (418, 2274))
 
 
 class ListRowTests(NestCollapseTests):

@@ -49,7 +49,7 @@ COMMON_ACTIONS = """
 DESCRIBE_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap something. Fields: `type`, `target` (description), `reason`, and optional `count` (int) and `interval_ms` (int).
+- "tap": Tap something once, then observe the result. Fields: `type`, `target` (description), `reason`.
 - "type": Type text into a field. Fields: `type`, `text`, `target` (description), `reason`.
 - "clear": Clear a text field. Fields: `type`, `target` (description), `reason`.
 - "double_tap": Double-tap something. Fields: `type`, `target` (description), `reason`.
@@ -57,16 +57,16 @@ Each action must have a `type` field set to one of:
 MARKS_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap an element. Fields: `type`, `mark` (int), `target` (description), `reason`, and optional `count` (int) and `interval_ms` (int).
+- "tap": Tap an element once, then observe the result. Fields: `type`, `mark` (int), `target` (description), `reason`.
 - "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `target` (description), `reason`.
 - "clear": Clear a text field. Fields: `type`, `mark` (int), `target` (description), `reason`.
 - "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `target` (description), `reason`.
 - "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `target` (description), `reason`.
-- "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like and roughly where), `reason`."""
+- "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like), `region` (one of upper_left, upper_center, upper_right, middle_left, middle_center, middle_right, lower_left, lower_center, lower_right), `reason`."""
 COORDINATE_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap at coordinates. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`, and optional `count` (int) and `interval_ms` (int).
+- "tap": Tap once at coordinates, then observe the result. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
 - "type": Type text into a field. Fields: `type`, `text`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
 - "clear": Clear a text field. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
 - "double_tap": Double-tap. Fields: `type`, `target` (description), `coordinates` as {"x": int, "y": int}, `reason`.
@@ -84,19 +84,21 @@ CRITICAL CONSTRAINTS:
 8. The soft keyboard blocks taps on anything behind it. Dismiss it with key_event 4 before you target a lower-screen control. On Android, back dismisses the keyboard without leaving the app.
 9. If a description was not found, describe the same thing by a different visible feature. Use its symbol, shape, colour, or words. Do not add details about its surroundings.
 10. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
-11. When a step asks for repeated taps, send one tap action with that `count`. Never count taps across steps. The screen may not show how many landed.
+11. A tap is exactly one tap. Observe the resulting screen before choosing another action.
+12. If a goal requires an exact number of taps or clicks, count every tap recorded as delivered once, even when the screen stays unchanged. Do not add a replacement tap solely because a value or pixels repeated.
 """
 MARKS_CONSTRAINTS = """
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. Every element on the screenshot carries a number. Name the number in `mark`. Also describe that same element in `target`. Never send coordinates — they are not accepted.
+2. Numbers identify visible detected regions. A number does not prove that a region is interactive. Name the number in `mark` and describe that same region in `target`. Never send coordinates — they are not accepted.
 3. Use "type" and "clear" only on the actual editable field. A caption, summary value, read-only value, or label with the same words is not the field. If the field is hidden by the keyboard or is not numbered, dismiss the keyboard with key_event 4 or use "target_not_listed". Never type into a same-named label as a substitute.
 4. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
 5. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
 6. The soft keyboard blocks taps on anything behind it. Dismiss the keyboard with key_event 4 before targeting a lower-screen control. On Android, back dismisses the soft keyboard without leaving the app.
 7. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
-8. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
+8. A tap is exactly one tap. Observe the resulting screen before choosing another action.
 9. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
+10. If a goal requires an exact number of taps or clicks, count every tap recorded as delivered once, even when the screen stays unchanged. Do not add a replacement tap solely because a value or pixels repeated.
 """
 COORDINATE_CONSTRAINTS = """
 CRITICAL CONSTRAINTS:
@@ -108,7 +110,16 @@ CRITICAL CONSTRAINTS:
 6. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 7. Read coordinates from the CURRENT screenshot. Never reuse coordinates from an older screenshot.
 8. Re-read coordinates after any layout change. This includes keyboard changes, navigation, modals, and scrolling.
-9. When a step asks for repeated taps, send one tap action with that `count`. Never count taps yourself across steps. The screen may not show how many landed.
+9. A tap is exactly one tap. Observe the resulting screen before choosing another action.
+10. If a goal requires an exact number of taps or clicks, count every tap recorded as delivered once, even when the screen stays unchanged. Do not add a replacement tap solely because a value or pixels repeated.
+"""
+
+APP_LAUNCH_CONSTRAINTS = """
+APP LAUNCH RULES:
+1. On a device home screen or launcher, do not infer an app's identity from an icon that has no visible name.
+2. On Android, open the app drawer first. Select the app there only when its visible name matches the requested app. Use app-drawer search only if the named app is not visible in the drawer.
+3. On iOS, use Home Screen Search or the App Library when the requested app's name is not visible.
+4. If an icon opens the wrong app, treat that icon as disproven for the requested app. Return to the launcher and do not select that icon again for the same request.
 """
 
 RESPONSE_INSTRUCTIONS = """
@@ -117,7 +128,7 @@ RESPONSE_INSTRUCTIONS = """
 2. Set `evaluation_previous_goal`: honestly assess whether your PREVIOUS action succeeded, failed, or is uncertain. Leave empty on the first step.
 3. Set `observation`: describe only what is currently visible.
 4. Set `reasoning`: explain why the chosen action is the best next step.
-5. Set `goal_satisfied` True when the goal's stated outcome is already visible, and put that evidence in `goal_evidence`. Follow-on UI does not undo an outcome that the current screen still proves.
+5. Set `goal_satisfied` True only when the goal's stated outcome is visible on the current screen. Name that visible outcome in `goal_evidence`. A screen that changed is not the outcome. A control you pressed is not the outcome. Follow-on UI does not undo an outcome that the current screen still proves.
 6. Set `action`: choose exactly ONE action. If the goal is fully complete, use `done`.
 7. Set `external_navigation` to True if the action will temporarily leave the app.
 """
@@ -278,7 +289,8 @@ class DevicePlanner:
 
     def _action_constraints(self) -> str:
         """The rules for choosing an action. Shared with QAPlanner — see above."""
-        return TARGET_CONSTRAINTS.get(self.grounding, COORDINATE_CONSTRAINTS)
+        targeting = TARGET_CONSTRAINTS.get(self.grounding, COORDINATE_CONSTRAINTS)
+        return targeting + APP_LAUNCH_CONSTRAINTS
 
     def _build_prompt(
         self,

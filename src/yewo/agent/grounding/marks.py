@@ -13,11 +13,9 @@ import io
 import logging
 from copy import copy
 from dataclasses import dataclass, replace
-from functools import lru_cache
-from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from yewo.agent.actuation.actions import (
     TARGETED_ACTIONS,
@@ -25,20 +23,21 @@ from yewo.agent.actuation.actions import (
     Coordinates,
 )
 from yewo.agent.grounding import GROUNDING_MARKS
+from yewo.agent.grounding.badges import render
 from yewo.agent.perception import keyboard
 from yewo.agent.perception.elements import GUIElement
 
 logger = logging.getLogger(__name__)
 
 DUPLICATE_OVERLAP = 0.80
+# Below this, two boxes of one class differ in size enough to be a container
+# and the part inside it, which _collapse_nests folds without losing either.
+DUPLICATE_SIZE_RATIO = 0.50
 # How much of a box must sit inside another before it counts as part of it.
 CONTAINED_FRACTION = 0.90
 # A box bigger than this is a layout region, not a control, so it keeps its parts.
 MAX_CONTAINER_FRACTION = 0.25
 ROW_BAND = 25
-BADGE_PAD = 3
-BAND_COLOR = (36, 82, 168)
-# Where the soft keyboard starts, and how short a label has to be to be a key.
 
 
 @dataclass(frozen=True)
@@ -127,6 +126,45 @@ def _contained_in(child, parent) -> bool:
     return (overlap_w * overlap_h) / _area(child) >= CONTAINED_FRACTION
 
 
+def _smaller_box_overlap(a, b) -> float:
+    """The shared area as a fraction of the smaller box.
+
+    An even-overlap test divides by the area of both boxes, so a small shift
+    along a long edge drops the score far below what the eye reads as the same
+    box. A rule detected twice loses a third of its score to a shift of a
+    tenth of its length.
+    """
+    left, top = max(a.x_min, b.x_min), max(a.y_min, b.y_min)
+    right, bottom = min(a.x_max, b.x_max), min(a.y_max, b.y_max)
+    if right <= left or bottom <= top:
+        return 0.0
+    return ((right - left) * (bottom - top)) / min(_area(a), _area(b))
+
+
+def _is_duplicate(element: GUIElement, other: GUIElement) -> bool:
+    """Whether two detections are one thing the detector found twice.
+
+    Comparable size is what separates a repeat from a nest. A container and
+    the part inside it also sit almost entirely on each other, and folding
+    those is `_collapse_nests`'s work: it keeps the container's outline and
+    takes only the touch point from the part.
+
+    Kept as two, a repeated label gives its button two labels, and a box
+    holding two labels is read as a row and never folded into one control.
+    """
+    if element.text != other.text:
+        return False
+    box, other_box = element.bounding_box, other.bounding_box
+    if _overlap(box, other_box) >= DUPLICATE_OVERLAP:
+        return True
+    if element.element != other.element:
+        return False
+    areas = (_area(box), _area(other_box))
+    if min(areas) / max(areas) < DUPLICATE_SIZE_RATIO:
+        return False
+    return _smaller_box_overlap(box, other_box) >= DUPLICATE_OVERLAP
+
+
 def _is_one_control(parent: GUIElement, children: List[GUIElement]) -> bool:
     """Whether a box and its contents are one thing, or several things in a container.
 
@@ -200,6 +238,25 @@ def _named(parent: GUIElement, children: List[GUIElement]) -> GUIElement:
         return parent
     named = copy(parent)
     named.text = " ".join(dict.fromkeys(texts))
+    # Detectors sometimes return both a broad layout container and the smaller
+    # control inside it. If the one named child sits inside that smaller blank
+    # container, the smaller box is the visible control. Keeping the broad box
+    # made a correct detection look like an entire toolbar was clickable.
+    named_children = [child for child in children if (child.text or "").strip()]
+    visual_containers = [
+        child
+        for child in children
+        if not (child.text or "").strip()
+        and named_children
+        and all(
+            _contained_in(label.bounding_box, child.bounding_box)
+            for label in named_children
+        )
+    ]
+    if visual_containers:
+        named.bounding_box = min(
+            visual_containers, key=lambda child: _area(child.bounding_box)
+        ).bounding_box.model_copy()
     return named
 
 
@@ -219,11 +276,7 @@ def build(elements: List[GUIElement], screen_area: int = 0) -> List[Mark]:
     """
     kept: List[GUIElement] = []
     for element in elements or []:
-        if any(
-            element.text == other.text
-            and _overlap(element.bounding_box, other.bounding_box) >= DUPLICATE_OVERLAP
-            for other in kept
-        ):
+        if any(_is_duplicate(element, other) for other in kept):
             continue
         kept.append(element)
 
@@ -281,115 +334,6 @@ def describe(marks: List[Mark], height: int) -> str:
         for mark in marks
     ]
     return "\n".join(lines) or "None detected."
-
-
-FONT_PATH = Path(__file__).parent / "fonts" / "Aileron-Bold.otf"
-"""Aileron Bold, shipped with the package. Public domain, so it carries no notice.
-
-The badge numbers are the only way the planner can name a target, so they have
-to be legible at screenshot resolution on every machine. A system font cannot
-promise that: the path differs per platform and a slim container image often
-carries none.
-"""
-
-
-@lru_cache(maxsize=8)
-def _font(scale_ref: int) -> ImageFont.FreeTypeFont:
-    """The badge face, sized for this screen."""
-    size = max(10, int(15 * (scale_ref / 1200.0)))
-    return ImageFont.truetype(FONT_PATH, size)
-
-
-def _free_slot(box, text_w, text_h, placed, screen):
-    """Finds somewhere for a badge that does not sit on another badge.
-
-    Numbers that overlap each other are worse than no numbers: two legible
-    digits read as one illegible one, and the model picks neither.
-    """
-    width, height = screen
-    pad = BADGE_PAD * 2
-    w, h = text_w + pad, text_h + pad
-    candidates = (
-        (box.x_min - w, box.y_min - h),  # outside the top-left corner
-        (box.x_min, box.y_min - h),  # directly above
-        (box.x_max, box.y_min - h),  # outside the top-right corner
-        (box.x_min - w, box.y_min),  # to the left
-        (box.x_max, box.y_min),  # to the right
-        (box.x_min, box.y_min),  # inside, last resort
-    )
-    for x, y in candidates:
-        x = max(0, min(x, width - w))
-        y = max(0, min(y, height - h))
-        slot = (x, y, x + w, y + h)
-        if not any(
-            slot[0] < other[2]
-            and other[0] < slot[2]
-            and slot[1] < other[3]
-            and other[1] < slot[3]
-            for other in placed
-        ):
-            return slot
-    x = max(0, min(box.x_min, width - w))
-    y = max(0, min(box.y_min, height - h))
-    return (x, y, x + w, y + h)
-
-
-def _draw_band(draw, band, font, screen) -> None:
-    x0, y0, x1, y1 = band
-    draw.rectangle([x0, y0, x1, y1], fill=BAND_COLOR + (36,))
-    draw.rectangle([x0, y0, x1 - 1, y1 - 1], outline=BAND_COLOR, width=4)
-
-    label = "KEYBOARD"
-    left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
-    w, h = right - left + BADGE_PAD * 2, bottom - top + BADGE_PAD * 2
-    # Bottom-right: the top-left of a keyboard is its most-used keys.
-    bx, by = max(0, x1 - w), max(0, min(y1 - h, screen[1] - h))
-    draw.rectangle([bx, by, bx + w, by + h], fill=BAND_COLOR)
-    draw.text(
-        (bx + BADGE_PAD - left, by + BADGE_PAD - top), label, fill=(255, 255, 255), font=font
-    )
-
-
-def render(
-    image: Image.Image,
-    marks: List[Mark],
-    color=(214, 16, 46),
-    band: Optional[tuple] = None,
-) -> Image.Image:
-    """Draws each number near its element, avoiding other badges.
-
-    Small, and outside the box where there is room. The number has to be
-    readable without hiding the thing it names. A badge covering a label costs
-    the planner the word it navigates by.
-    """
-    marked = image.copy()
-    draw = ImageDraw.Draw(marked, "RGBA")
-    screen = marked.size
-    font = _font(max(screen))
-    if band:
-        _draw_band(draw, band, font, screen)
-    outline = max(1, int(1.5 * (max(screen) / 1000.0)))
-    placed = []
-
-    for mark in marks:
-        box = mark.element.bounding_box
-        draw.rectangle(
-            [box.x_min, box.y_min, box.x_max, box.y_max], outline=color, width=outline
-        )
-
-        label = str(mark.index)
-        left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
-        slot = _free_slot(box, right - left, bottom - top, placed, screen)
-        placed.append(slot)
-
-        draw.rectangle(list(slot), fill=color)
-        draw.text(
-            (slot[0] + BADGE_PAD - left, slot[1] + BADGE_PAD - top),
-            label,
-            fill=(255, 255, 255),
-            font=font,
-        )
-    return marked
 
 
 def resolve_mark(action, element_marks, grounding: str = "") -> tuple:

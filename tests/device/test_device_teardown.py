@@ -15,7 +15,7 @@ from fakes import PACKAGE, SERIAL, LoggingDriver, log_entries
 
 from yewo.agent.artifacts.layout import RunLayout
 from yewo.agent.device.device_logs import DeviceLogRecorder
-from yewo.agent.device.adb_control import AdbControl
+from yewo.agent.device.adb_control import AdbControl, VisualFeedbackSettings
 from yewo.agent.device.files import DeviceFiles
 from yewo.agent.device.session import DeviceSession
 from yewo.agent.device.simctl_control import SimctlControl
@@ -124,6 +124,7 @@ class OwnershipDetectionTests(unittest.TestCase):
         session = DeviceSession.__new__(DeviceSession)
         session.platform = Platform.ANDROID
         session._installed_by_run = True
+        session._visual_feedback_before_run = None
 
         with patch.object(AdbControl, "resolve_emulator_serial") as resolve:
             session._note_app_ownership()
@@ -247,6 +248,11 @@ class UninstallPolicyTests(unittest.TestCase):
         with (
             patch.object(DeviceSession, "_start_appium"),
             patch.object(DeviceSession, "_note_app_ownership"),
+            patch.object(
+                AdbControl,
+                "read_visual_feedback",
+                return_value=VisualFeedbackSettings(False, False),
+            ),
             patch.object(AdbControl, "enable_feedback"),
             patch("yewo.agent.device.session.DeviceControl", return_value=control),
             patch("yewo.agent.device.session.time.sleep"),
@@ -277,6 +283,23 @@ class UninstallPolicyTests(unittest.TestCase):
 
         self.assertTrue(session.layout.device_log("logcat").exists())
         self.assertTrue(driver.quit_called)
+
+    def test_android_visual_feedback_is_restored_before_disconnect(self):
+        settings = VisualFeedbackSettings(pointer_location=True, tap_highlights=False)
+        session = self._session(
+            _owns_appium=False,
+            _visual_feedback_before_run=settings,
+            device_control=self._control(),
+        )
+        with (
+            patch.object(DeviceSession, "save_recording"),
+            patch.object(AdbControl, "uninstall_app"),
+            patch.object(AdbControl, "restore_visual_feedback") as restore,
+        ):
+            session.close(final=True)
+
+        restore.assert_called_once_with(SERIAL, settings)
+        self.assertIsNone(session._visual_feedback_before_run)
 
     def test_a_session_with_no_driver_still_closes(self):
         """A session that died before it opened one has nothing to read."""
