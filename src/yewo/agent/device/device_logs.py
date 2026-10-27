@@ -24,9 +24,14 @@ from pathlib import Path
 from typing import Dict, Optional, Protocol, Sequence
 
 from yewo.agent.artifacts.layout import RunLayout
+from yewo.agent.device.crash_diagnostics import (
+    CrashDiagnostic,
+    extract_crash_diagnostic,
+)
 from yewo.agent.device.platform import Platform
 
 logger = logging.getLogger(__name__)
+
 
 BUFFERED_LINES = 10000
 """Appium's buffer size, per log. A drain this full reached a buffer at its
@@ -461,3 +466,36 @@ class DeviceLogRecorder:
         state.consecutive_failures = 0
         # A full drain arrived at a buffer that had already evicted.
         state.truncated = state.truncated or len(lines) >= BUFFERED_LINES
+
+    def extract_crash_diagnostic(
+        self,
+        *,
+        target_package: Optional[str] = None,
+        target_app_id: Optional[str] = None,
+        target_process_name: Optional[str] = None,
+    ) -> Optional[CrashDiagnostic]:
+        """Inspect the bounded log capture without performing another device read."""
+        for source in self._sources:
+            state = self._state[source.log_type]
+            if state.path is None or not state.path.exists():
+                continue
+            try:
+                with state.path.open(
+                    "r", encoding="utf-8", errors="backslashreplace"
+                ) as log_file:
+                    diagnostic = extract_crash_diagnostic(
+                        log_file.readlines(),
+                        source=source.log_type,
+                        target_package=target_package,
+                        target_app_id=target_app_id,
+                        target_process_name=target_process_name,
+                    )
+                if diagnostic is not None:
+                    return diagnostic
+            except Exception as exc:  # noqa: BLE001 - evidence must not fail the run
+                logger.warning(
+                    "Could not inspect device log %s for a crash: %s",
+                    state.path,
+                    type(exc).__name__,
+                )
+        return None

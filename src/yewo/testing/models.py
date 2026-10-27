@@ -28,6 +28,7 @@ from yewo.testing.lifecycle import ScenarioPreconditions, SetupOrigin
 from yewo.testing.evidence import (  # noqa: F401
     AssertionScope,
     BoundingBox,
+    CrashDiagnostic,
     ExpectedOutcome,
     IssueKind,
     JourneyReport,
@@ -136,6 +137,7 @@ class ScenarioDraft(BaseModel):
             "for every value the file says this app refuses."
         ),
     )
+
     @model_validator(mode="after")
     def _validate_entered_values_declared(self, info: ValidationInfo) -> "ScenarioDraft":
         """Holds an entered value to a name the file declared.

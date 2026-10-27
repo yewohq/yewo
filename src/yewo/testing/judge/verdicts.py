@@ -12,6 +12,7 @@ from yewo.agent.run.outcomes import DeviceRunResult
 from yewo.errors import Cause
 from yewo.testing.judge import rules
 from yewo.testing.models import (
+    CrashDiagnostic,
     ExpectedOutcome,
     QAIssue,
     ReportStatus,
@@ -36,12 +37,15 @@ def _terminal_outcome(
     issues: List[QAIssue],
     outputs: Sequence["Feasibility"],
     findings: Optional[List] = None,
+    crash_diagnostic: Optional[CrashDiagnostic] = None,
 ) -> Optional[tuple[ScenarioStatus, Optional[str], Optional[Cause]]]:
     """Classify outcomes that cannot become a successful verification."""
 
-    # Ranked first: a crash is something the app did, and the rest are
-    # statements about the run. A scenario that crashed the app has found a
-    # defect, whatever else the planner concluded about being able to proceed.
+    # Ranked first: an uncaught crash, fatal exception, or ANR from device logs
+    if crash_diagnostic is not None:
+        return ReportStatus.FAILED, f"App crashed: {crash_diagnostic.summary}", None
+
+    # A crash screen detected by perception
     if any(issue.issue_type == "crash_screen" for issue in issues):
         return ReportStatus.FAILED, "App crashed: crash screen detected.", None
 

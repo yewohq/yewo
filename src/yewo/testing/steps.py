@@ -57,6 +57,30 @@ class ActionStep(BaseModel):
         description="One action on one control, such as 'Tap the Save button.'"
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_action(cls, data):
+        if isinstance(data, dict):
+            val = dict(data)
+            if "type" in val and "kind" not in val:
+                val["kind"] = val.pop("type")
+            if "action" in val and "instruction" not in val:
+                action_val = val.pop("action")
+                if isinstance(action_val, dict):
+                    action_val = action_val.get("instruction") or action_val.get("action")
+                target = val.pop("target", None)
+                if isinstance(action_val, str) and target and target not in action_val:
+                    val["instruction"] = f"{action_val} {target}"
+                elif isinstance(action_val, str):
+                    val["instruction"] = action_val
+            if "instruction" in val and isinstance(val["instruction"], dict):
+                inst_dict = val["instruction"]
+                nested_instruction = inst_dict.get("instruction") or inst_dict.get("action")
+                if isinstance(nested_instruction, str):
+                    val["instruction"] = nested_instruction
+            return val
+        return data
+
     @model_validator(mode="after")
     def _validate_instruction_action(self) -> "ActionStep":
         """Raises:

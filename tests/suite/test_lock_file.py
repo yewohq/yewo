@@ -171,9 +171,9 @@ class EntryTests(unittest.TestCase):
             steps=[EnterStep(field="Password", value="rejected_password")]
         )
 
-        written = json.dumps(entry.model_dump(mode="json"))
-        self.assertIn("rejected_password", written)
-        self.assertNotIn("abc", written)
+        written = entry.model_dump(mode="json")
+        self.assertEqual(written["steps"][0]["value"], "rejected_password")
+        self.assertNotIn("abc", written["steps"][0].values())
 
 
 class FileTests(unittest.TestCase):

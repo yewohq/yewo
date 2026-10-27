@@ -12,6 +12,7 @@ def build_verdict_inputs(
     security_rules,
     all_findings,
     measurement_samples=(),
+    crash_diagnostic=None,
 ) -> VerdictInputs:
     """Keep every fact needed to reach the scenario verdict again."""
     last_output = qa_outputs[-1] if qa_outputs else None
@@ -35,4 +36,5 @@ def build_verdict_inputs(
             for receipt in run_result.capability_receipts
         ],
         postcondition_verifications=list(run_result.postcondition_verifications),
+        crash_diagnostic=crash_diagnostic,
     )

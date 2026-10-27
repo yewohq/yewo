@@ -27,6 +27,7 @@ from typing import List, Literal, Optional, Sequence
 from pydantic import BaseModel, Field
 
 from yewo.agent.run.record import CallRow, StepRecord
+from yewo.agent.device.crash_diagnostics import CrashDiagnostic
 from yewo.identity import new_uuid
 from yewo.testing.models import (
     GeneratedTestCase,
@@ -46,10 +47,11 @@ from yewo.testing.lifecycle import LifecycleOperation
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = 4
+SCHEMA = 5
 """The version of this file's shape.
 
-4 adds direct measurement samples to each scenario. Schema 3 added lifecycle
+5 adds app-scoped crash diagnostics to each scenario. Schema 4 added direct
+measurement samples to each scenario. Schema 3 added lifecycle
 operations. Schema 2 added `verdict_inputs`.
 A record written under 1 holds too little to reach its verdict again.
 """
@@ -119,6 +121,7 @@ class ScenarioEntry(BaseModel):
     detected_issues: List[QAIssue] = Field(default_factory=list)
     lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
     measurements: List[Measurement] = Field(default_factory=list)
+    crash_diagnostic: Optional[CrashDiagnostic] = None
     verdict_inputs: Optional[VerdictInputs] = Field(
         default=None,
         description=(
@@ -299,9 +302,24 @@ class RunManifest:
                 for operation in report.lifecycle_operations
             ]
             entry.measurements = [self._masked_measurement(item) for item in report.measurements]
+            entry.crash_diagnostic = self._masked_crash_diagnostic(
+                report.crash_diagnostic
+            )
             entry.verdict_inputs = self._masked(report.verdict_inputs)
             entry.finished_at = _now()
         self.write()
+
+    def _masked_crash_diagnostic(
+        self, diagnostic: Optional[CrashDiagnostic]
+    ) -> Optional[CrashDiagnostic]:
+        if diagnostic is None:
+            return None
+        kept = diagnostic.model_copy(deep=True)
+        kept.exception_type = self._scrub(kept.exception_type)
+        kept.message = self._scrub(kept.message)
+        kept.stack_trace = [self._scrub(frame) for frame in kept.stack_trace]
+        kept.source = self._scrub(kept.source)
+        return kept
 
     def _masked(self, inputs: Optional[VerdictInputs]) -> Optional[VerdictInputs]:
         """The judge's inputs, with every declared value masked.

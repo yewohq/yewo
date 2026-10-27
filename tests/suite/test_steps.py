@@ -95,6 +95,20 @@ class CapabilityStepTests(unittest.TestCase):
 
 
 class ActionStepTests(unittest.TestCase):
+    def test_provider_action_and_target_shape_is_normalized(self):
+        step = ActionStep.model_validate(
+            {"type": "action", "action": "Tap", "target": "the Login button"}
+        )
+
+        self.assertEqual(step.instruction, "Tap the Login button")
+
+    def test_nested_provider_instruction_is_normalized(self):
+        step = ActionStep.model_validate(
+            {"kind": "action", "instruction": {"action": "Launch the app."}}
+        )
+
+        self.assertEqual(step.instruction, "Launch the app.")
+
     def test_a_plain_action_is_accepted(self):
         self.assertEqual(
             ActionStep(instruction="Tap the Login button.").rendered(),

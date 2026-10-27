@@ -9,12 +9,14 @@ from yewo.agent.run.agent import DeviceAgent, DeviceRunResult
 from yewo.agent.plan.planner import DeviceStepResponse
 from yewo.agent.memory.trail import SessionTrail
 from yewo.agent.device.platform import Platform
+from yewo.agent.device.crash_diagnostics import CrashDiagnosticSource
 from yewo.agent.memory.replay import ReplayLedger
 
 from yewo.defaults import STEP_BUDGET_FLOOR, STEP_BUDGET_PER_INSTRUCTION
 from yewo.llm.failures import reportable
 from yewo.llm.llm_client import LLMClient
 from yewo.testing.models import (
+    CrashDiagnostic,
     ExpectedOutcome,
     GeneratedTestCase,
     QAIssue,
@@ -104,12 +106,7 @@ class QAAgent:
         self._fast_llm: LLMClient = self._device_agent.fast_llm
 
     def _step_budget(self, test_case: GeneratedTestCase) -> int:
-        """How many agent steps a scenario may use.
-
-        Scenarios differ widely in size, and a short check cannot share one
-        number with a long end-to-end order. So each gets a budget from its own
-        instructions, under the configured ceiling.
-        """
+        """Bound this scenario from its instruction count and the run ceiling."""
         wanted = len(test_case.steps_instructions) * STEP_BUDGET_PER_INSTRUCTION
         ceiling = self._device_agent.max_steps
         return min(ceiling, max(STEP_BUDGET_FLOOR, wanted))
@@ -123,6 +120,7 @@ class QAAgent:
         session_dir: Path,
         session_trail: Optional[SessionTrail] = None,
         telemetry_dir: Optional[Path] = None,
+        crash_diagnostic_source: Optional[CrashDiagnosticSource] = None,
     ) -> ScenarioReport:
         """Execute one test scenario and return a complete ScenarioReport."""
         start_time = time.time()
@@ -339,6 +337,12 @@ class QAAgent:
         screen_audits.finalize()
         stop_reason["value"] = stop_reason["value"] or screen_audits.stop_reason
 
+        crash_diagnostic = (
+            crash_diagnostic_source.collect_crash_diagnostic()
+            if crash_diagnostic_source is not None
+            else None
+        )
+
         report = self._build_report(
             test_case=test_case,
             run_result=run_result,
@@ -348,6 +352,7 @@ class QAAgent:
             duration=time.time() - start_time,
             security_rules=security_rules,
             measurement_samples=measurement_collector.samples,
+            crash_diagnostic=crash_diagnostic,
         )
         report.lifecycle_operations = lifecycle_operations
         failed_restorations = [
@@ -376,6 +381,7 @@ class QAAgent:
         security_rules: List[str],
         settle_transitions: bool = True,
         measurement_samples: Sequence[Measurement] = (),
+        crash_diagnostic: Optional[CrashDiagnostic] = None,
     ) -> ScenarioReport:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
@@ -425,6 +431,7 @@ class QAAgent:
             security_rules=security_rules,
             all_findings=all_findings,
             measurement_samples=measurement_samples,
+            crash_diagnostic=crash_diagnostic,
         )
 
         return ScenarioReport(
@@ -442,6 +449,7 @@ class QAAgent:
             postcondition_verifications=list(run_result.postcondition_verifications),
             measurements=list(measurement_samples),
             failure_reason=scrub(failure_reason or "") or None,
+            crash_diagnostic=crash_diagnostic,
             verdict_inputs=build_verdict_inputs(
                 run_result,
                 stop_reason,
@@ -451,25 +459,16 @@ class QAAgent:
                 security_rules,
                 all_findings,
                 measurement_samples,
+                crash_diagnostic,
             ),
         )
 
     def _settled_transitions(
         self, test_case: GeneratedTestCase, assessments: List[ScreenAssessment]
     ) -> List[RuleVerification]:
-        """Evidence for the outcomes no single screenshot could carry.
+        """Judge transition outcomes. Preserve provider failures as errors.
 
-        The gate requires every expected outcome, and the auditor is never
-        shown the ones about reaching a screen. Without this they are demanded
-        and unanswerable, and a scenario that did everything asked of it
-        reports missing evidence.
-
-        A failure here leaves them unevidenced, which is the honest answer:
-        the judgement did not happen, so nothing was judged.
-
-        A failure of the service is the exception, whether it was spent or
-        refused. Read as missing evidence it would blame the run for an
-        outage, so it ends the scenario on the provider instead.
+        Other failures leave the outcome unevidenced instead of inventing it.
         """
         try:
             return transitions.settle(
@@ -528,13 +527,9 @@ class QAAgent:
         all_findings: Optional[List[SensitiveFinding]] = None,
         required_capabilities: Sequence = (),
         measurement_samples: Sequence[Measurement] = (),
+        crash_diagnostic: Optional[CrashDiagnostic] = None,
     ):
-        """The verdict for this scenario, decided in `judge.decide`.
-
-        Kept as a method because the decision is read here. Moved out because
-        it reads no part of this agent. The eval corpus calls the function
-        with stored evidence, and with no device.
-        """
+        """Decide this scenario through the same function used by evaluation."""
         return decide.determine_status(
             run_result=run_result,
             stop_reason=stop_reason,
@@ -547,4 +542,5 @@ class QAAgent:
             all_findings=all_findings,
             required_capabilities=required_capabilities,
             measurement_samples=measurement_samples,
+            crash_diagnostic=crash_diagnostic,
         )

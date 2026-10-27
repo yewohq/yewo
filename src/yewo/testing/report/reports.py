@@ -205,6 +205,18 @@ def _append_scenario(
         lines.append(
             f"* ❌ **Failure Reason**: `{_scrub(scrubber, scenario.failure_reason)}`"
         )
+    if scenario.crash_diagnostic:
+        diag = scenario.crash_diagnostic
+        lines.append("\n### 💥 Crash & Exception Diagnostics:")
+        lines.append(f"* **Exception**: `{diag.exception_type}`")
+        if diag.message:
+            lines.append(f"* **Message**: `{_scrub(scrubber, diag.message)}`")
+        if diag.stack_trace:
+            lines.append("* **Stack Trace**:")
+            lines.append("```")
+            for frame in diag.stack_trace:
+                lines.append(f"  {_scrub(scrubber, frame)}")
+            lines.append("```")
     if scenario.lifecycle_operations:
         lines.append("### Lifecycle:")
         for operation in scenario.lifecycle_operations:
@@ -365,7 +377,15 @@ def _append_junit_case(
             f"{_scrub(scrubber, issue.current_screen)}"
             for issue in scenario.detected_issues
         ]
-        element.text = "\n".join(details) or message
+        if scenario.crash_diagnostic:
+            diag = scenario.crash_diagnostic
+            crash_lines = [
+                f"CRASH: {diag.exception_type}: {_scrub(scrubber, diag.message)}",
+                *[_scrub(scrubber, f) for f in diag.stack_trace],
+            ]
+            element.text = "\n".join(crash_lines + details)
+        else:
+            element.text = "\n".join(details) or message
     elif scenario.status in (ReportStatus.ERROR, ReportStatus.ABORTED):
         element = ET.SubElement(
             testcase,

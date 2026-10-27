@@ -95,4 +95,5 @@ def verdict_of(entry: dict, schema: int) -> decide.Verdict:
         all_findings=inputs.sensitive_findings,
         required_capabilities=inputs.required_capabilities,
         measurement_samples=inputs.measurements,
+        crash_diagnostic=inputs.crash_diagnostic,
     )

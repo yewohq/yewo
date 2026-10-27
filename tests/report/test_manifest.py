@@ -13,6 +13,7 @@ from pathlib import Path
 from fakes import walk
 
 from yewo.agent.run.record import DecisionRecord, StepRecord
+from yewo.agent.device.crash_diagnostics import CrashDiagnostic
 from yewo.testing.models import (
     GeneratedTestCase,
     ReportStatus,
@@ -214,6 +215,25 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(first["steps_executed"], 9)
         self.assertEqual(first["duration_seconds"], 12.3)
         self.assertEqual(data["counts"], {"FAILED": 1, "PENDING": 1})
+
+    def test_crash_diagnostics_are_scrubbed_into_the_canonical_record(self):
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"password": "private-value"})
+        report = self._report(
+            crash_diagnostic=CrashDiagnostic(
+                exception_type="StateError",
+                message="private-value failed",
+                stack_trace=["private-value at App.submit"],
+                source="logcat",
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            record = manifest(directory, scrubber=scrubber)
+            record.record("TS_001", report)
+            diagnostic = written(record)["scenarios"][0]["crash_diagnostic"]
+
+        self.assertNotIn("private-value", json.dumps(diagnostic))
+        self.assertEqual(diagnostic["message"], "{{password}} failed")
 
     def test_every_status_in_the_record_is_one_yewo_spells(self):
         """One vocabulary, so a reader of the file needs one list of words.

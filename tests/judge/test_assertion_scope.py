@@ -36,6 +36,16 @@ class ScopeDefaultTests(unittest.TestCase):
         self.assertEqual(case.expected_outcomes[0].statement.split()[0], "The")
         self.assertIs(case.expected_outcomes[0].scope, AssertionScope.CURRENT_SCREEN)
 
+    def test_provider_statement_and_scope_aliases_are_normalized(self):
+        from yewo.testing.models import AssertionScope, ExpectedOutcome
+
+        outcome = ExpectedOutcome.model_validate(
+            {"description": "Home is visible.", "kind": "current_screen"}
+        )
+
+        self.assertEqual(outcome.statement, "Home is visible.")
+        self.assertIs(outcome.scope, AssertionScope.CURRENT_SCREEN)
+
 
 class AuditorScopeTests(unittest.TestCase):
     """The auditor sees one screenshot, so it is asked only what that settles."""

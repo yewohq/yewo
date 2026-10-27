@@ -139,7 +139,7 @@ class LLMClient:
                     TextMessage(
                         content=(
                             "Your previous reply did not match the required JSON schema:\n"
-                            f"{json.dumps(safe_errors)}\n"
+                            f"{json.dumps(safe_errors, default=str)}\n"
                             "Answer again as JSON matching the schema exactly."
                         )
                     )

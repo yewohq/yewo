@@ -97,6 +97,27 @@ class RejudgingTests(unittest.TestCase):
         self.assertEqual(decided[0].status, "UNVERIFIED")
         self.assertIn("never confirmed", decided[0].reason)
 
+    def test_an_app_scoped_crash_is_read_back(self):
+        decided = self._verdicts(
+            [
+                _scenario(
+                    status="FAILED",
+                    verdict_inputs={
+                        "run_status": "goal_reached",
+                        "screens_judged": 1,
+                        "crash_diagnostic": {
+                            "exception_type": "StateError",
+                            "message": "Checkout failed",
+                            "source": "logcat",
+                        },
+                    },
+                )
+            ]
+        )
+
+        self.assertEqual(decided[0].status, "FAILED")
+        self.assertIn("Checkout failed", decided[0].reason)
+
     def test_the_planners_last_word_is_read_back(self):
         decided = self._verdicts([
             _scenario(

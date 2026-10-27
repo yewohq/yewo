@@ -85,11 +85,6 @@ class ScreenAssessment(BaseModel):
                 }
                 for rule, status in verifications.items()
             ]
-        for verification in normalized.get("rule_verifications") or []:
-            if isinstance(verification, dict) and "reasoning" not in verification:
-                verification["reasoning"] = verification.pop(
-                    "details", "No reasoning supplied by the provider."
-                )
         issues = []
         for raw_issue in normalized.get("detected_issues") or []:
             if isinstance(raw_issue, QAIssue):

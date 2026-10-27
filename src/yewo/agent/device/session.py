@@ -18,6 +18,7 @@ from yewo.agent.device.adb_control import AdbControl, VisualFeedbackSettings
 from yewo.agent.device.appium_runtime import resolve_appium_runtime
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device import device_logs
+from yewo.agent.device.crash_diagnostics import CrashDiagnostic
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.scope import DeviceScope
 from yewo.agent.device.recording import DeviceRecording
@@ -162,6 +163,20 @@ class DeviceSession(DeviceRecording):
     def installed_by_run(self) -> Optional[bool]:
         """Whether this run installed the app, as far as it could tell."""
         return self._installed_by_run
+
+    def collect_crash_diagnostic(self) -> Optional[CrashDiagnostic]:
+        """Drain once and return a crash that belongs to this session's app."""
+        device_control = self.device_control
+        driver = self._log_reading_driver()
+        if device_control is None or driver is None:
+            return None
+        self._device_logs.drain(driver)
+        target_process_name = Path(self.app_path).stem if self.app_path else None
+        return self._device_logs.extract_crash_diagnostic(
+            target_package=device_control.package_id,
+            target_app_id=device_control.app_id,
+            target_process_name=target_process_name,
+        )
 
     def _start_appium(self):
         try:

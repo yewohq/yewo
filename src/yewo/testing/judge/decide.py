@@ -22,6 +22,7 @@ from yewo.testing.judge import measurements
 from yewo.testing.judge.capabilities import unconfirmed_capabilities
 from yewo.testing.judge.verdicts import _missing_required_ids, _terminal_outcome
 from yewo.testing.models import (
+    CrashDiagnostic,
     ExpectedOutcome,
     QAIssue,
     ReportStatus,
@@ -70,6 +71,7 @@ def determine_status(
     all_findings: Optional[List[SensitiveFinding]] = None,
     required_capabilities: Sequence = (),
     measurement_samples: Sequence[Measurement] = (),
+    crash_diagnostic: Optional[CrashDiagnostic] = None,
 ) -> Verdict:
     """What this scenario adds up to.
 
@@ -85,6 +87,7 @@ def determine_status(
         security_rules: What must never happen.
         all_findings: What was seen where a sensitive value could be.
         required_capabilities: The device states the scenario declared.
+        crash_diagnostic: Crash or uncaught exception from device logs.
     """
     # Feasibility stays the planner's call: it is a statement about whether
     # the agent can proceed, not about whether the app is correct.
@@ -102,6 +105,7 @@ def determine_status(
         all_issues,
         qa_outputs,
         all_findings,
+        crash_diagnostic=crash_diagnostic,
     )
     if terminal:
         return Verdict(*terminal)

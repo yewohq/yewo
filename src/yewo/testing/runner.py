@@ -417,7 +417,6 @@ class YewoTestRunner:
                     )
 
                     usage_tracker.output_dir = session.telemetry_dir
-
                 try:
                     scen_report = agent.execute_scenario(
                         test_case=scenario,
@@ -427,6 +426,7 @@ class YewoTestRunner:
                         session_dir=session.screenshots_dir,
                         session_trail=trail,
                         telemetry_dir=session.telemetry_dir,
+                        crash_diagnostic_source=session,
                     )
                 except ProviderUnavailable as exc:
                     # The service was asked again and still would not answer.

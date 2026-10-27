@@ -81,7 +81,7 @@ CRITICAL CONSTRAINTS:
 5. Do not identify it by its position in a sequence. The grounder reads the picture, not a list. Say what makes it different: "the blue Add button with the plus symbol".
 6. The target must be visible on the screen in front of you. Do not name something you remember from an earlier screen, and do not name something you expect to appear.
 7. "type" focuses the field itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-8. The soft keyboard blocks taps on anything behind it. Dismiss it with key_event 4 before you target a lower-screen control. On Android, back dismisses the keyboard without leaving the app.
+8. If the next target is another input field, you can type into it directly without dismissing the soft keyboard. Only dismiss it with key_event 4 if a button, checkbox, or non-input control you need to tap is blocked behind the keyboard. On Android, back dismisses the keyboard without leaving the app.
 9. If a description was not found, describe the same thing by a different visible feature. Use its symbol, shape, colour, or words. Do not add details about its surroundings.
 10. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 11. A tap is exactly one tap. Observe the resulting screen before choosing another action.
@@ -94,7 +94,7 @@ CRITICAL CONSTRAINTS:
 3. Use "type" and "clear" only on the actual editable field. A caption, summary value, read-only value, or label with the same words is not the field. If the field is hidden by the keyboard or is not numbered, dismiss the keyboard with key_event 4 or use "target_not_listed". Never type into a same-named label as a substitute.
 4. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
 5. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
-6. The soft keyboard blocks taps on anything behind it. Dismiss the keyboard with key_event 4 before targeting a lower-screen control. On Android, back dismisses the soft keyboard without leaving the app.
+6. If the next target is another input field, you can type into it directly without dismissing the soft keyboard. Only dismiss the soft keyboard with key_event 4 before targeting a button, link, or lower-screen control that is blocked behind it. On Android, back dismisses the soft keyboard without leaving the app.
 7. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 8. A tap is exactly one tap. Observe the resulting screen before choosing another action.
 9. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
@@ -106,7 +106,7 @@ CRITICAL CONSTRAINTS:
 2. Every targeted action MUST provide `target`. Describe the control by its own visible text, symbol, shape, or colour.
 3. For "type", you MUST provide `text`, `target`, AND `coordinates` of the target field.
 4. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-5. The soft keyboard blocks taps on anything behind it. Dismiss it with key_event 4 before you target a lower-screen control. On Android, back dismisses the keyboard without leaving the app. Then use the fresh screenshot for coordinates.
+5. If the next target is another input field, you can type into it directly without dismissing the keyboard. Only dismiss it with key_event 4 if a button, link, or non-input control you need to tap is blocked behind the keyboard. On Android, back dismisses the keyboard without leaving the app. Then use the fresh screenshot for coordinates.
 6. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 7. Read coordinates from the CURRENT screenshot. Never reuse coordinates from an older screenshot.
 8. Re-read coordinates after any layout change. This includes keyboard changes, navigation, modals, and scrolling.

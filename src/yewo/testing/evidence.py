@@ -13,12 +13,14 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from yewo.agent.actuation.actions import CapabilityKind
+from yewo.agent.device.crash_diagnostics import CrashDiagnostic
 from yewo.agent.run.outcomes import RunStatus
 from yewo.agent.run.postconditions import PostconditionVerification
 from yewo.agent.run.record import StepRecord
 from yewo.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
 from yewo.metrics import Measurement, Metric, definition_for
 from yewo.policy import PolicyCheckReport, policy_checks_succeeded
+from yewo.testing import provider_shapes
 from yewo.testing.lifecycle import LifecycleOperation, LifecycleStatus
 
 
@@ -66,32 +68,9 @@ class SensitiveFinding(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_finding_fields(cls, value):
-        """Reads a finding under the names its two fields arrive with.
-
-        How a value was rendered comes back as `rendering`, `state`, `status`
-        or `type`. `type` is the ambiguous one: it names the value in some
-        answers and its rendering in others. The renderings are a closed set,
-        so which one it carries can be read off rather than guessed.
-
-        A missing name falls back to where the value was seen, which is what
-        the model gave instead of naming it.
-        """
-        if not isinstance(value, dict):
-            return value
-        finding = dict(value)
-        named = finding.pop("type", None)
-        if named in {rendering.value for rendering in Rendering}:
-            finding.setdefault("rendering", named)
-        elif named is not None:
-            finding.setdefault("field", named)
-        for alias in ("state", "status"):
-            if "rendering" not in finding and alias in finding:
-                finding["rendering"] = finding.pop(alias)
-        if "field" not in finding and ("location" in finding or "subject" in finding):
-            finding["field"] = finding.get("location", finding.get("subject"))
-        if finding.get("quoted") is None:
-            finding["quoted"] = ""
-        return finding
+        return provider_shapes.normalize_sensitive_finding(
+            value, frozenset(rendering.value for rendering in Rendering)
+        )
     rendering: Rendering = Field(
         ...,
         description=(
@@ -245,6 +224,11 @@ STATUS_SPELLINGS = {
     "failed": "failed",
     "untested": "untested",
     "not_tested": "untested",
+    "unverified": "untested",
+    "not_applicable": "untested",
+    "n/a": "untested",
+    "na": "untested",
+    "unknown": "untested",
 }
 """How a verdict's status is spelled, mapped to the three that are accepted."""
 
@@ -302,11 +286,9 @@ class ExpectedOutcome(BaseModel):
     @classmethod
     def _normalize_expected_outcome(cls, value):
         """Normalize shorthand and derive the scope of a named metric."""
-        if isinstance(value, str):
-            return {"statement": value}
-        if isinstance(value, dict) and value.get("metric") is not None and "scope" not in value:
-            return {**value, "scope": AssertionScope.MEASURED}
-        return value
+        return provider_shapes.normalize_expected_outcome(
+            value, AssertionScope.MEASURED
+        )
 
     @model_validator(mode="after")
     def _validate_metric_scope(self) -> "ExpectedOutcome":
@@ -341,34 +323,11 @@ class RuleVerification(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_rule_verification(cls, value):
-        """Reads a verdict however the model chose to write it.
-
-        One rejected verdict takes the whole assessment with it, and the
-        verdicts beside it were answers to other rules.
-
-        The gate needs the id and matches it whole. The id is read from any
-        field that holds it and from surrounding text. It stands in for `rule`
-        when only the id was given. An id names its rule as well as the words
-        do.
-
-        An unrecognised status is left alone to be refused. A verdict is the
-        thing being recorded, and guessing at one invents evidence.
-        """
-        if not isinstance(value, dict):
-            return value
+        """Normalize labels while leaving unknown verdicts for Pydantic to reject."""
         from yewo.testing.judge import rules
-
-        verdict = dict(value)
-        found = rules.id_in(verdict.get("rule_id")) or rules.id_in(verdict.get("rule"))
-        if found:
-            verdict["rule_id"] = found
-        if not verdict.get("rule") and verdict.get("rule_id"):
-            verdict["rule"] = verdict["rule_id"]
-        verdict["status"] = STATUS_SPELLINGS.get(
-            str(verdict.get("status", "")).strip().lower().replace(" ", "_"),
-            verdict.get("status"),
+        return provider_shapes.normalize_rule_verification(
+            value, status_spellings=STATUS_SPELLINGS, resolve_rule_id=rules.id_in
         )
-        return verdict
     status: Literal["passed", "failed", "untested"]
     applicable: bool = Field(
         default=True,
@@ -434,6 +393,7 @@ class VerdictInputs(BaseModel):
     postcondition_verifications: List[PostconditionVerification] = Field(
         default_factory=list
     )
+    crash_diagnostic: Optional[CrashDiagnostic] = None
 
 
 class ScenarioReport(BaseModel):
@@ -479,6 +439,10 @@ class ScenarioReport(BaseModel):
     measurements: List[Measurement] = Field(default_factory=list)
     lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
     failure_reason: Optional[str] = None
+    crash_diagnostic: Optional[CrashDiagnostic] = Field(
+        default=None,
+        description="Fatal exception, crash, or ANR extracted from device logs if the app crashed.",
+    )
     verdict_inputs: Optional[VerdictInputs] = Field(
         default=None,
         description=(
