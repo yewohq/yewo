@@ -10,6 +10,15 @@ policy:
     android.debuggable: "Bundled development build used for the example journey"
     android.allow_backup: "Bundled development build contains no production user data"
 workflows:
+  permissions_flow:
+    journeys:
+      - id: permissions_flow_01
+        name: Native Location Permission Flow
+        journey: |
+          A user opens the app and lands directly on the location access screen. They tap
+          the Grant Location Permission button. When the operating system displays the location
+          permission dialog, they tap While using the app. The app opens the home screen,
+          which lists restaurants sorted nearest first.
   restaurant_menu_matrix_smoke:
     targets:
       - id: ios_iphone_17_pro_max

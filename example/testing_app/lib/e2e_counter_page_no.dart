@@ -28,7 +28,7 @@ class E2eCounterPageNo extends StatefulWidget {
 
 class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
   // Navigation State
-  AppScreen _currentScreen = AppScreen.login;
+  AppScreen _currentScreen = AppScreen.requestLocation;
 
   // Global Info / Credentials (saved for reference if needed)
   String _email = '';
@@ -37,7 +37,7 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
   String _phone = '';
 
   // Location State
-  bool _locationPermissionGranted = true;
+  bool _locationPermissionGranted = false;
 
   // Accessibility State (simulating large font scale for audits)
   double _fontScale = 1.0;
@@ -121,7 +121,6 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
       _orderStatus = 'confirming';
       _currentScreen = AppScreen.orderStatus;
     });
-
     _startOrderStatusTimer();
   }
 

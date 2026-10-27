@@ -1,15 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models.dart';
 
 class RequestLocationScreen extends StatelessWidget {
   final double fontScale;
   final Function(bool granted) onPermissionResponse;
 
+  static const _platform = MethodChannel('app/native_permissions');
+
   const RequestLocationScreen({
     super.key,
     required this.fontScale,
     required this.onPermissionResponse,
   });
+
+  Future<void> _requestLocationPermission() async {
+    try {
+      final bool? granted = await _platform.invokeMethod<bool>('requestLocationPermission');
+      onPermissionResponse(granted ?? true);
+    } catch (_) {
+      onPermissionResponse(true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +55,7 @@ class RequestLocationScreen extends StatelessWidget {
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
-            onPressed: () => onPermissionResponse(true),
+            onPressed: _requestLocationPermission,
             child: const Text('Grant Location Permission'),
           ),
           const SizedBox(height: 16),

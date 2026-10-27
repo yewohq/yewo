@@ -117,6 +117,43 @@
       ]
     },
     {
+      "scenario_uuid": "7d1eb323-5746-4fc0-be65-226c1f12fd23",
+      "workflow": "permissions_flow",
+      "journey": "permissions_flow_01",
+      "cell": "functional.happy_path.0",
+      "test_id": "TS_functional_happy_path_0",
+      "category": "functional",
+      "scenario_type": "happy_path",
+      "priority": "P0",
+      "contract_sha256": "e413a9e23a77fc6a032403157b3bded3b82ed0d3bc1d0068f3ebbf26ece7f00f",
+      "scenario_name": "Grant location permission while using app leads to home screen sorted nearest first",
+      "setup": "clear_data",
+      "steps": [
+        {
+          "kind": "action",
+          "instruction": "launch the app"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap Grant Location Permission"
+        },
+        {
+          "kind": "action",
+          "instruction": "tap While using the app"
+        }
+      ],
+      "expected_outcomes": [
+        {
+          "statement": "The home screen is displayed, listing restaurants.",
+          "scope": "current_screen"
+        },
+        {
+          "statement": "The app transitioned from the location access screen to the home screen.",
+          "scope": "transition"
+        }
+      ]
+    },
+    {
       "scenario_uuid": "0eee1836-6572-4d3b-8f7e-4e944f732238",
       "workflow": "restaurant_menu_matrix_smoke",
       "journey": "restaurant_menu_matrix_smoke_01",
