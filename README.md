@@ -317,3 +317,9 @@ What each one holds:
 | `eval_gate.py` | The judging still answers a corpus of labelled cases as it should |
 | `mutation_sweep.py` | Deliberate defects are still caught by something |
 | `type_gate.py` | Pyright, against a per-file baseline |
+
+## Roadmap
+
+Phases 3 through 8 are recorded in the
+[completed roadmap](docs/roadmap_after_2_7.md). Current work is tracked in the
+[post-Phase-8 roadmap](docs/roadmap_after_phase_8.md).
