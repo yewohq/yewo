@@ -14,7 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from yewo.errors import ProviderUnavailable
 
-from . import failures, prompt_cache, prompts, usage
+from . import failures, prompts, usage
 from .prompts import PromptStore
 from .messages import Message, TextMessage
 
@@ -52,8 +52,7 @@ class LLMClient:
                 nothing, which is what a client built outside a run gets.
             cache_affinity: Stable identity for calls in one run. OpenRouter
                 uses it for sticky routing to the endpoint holding a prompt
-                cache. It does not ask for caching. A provider that caches
-                only on request is marked in the message payload instead.
+                cache. It does not ask for caching.
         """
         self._model = model
         self.usage_callback = usage_callback
@@ -209,9 +208,10 @@ class LLMClient:
 
         kwargs: dict = {
             "model": self._model,
-            "messages": prompt_cache.mark_cacheable_prefix(
-                [m.to_dict() for m in request_messages], self._model
-            ),
+            "messages": [message.to_dict() for message in request_messages],
+            "cache_control_injection_points": [
+                {"location": "message", "role": "system"}
+            ],
         }
 
         # These are OpenRouter request fields, not generic LiteLLM fields.
