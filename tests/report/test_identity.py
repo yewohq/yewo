@@ -372,7 +372,7 @@ class ReusedAppTests(unittest.TestCase):
 class GoalRunIdentityTests(unittest.TestCase):
     """A goal run records what it tested on the same terms as a suite does."""
 
-    def _manifest(self, directory, reuse_app):
+    def _manifest(self, directory, reuse_app, grounding="coordinates"):
         from unittest.mock import Mock
 
         from yewo.agent.run import standalone
@@ -388,7 +388,7 @@ class GoalRunIdentityTests(unittest.TestCase):
         )
         agent = SimpleNamespace(
             llm=SimpleNamespace(model="openrouter/m"),
-            grounding="coordinates",
+            grounding=grounding,
             scrubber=Mock(scrub=str),
         )
         return standalone._manifest(
@@ -409,3 +409,11 @@ class GoalRunIdentityTests(unittest.TestCase):
 
         self.assertFalse(app.installed)
         self.assertIsNone(app.artifact_sha256)
+
+    def test_a_marks_run_records_the_default_perception_model(self):
+        from yewo.defaults import DEFAULT_PERCEPTION_MODEL
+
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self._manifest(directory, reuse_app=False, grounding="marks")
+
+        self.assertEqual(manifest.environment.detector, DEFAULT_PERCEPTION_MODEL)

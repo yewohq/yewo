@@ -34,9 +34,36 @@ class GroundingRequirementTests(unittest.TestCase):
 
     def test_an_installed_detector_is_not_reported(self):
         from yewo.preflight import packages_for
+        from yewo.agent.perception.rapidocr_diagnostics import RapidOCRDiagnostic
 
-        with mock.patch("yewo.preflight.missing_vision_packages", return_value=[]):
+        with (
+            mock.patch("yewo.preflight.missing_vision_packages", return_value=[]),
+            mock.patch(
+                "yewo.preflight.diagnose_rapidocr",
+                return_value=RapidOCRDiagnostic("ok", "ready"),
+            ),
+        ):
             self.assertEqual(packages_for("marks"), [])
+
+    def test_a_broken_ocr_runtime_is_refused_before_device_start(self):
+        from yewo.agent.perception.rapidocr_diagnostics import RapidOCRDiagnostic
+        from yewo.preflight import packages_for
+
+        with (
+            mock.patch("yewo.preflight.missing_vision_packages", return_value=[]),
+            mock.patch(
+                "yewo.preflight.diagnose_rapidocr",
+                return_value=RapidOCRDiagnostic(
+                    "provider_missing",
+                    "CPU provider unavailable",
+                    "reinstall vision",
+                ),
+            ),
+        ):
+            refusal = packages_for("marks")
+
+        self.assertIn("CPU provider unavailable", refusal[0])
+        self.assertIn("reinstall vision", refusal[0])
 
 
 class RunRefusalTests(unittest.TestCase):
@@ -59,10 +86,15 @@ class RunRefusalTests(unittest.TestCase):
 
     def test_a_run_with_everything_it_needs_starts(self):
         from yewo.preflight import require_run
+        from yewo.agent.perception.rapidocr_diagnostics import RapidOCRDiagnostic
 
         with (
             mock.patch("yewo.preflight.missing_credentials", return_value=[]),
             mock.patch("yewo.preflight.missing_vision_packages", return_value=[]),
+            mock.patch(
+                "yewo.preflight.diagnose_rapidocr",
+                return_value=RapidOCRDiagnostic("ok", "ready"),
+            ),
         ):
             self.assertIsNone(require_run("some/model", "some/fast", "marks"))
 

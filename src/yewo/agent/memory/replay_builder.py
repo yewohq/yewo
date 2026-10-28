@@ -14,6 +14,7 @@ from yewo.agent.actuation.actions import (
     WaitAction,
 )
 from yewo.agent.memory.replay import REPLAYABLE_KEYCODES
+from yewo.agent.memory.replay_projection import project_actionable_elements
 from yewo.agent.memory.replay_store import (
     BOUNDS_SCALE,
     AnchorContext,
@@ -121,9 +122,13 @@ def _build_destination(
     names: ValueNames,
     key: Optional[bytes],
     description: Optional[str] = None,
+    grounding: str = "",
 ) -> ScreenSignature:
     """Build the screen contract that a transition must reach."""
-    anchors = tuple(anchor for anchor in anchors_of(elements, scan, names, key) if anchor.text)
+    projected_elements = project_actionable_elements(elements, scan, grounding)
+    anchors = tuple(
+        anchor for anchor in anchors_of(projected_elements, scan, names, key) if anchor.text
+    )
     source_identities = {(anchor.role, anchor.text) for anchor in source.anchors}
     arrived_identities = {(anchor.role, anchor.text) for anchor in anchors if anchor.text}
     return ScreenSignature(
@@ -131,6 +136,7 @@ def _build_destination(
         anchors=anchors,
         element_count=scan.element_count,
         phash=scan.phash,
+        keyboard_visible=scan.keyboard_effective_visible,
         distinguishing=tuple(sorted(arrived_identities - source_identities)),
     )
 
@@ -158,7 +164,10 @@ def build_trace(
             break
         before_elements, before_scan = before
         after_elements, after_scan = after
-        detected_anchors = anchors_of(before_elements, before_scan, names, key)
+        projected_before_elements = project_actionable_elements(
+            before_elements, before_scan, identity.grounding
+        )
+        detected_anchors = anchors_of(projected_before_elements, before_scan, names, key)
         source_anchors = (
             detected_anchors
             if isinstance(action, WaitAction)
@@ -173,6 +182,7 @@ def build_trace(
             anchors=source_anchors,
             element_count=before_scan.element_count,
             phash=before_scan.phash,
+            keyboard_visible=before_scan.keyboard_effective_visible,
         )
         if not source.anchors and not (source.description and source.phash):
             logger.info(
@@ -232,6 +242,7 @@ def build_trace(
                         if screen_descriptions and position < len(screen_descriptions)
                         else None
                     ),
+                    grounding=identity.grounding,
                 ),
                 arrival_ms=_arrival_ms_at(arrival_ms, position),
             )

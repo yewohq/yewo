@@ -9,7 +9,8 @@ from yewo.setup.steps import (
     install_applesimutils,
     install_driver,
     install_vision,
-    prefetch_models,
+    prefetch_detector,
+    verify_rapidocr,
 )
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "install_applesimutils",
     "install_driver",
     "install_vision",
-    "prefetch_models",
+    "prefetch_detector",
+    "verify_rapidocr",
 ]

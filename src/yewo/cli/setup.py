@@ -62,7 +62,8 @@ def run(args: argparse.Namespace, config: Config) -> int:
         install_applesimutils,
         install_driver,
         install_vision,
-        prefetch_models,
+        prefetch_detector,
+        verify_rapidocr,
     )
 
     platforms = config.platforms(args.platform)
@@ -101,9 +102,11 @@ def run(args: argparse.Namespace, config: Config) -> int:
     console.heading("Vision")
     vision_results = [install_vision(ctx)]
     if skip_models:
-        console.result("skip", "model weights", "skipped (--skip-models)")
+        console.result("skip", "detector model", "skipped (--skip-models)")
+        console.result("skip", "RapidOCR", "skipped (--skip-models)")
     else:
-        vision_results.append(prefetch_models(ctx))
+        vision_results.append(prefetch_detector(ctx, config.get("perception_model")))
+        vision_results.append(verify_rapidocr(ctx))
     _report(console, vision_results)
     steps.extend(vision_results)
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from yewo import __version__
+from yewo.agent.perception.rapidocr_diagnostics import diagnose_rapidocr
 from yewo.defaults import DEFAULT_MODEL
 from yewo.utils.platform_checks import MIN_EMULATOR_FREE_GB, free_disk_gb
 from yewo.utils.subprocess_runner import run_command
@@ -107,6 +108,35 @@ def check_vision_deps() -> CheckResult:
         Status.FAIL,
         f"missing: {', '.join(missing)}",
         "yewo setup   (or: uv sync --extra vision)",
+    )
+
+
+def check_rapidocr_runtime() -> CheckResult:
+    """Inspect the pinned OCR runtime without initializing or downloading models."""
+    missing = missing_vision_packages()
+    unavailable = [package for package in ("rapidocr", "onnxruntime") if package in missing]
+    if unavailable:
+        return CheckResult(
+            "RapidOCR runtime",
+            Status.SKIP,
+            f"cannot inspect while missing: {', '.join(unavailable)}",
+        )
+    diagnostic = diagnose_rapidocr()
+    if not diagnostic.is_ok:
+        return CheckResult(
+            "RapidOCR runtime",
+            Status.FAIL,
+            diagnostic.detail,
+            diagnostic.hint,
+        )
+    versions = dict(diagnostic.versions)
+    version_detail = ", ".join(
+        f"{package} {versions[package]}" for package in ("rapidocr", "onnxruntime")
+    )
+    return CheckResult(
+        "RapidOCR runtime",
+        Status.OK,
+        f"{version_detail}; {', '.join(diagnostic.providers)}",
     )
 
 
@@ -382,6 +412,7 @@ def run_checks(platforms: tuple[str, ...] = ("android", "ios")) -> list[CheckSec
                 check_python(),
                 check_yewo(),
                 check_vision_deps(),
+                check_rapidocr_runtime(),
                 check_credentials(),
                 check_disk_space(),
             ],

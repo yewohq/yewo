@@ -25,10 +25,10 @@ from yewo.agent.run.postconditions import (
 )
 
 logger = logging.getLogger(__name__)
-SCHEMA = 1
+SCHEMA = 2
 """The shape of the file. A reader refuses a schema it does not know."""
 
-MATCHER = 1
+MATCHER = 2
 """How an anchor is compared. Separate from the schema, because the same file
 can be read by a stricter matcher, and then it must not be trusted."""
 
@@ -158,6 +158,7 @@ class ScreenSignature(BaseModel):
     anchors: Tuple[ElementAnchor, ...] = ()
     element_count: int = 0
     phash: Optional[str] = None
+    keyboard_visible: Optional[bool] = Field(default=None, description="Effective keyboard state.")
     distinguishing: Tuple[Tuple[str, str], ...] = Field(
         default=(),
         description=(
@@ -297,6 +298,7 @@ class TraceIdentity(BaseModel):
     platform: str
     target_profile: str
     detector: str
+    perception_pipeline: str = Field(min_length=1, description="Perception pipeline identity.")
     grounding: str
 
 

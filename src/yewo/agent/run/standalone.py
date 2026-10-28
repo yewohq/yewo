@@ -6,10 +6,12 @@ from pathlib import Path
 
 from yewo import __version__, identity
 from yewo.agent.device.platform import Platform
+from yewo.agent.grounding import GROUNDING_MARKS
 from yewo.agent.device.session import DeviceSession
 from yewo.agent.perception.blind import for_grounding
 from yewo.agent.run.outcomes import DeviceRunResult
 from yewo.llm.prompts import PromptStore
+from yewo.defaults import DEFAULT_PERCEPTION_MODEL
 from yewo.testing import sensitivity
 from yewo.testing.report.usage_tracker import LLMUsageTracker
 
@@ -31,6 +33,7 @@ def run_goal(
     keep_device: bool = False,
     reuse_app: bool = False,
     persist_inputs: bool = True,
+    perception_model: str | None = None,
 ) -> DeviceRunResult:
     """Opens a session, runs the goal against it, and closes it either way.
 
@@ -67,11 +70,13 @@ def run_goal(
     manifest = None
     try:
         device_control = session.start(is_headless=headless)
-        manifest = _manifest(session, agent, goal, platform, device_control)
+        manifest = _manifest(
+            session, agent, goal, platform, device_control, perception_model
+        )
         result = agent.run(
             goal=goal,
             device_control=device_control,
-            perception=for_grounding(agent.grounding, session),
+            perception=for_grounding(agent.grounding, session, perception_model),
             session_dir=session.screenshots_dir,
         )
         manifest.record_unattached_calls(usage.calls_outside_steps(AGENT))
@@ -89,7 +94,14 @@ def run_goal(
         session.close()
 
 
-def _manifest(session, agent, goal: str, platform: Platform, device_control):
+def _manifest(
+    session,
+    agent,
+    goal: str,
+    platform: Platform,
+    device_control,
+    perception_model: str | None = None,
+):
     """The record for this run, opened as soon as the device answers."""
     from yewo.testing.models import RunEnvironment
     from yewo.testing.report.manifest import RunInputs, RunManifest, RunSubject
@@ -108,6 +120,11 @@ def _manifest(session, agent, goal: str, platform: Platform, device_control):
             model=agent.llm.model,
             platform=platform.value,
             grounding=agent.grounding,
+            detector=(
+                perception_model or DEFAULT_PERCEPTION_MODEL
+                if agent.grounding == GROUNDING_MARKS
+                else None
+            ),
             app=identity.app_identity(session.app_path, installed=not session.reuse_app),
             device=identity.device_identity(device_control),
             git=identity.git_identity(),

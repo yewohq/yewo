@@ -32,7 +32,7 @@ def element(text, role="button", box=(100, 100, 300, 200)):
     )
 
 
-def scan(count=1, phash="p"):
+def scan(count=1, phash="p", **updates):
     return ScanInfo(
         mode="detect",
         reason="step",
@@ -40,6 +40,7 @@ def scan(count=1, phash="p"):
         screen_width=WIDTH,
         screen_height=HEIGHT,
         element_count=count,
+        **updates,
     )
 
 
@@ -94,6 +95,7 @@ def identity():
         platform="android",
         target_profile="Pixel_8",
         detector="d@abc",
+        perception_pipeline="test-pipeline",
         grounding="marks",
     )
 

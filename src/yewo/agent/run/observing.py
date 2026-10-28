@@ -3,8 +3,8 @@
 import logging
 import time
 
-from yewo.agent.actuation.actions import ActionType
 from yewo.agent.device import state
+from yewo.agent.perception import keyboard
 from yewo.agent.step import narration, observation
 
 logger = logging.getLogger(__name__)
@@ -23,18 +23,22 @@ def capture(agent, step, device_control, perception, session_dir, session_trail,
     snapshot = observation.capture(perception, session_trail, ctx.prev_phash)
     if snapshot.scan_info is not None:
         ctx.screen_height = snapshot.scan_info.screen_height
+    native_keyboard = device_control.is_keyboard_open()
+    keyboard_observation = keyboard.observe(snapshot.gui_elements, native_keyboard)
+    snapshot.keyboard_observation = keyboard_observation
+    ctx.keyboard_open = keyboard_observation.effective_visible
+    if not keyboard_observation.visual_visible:
+        ctx.keyboard_targets_expanded = False
+    if snapshot.scan_info is not None:
+        snapshot.scan_info.keyboard_native_visible = native_keyboard
+        snapshot.scan_info.keyboard_visual_visible = keyboard_observation.visual_visible
+        snapshot.scan_info.keyboard_effective_visible = keyboard_observation.effective_visible
+        snapshot.scan_info.keyboard_owned_count = len(keyboard_observation.owned_elements)
+        snapshot.scan_info.keyboard_state_disagrees = keyboard_observation.state_disagrees
+        snapshot.scan_info.keyboard_targets_expanded = ctx.keyboard_targets_expanded
     agent.images.clear_after_navigation(snapshot.scan_info)
     ctx.current_phash = snapshot.current_phash
     ctx.steps.files(agent.artifacts.save_step(session_dir, step, snapshot))
-
-    moved = snapshot.scan_info and snapshot.scan_info.reason in (
-        "navigation",
-        "layout_shift",
-    )
-    if moved or ctx.last_action_type == ActionType.TYPE.value:
-        detected = device_control.is_keyboard_open()
-        if detected is not None:
-            ctx.keyboard_open = detected
 
     ctx.history.update_last_reaction(
         narration.reaction(snapshot.scan_info, ctx.prev_element_count, ctx.keyboard_open)

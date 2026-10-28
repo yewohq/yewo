@@ -31,8 +31,13 @@ dependencies = [
 # out of the base install and fetched on demand. See yewo.utils.vision_deps.
 vision = [
     "ultralytics>=8.0.0",
-    "easyocr>=1.6.0",
     "huggingface-hub>=0.16.0",
+    "rapidocr==3.10.0",
+    "onnxruntime==1.31.1",
+]
+# Retains the legacy engine only for explicit comparison tools.
+perception-eval = [
+    "easyocr>=1.6.0",
 ]
 # The decision model is reached through its own SDK. See yewo.utils.jev_deps.
 jev = [

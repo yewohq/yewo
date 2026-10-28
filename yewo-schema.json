@@ -1007,6 +1007,20 @@
           "default": null,
           "title": "Model"
         },
+        "perception_model": {
+          "anyOf": [
+            {
+              "pattern": "^hf://[^/@\\s]+/[^@\\s]+@[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Pinned Hugging Face detector package.",
+          "title": "Perception Model"
+        },
         "fast_model": {
           "anyOf": [
             {
@@ -1426,6 +1440,20 @@
       ],
       "default": null,
       "title": "Model"
+    },
+    "perception_model": {
+      "anyOf": [
+        {
+          "pattern": "^hf://[^/@\\s]+/[^@\\s]+@[0-9a-f]{40}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Pinned Hugging Face detector package.",
+      "title": "Perception Model"
     },
     "fast_model": {
       "anyOf": [

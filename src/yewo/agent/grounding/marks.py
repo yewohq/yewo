@@ -38,6 +38,8 @@ CONTAINED_FRACTION = 0.90
 # A box bigger than this is a layout region, not a control, so it keeps its parts.
 MAX_CONTAINER_FRACTION = 0.25
 ROW_BAND = 25
+TARGET_PROJECTION_VERSION = 1
+"""Version of the raw-detection to actionable-target projection."""
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,18 @@ class Mark:
             return self.point
         box = self.element.bounding_box
         return (box.x_min + box.x_max) // 2, (box.y_min + box.y_max) // 2
+
+
+@dataclass(frozen=True)
+class TargetProjection:
+    """Planner-selectable controls and keyboard-owned screen elements."""
+
+    marks: tuple[Mark, ...]
+    keyboard_elements: tuple[GUIElement, ...]
+
+    @property
+    def actionable_elements(self) -> tuple[GUIElement, ...]:
+        return tuple(mark.element for mark in self.marks)
 
 
 Box = tuple[int, int, int, int]
@@ -292,6 +306,26 @@ def build(elements: List[GUIElement], screen_area: int = 0) -> List[Mark]:
     ]
 
 
+def project_targets(
+    elements: Sequence[GUIElement],
+    screen_width: int,
+    screen_height: int,
+    keyboard_open: Optional[bool],
+    include_keyboard_targets: bool = False,
+) -> TargetProjection:
+    """Build the one actionable target view shared by planning and replay."""
+    target_elements, keyboard_elements = keyboard.target_elements(
+        elements,
+        keyboard_open,
+        include_keyboard_targets=include_keyboard_targets,
+    )
+    screen_area = max(0, screen_width) * max(0, screen_height)
+    return TargetProjection(
+        marks=tuple(build(target_elements, screen_area=screen_area)),
+        keyboard_elements=tuple(keyboard_elements),
+    )
+
+
 def find(marks: Sequence[Mark], index: int) -> Optional[Mark]:
     """The mark with this number, or None if the model named one that isn't there."""
     for mark in marks:
@@ -430,6 +464,7 @@ def number(
     keyboard_open: Optional[bool],
     screen_height: Optional[int],
     refused: Sequence[Box] = (),
+    include_keyboard_targets: bool = False,
 ) -> tuple[List[Mark], bytes]:
     """The numbered targets, and the screenshot carrying their numbers.
 
@@ -437,19 +472,29 @@ def number(
     see. A place that already refused text keeps its number and is marked, so
     the planner is told rather than left to choose it again.
     """
-    targets, keys = keyboard.split_keyboard(elements, keyboard_open, screen_height)
     image = Image.open(io.BytesIO(screenshot))
     width, height = image.size
+    projection = project_targets(
+        elements,
+        screen_width=width,
+        screen_height=screen_height or height,
+        keyboard_open=keyboard_open,
+        include_keyboard_targets=include_keyboard_targets,
+    )
 
     built = [
         replace(mark, refuses_text=True)
         if any(is_same_element(mark.element, box) for box in refused)
         else mark
-        for mark in build(targets, screen_area=width * height)
+        for mark in projection.marks
     ]
 
     numbered = io.BytesIO()
-    render(image, built, band=keyboard.keyboard_band(keys, width)).save(
+    render(
+        image,
+        built,
+        band=keyboard.keyboard_band(list(projection.keyboard_elements), width),
+    ).save(
         numbered, format="PNG"
     )
     return built, numbered.getvalue()

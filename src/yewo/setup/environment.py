@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-VISION_PACKAGES = ("ultralytics", "easyocr", "huggingface-hub")
+from yewo.utils.vision_deps import VISION_INSTALL_REQUIREMENTS
 
 
 class InstallKind(str, Enum):
@@ -51,12 +51,19 @@ class Environment:
             return ["uv", "sync", "--extra", "vision"]
 
         if self.kind is InstallKind.PIPX and shutil.which("pipx"):
-            return ["pipx", "inject", "yewo-ai", *VISION_PACKAGES]
+            return ["pipx", "inject", "yewo-ai", *VISION_INSTALL_REQUIREMENTS]
 
         if shutil.which("uv"):
-            return ["uv", "pip", "install", "--python", sys.executable, *VISION_PACKAGES]
+            return [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                sys.executable,
+                *VISION_INSTALL_REQUIREMENTS,
+            ]
 
-        return [sys.executable, "-m", "pip", "install", *VISION_PACKAGES]
+        return [sys.executable, "-m", "pip", "install", *VISION_INSTALL_REQUIREMENTS]
 
     @property
     def install_cwd(self) -> Optional[Path]:

@@ -162,7 +162,7 @@ class MarkTests(unittest.TestCase):
 class KeyboardMarkTests(unittest.TestCase):
     """An open keyboard is most of the screen, and numbering it buries the app."""
 
-    def _el(self, text, y):
+    def _el(self, text, y, *roles):
         from yewo.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
@@ -170,6 +170,7 @@ class KeyboardMarkTests(unittest.TestCase):
             type="yolo_detection",
             confidence=0.9,
             text=text,
+            semantic_roles=frozenset(roles),
             bounding_box=BoundingBox(x_min=10, y_min=y, x_max=60, y_max=y + 40),
         )
 
@@ -177,8 +178,8 @@ class KeyboardMarkTests(unittest.TestCase):
         return [
             self._el("Email Address", 800),
             self._el("Login", 1300),
-            *[self._el(letter, 1800) for letter in "qwertyuiop"],
-            self._el("?!", 2200),
+            *[self._el(letter, 1800, "keyboard_key") for letter in "qwertyuiop"],
+            self._el("?!", 2200, "keyboard_key"),
         ]
 
     def test_keys_are_not_numbered_while_the_keyboard_is_open(self):
@@ -190,13 +191,13 @@ class KeyboardMarkTests(unittest.TestCase):
 
         self.assertEqual(texts, ["Email Address", "Login"])
 
-    def test_everything_is_numbered_when_the_keyboard_is_closed(self):
+    def test_visual_semantics_override_a_stale_native_closed_state(self):
         from yewo.agent.grounding.marks import build
         from yewo.agent.perception.keyboard import without_keyboard_keys
 
         kept = without_keyboard_keys(self._screen(), keyboard_open=False, screen_height=2400)
 
-        self.assertEqual(len(build(kept)), len(self._screen()))
+        self.assertEqual([mark.element.text for mark in build(kept)], ["Email Address", "Login"])
 
     def test_a_long_label_low_on_screen_is_not_mistaken_for_a_key(self):
         from yewo.agent.perception.keyboard import without_keyboard_keys
@@ -367,15 +368,19 @@ class KeyboardBandTests(unittest.TestCase):
             type="yolo_detection",
             confidence=0.9,
             text=text,
+            semantic_roles=frozenset({"keyboard_key"}),
             bounding_box=BoundingBox(x_min=10, y_min=y, x_max=60, y_max=y + 40),
         )
+
+    def _app_control(self, text, y):
+        return self._key(text, y).model_copy(update={"semantic_roles": frozenset()})
 
     def test_the_band_spans_the_keys(self):
         from yewo.agent.perception.keyboard import keyboard_band
 
         band = keyboard_band([self._key("q", 1800), self._key("m", 2200)], 1080)
 
-        self.assertEqual(band, (0, 1800, 1080, 2240))
+        self.assertEqual(band, (10, 1800, 60, 2240))
 
     def test_there_is_no_band_without_a_keyboard(self):
         from yewo.agent.perception.keyboard import keyboard_band
@@ -383,7 +388,7 @@ class KeyboardBandTests(unittest.TestCase):
         self.assertIsNone(keyboard_band([], 1080))
 
     def test_a_wide_key_inside_the_band_is_absorbed(self):
-        """ "?123" and "space" are too long for the label rule but sit among the keys."""
+        """Semantic keys do not depend on label length."""
         from yewo.agent.perception.keyboard import split_keyboard
 
         elements = [
@@ -400,7 +405,11 @@ class KeyboardBandTests(unittest.TestCase):
     def test_an_app_control_above_the_keyboard_survives(self):
         from yewo.agent.perception.keyboard import split_keyboard
 
-        elements = [self._key("Place Order", 1400), self._key("q", 1700), self._key("m", 2200)]
+        elements = [
+            self._app_control("Place Order", 1400),
+            self._key("q", 1700),
+            self._key("m", 2200),
+        ]
 
         kept, keys = split_keyboard(elements, keyboard_open=True, screen_height=2400)
 

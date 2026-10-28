@@ -182,6 +182,7 @@ class SemanticReplayTests(unittest.TestCase):
                 platform="android",
                 target_profile="Pixel",
                 detector="",
+                perception_pipeline="test-pipeline",
                 grounding="coordinates",
             ),
             steps,

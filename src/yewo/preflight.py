@@ -7,6 +7,7 @@ missing things cost one message rather than two boot cycles.
 
 from typing import Optional
 
+from yewo.agent.perception.rapidocr_diagnostics import diagnose_rapidocr
 from yewo.agent.grounding import (
     GROUNDING_DESCRIBE,
     GROUNDING_MARKS,
@@ -51,7 +52,15 @@ def packages_for(grounding: str) -> list[str]:
         return []
 
     if not absent:
-        return []
+        if grounding != GROUNDING_MARKS:
+            return []
+        diagnostic = diagnose_rapidocr()
+        if diagnostic.is_ok:
+            return []
+        return [
+            f"grounding={grounding} cannot use RapidOCR: {diagnostic.detail}.\n"
+            f"  {diagnostic.hint}"
+        ]
     return [f"{why}, which needs {', '.join(absent)}.\n" + hint.replace("\n", "\n  ")]
 
 

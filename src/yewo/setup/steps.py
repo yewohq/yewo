@@ -8,20 +8,16 @@ behind, and the remaining steps still run.
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from importlib import invalidate_caches
 from pathlib import Path
 from typing import Callable, Optional
 
-from yewo.agent.perception.detector import (
-    OCR_LANGUAGES,
-    YOLO_FILENAME,
-    YOLO_REPO_ID,
-    YOLO_REVISION,
-)
+from yewo.agent.perception.rapidocr_diagnostics import diagnose_rapidocr
 from yewo.cli.console import FAIL, INFO, OK, SKIP, WARN
-from yewo.defaults import DEFAULT_MODEL
+from yewo.defaults import DEFAULT_MODEL, DEFAULT_PERCEPTION_MODEL
 from yewo.doctor import Status, check_appium_driver, is_macos
 from yewo.utils.subprocess_runner import run_command
-from yewo.utils.vision_deps import vision_available
+from yewo.utils.vision_deps import vision_available, vision_installation_satisfies_contract
 
 ENV_FILENAME = ".env"
 
@@ -33,17 +29,17 @@ OPENROUTER_API_KEY=
 # Other providers work too; pass --model to use them.
 # GEMINI_API_KEY=
 # ANTHROPIC_API_KEY=
+
+# Required while the configured perception model repository is private.
+# HF_TOKEN=
 """
 
-PREFETCH_SCRIPT = f"""\
-from huggingface_hub import hf_hub_download
-import easyocr
-
-hf_hub_download(
-    repo_id={YOLO_REPO_ID!r}, filename={YOLO_FILENAME!r}, revision={YOLO_REVISION!r}
-)
-easyocr.Reader({OCR_LANGUAGES!r}, gpu=False)
-"""
+def _detector_prefetch_script(model_reference: str | None) -> str:
+    reference = model_reference or DEFAULT_PERCEPTION_MODEL
+    return (
+        "from yewo.agent.perception.model_package import resolve_model_package\n"
+        f"resolve_model_package({reference!r})\n"
+    )
 
 
 @dataclass
@@ -139,7 +135,9 @@ def install_appium(ctx: SetupContext) -> StepResult:
 
     ctx.log("Installing Appium (this takes a minute)...")
     if _run_visible(command) != 0:
-        return StepResult(FAIL, "appium", "npm install failed", f"Try manually: {' '.join(command)}")
+        return StepResult(
+            FAIL, "appium", "npm install failed", f"Try manually: {' '.join(command)}"
+        )
     return StepResult(OK, "appium", "installed")
 
 
@@ -206,9 +204,7 @@ def install_applesimutils(ctx: SetupContext) -> StepResult:
     ctx.log("Installing applesimutils...")
     for command in steps:
         if _run_visible(command) != 0:
-            return StepResult(
-                FAIL, label, "install failed", f"Try manually: {' '.join(command)}"
-            )
+            return StepResult(FAIL, label, "install failed", f"Try manually: {' '.join(command)}")
     return StepResult(OK, label, "installed")
 
 
@@ -216,7 +212,7 @@ def install_vision(ctx: SetupContext) -> StepResult:
     """Adds the vision extra to whichever environment Yewo is installed in."""
     from yewo.setup.environment import detect_environment
 
-    if vision_available():
+    if vision_installation_satisfies_contract():
         return StepResult(OK, "vision deps", "already installed")
 
     environment = detect_environment()
@@ -226,8 +222,8 @@ def install_vision(ctx: SetupContext) -> StepResult:
             FAIL,
             "vision deps",
             f"cannot install into {environment.description}",
-            "Install uv (https://docs.astral.sh/uv/) or add ultralytics, easyocr and "
-            "huggingface-hub yourself",
+            "Install uv (https://docs.astral.sh/uv/) or add ultralytics, rapidocr, "
+            "onnxruntime and huggingface-hub yourself",
         )
 
     if ctx.dry_run:
@@ -238,34 +234,66 @@ def install_vision(ctx: SetupContext) -> StepResult:
     ):
         return _declined("vision deps", command)
 
-    ctx.log(f"Installing ultralytics, easyocr and huggingface-hub into the {environment.description}...")
+    ctx.log(
+        "Installing ultralytics, RapidOCR, ONNX Runtime and "
+        f"huggingface-hub into the {environment.description}..."
+    )
     if _run_visible(command, cwd=environment.install_cwd) != 0:
         return StepResult(
             FAIL, "vision deps", "install failed", f"Try manually: {' '.join(command)}"
         )
+    invalidate_caches()
     return StepResult(OK, "vision deps", "installed")
 
 
-def prefetch_models(ctx: SetupContext) -> StepResult:
-    """Downloads the YOLO and OCR weights so the first run is not a silent wait."""
+def prefetch_detector(
+    ctx: SetupContext,
+    model_reference: str | None = None,
+) -> StepResult:
+    """Download and validate the configured detector package."""
     if not vision_available():
-        return StepResult(SKIP, "model weights", "vision deps not installed")
+        return StepResult(SKIP, "detector model", "vision deps not installed")
+    model_name = model_reference or DEFAULT_PERCEPTION_MODEL
     if ctx.dry_run:
-        return StepResult(INFO, "model weights", f"would prefetch {YOLO_REPO_ID} and EasyOCR")
-    if not ctx.approved("Download the YOLO and EasyOCR weights now (several hundred MB)?"):
+        return StepResult(INFO, "detector model", f"would prefetch {model_name}")
+    if not ctx.approved("Download and validate the detector model now?"):
         return StepResult(
-            WARN, "model weights", "skipped", "They will download on the first run instead"
+            WARN,
+            "detector model",
+            "skipped",
+            "It will download on the first run instead",
         )
 
     # Runs out-of-process: the vision packages may have been installed moments
     # ago, and importing them here would mean importing into a mid-change env.
-    command = [sys.executable, "-c", PREFETCH_SCRIPT]
-    ctx.log("Downloading YOLO and EasyOCR weights (several hundred MB, cached afterwards)...")
+    command = [sys.executable, "-c", _detector_prefetch_script(model_reference)]
+    ctx.log(f"Downloading and validating {model_name}...")
     if _run_visible(command) != 0:
         return StepResult(
-            WARN,
-            "model weights",
-            "prefetch failed",
-            "They will download on the first run instead",
+            FAIL,
+            "detector model",
+            "download or validation failed",
+            "Check the model reference and HF_TOKEN, then run yewo setup again",
         )
-    return StepResult(OK, "model weights", "cached")
+    return StepResult(OK, "detector model", "cached and validated")
+
+
+def verify_rapidocr(ctx: SetupContext) -> StepResult:
+    """Initialize RapidOCR and validate one inference in an isolated process."""
+    if not vision_available():
+        return StepResult(SKIP, "RapidOCR", "vision deps not installed")
+    if ctx.dry_run:
+        return StepResult(INFO, "RapidOCR", "would run the isolated smoke test")
+    if not ctx.approved("Initialize and test RapidOCR now?"):
+        return StepResult(
+            WARN,
+            "RapidOCR",
+            "skipped",
+            "Run yewo setup again before the first marks-based test",
+        )
+
+    ctx.log("Initializing RapidOCR and running one inference...")
+    diagnostic = diagnose_rapidocr(smoke_test=True)
+    if not diagnostic.is_ok:
+        return StepResult(FAIL, "RapidOCR", diagnostic.detail, diagnostic.hint)
+    return StepResult(OK, "RapidOCR", f"{diagnostic.identity}; smoke test passed")

@@ -203,6 +203,8 @@ class QAPlanner(DevicePlanner):
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
+        screen_text: tuple[str, ...] = (),
+        ocr_evidence=(),
     ) -> QAStepResponse:
         from yewo.utils.redactor import safe_text
 
@@ -221,10 +223,15 @@ class QAPlanner(DevicePlanner):
             keyboard_open=keyboard_open,
             marks=marks,
             screen_height=screen_height,
+            screen_text=screen_text,
         )
 
         messages = self._model_messages(
-            stable_prompt, current_state, current_image_bytes, gui_elements
+            stable_prompt,
+            current_state,
+            current_image_bytes,
+            gui_elements,
+            ocr_evidence,
         )
 
         logger.info("Querying QAPlanner for the next action...")
@@ -251,6 +258,7 @@ class QAPlanner(DevicePlanner):
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
+        screen_text: tuple[str, ...] = (),
     ) -> str:
         stable_prompt, current_state = self._build_qa_prompt_sections(
             goal_lines=goal_lines,
@@ -262,6 +270,7 @@ class QAPlanner(DevicePlanner):
             keyboard_open=keyboard_open,
             marks=marks,
             screen_height=screen_height,
+            screen_text=screen_text,
         )
         return stable_prompt + current_state
 
@@ -276,6 +285,7 @@ class QAPlanner(DevicePlanner):
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
+        screen_text: tuple[str, ...] = (),
     ) -> tuple[str, str]:
         stable_prompt = (
             PROMPT
@@ -298,6 +308,8 @@ class QAPlanner(DevicePlanner):
             ),
             history=history or "No actions executed yet.",
         )
+        if screen_text:
+            current_state += self._format_screen_text(screen_text)
         if drift_warning:
             current_state += DRIFT_SECTION.format(drift=drift_warning)
         if trail:

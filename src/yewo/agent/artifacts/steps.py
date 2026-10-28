@@ -34,6 +34,22 @@ class StepArtifacts:
         self.images = images
         self.scrubber = scrubber
 
+    @staticmethod
+    def _redaction_evidence(
+        snapshot: PerceptionSnapshot,
+        *,
+        planner_view: bool = False,
+    ) -> list:
+        frame = (
+            getattr(snapshot, "planner_perception_frame", None)
+            if planner_view
+            else getattr(snapshot, "perception_frame", None)
+        )
+        elements = getattr(snapshot, "planner_elements", None) if planner_view else snapshot.gui_elements
+        elements = elements if elements is not None else snapshot.gui_elements
+        ocr_evidence = frame.ocr_redaction_evidence() if frame is not None else ()
+        return [*elements, *ocr_evidence]
+
     def save_step(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot
     ) -> dict[str, str]:
@@ -51,7 +67,7 @@ class StepArtifacts:
         self.images.save_redacted_pair(
             snapshot.annotated_img,
             snapshot.raw_img_bytes,
-            snapshot.gui_elements,
+            self._redaction_evidence(snapshot),
             annotated_path,
             raw_path,
         )
@@ -72,6 +88,7 @@ class StepArtifacts:
             },
             prev_phash=snapshot.prev_phash,
             scrubber=self.scrubber,
+            perception_frame=getattr(snapshot, "perception_frame", None),
         )
         write_screen_scan_dump(scan_path, record)
         logger.debug("Perception scan dump saved to %s", scan_path)
@@ -94,9 +111,7 @@ class StepArtifacts:
         marked = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_marks.png"
         self.images.save_redacted_bytes(
             planner_view,
-            getattr(snapshot, "planner_elements", None)
-            if getattr(snapshot, "planner_elements", None) is not None
-            else snapshot.gui_elements,
+            self._redaction_evidence(snapshot, planner_view=True),
             marked,
         )
         return marked.name
@@ -108,9 +123,7 @@ class StepArtifacts:
         if snapshot.refinement is None:
             return {}
         session_dir.mkdir(parents=True, exist_ok=True)
-        path = session_dir / (
-            f"step{step + 1:03d}_{snapshot.timestamp}_refinement.json"
-        )
+        path = session_dir / (f"step{step + 1:03d}_{snapshot.timestamp}_refinement.json")
         path.write_text(
             json.dumps(snapshot.refinement, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -129,7 +142,7 @@ class StepArtifacts:
         """
         click_path = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_action.png"
         drawn = self.images.save_redacted_action_annotation(
-            snapshot.annotated_img, snapshot.gui_elements, action, click_path
+            snapshot.annotated_img, self._redaction_evidence(snapshot), action, click_path
         )
         return click_path.name if drawn else None
 
@@ -142,7 +155,9 @@ def save_unmatched_screen(images: RedactedImages, path: Path, snapshot) -> None:
     """
     try:
         images.save_redacted_bytes(
-            snapshot.raw_img_bytes, snapshot.gui_elements, path
+            snapshot.raw_img_bytes,
+            StepArtifacts._redaction_evidence(snapshot),
+            path,
         )
     except Exception as exc:  # noqa: BLE001 - an artifact must never fail a run
         logger.warning("Could not save the unmatched screen: %s", exc)

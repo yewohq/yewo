@@ -46,6 +46,10 @@ class YewoCLI:
         parser.add_argument("--max-steps", type=int, help="Max steps per test scenario execution")
         parser.add_argument("--settle-time", type=float, help="Settle time after actions")
         parser.add_argument("--model", help="LiteLLM model to use")
+        parser.add_argument(
+            "--perception-model",
+            help="Pinned detector package: hf://owner/repository@commit",
+        )
         parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for ReAct step planning")
         parser.add_argument("--headless", action="store_true", default=None, help="Run android emulator headlessly")
         parser.add_argument(

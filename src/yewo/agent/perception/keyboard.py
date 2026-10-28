@@ -1,108 +1,163 @@
-"""Telling the soft keyboard's own keys from the app's controls.
+"""Keyboard ownership policy over model-declared semantic roles.
 
-YOLO has no class for a keyboard, so this is geometry: low on the screen with
-a label too short to be a sentence.
+This module does not detect keyboards and contains no platform or screen-position
+rules. The model identifies keyboard regions and keys; this policy keeps them
+separate from ordinary app controls and expands visual keys when the planner asks.
 """
 
 import logging
 from copy import copy
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import List, Optional, Sequence
 
-from yewo.agent.perception.elements import GUIElement
+from yewo.agent.perception.elements import BoundingBox, GUIElement
 
 logger = logging.getLogger(__name__)
 
-KEYBOARD_TOP_FRACTION = 0.60
-"""Where the keyboard starts, as a fraction of screen height."""
+KEYBOARD_REGION_ROLE = "keyboard_region"
+KEYBOARD_KEY_ROLE = "keyboard_key"
 
-KEY_LABEL_LENGTH = 2
-"""A label this short on a key-shaped box is a key, not a control."""
+
+@dataclass(frozen=True)
+class KeyboardObservation:
+    """Visual/native keyboard evidence and the elements owned by the keyboard."""
+
+    native_visible: Optional[bool]
+    visual_visible: bool
+    effective_visible: bool
+    regions: tuple[BoundingBox, ...]
+    app_elements: tuple[GUIElement, ...]
+    owned_elements: tuple[GUIElement, ...]
+    key_elements: tuple[GUIElement, ...]
+
+    @property
+    def state_disagrees(self) -> bool:
+        return self.native_visible is not None and self.native_visible != self.visual_visible
+
+
+def _has_role(element: GUIElement, role: str) -> bool:
+    return role in getattr(element, "semantic_roles", frozenset())
+
+
+def _center_is_inside(element: GUIElement, region: BoundingBox) -> bool:
+    box = element.bounding_box
+    center_x = (box.x_min + box.x_max) / 2
+    center_y = (box.y_min + box.y_max) / 2
+    return region.x_min <= center_x <= region.x_max and region.y_min <= center_y <= region.y_max
+
+
+def observe(
+    elements: Optional[Sequence[GUIElement]], native_visible: Optional[bool] = None
+) -> KeyboardObservation:
+    """Resolve keyboard ownership from semantic roles, plus native visibility."""
+    all_elements = list(elements or [])
+    region_elements = [
+        element for element in all_elements if _has_role(element, KEYBOARD_REGION_ROLE)
+    ]
+    regions = tuple(element.bounding_box for element in region_elements)
+    explicit_keys = [element for element in all_elements if _has_role(element, KEYBOARD_KEY_ROLE)]
+
+    owned, app = [], []
+    for element in all_elements:
+        is_region = _has_role(element, KEYBOARD_REGION_ROLE)
+        is_key = _has_role(element, KEYBOARD_KEY_ROLE)
+        is_contained = any(_center_is_inside(element, region) for region in regions)
+        if is_region or is_key or is_contained:
+            owned.append(element)
+        else:
+            app.append(element)
+
+    visual_visible = bool(regions or explicit_keys)
+    observation = KeyboardObservation(
+        native_visible=native_visible,
+        visual_visible=visual_visible,
+        effective_visible=native_visible is True or visual_visible,
+        regions=regions,
+        app_elements=tuple(app),
+        owned_elements=tuple(owned),
+        key_elements=tuple(explicit_keys),
+    )
+    if observation.state_disagrees:
+        logger.info(
+            "Keyboard evidence disagrees: native=%s visual=%s.",
+            native_visible,
+            visual_visible,
+        )
+    return observation
+
+
+def target_elements(
+    elements: Optional[Sequence[GUIElement]],
+    native_visible: Optional[bool],
+    include_keyboard_targets: bool = False,
+) -> tuple[List[GUIElement], List[GUIElement]]:
+    """Return actionable elements while retaining keyboard ownership separately."""
+    observation = observe(elements, native_visible)
+    targets = list(observation.app_elements)
+    if include_keyboard_targets:
+        for key in observation.key_elements:
+            annotated = copy(key)
+            text = (annotated.text or "").strip()
+            annotated.text = f"[key] {text}" if text else "[key]"
+            targets.append(annotated)
+    return targets, list(observation.owned_elements)
 
 
 def split_keyboard(
-    elements: List[GUIElement], keyboard_open: Optional[bool], screen_height: Optional[int]
+    elements: Optional[Sequence[GUIElement]],
+    keyboard_open: Optional[bool],
+    screen_height: Optional[int],
 ) -> tuple[List[GUIElement], List[GUIElement]]:
-    """Separates the soft keyboard's own keys from the app's controls.
+    """Separate keyboard-owned detections from app controls.
 
-    An open keyboard is most of what is on screen. Numbering every letter would
-    bury the handful of app controls under a wall of badges, and the agent never
-    needs them. Text arrives through `type`, and Enter and Back are key events.
-
-    YOLO has no class for a keyboard, so this is geometry: low on the screen
-    with a label too short to be a sentence.
+    `screen_height` remains in the public signature for callers that number a
+    screenshot, but semantic ownership intentionally does not use it.
     """
-    if not keyboard_open or not screen_height:
-        return list(elements or []), []
-
-    keyboard_top = int(screen_height * KEYBOARD_TOP_FRACTION)
-    kept, keys = [], []
-    for element in elements or []:
-        box = element.bounding_box
-        center_y = (box.y_min + box.y_max) // 2
-        looks_like_key = (
-            center_y >= keyboard_top
-            and len((element.text or "").strip()) <= KEY_LABEL_LENGTH
-        )
-        (keys if looks_like_key else kept).append(element)
-
-    # A second pass by position, because the label rule misses the wide keys —
-    # "?123", "space", "return". Anything sitting within the keyboard's own
-    # extent belongs to it whatever its label says.
-    if keys:
-        top = min(key.bounding_box.y_min for key in keys)
-        bottom = max(key.bounding_box.y_max for key in keys)
-        remaining = []
-        for element in kept:
-            center_y = (element.bounding_box.y_min + element.bounding_box.y_max) // 2
-            (keys if top <= center_y <= bottom else remaining).append(element)
-        kept = remaining
-        logger.info("Keyboard is open — %d key(s) left unnumbered.", len(keys))
-    return kept, keys
+    del screen_height
+    return target_elements(elements, keyboard_open)
 
 
 def without_keyboard_keys(
-    elements: List[GUIElement], keyboard_open: Optional[bool], screen_height: Optional[int]
+    elements: Optional[Sequence[GUIElement]],
+    keyboard_open: Optional[bool],
+    screen_height: Optional[int],
 ) -> List[GUIElement]:
-    """The app's controls, with the soft keyboard's keys removed."""
+    """Return app controls with model-declared keyboard content removed."""
     return split_keyboard(elements, keyboard_open, screen_height)[0]
 
 
 def keyboard_band(keys: List[GUIElement], screen_width: int) -> Optional[tuple]:
-    """The region the keyboard occupies, as one rectangle.
-
-    Drawn so that the bare strip carrying no numbers is explained. Nothing here
-    carries a number because the keyboard covers it. Anything behind it needs
-    the keyboard dismissed first.
-    """
+    """Return the actual bounds of the declared keyboard surface."""
+    del screen_width
     if not keys:
         return None
-    boxes = [key.bounding_box for key in keys]
+    region_boxes = [
+        element.bounding_box for element in keys if _has_role(element, KEYBOARD_REGION_ROLE)
+    ]
+    boxes = region_boxes or [element.bounding_box for element in keys]
     return (
-        0,
+        min(box.x_min for box in boxes),
         min(box.y_min for box in boxes),
-        screen_width,
+        max(box.x_max for box in boxes),
         max(box.y_max for box in boxes),
     )
 
 
 def annotate_keyboard_keys(
-    elements: List[GUIElement], keyboard_open: Optional[bool], screen_height: Optional[int]
+    elements: Optional[Sequence[GUIElement]],
+    keyboard_open: Optional[bool],
+    screen_height: Optional[int],
 ) -> List[GUIElement]:
-    """Prefixes likely keyboard keys with [key] so the planner can tell them apart.
-
-    Used where the keys are still offered as targets. Where they are numbered
-    instead, see without_keyboard_keys — there they are not offered at all.
-    """
-    if not keyboard_open or not screen_height:
-        return elements
-
-    keyboard_top = int(screen_height * KEYBOARD_TOP_FRACTION)
+    """Label semantic keyboard content for planner modes that retain all boxes."""
+    del screen_height
+    observation = observe(elements, keyboard_open)
+    owned_ids = {id(element) for element in observation.owned_elements}
     annotated = []
-    for element in elements:
-        center_y = (element.bounding_box.y_min + element.bounding_box.y_max) // 2
-        text = (element.text or "").strip()
-        if center_y >= keyboard_top and len(text) <= KEY_LABEL_LENGTH:
+    for element in elements or []:
+        if id(element) in owned_ids:
             element = copy(element)
-            element.text = f"[key] {text}" if text else "[key]"
+            text = (element.text or "").strip()
+            prefix = "[keyboard]" if _has_role(element, KEYBOARD_REGION_ROLE) else "[key]"
+            element.text = f"{prefix} {text}" if text else prefix
         annotated.append(element)
     return annotated

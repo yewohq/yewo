@@ -69,6 +69,9 @@ def runner_for(
         device_name=setting("device", args.device),
         app_path=str(app_path),
         model=setting("model", args.model),
+        perception_model=setting(
+            "perception_model", getattr(args, "perception_model", None)
+        ),
         assets_dir=assets_dir or Path(setting("output_dir", args.output_dir)),
         max_steps=int(setting("max_steps", args.max_steps)),
         settle_time=float(setting("settle_time", args.settle_time)),

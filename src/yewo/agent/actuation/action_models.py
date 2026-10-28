@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal, Optional, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.agent.actuation.retargeting import describe_variant, marks_variant
+from yewo.agent.actuation.target_not_listed import TargetNotListedAction
 
 
 class Coordinates(BaseModel):
@@ -39,6 +40,7 @@ class ActionType(str, Enum):
     CLEAR = "clear"
     WAIT = "wait"
     TARGET_NOT_LISTED = "target_not_listed"
+    SHOW_KEYBOARD_TARGETS = "show_keyboard_targets"
 
 
 class CapabilityKind(str, Enum):
@@ -420,28 +422,11 @@ class CapabilityAction(BaseModel):
     reason: str = Field(..., description="How the capability control helps achieve the test goal.")
 
 
-class TargetNotListedAction(BaseModel):
-    """Says the target is not among the numbered elements, rather than guessing.
+class ShowKeyboardTargetsAction(BaseModel):
+    """Reveal visual keys only when the keyboard UI itself is under test."""
 
-    For when the element a step needs is absent from the numbered targets.
-    Never executed: the step stops and the screen is recorded, so a detection
-    gap becomes a counted event instead of a tap into empty space.
-    """
-
-    type: Literal[ActionType.TARGET_NOT_LISTED] = ActionType.TARGET_NOT_LISTED
-    description: str = Field(..., description="What the target looks like and roughly where it is.")
-    region: Literal[
-        "upper_left",
-        "upper_center",
-        "upper_right",
-        "middle_left",
-        "middle_center",
-        "middle_right",
-        "lower_left",
-        "lower_center",
-        "lower_right",
-    ] = Field(..., description="The coarse screen region to inspect more closely.")
-    reason: str = Field(..., description="What you were trying to achieve.")
+    type: Literal[ActionType.SHOW_KEYBOARD_TARGETS] = ActionType.SHOW_KEYBOARD_TARGETS
+    reason: str = Field(..., description="Why the visual keyboard UI itself must be tested.")
 
 
 MIN_WAIT_SECONDS = 0.1
@@ -503,6 +488,7 @@ Action = Annotated[
     | CapabilityAction
     | ClearAction
     | WaitAction
+    | ShowKeyboardTargetsAction
     | TargetNotListedAction,
     Field(discriminator="type"),
 ]
@@ -536,6 +522,7 @@ MarksAction = Annotated[
     | SwipeAction
     | CapabilityAction
     | WaitAction
+    | ShowKeyboardTargetsAction
     | TargetNotListedAction,
     Field(discriminator="type"),
 ]

@@ -143,6 +143,11 @@ class Settings(StrictModel):
     app: Optional[str] = Field(default=None, description="App binary, relative to this file.")
     app_path: Optional[str] = Field(default=None, description="Another spelling of 'app'.")
     model: Optional[str] = None
+    perception_model: Optional[str] = Field(
+        default=None,
+        pattern=r"^hf://[^/@\s]+/[^@\s]+@[0-9a-f]{40}$",
+        description="Pinned Hugging Face detector package.",
+    )
     fast_model: Optional[str] = Field(
         default=None, description="Cheaper model for per-step planning."
     )

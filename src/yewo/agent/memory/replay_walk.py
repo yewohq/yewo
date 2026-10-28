@@ -21,6 +21,7 @@ from yewo.agent.actuation.orchestrator import ActionOrchestrator
 from yewo.agent.grounding.description import SCREEN_MISMATCH
 from yewo.agent.memory import replay_match
 from yewo.agent.memory.replay import REPLAYABLE_KEYCODES
+from yewo.agent.memory.replay_projection import project_actionable_elements
 from yewo.agent.step import targeting
 from yewo.agent.perception.elements import BoundingBox, GUIElement, ScanInfo
 from yewo.agent.memory.replay_store import (
@@ -164,6 +165,7 @@ def confirm_arrival(
     names: ValueNames,
     key: Optional[bytes] = None,
     same_build: bool = False,
+    grounding: str = "",
 ) -> Optional[str]:
     """Whether the last cached step arrived where it used to arrive.
 
@@ -173,6 +175,9 @@ def confirm_arrival(
     """
     if screen.scan_info is None:
         return "the screen it reached reported nothing"
+    keyboard_refusal = replay_match.resolve_keyboard_state_refusal(expected, screen.scan_info)
+    if keyboard_refusal is not None:
+        return keyboard_refusal.reason
     if not same_build and expected.description:
         # The next transition verifies this destination as its source in one
         # semantic request. The final destination is verified by the caller.
@@ -181,8 +186,11 @@ def confirm_arrival(
         if same_build and expected.phash == screen.current_phash:
             return None
         return "the detector-free destination has no semantic description"
+    projected_elements = project_actionable_elements(
+        screen.gui_elements, screen.scan_info, grounding
+    )
     refusal = replay_match.destination_reached(
-        expected, screen.gui_elements, screen.scan_info, names, key
+        expected, projected_elements, screen.scan_info, names, key
     )
     return refusal.reason if refusal else None
 
@@ -206,11 +214,14 @@ def select_transition(
     """
     if screen.scan_info is None:
         return None
+    projected_elements = project_actionable_elements(
+        screen.gui_elements, screen.scan_info, trace.identity.grounding
+    )
     matches: list[int] = []
     for index in range(position, len(trace.transitions)):
         refusal = replay_match.screen_agrees(
             trace.transitions[index].source,
-            screen.gui_elements,
+            projected_elements,
             screen.scan_info,
             names,
             key,
@@ -250,6 +261,7 @@ def take_cached_step(
     same_build: bool = False,
     model_image: Optional[bytes] = None,
     before_action: Optional[Callable[[Action], bool]] = None,
+    grounding: str = "",
 ) -> StepAttempt:
     """Runs one saved step against the screen in front of the run.
 
@@ -260,6 +272,7 @@ def take_cached_step(
     scan = screen.scan_info
     if scan is None:
         return StepAttempt(refusal="this screen reported nothing to match on")
+    projected_elements = project_actionable_elements(screen.gui_elements, scan, grounding)
 
     source_matches_locally = (
         same_build
@@ -311,7 +324,7 @@ def take_cached_step(
             if transition.action.target is None:
                 return StepAttempt(refusal="a saved step names no target")
             target_match, refusal = replay_match.find_target(
-                transition.action.target, screen.gui_elements, scan, names, key
+                transition.action.target, projected_elements, scan, names, key
             )
             if target_match is None:
                 return StepAttempt(

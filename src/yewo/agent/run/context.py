@@ -31,6 +31,8 @@ class RunContext:
     current_phash: Optional[str] = None
     prev_element_count: Optional[int] = None
     keyboard_open: Optional[bool] = None
+    keyboard_targets_expanded: bool = False
+    """Whether the planner requested visual keyboard keys as actionable targets."""
     last_action_type: Optional[str] = None
     screen_height: Optional[int] = None
     pending_loop_nudge: Optional[str] = None

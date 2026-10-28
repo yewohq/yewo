@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "detector": "hf://BeccaSaka/yewo-ui@29b9bb30f6ba5ecb22026368ed5438d62a2e4150",
+  "ocr": "rapidocr@3.10.0+onnxruntime@1.31.1/PP-OCRv6-small:ch/max-side-960",
+  "cases": {
+    "android_alpha_keyboard": {
+      "fixture_digest": "3fa89ba996ac9641",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2
+        ],
+        "covered_target_names": [
+          "email",
+          "password",
+          "login"
+        ]
+      }
+    },
+    "android_numeric_keyboard": {
+      "fixture_digest": "c78078a5a8850870",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2
+        ],
+        "covered_target_names": [
+          "email",
+          "password",
+          "login"
+        ]
+      }
+    },
+    "android_menu_small_text": {
+      "fixture_digest": "e3870b3d212764fb",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "covered_target_names": [
+          "classic_burger_add",
+          "french_fries_add",
+          "vanilla_shake_add",
+          "cart"
+        ]
+      }
+    },
+    "android_permission_dialog": {
+      "fixture_digest": "0f3f28b92b20b4ef",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2
+        ],
+        "covered_target_names": [
+          "allow",
+          "dont_allow"
+        ]
+      }
+    },
+    "android_secure_masked": {
+      "fixture_digest": "ea40757a72d6c241",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "covered_target_names": [
+          "address",
+          "card_number",
+          "cvv",
+          "place_order"
+        ]
+      }
+    },
+    "ios_alpha_keyboard": {
+      "fixture_digest": "97a2f1b0ad7b5d7d",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2
+        ],
+        "covered_target_names": [
+          "email",
+          "password",
+          "login"
+        ]
+      }
+    },
+    "ios_form": {
+      "fixture_digest": "f527c1040c73303f",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2
+        ],
+        "covered_target_names": [
+          "email",
+          "password",
+          "login",
+          "sign_up"
+        ]
+      }
+    },
+    "android_taobao_home_dense": {
+      "fixture_digest": "459c3e56f3413c41",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "covered_target_names": [
+          "search",
+          "live",
+          "subsidies",
+          "banana_product",
+          "benefits",
+          "cart"
+        ]
+      }
+    },
+    "android_taobao_cart_dense": {
+      "fixture_digest": "75b31ce1c8149d8d",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "covered_target_names": [
+          "search",
+          "filter",
+          "first_item_checkbox",
+          "first_item",
+          "details",
+          "checkout",
+          "messages"
+        ]
+      }
+    },
+    "android_files_grid_benchmark": {
+      "fixture_digest": "14bbaebf7528b0e4",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "covered_target_names": [
+          "share",
+          "delete",
+          "images_filter",
+          "list_switch",
+          "selected_file",
+          "second_file",
+          "third_file"
+        ]
+      }
+    },
+    "ios_destination_keyboard_bilingual": {
+      "fixture_digest": "cc00050ce230b8a1",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "covered_target_names": [
+          "back",
+          "current_location",
+          "destination",
+          "add_waypoint",
+          "saved_places",
+          "set_location_on_map"
+        ]
+      }
+    },
+    "ios_event_form_dense": {
+      "fixture_digest": "fa9b9503b48cde4e",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "covered_target_names": [
+          "cancel",
+          "save",
+          "title",
+          "guests",
+          "guest_permission",
+          "no_repeats",
+          "add_rooms",
+          "add_description"
+        ]
+      }
+    },
+    "ipad_home_dense": {
+      "fixture_digest": "76d38e65fc180382",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "covered_target_names": [
+          "clock_widget",
+          "files_widget",
+          "messages",
+          "maps",
+          "camera",
+          "settings",
+          "files_dock"
+        ]
+      }
+    },
+    "ios_maps_bilingual": {
+      "fixture_digest": "9c5fbb9f95d5ee9f",
+      "quality": {
+        "keyboard_correct": true,
+        "matched_text_indices": [
+          3,
+          4,
+          5
+        ],
+        "covered_target_names": [
+          "map_options",
+          "current_location",
+          "search",
+          "more_favorites",
+          "add_favorite",
+          "more_recents"
+        ]
+      }
+    }
+  }
+}

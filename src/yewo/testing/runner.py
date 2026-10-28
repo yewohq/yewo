@@ -8,7 +8,6 @@ from yewo.agent.memory.trail import SessionTrail
 from yewo.agent.device.session import DeviceSession
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.readiness import ensure_device_ready
-from yewo.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
 from yewo.agent.perception.blind import for_grounding
 from yewo.agent.plan.planner import GROUNDING_MARKS
 from yewo.agent.memory import replay_scenarios
@@ -23,6 +22,7 @@ from .report.run_record import create_manifest, ensure_interrupted_manifest
 from .report import infrastructure
 from . import sensitivity
 from yewo.llm.prompts import PromptStore
+from yewo.defaults import DEFAULT_PERCEPTION_MODEL
 from .models import (
     JourneyReport,
     JourneyStatus,
@@ -91,6 +91,7 @@ class YewoTestRunner:
         app_path: str,
         platform: Platform = Platform.ANDROID,
         model: str = "openrouter/google/gemini-2.5-flash",
+        perception_model: str | None = None,
         assets_dir: Path = Path("assets"),
         max_steps: int = 40,
         replay: bool = False,
@@ -127,6 +128,7 @@ class YewoTestRunner:
         self.device_name = device_name
         self.app_path = app_path
         self.model = model
+        self.perception_model = perception_model
         self.assets_dir = assets_dir
         self.max_steps = max_steps
         self.replay = replay
@@ -179,7 +181,9 @@ class YewoTestRunner:
             platform=self.platform.value,
             grounding=self.grounding,
             detector=(
-                f"{YOLO_REPO_ID}@{YOLO_REVISION}" if self.grounding == GROUNDING_MARKS else None
+                self.perception_model or DEFAULT_PERCEPTION_MODEL
+                if self.grounding == GROUNDING_MARKS
+                else None
             ),
             app=self._app,
             device=self._device,
@@ -348,7 +352,6 @@ class YewoTestRunner:
             # Generation happened before this file existed, and it is the one
             # call a run makes that no scenario owns.
             manifest.record_unattached_calls(usage_tracker.calls_outside_steps(GENERATION))
-
             # A cell nothing covered is recorded before the first scenario
             # runs, so a reader sees the gap even if the run dies next. It
             # goes in the record as well as the report: the record is the one
@@ -358,10 +361,8 @@ class YewoTestRunner:
                 scenario_reports.append(uncovered)
                 manifest.add(uncovered)
             record_refused_reports(manifest, preflight_reports)
-
             manifest.write()
             logger.info("Run manifest: %s", manifest.path)
-
             current_component = PLANNER
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
@@ -370,7 +371,6 @@ class YewoTestRunner:
                 trail = SessionTrail()
                 manifest.start(scenario.test_id)
                 logger.info("========================================")
-
                 current_component = PLANNER
                 logger.info(
                     "Executing Scenario %d/%d: %s (%s) - Cell: %s",
@@ -381,7 +381,6 @@ class YewoTestRunner:
                     scenario.cell,
                 )
                 logger.info("========================================")
-
                 if not is_session_responsive(device_control):
                     logger.warning(
                         "WebDriver/instrumentation session is unresponsive. Attempting session recovery..."
@@ -414,6 +413,7 @@ class YewoTestRunner:
                     perception = for_grounding(
                         self.grounding,
                         session,
+                        self.perception_model,
                     )
 
                     usage_tracker.output_dir = session.telemetry_dir

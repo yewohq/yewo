@@ -135,21 +135,22 @@ class VisionWeightsTests(unittest.TestCase):
     """The weights decide what the agent can see, so which weights must be fixed."""
 
     def test_the_detector_is_pinned_to_a_commit(self):
-        from yewo.agent.perception.detector import YOLO_REVISION
+        from yewo.agent.perception.model_package import parse_model_reference
+        from yewo.defaults import DEFAULT_PERCEPTION_MODEL
 
-        self.assertRegex(YOLO_REVISION, r"^[0-9a-f]{40}$")
+        reference = parse_model_reference(DEFAULT_PERCEPTION_MODEL)
+
+        self.assertRegex(reference.revision, r"^[0-9a-f]{40}$")
 
     def test_setup_prefetches_exactly_what_a_run_loads(self):
         """Otherwise setup warms one set of weights and the run downloads another."""
-        from yewo.agent.perception.detector import (
-            YOLO_FILENAME,
-            YOLO_REPO_ID,
-            YOLO_REVISION,
-        )
-        from yewo.setup.steps import PREFETCH_SCRIPT
+        from yewo.defaults import DEFAULT_PERCEPTION_MODEL
+        from yewo.setup.steps import _detector_prefetch_script
 
-        for value in (YOLO_REPO_ID, YOLO_FILENAME, YOLO_REVISION):
-            self.assertIn(repr(value), PREFETCH_SCRIPT)
+        self.assertIn(
+            repr(DEFAULT_PERCEPTION_MODEL),
+            _detector_prefetch_script(None),
+        )
 
     def test_the_reported_box_keeps_its_model_facing_meaning(self):
         """The model answers in this schema, so its description is prompt text."""

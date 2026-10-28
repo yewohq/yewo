@@ -18,6 +18,10 @@ from yewo.agent.memory.replay_store import TraceIdentity, ValueNames
 from yewo.agent.memory.replay_learning import DurableReplay
 from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.agent.grounding import GROUNDING_MARKS
+from yewo.agent.grounding.marks import TARGET_PROJECTION_VERSION
+from yewo.agent.perception.detector import OCR_MAX_SIDE_LENGTH
+from yewo.agent.perception.fusion import FUSION_VERSION
+from yewo.agent.perception.rapidocr_adapter import build_rapidocr_identity
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,20 @@ PASSED = "PASSED"
 A path to a failure is a path to a result already known. Walking it again
 spends a run arriving where the last one arrived.
 """
+
+
+def build_perception_pipeline_identity(detector: str, grounding: str) -> str:
+    """Return the perception contract that makes a replay path valid."""
+    if grounding != GROUNDING_MARKS:
+        return f"grounding={grounding}"
+    return "|".join(
+        (
+            f"detector={detector}",
+            f"ocr={build_rapidocr_identity(OCR_MAX_SIDE_LENGTH)}",
+            f"fusion={FUSION_VERSION}",
+            f"target-projection={TARGET_PROJECTION_VERSION}",
+        )
+    )
 
 
 class TraceStore:
@@ -45,6 +63,7 @@ class TraceStore:
         detector: str,
         grounding: str,
         key: bytes,
+        perception_pipeline: Optional[str] = None,
         verification_policies: Optional[Dict[str, ValueVerificationPolicy]] = None,
         artifact: Optional[str] = None,
         allow_path_creation: bool = True,
@@ -59,6 +78,11 @@ class TraceStore:
         self._target_profile = target_profile
         self._detector = detector
         self._grounding = grounding
+        self._perception_pipeline = (
+            perception_pipeline
+            if perception_pipeline is not None
+            else build_perception_pipeline_identity(detector, grounding)
+        )
         self._artifact = artifact
         self._allow_path_creation = allow_path_creation
         self._approve_path_update = approve_path_update or (lambda _path: False)
@@ -81,6 +105,7 @@ class TraceStore:
             platform=self._platform,
             target_profile=self._target_profile,
             detector=self._detector,
+            perception_pipeline=self._perception_pipeline,
             grounding=self._grounding,
         )
 

@@ -55,7 +55,11 @@ class BlindPerception:
         return [], raw, raw
 
 
-def for_grounding(grounding: str, device_session):
+def for_grounding(
+    grounding: str,
+    device_session,
+    model_reference: str | None = None,
+):
     """The perception a grounding mode needs.
 
     A mode that names its target reads the screen and detects nothing. Every
@@ -68,4 +72,4 @@ def for_grounding(grounding: str, device_session):
 
     if grounding in (GROUNDING_COORDINATES, GROUNDING_DESCRIBE):
         return BlindPerception(device_session, grounding)
-    return ScreenPerception(device_session)
+    return ScreenPerception(device_session, model_reference)

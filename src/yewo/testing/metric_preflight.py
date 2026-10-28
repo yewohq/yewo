@@ -31,6 +31,7 @@ class RunnerBoundary(Protocol):
     locked: bool
     headless: bool
     grounding: str
+    perception_model: str | None
     _device: identity.DeviceIdentity
 
     def _lock_path(self) -> Path | None: ...
@@ -162,7 +163,9 @@ def prepare_execution(
         ensure_target_ready(runner.platform, runner.device_name)
         logger.info("Initializing emulator and starting remote webdriver session...")
         device_control = session.start(is_headless=runner.headless)
-        perception = build_perception(runner.grounding, session)
+        perception = build_perception(
+            runner.grounding, session, runner.perception_model
+        )
         device_identity = identity.device_identity(device_control)
         runner._device = device_identity
         trace_store = runner._trace_store_for(journey)

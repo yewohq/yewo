@@ -1,61 +1,73 @@
-"""
-Vision perception subsystem mapping screenshots to semantic GUI elements.
+"""Concurrent UI detection and whole-screen OCR with geometry-only fusion."""
 
-This module processes device screenshots using:
-1. YOLOv8 object detection (using the `deki-yolo` model from Hugging Face) to find element bounding boxes.
-2. EasyOCR running in parallel via a ThreadPoolExecutor to perform OCR only on relevant cropped regions (e.g., Text, Button, and EditText).
-3. PIL to generate annotated images with overlaid bounding boxes and detected labels.
-"""
-
+import hashlib
 import io
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Lock
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from yewo.agent.perception.elements import BoundingBox, GUIElement
+from yewo.agent.perception.fusion import FUSION_VERSION, PerceptionFrame, fuse_perception
+from yewo.agent.perception.incremental import merge_ocr_evidence, rescale_ocr_result
+from yewo.agent.perception.model_package import resolve_model_package
+from yewo.agent.perception.ocr import OCRReader
+from yewo.agent.perception.rapidocr_adapter import RapidOCRBoundaryError, RapidOCRReader
+from yewo.agent.perception.rapidocr_diagnostics import diagnose_rapidocr
+from yewo.defaults import DEFAULT_PERCEPTION_MODEL
 from yewo.utils.vision_deps import require_vision
 
 logger = logging.getLogger(__name__)
 
 
-OCR_RELEVANT_TYPES = {"Text", "Button", "EditText"}
-
-YOLO_REPO_ID = "orasul/deki-yolo"
-YOLO_FILENAME = "best.pt"
-YOLO_REVISION = "287f12d1ee2413bbe217fc321483a9931e0e5317"
-OCR_LANGUAGES = ["en"]
-
-DETECTION_IMAGE_SIZE = 768
-"""Longest side the screenshot is scaled to before detection.
-
-Ultralytics defaults to 640. A tall phone screenshot scaled to that leaves a
-30px control about 23px wide, and a grid of them is then found only in part.
-Lowering the confidence threshold does not recover them, because the misses
-are not low-confidence detections. The model was trained at 640, so this is
-raised only as far as small controls require.
-"""
+OCR_MAX_SIDE_LENGTH = 960
+FRAME_CACHE_ENTRIES = 8
 
 
 class ImageDescriptor:
-    def __init__(self):
+    def __init__(
+        self,
+        model_reference: str | None = None,
+        ocr_reader: OCRReader | None = None,
+        cache_entries: int = FRAME_CACHE_ENTRIES,
+    ):
+        if cache_entries <= 0:
+            raise ValueError("cache_entries must be positive")
         require_vision()
         # Deferred: these pull torch, which lives behind the 'vision' extra.
-        import easyocr
-        from huggingface_hub import hf_hub_download
         from ultralytics import YOLO
 
-        logger.info("Loading deki-yolo model...")
-        model_path = hf_hub_download(
-            repo_id=YOLO_REPO_ID, filename=YOLO_FILENAME, revision=YOLO_REVISION
-        )
-        self.yolo = YOLO(model_path)
+        package = resolve_model_package(model_reference or DEFAULT_PERCEPTION_MODEL)
+        logger.info("Loading %s...", package.reference.value)
+        self.yolo = YOLO(package.weights_path)
+        self.detection_image_size = package.manifest.inference_image_size
+        self.model_identity = package.reference.value
         self.names = self.yolo.names
+        package.manifest.validate_model_classes(self.names)
+        self.semantic_roles_by_class_id = package.manifest.semantic_roles_by_class_id()
         logger.info("✓ Model loaded")
-        logger.info("Loading EasyOCR...")
-        self.reader = easyocr.Reader(OCR_LANGUAGES, gpu=False)
+        logger.info("Loading RapidOCR...")
+        if ocr_reader is not None:
+            self.ocr_reader = ocr_reader
+        else:
+            try:
+                self.ocr_reader = RapidOCRReader(max_side_len=OCR_MAX_SIDE_LENGTH)
+            except Exception as exc:  # noqa: BLE001 - normalize the external native boundary
+                diagnostic = diagnose_rapidocr(smoke_test=True)
+                raise RapidOCRBoundaryError(
+                    f"RapidOCR could not initialize: {diagnostic.detail}. {diagnostic.hint}"
+                ) from exc
         logger.info("✓ OCR loaded")
+        self._cache_entries = cache_entries
+        self._frame_cache: OrderedDict[str, PerceptionFrame] = OrderedDict()
+        self._inflight: dict[str, Future[PerceptionFrame]] = {}
+        self._cache_lock = Lock()
+        self._cache_generation = 0
+        self._detector_lock = Lock()
+        self._ocr_lock = Lock()
+        self.last_frame: PerceptionFrame | None = None
 
     def describe(
         self,
@@ -63,52 +75,165 @@ class ImageDescriptor:
         box_color: tuple = (0, 255, 0),
         thickness: int = 2,
     ) -> tuple[list[GUIElement], Image.Image]:
+        frame, image = self.observe(png_bytes)
+        elements = [element.model_copy(deep=True) for element in frame.elements]
+        return elements, self._draw_gui_elements(image, elements, box_color, thickness)
+
+    def observe(self, png_bytes: bytes) -> tuple[PerceptionFrame, Image.Image]:
+        """Return independent evidence and fused elements for one screenshot."""
         image = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        result = self.yolo(image, imgsz=DETECTION_IMAGE_SIZE)[0]
+        image_digest = _pixel_digest(image)
+        cache_key = self._cache_key(image_digest)
+        frame = self._cached_or_compute(cache_key, image_digest, image)
+        returned_frame = frame.model_copy(deep=True)
+        self.last_frame = returned_frame
+        return returned_frame, image
+
+    def describe_incremental(
+        self,
+        png_bytes: bytes,
+        previous_frame: PerceptionFrame,
+        regions: tuple[tuple[int, int, int, int], ...],
+        reuse_detector: bool,
+        box_color: tuple = (0, 255, 0),
+        thickness: int = 2,
+    ) -> tuple[list[GUIElement], Image.Image]:
+        """Refresh OCR crops and optionally reuse detector geometry."""
+        image = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        image_digest = _pixel_digest(image)
+        with self._cache_lock:
+            cache_generation = self._cache_generation
+
+        def refresh_ocr():
+            reference_max_side = getattr(self.ocr_reader, "reference_max_side", None)
+            scale = min(1.0, reference_max_side / max(image.size)) if reference_max_side else 1.0
+            refreshed = []
+            for region in regions:
+                crop = image.crop(region)
+                if scale < 1.0:
+                    crop = crop.resize(
+                        (
+                            max(1, round(crop.width * scale)),
+                            max(1, round(crop.height * scale)),
+                        ),
+                        Image.Resampling.LANCZOS,
+                    )
+                result = self._run_ocr(crop)
+                if scale < 1.0:
+                    result = rescale_ocr_result(result, 1.0 / scale)
+                refreshed.append((region, result))
+            return merge_ocr_evidence(
+                previous_frame.text_lines,
+                refreshed,
+                self.ocr_reader.identity,
+            )
+
+        if reuse_detector:
+            detector_elements = _detector_evidence(previous_frame.elements)
+            ocr_result = refresh_ocr()
+        else:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                detector_future = executor.submit(self._run_detector, image)
+                ocr_future = executor.submit(refresh_ocr)
+                result = detector_future.result()
+                ocr_result = ocr_future.result()
+            names = result.names if hasattr(result, "names") else self.names
+            detector_elements = self._get_yolo_gui_elements(result, names)
+
+        frame = fuse_perception(
+            detector_elements,
+            ocr_result,
+            image_digest,
+            self.model_identity,
+        )
+        cache_key = self._cache_key(image_digest)
+        with self._cache_lock:
+            if cache_generation == self._cache_generation:
+                self._frame_cache[cache_key] = frame
+                while len(self._frame_cache) > self._cache_entries:
+                    self._frame_cache.popitem(last=False)
+        self.last_frame = frame.model_copy(deep=True)
+        elements = [element.model_copy(deep=True) for element in frame.elements]
+        return elements, self._draw_gui_elements(image, elements, box_color, thickness)
+
+    def clear_cache(self) -> None:
+        """Forget session-scoped OCR text and detector observations."""
+        with self._cache_lock:
+            self._frame_cache.clear()
+            self._cache_generation += 1
+        self.last_frame = None
+
+    def _cache_key(self, image_digest: str) -> str:
+        return ":".join(
+            (
+                image_digest,
+                self.model_identity,
+                str(self.detection_image_size),
+                self.ocr_reader.identity,
+                f"fusion-{FUSION_VERSION}",
+            )
+        )
+
+    def _cached_or_compute(
+        self,
+        cache_key: str,
+        image_digest: str,
+        image: Image.Image,
+    ) -> PerceptionFrame:
+        with self._cache_lock:
+            cached = self._frame_cache.pop(cache_key, None)
+            if cached is not None:
+                self._frame_cache[cache_key] = cached
+                return cached
+            future = self._inflight.get(cache_key)
+            owns_computation = future is None
+            generation = self._cache_generation
+            if future is None:
+                future = Future()
+                self._inflight[cache_key] = future
+
+        if not owns_computation:
+            return future.result()
+
+        try:
+            frame = self._compute_frame(image, image_digest)
+        except Exception as exc:
+            with self._cache_lock:
+                self._inflight.pop(cache_key, None)
+                future.set_exception(exc)
+            raise
+
+        with self._cache_lock:
+            if generation == self._cache_generation:
+                self._frame_cache[cache_key] = frame
+                while len(self._frame_cache) > self._cache_entries:
+                    self._frame_cache.popitem(last=False)
+            self._inflight.pop(cache_key, None)
+            future.set_result(frame)
+        return frame
+
+    def _compute_frame(self, image: Image.Image, image_digest: str) -> PerceptionFrame:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            detector_future = executor.submit(self._run_detector, image)
+            ocr_future = executor.submit(self._run_ocr, image)
+            result = detector_future.result()
+            ocr_result = ocr_future.result()
         names = result.names if hasattr(result, "names") else self.names
         gui_elements = self._get_yolo_gui_elements(result, names)
-
-        # Run OCR in parallel
-        ocr_targets = [el for el in gui_elements if el.element in OCR_RELEVANT_TYPES]
-        if ocr_targets:
-            with ThreadPoolExecutor() as executor:
-                futures = {
-                    executor.submit(self._extract_text, image, el): el
-                    for el in ocr_targets
-                }
-                for future in as_completed(futures):
-                    el = futures[future]
-                    el.text = future.result()
-
-        return gui_elements, self._draw_gui_elements(
-            image, gui_elements, box_color, thickness
+        return fuse_perception(
+            gui_elements,
+            ocr_result,
+            image_digest,
+            self.model_identity,
         )
 
-    def run_ocr_on_elements(self, image: Image.Image, elements: list[GUIElement]) -> None:
-        """Re-runs OCR on the provided elements in-place without re-running YOLO.
+    def _run_detector(self, image: Image.Image):
+        with self._detector_lock:
+            return self.yolo(image, imgsz=self.detection_image_size, verbose=False)[0]
 
-        Used after per-element pixel diff identifies dirty elements — bounding boxes
-        are already known from the previous detection pass.
-        """
-        targets = [el for el in elements if el.element in OCR_RELEVANT_TYPES]
-        if not targets:
-            return
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(self._extract_text, image, el): el
-                for el in targets
-            }
-            for future in as_completed(futures):
-                futures[future].text = future.result()
-
-    def _extract_text(self, image: Image.Image, element: GUIElement) -> str:
-        x1, y1, x2, y2 = element.bounding_box
-        pad, (w, h) = 4, image.size
-        crop = image.crop(
-            (max(0, x1 - pad), max(0, y1 - pad), min(w, x2 + pad), min(h, y2 + pad))
-        )
-        results = self.reader.readtext(np.array(crop), detail=0)
-        return " ".join(results).strip()
+    def _run_ocr(self, image: Image.Image):
+        with self._ocr_lock:
+            return self.ocr_reader.recognize(image)
 
     def _get_yolo_gui_elements(self, result, names) -> list[GUIElement]:
         if result.boxes is None:
@@ -120,9 +245,7 @@ class ImageDescriptor:
         for box, cls_id, conf in zip(xyxy, clss, confs):
             x_min, y_min, x_max, y_max = box
             class_name = (
-                names.get(cls_id, str(cls_id))
-                if isinstance(names, dict)
-                else names[cls_id]
+                names.get(cls_id, str(cls_id)) if isinstance(names, dict) else names[cls_id]
             )
             elements.append(
                 GUIElement(
@@ -135,6 +258,9 @@ class ImageDescriptor:
                     ),
                     confidence=float(conf),
                     type="yolo_detection",
+                    semantic_roles=getattr(self, "semantic_roles_by_class_id", {}).get(
+                        int(cls_id), frozenset()
+                    ),
                 )
             )
         return elements
@@ -164,3 +290,18 @@ class ImageDescriptor:
             )
             draw.text((text_x, text_y), label_text, fill=(255, 255, 255), font=font)
         return image
+
+
+def _pixel_digest(image: Image.Image) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"{image.width}x{image.height}:{image.mode}\0".encode())
+    digest.update(image.tobytes())
+    return digest.hexdigest()
+
+
+def _detector_evidence(elements: tuple[GUIElement, ...]) -> list[GUIElement]:
+    """Remove fused OCR text while retaining detector geometry and semantics."""
+    evidence = [element.model_copy(deep=True) for element in elements]
+    for element in evidence:
+        element.text = ""
+    return evidence

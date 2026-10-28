@@ -21,6 +21,10 @@ def add_device_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--platform", choices=list(PLATFORMS), help="Target platform")
     parser.add_argument("--device", help="Name of emulator/simulator/device")
     parser.add_argument("--model", help="LiteLLM model to use")
+    parser.add_argument(
+        "--perception-model",
+        help="Pinned detector package: hf://owner/repository@commit",
+    )
     parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for per-step planning")
     parser.add_argument("--output-dir", help="Directory to save outputs and screenshots")
     parser.add_argument("--max-steps", type=int, help="Max steps per run")
@@ -74,6 +78,9 @@ def run(args: argparse.Namespace, config: Config) -> int:
 
     model = config.resolve("model", args.model)
     fast_model = config.resolve("fast_model", args.fast_model)
+    perception_model = config.resolve(
+        "perception_model", getattr(args, "perception_model", None)
+    )
     platform = config.resolve("platform", args.platform)
 
     require_run(model, fast_model)
@@ -104,6 +111,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
             keep_device=args.keep_device,
             reuse_app=args.reuse_app,
             persist_inputs=not args.no_persist_inputs,
+            perception_model=perception_model,
         )
     except KeyboardInterrupt:
         logger.info("Agent execution interrupted by user")

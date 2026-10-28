@@ -108,6 +108,14 @@ class ReadFileTests(unittest.TestCase):
         self.assertEqual(settings["app_path"], "app.apk")
         self.assertIs(settings["record"], False)
 
+    def test_a_pinned_private_detector_reference_is_a_setting(self):
+        reference = f"hf://example/yewo-ui@{'a' * 40}"
+
+        settings, warnings = self._read(f"perception_model: {reference}\n")
+
+        self.assertEqual(settings["perception_model"], reference)
+        self.assertEqual(warnings, [])
+
 
 class WriteTests(unittest.TestCase):
     """A write keeps the half of the file it was not asked about."""
@@ -261,6 +269,12 @@ class SchemaBackedSettingsTests(unittest.TestCase):
 
         self.assertEqual(coerce("max_steps", "25"), 25)
         self.assertIs(coerce("record", "no"), False)
+
+    def test_a_mutable_detector_revision_is_refused(self):
+        from yewo.config import coerce
+
+        with self.assertRaises(ConfigError):
+            coerce("perception_model", "hf://example/yewo-ui@main")
 
     def test_the_settings_are_the_ones_the_schema_declares(self):
         from yewo.config import SETTINGS

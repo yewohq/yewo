@@ -77,6 +77,17 @@ def _count_by_identity(anchors: Sequence[ElementAnchor]) -> Dict[Tuple[str, str]
     return counts_by_identity
 
 
+def resolve_keyboard_state_refusal(expected: ScreenSignature, scan) -> Optional[Refusal]:
+    """Return why the current keyboard state cannot satisfy a saved screen."""
+    if expected.keyboard_visible is None:
+        return None
+    if scan.keyboard_effective_visible is None:
+        return Refusal("the current keyboard state is unknown")
+    if expected.keyboard_visible != scan.keyboard_effective_visible:
+        return Refusal("the keyboard visibility changed")
+    return None
+
+
 def screen_agrees(
     expected: ScreenSignature,
     elements: Sequence,
@@ -102,6 +113,10 @@ def screen_agrees(
     """
     if not expected.anchors:
         return Refusal("the trace holds no anchors for this screen")
+
+    keyboard_refusal = resolve_keyboard_state_refusal(expected, scan)
+    if keyboard_refusal is not None:
+        return keyboard_refusal
 
     # A screen with nothing readable on it is only its boxes, and boxes
     # line up across unrelated screens. The image hash is the one thing

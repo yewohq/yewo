@@ -7,7 +7,7 @@ The contract lives here, not in `detector`, so that no producer owns it.
 from dataclasses import dataclass, field
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 NAVIGATION_THRESHOLD = 80
 """pHash-256 distance above which a frame is a screen the run just arrived at."""
@@ -61,6 +61,7 @@ class GUIElement(BaseModel):
     confidence: float
     type: str
     text: str = ""
+    semantic_roles: frozenset[str] = Field(default_factory=frozenset)
 
 
 @dataclass
@@ -80,4 +81,16 @@ class ScanInfo:
     match_rate: Optional[float] = None
     dirty_ocr_count: Optional[int] = None
     uncovered_mae: Optional[float] = None
+    keyboard_native_visible: Optional[bool] = None
+    keyboard_visual_visible: Optional[bool] = None
+    keyboard_effective_visible: Optional[bool] = None
+    keyboard_owned_count: int = 0
+    keyboard_state_disagrees: bool = False
+    keyboard_targets_expanded: bool = False
+    detector_reused: bool = False
+    ocr_input_regions: int = 0
+    ocr_input_pixels: int = 0
+    changed_pixel_fraction: Optional[float] = None
+    incremental_surface_roles: tuple[str, ...] = ()
+    full_scan_fallback: Optional[str] = None
     thresholds: dict[str, float | int] = field(default_factory=dict)

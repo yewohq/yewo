@@ -16,6 +16,8 @@ from yewo.agent.grounding import GROUNDING_MARKS
 from yewo.agent.grounding import marks
 from yewo.agent.perception.screen import ScreenPerception
 from yewo.agent.perception.elements import BoundingBox, GUIElement, ScanInfo
+from yewo.agent.perception.fusion import PerceptionFrame
+from yewo.agent.perception.keyboard import KeyboardObservation
 from yewo.agent.memory.trail import SessionTrail
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,9 @@ class PerceptionSnapshot:
     planner_screen_height: Optional[int] = None
     refinement: Optional[dict] = None
     view_note: Optional[str] = None
+    perception_frame: Optional[PerceptionFrame] = None
+    planner_perception_frame: Optional[PerceptionFrame] = None
+    keyboard_observation: Optional[KeyboardObservation] = None
 
 
 def capture(
@@ -75,6 +80,7 @@ def capture(
         timestamp=time.strftime("%Y%m%d_%H%M%S"),
         scan_info=perception.last_scan_info,
         prev_phash=prev_phash,
+        perception_frame=getattr(perception, "current_frame", None),
     )
 
 
@@ -132,6 +138,7 @@ def _number_refined_targets(snapshot: PerceptionSnapshot, ctx, perception, regio
     close_up.save(buf, format="PNG")
     close_up_bytes = buf.getvalue()
     local_elements, _ = perception.image_descriptor.describe(close_up_bytes)
+    snapshot.planner_perception_frame = getattr(perception.image_descriptor, "last_frame", None)
     local_marks, planner_bytes = marks.number(
         local_elements,
         close_up_bytes,
@@ -168,9 +175,9 @@ def number_targets(
 ) -> None:
     """Numbers the elements and redraws the screenshot to match.
 
-    Done here rather than at perception time, because only now is the keyboard
-    state known. The keyboard's own keys must not carry numbers: they would
-    outnumber the app's controls several times over.
+    Keyboard keys stay collapsed for ordinary app interaction. If the planner
+    explicitly asks to test the visual keyboard surface, the next view numbers
+    its model-declared keys alongside the app controls.
     """
     if grounding != GROUNDING_MARKS:
         return
@@ -190,6 +197,7 @@ def number_targets(
         keyboard_open=ctx.keyboard_open,
         screen_height=ctx.screen_height,
         refused=ctx.refused_marks.get(snapshot.current_phash) or [],
+        include_keyboard_targets=getattr(ctx, "keyboard_targets_expanded", False),
     )
     snapshot.planner_elements = snapshot.gui_elements
     snapshot.planner_screen_height = ctx.screen_height

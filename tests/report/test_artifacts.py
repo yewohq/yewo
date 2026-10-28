@@ -108,7 +108,7 @@ class ArtifactSafetyTests(unittest.TestCase):
         self.assertNotIn("**Detector**", payload)
 
     def test_the_runner_records_the_pinned_detector(self):
-        from yewo.agent.perception.detector import YOLO_REVISION
+        from yewo.defaults import DEFAULT_PERCEPTION_MODEL
         from yewo.testing.runner import YewoTestRunner
 
         runner = YewoTestRunner(
@@ -122,7 +122,19 @@ class ArtifactSafetyTests(unittest.TestCase):
         environment = runner._environment()
 
         self.assertEqual(environment.platform, "android")
-        self.assertIn(YOLO_REVISION, environment.detector)
+        self.assertEqual(environment.detector, DEFAULT_PERCEPTION_MODEL)
+
+    def test_the_runner_records_a_configured_perception_package(self):
+        from yewo.testing.runner import YewoTestRunner
+
+        reference = f"hf://example/yewo-ui@{'a' * 40}"
+        runner = YewoTestRunner(
+            device_name="emulator-5554",
+            app_path="app.apk",
+            perception_model=reference,
+        )
+
+        self.assertEqual(runner._environment().detector, reference)
 
     def test_report_write_failure_makes_the_run_fail(self):
         from yewo.testing.models import JourneyReport
@@ -224,6 +236,33 @@ class ScanDumpSafetyTests(unittest.TestCase):
         dumped = element_to_dict(self._element("Continue"), 0, scrubber)
 
         self.assertEqual(dumped["text"], "Continue")
+
+    def test_declared_secrets_are_masked_in_raw_ocr_evidence(self):
+        from yewo.agent.artifacts.scan import perception_to_dict
+        from yewo.agent.perception.fusion import PerceptionFrame
+        from yewo.agent.perception.ocr import OCRLine, OCRPoint
+        from yewo.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"password": "secret-password123"})
+        box = (
+            OCRPoint(x=0, y=0),
+            OCRPoint(x=10, y=0),
+            OCRPoint(x=10, y=10),
+            OCRPoint(x=0, y=10),
+        )
+        frame = PerceptionFrame(
+            image_digest="a" * 64,
+            detector_identity="ui@test",
+            ocr_identity="rapidocr@test",
+            elements=(),
+            text_lines=(OCRLine(box=box, text="secret-password123", confidence=0.9),),
+            associations=(),
+        )
+
+        dumped = perception_to_dict(frame, scrubber)
+
+        self.assertEqual(dumped["ocr_lines"][0]["text"], "{{password}}")
 
 
 class SecretScrubbingTests(unittest.TestCase):

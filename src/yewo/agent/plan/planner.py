@@ -62,7 +62,8 @@ Each action must have a `type` field set to one of:
 - "clear": Clear a text field. Fields: `type`, `mark` (int), `target` (description), `reason`.
 - "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `target` (description), `reason`.
 - "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `target` (description), `reason`.
-- "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like), `region` (one of upper_left, upper_center, upper_right, middle_left, middle_center, middle_right, lower_left, lower_center, lower_right), `reason`."""
+- "show_keyboard_targets": Reveal detected visual keys for direct tapping. Use only when the goal tests the keyboard/keypad UI itself, never to enter ordinary text. Fields: `type`, `reason`.
+- "target_not_listed": An app element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like), `region` (one of upper_left, upper_center, upper_right, middle_left, middle_center, middle_right, lower_left, lower_center, lower_right), `reason`."""
 COORDINATE_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
@@ -135,7 +136,10 @@ RESPONSE_INSTRUCTIONS = """
 
 KEYBOARD_VISIBLE = (
     "\n### Keyboard State\nVISIBLE — the soft keyboard is currently displayed. "
-    "Elements in the lower ~40% of the screen may be keyboard keys, not app UI.\n"
+    "Its visual keys are normally collapsed because text and standard key presses use "
+    "semantic actions. If the goal tests the keyboard or keypad UI itself and the "
+    "needed key is not numbered, use show_keyboard_targets; the "
+    "next view will expose detected [key] targets. Do not dismiss that keyboard.\n"
 )
 KEYBOARD_HIDDEN = (
     "\n### Keyboard State\nHIDDEN — the soft keyboard is not visible. "
@@ -157,6 +161,11 @@ CURRENT_STATE_SECTION = """
 {keyboard}
 ### Action History (with system-observed outcomes)
 {history}
+"""
+
+SCREEN_TEXT_SECTION = """
+### Independent Screen Text (evidence only, not action targets)
+{screen_text}
 """
 
 DRIFT_SECTION = """
@@ -216,6 +225,7 @@ class DevicePlanner:
         current_state: str,
         image: bytes,
         gui_elements,
+        ocr_evidence=(),
     ) -> list[Message]:
         """Keep the reusable prefix separate from changing state and pixels.
 
@@ -225,14 +235,14 @@ class DevicePlanner:
         """
         stable = SystemMessage(
             content=self._scrubber.for_model(
-                f"{stable_prompt.rstrip()}\n\n### Yewo screenshot masks\n"
-                f"{SECRET_MASK_GUIDANCE}"
+                f"{stable_prompt.rstrip()}\n\n### Yewo screenshot masks\n{SECRET_MASK_GUIDANCE}"
             )
         )
         current = MultiPartMessage()
         current.add_text(self._scrubber.for_model(current_state))
         current.add_text("Current screenshot (newest):")
-        current.add_image(self._model_images.redact_model_image(image, gui_elements or []))
+        redaction_evidence = [*(gui_elements or []), *ocr_evidence]
+        current.add_image(self._model_images.redact_model_image(image, redaction_evidence))
         return [stable, current]
 
     def plan_step(
@@ -247,6 +257,8 @@ class DevicePlanner:
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
+        screen_text: tuple[str, ...] = (),
+        ocr_evidence=(),
     ) -> DeviceStepResponse:
         """Plan the next action given current screen state and accumulated history."""
 
@@ -265,10 +277,15 @@ class DevicePlanner:
             keyboard_open=keyboard_open,
             marks=marks,
             screen_height=screen_height,
+            screen_text=screen_text,
         )
 
         messages = self._model_messages(
-            stable_prompt, current_state, current_image_bytes, gui_elements
+            stable_prompt,
+            current_state,
+            current_image_bytes,
+            gui_elements,
+            ocr_evidence,
         )
 
         logger.info("Querying DevicePlanner for next step...")
@@ -303,6 +320,7 @@ class DevicePlanner:
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
+        screen_text: tuple[str, ...] = (),
     ) -> str:
         stable_prompt, current_state = self._build_prompt_sections(
             goal_lines=goal_lines,
@@ -314,6 +332,7 @@ class DevicePlanner:
             keyboard_open=keyboard_open,
             marks=marks,
             screen_height=screen_height,
+            screen_text=screen_text,
         )
         return stable_prompt + current_state
 
@@ -328,6 +347,7 @@ class DevicePlanner:
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
+        screen_text: tuple[str, ...] = (),
     ) -> tuple[str, str]:
         keyboard = ""
         if keyboard_open is True:
@@ -348,6 +368,8 @@ class DevicePlanner:
             keyboard=keyboard,
             history=history or "No actions executed yet.",
         )
+        if screen_text:
+            current_state += self._format_screen_text(screen_text)
         if drift_warning:
             current_state += DRIFT_SECTION.format(drift=drift_warning)
         if trail:
@@ -427,6 +449,12 @@ class DevicePlanner:
     def _target_heading(self) -> str:
         """Says where the targets are, which differs by mode and must not lie."""
         return TARGET_HEADINGS.get(self.grounding, "(YOLO/OCR)")
+
+    @staticmethod
+    def _format_screen_text(screen_text: tuple[str, ...]) -> str:
+        return SCREEN_TEXT_SECTION.format(
+            screen_text="\n".join(f"- {text}" for text in dict.fromkeys(screen_text))
+        )
 
     def format_targets(self, elements, marks=None, screen_height: int = 0) -> str:
         """The element list for the prompt, in whichever form the mode calls for."""

@@ -368,6 +368,7 @@ class TypedValueTests(unittest.TestCase):
                 platform="android",
                 target_profile="Pixel",
                 detector="detector@revision",
+                perception_pipeline="test-pipeline",
                 grounding="coordinates",
             ),
             [step],
@@ -480,7 +481,7 @@ class ActionTests(unittest.TestCase):
             identity=replay_store.TraceIdentity(
                 scenario_uuid="u", scenario_digest="d", platform="android",
                 target_profile="Pixel_8",
-                detector="d@abc", grounding="marks",
+                detector="d@abc", perception_pipeline="test-pipeline", grounding="marks",
             )
         ).model_dump(by_alias=True)
 

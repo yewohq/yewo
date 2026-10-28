@@ -76,6 +76,7 @@ def identity():
         platform="android",
         target_profile="Pixel_8",
         detector="d@abc",
+        perception_pipeline="test-pipeline",
         grounding="marks",
     )
 

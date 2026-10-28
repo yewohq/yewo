@@ -13,7 +13,14 @@ from yewo.agent.plan.planner import (
     DeviceStepResponse,
 )
 from yewo.agent.device.launch import SetupMode
-from yewo.agent.run import observing, outcomes, postconditions, record, saved_path
+from yewo.agent.run import (
+    keyboard_targets,
+    observing,
+    outcomes,
+    postconditions,
+    record,
+    saved_path,
+)
 from yewo.agent.run.outcomes import DeviceRunResult, ObservationHookFn, StepHookFn
 from yewo.agent.perception import settle
 from yewo.agent.step import dispatch, observation
@@ -294,6 +301,16 @@ class DeviceAgent:
             saved_path.describe_terminal_screen(self, step_response.current_screen)
             return ending
 
+        if step_response.action.type == ActionType.SHOW_KEYBOARD_TARGETS:
+            return keyboard_targets.expand(
+                step,
+                step_response.action,
+                snapshot,
+                session_trail,
+                ctx,
+                self.grounding,
+            )
+
         decision = targeting.evaluate(
             step_response.action,
             snapshot,
@@ -506,6 +523,11 @@ class DeviceAgent:
         view_note = getattr(snapshot, "view_note", None)
         if view_note:
             loop_nudge = "\n".join(filter(None, [view_note, loop_nudge]))
+        perception_frame = getattr(snapshot, "planner_perception_frame", None) or getattr(
+            snapshot, "perception_frame", None
+        )
+        screen_text = perception_frame.unmatched_text() if perception_frame is not None else ()
+        ocr_evidence = perception_frame.ocr_redaction_evidence() if perception_frame is not None else ()
         return planner.plan_step(
             goal=goal,
             gui_elements=gui_elements,
@@ -517,4 +539,6 @@ class DeviceAgent:
             marks=snapshot.marks,
             screen_height=planner_height or 0,
             keyboard_open=ctx.keyboard_open,
+            screen_text=screen_text,
+            ocr_evidence=ocr_evidence,
         )

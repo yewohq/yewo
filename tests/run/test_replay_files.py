@@ -24,6 +24,7 @@ def identity(**overrides):
         "platform": "android",
         "target_profile": "Pixel_8",
         "detector": "detector@abcdef12",
+        "perception_pipeline": "test-pipeline",
         "grounding": "marks",
     }
     fields.update(overrides)
@@ -130,6 +131,16 @@ class RefusalTests(unittest.TestCase):
 
         self.assertIsNone(
             replay_files.read_trace(self.path, identity(detector="detector@99999999"))
+        )
+
+    def test_a_trace_for_another_perception_pipeline_is_ignored(self):
+        replay_files.write_trace(self.path, trace(perception_pipeline="pipeline-1"))
+
+        self.assertIsNone(
+            replay_files.read_trace(
+                self.path,
+                identity(perception_pipeline="pipeline-2"),
+            )
         )
 
     def test_a_trace_for_another_scenario_digest_is_ignored(self):

@@ -9,6 +9,7 @@ from yewo.agent.actuation.actions import PlannerTapAction, TapAction, TypeAction
 from yewo.agent.memory import replay_match, replay_walk
 from yewo.agent.memory.history import ActionEntry, ActionResult
 from yewo.agent.memory.loop_detector import RollingLoopDetector
+from yewo.agent.memory.replay_projection import project_actionable_elements
 from yewo.agent.run.record import StepSource
 from yewo.agent.run.outcomes import (
     GOAL_REACHED,
@@ -64,9 +65,14 @@ def try_cached_step(
         if snapshot.scan_info is None:
             index = None
         elif expected_transition.source.anchors:
+            projected_elements = project_actionable_elements(
+                snapshot.gui_elements,
+                snapshot.scan_info,
+                replay.trace.identity.grounding,
+            )
             refusal = replay_match.screen_agrees(
                 expected_transition.source,
-                snapshot.gui_elements,
+                projected_elements,
                 snapshot.scan_info,
                 replay.names,
                 replay.key,
@@ -126,6 +132,7 @@ def try_cached_step(
         )
         if before_action_hook is not None
         else None,
+        grounding=replay.trace.identity.grounding,
     )
     if attempt.stopped:
         return False
@@ -196,6 +203,7 @@ def _arrived_where_expected(agent, replay, snapshot, ctx, step: int) -> bool:
         replay.names,
         replay.key,
         same_build=replay.is_same_build,
+        grounding=replay.trace.identity.grounding,
     )
     if refusal is None:
         if replay.position >= len(replay.trace.transitions):

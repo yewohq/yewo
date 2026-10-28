@@ -29,13 +29,14 @@ VERBS_BY_ACTION: dict[ActionType, tuple[str, ...]] = {
     ActionType.WAIT: ("wait",),
     ActionType.CAPABILITY: (),
     ActionType.TARGET_NOT_LISTED: (),
+    ActionType.SHOW_KEYBOARD_TARGETS: (),
 }
 """Which verbs ask for which action.
 
 `CAPABILITY` carries none of its own. Its verbs are in `VERBS_BY_CAPABILITY`,
 one group per kind, because a capability is a different request each time.
-`TARGET_NOT_LISTED` carries none either: the planner reports with it, and no
-instruction asks for it.
+`TARGET_NOT_LISTED` and `SHOW_KEYBOARD_TARGETS` carry none either: they are
+planner observations/refinements, not instructions a generated test asks for.
 """
 
 VERBS_BY_CAPABILITY: dict[CapabilityKind, tuple[str, ...]] = {

@@ -55,6 +55,7 @@ def identity():
         platform="android",
         target_profile="sdk_gphone64_arm64",
         detector="orasul/deki-yolo@revision",
+        perception_pipeline="test-pipeline",
         grounding="coordinates",
     )
 

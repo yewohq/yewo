@@ -144,6 +144,24 @@ class ScreenTests(unittest.TestCase):
 
         self.assertIsNone(self._agrees(screen, screen))
 
+    def test_a_changed_keyboard_state_is_refused(self):
+        screen = [element("Email", "field")]
+        expected = replay_store.ScreenSignature(
+            anchors=anchors(screen),
+            keyboard_visible=True,
+        )
+        current_scan = scan(1)
+        current_scan.keyboard_effective_visible = False
+
+        refused = replay_match.screen_agrees(
+            expected,
+            screen,
+            current_scan,
+            replay_store.ValueNames(),
+        )
+
+        self.assertEqual(refused.reason, "the keyboard visibility changed")
+
     def test_a_screen_that_grew_a_banner_still_agrees(self):
         """A build adds something. That is not a different screen."""
         saved = [element("Sign in"), element("Email", "field", (100, 400, 300, 450))]

@@ -75,3 +75,29 @@ jobs:
       # extras must resolve here although no job runs a model.
       - run: uv sync --group dev --extra vision --extra jev
       - run: uv run python tools/type_gate.py
+
+  perception-integration:
+    # Private model-backed integration is intentionally opt-in. It has no paid
+    # LLM or device dependency, but downloads the pinned detector/OCR packages.
+    if: vars.RUN_PERCEPTION_INTEGRATION == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --group dev --extra vision
+      - run: uv run python -m tools.perception_eval.integration_gate integration/run
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      - run: uv build --wheel --out-dir integration/dist
+      - run: uv run python -m tools.perception_eval.clean_install integration/dist integration/clean-install.json
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perception-integration
+          path: integration/
+          if-no-files-found: ignore
