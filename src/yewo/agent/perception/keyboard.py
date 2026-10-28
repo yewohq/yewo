@@ -1,7 +1,7 @@
 """Keyboard ownership policy over model-declared semantic roles.
 
 This module does not detect keyboards and contains no platform or screen-position
-rules. The model identifies keyboard regions and keys; this policy keeps them
+rules. The model identifies keyboard regions and keys. This policy keeps them
 separate from ordinary app controls and expands visual keys when the planner asks.
 """
 

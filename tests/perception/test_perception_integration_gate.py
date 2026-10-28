@@ -63,9 +63,9 @@ class PerceptionIntegrationGateTests(unittest.TestCase):
         result = {
             "detector_reused": True,
             "surface_roles": ["keyboard_region"],
-            "unique_fused_text_equal": True,
-            "incremental_class_counts": {"Button": 1},
-            "full_class_counts": {"Button": 1},
+            "unique_app_text_equal": True,
+            "incremental_app_class_counts": {"Button": 1},
+            "full_app_class_counts": {"Button": 1},
             "speedup": 1.2,
         }
 

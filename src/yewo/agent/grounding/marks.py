@@ -143,10 +143,9 @@ def _contained_in(child, parent) -> bool:
 def _smaller_box_overlap(a, b) -> float:
     """The shared area as a fraction of the smaller box.
 
-    An even-overlap test divides by the area of both boxes, so a small shift
-    along a long edge drops the score far below what the eye reads as the same
-    box. A rule detected twice loses a third of its score to a shift of a
-    tenth of its length.
+    An even-overlap test divides by the area of both boxes. A small shift along
+    a long edge then makes the score too low. A duplicated rule can lose one
+    third of its score after a shift of one tenth of its length.
     """
     left, top = max(a.x_min, b.x_min), max(a.y_min, b.y_min)
     right, bottom = min(a.x_max, b.x_max), min(a.y_max, b.y_max)
@@ -158,13 +157,12 @@ def _smaller_box_overlap(a, b) -> float:
 def _is_duplicate(element: GUIElement, other: GUIElement) -> bool:
     """Whether two detections are one thing the detector found twice.
 
-    Comparable size is what separates a repeat from a nest. A container and
-    the part inside it also sit almost entirely on each other, and folding
-    those is `_collapse_nests`'s work: it keeps the container's outline and
-    takes only the touch point from the part.
+    Comparable size separates a repeat from a nest. A container and its child
+    can also overlap almost completely. `_collapse_nests` handles that case.
+    It keeps the container outline and uses only the child's touch point.
 
-    Kept as two, a repeated label gives its button two labels, and a box
-    holding two labels is read as a row and never folded into one control.
+    Two repeated labels can give one button two labels. A box with two labels
+    is read as a row and is never folded into one control.
     """
     if element.text != other.text:
         return False

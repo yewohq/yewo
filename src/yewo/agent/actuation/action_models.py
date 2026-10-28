@@ -444,21 +444,16 @@ class WaitAction(BaseModel):
 
 
 TypeMarkAction = marks_variant(TypeAction, "TypeMarkAction")
-TapMarkAction = marks_variant(PlannerTapAction, "TapMarkAction")
+TapMarkAction = marks_variant(PlannerTapAction, "TapMarkAction", TapAction)
 ClearMarkAction = marks_variant(ClearAction, "ClearMarkAction")
 DoubleTapMarkAction = marks_variant(DoubleTapAction, "DoubleTapMarkAction")
 LongPressMarkAction = marks_variant(LongPressAction, "LongPressMarkAction")
 
 TypeDescribeAction = describe_variant(TypeAction, "TypeDescribeAction")
-TapDescribeAction = describe_variant(PlannerTapAction, "TapDescribeAction")
+TapDescribeAction = describe_variant(PlannerTapAction, "TapDescribeAction", TapAction)
 ClearDescribeAction = describe_variant(ClearAction, "ClearDescribeAction")
 DoubleTapDescribeAction = describe_variant(DoubleTapAction, "DoubleTapDescribeAction")
 LongPressDescribeAction = describe_variant(LongPressAction, "LongPressDescribeAction")
-
-# A numbered/described tap resolves into the stable internal action used by
-# dispatch and replay. Its count remains the internal default of one.
-TapMarkAction.coordinate_form = TapAction
-TapDescribeAction.coordinate_form = TapAction
 
 # Actions that touch a specific place, and so need a target resolved first.
 TARGETED_ACTIONS = frozenset(

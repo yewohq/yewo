@@ -71,9 +71,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      # Pyright reads the deferred torch and SDK imports, so both optional
-      # extras must resolve here although no job runs a model.
-      - run: uv sync --group dev --extra vision --extra jev
+      # Pyright reads deferred production, evaluation and SDK imports, so the
+      # optional extras must resolve here although no job runs a model.
+      - run: uv sync --group dev --extra vision --extra perception-eval --extra jev
       - run: uv run python tools/type_gate.py
 
   perception-integration:

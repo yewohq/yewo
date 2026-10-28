@@ -11,7 +11,7 @@ DEFAULT_PLATFORM = "android"
 DEFAULT_DEVICE = "Pixel_8a"
 DEFAULT_MODEL = "openrouter/google/gemini-2.5-flash"
 DEFAULT_PERCEPTION_MODEL = (
-    "hf://BeccaSaka/yewo-ui@29b9bb30f6ba5ecb22026368ed5438d62a2e4150"
+    "hf://BeccaSaka/yewo-ui@43ccac8703302adf4b876a055ee925ba1b444db8"
 )
 """Immutable release of Yewo's default detector package."""
 DEFAULT_OUTPUT_DIR = "assets"

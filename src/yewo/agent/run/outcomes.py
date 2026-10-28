@@ -69,9 +69,8 @@ record that keeps it, and the corpus that asserts on it.
 GOAL_REACHED: RunStatus = "goal_reached"
 """The only ending that means the goal was met.
 
-Named because a benchmark harness has to tell this ending from an exhausted
-budget, and a bare string at that boundary cannot be checked against the
-vocabulary above.
+A benchmark harness must distinguish this ending from an exhausted budget.
+A bare string at that boundary cannot be checked against the vocabulary above.
 """
 
 

@@ -116,7 +116,7 @@ CRITICAL CONSTRAINTS:
 """
 
 APP_LAUNCH_CONSTRAINTS = """
-APP LAUNCH RULES:
+APP OPENING RULES:
 1. On a device home screen or launcher, do not infer an app's identity from an icon that has no visible name.
 2. On Android, open the app drawer first. Select the app there only when its visible name matches the requested app. Use app-drawer search only if the named app is not visible in the drawer.
 3. On iOS, use Home Screen Search or the App Library when the requested app's name is not visible.

@@ -360,8 +360,8 @@
     "name": "the-findings-never-reach-the-judge",
     "owner": "gate",
     "path": "src/yewo/testing/qa_agent.py",
-    "find": "            security_rules=security_rules,\n            all_findings=all_findings,\n            measurement_samples=measurement_samples,\n        )",
-    "replace": "            security_rules=security_rules,\n            measurement_samples=measurement_samples,\n        )"
+    "find": "            security_rules=security_rules,\n            all_findings=all_findings,\n            measurement_samples=measurement_samples,\n            crash_diagnostic=crash_diagnostic,\n        )",
+    "replace": "            security_rules=security_rules,\n            measurement_samples=measurement_samples,\n            crash_diagnostic=crash_diagnostic,\n        )"
   },
   {
     "name": "a-report-carries-no-record-of-its-inputs",

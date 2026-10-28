@@ -1,11 +1,10 @@
 """Drawing the number that names each detected element on the screenshot.
 
-The number is the only way the planner can name a target, so a badge has to
-say which box it belongs to. A badge placed beside a box lands on the
-neighbouring box whenever the gap between elements is narrower than the badge,
-which is the ordinary case for icon grids and colour palettes. Inside its own
-box the association cannot be misread, so that is where a badge goes whenever
-the element is large enough to hold one.
+The number is the only way the planner can name a target. Each badge must show
+which box it belongs to. A badge beside a box can land on a neighbouring box.
+This occurs when the gap is narrower than the badge, as in icon grids and
+colour palettes. A badge inside its box has a clear association. Place it
+there when the element is large enough.
 
 Badge text is sized from the element rather than the screen. A number large
 enough to read on a full-screen dialog covers a small swatch completely.

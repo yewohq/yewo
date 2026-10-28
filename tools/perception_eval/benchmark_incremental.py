@@ -11,6 +11,7 @@ from typing import cast
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
+from yewo.agent.perception import keyboard
 from yewo.agent.perception.detector import ImageDescriptor
 from yewo.agent.perception.incremental import plan_incremental_refresh
 from yewo.agent.perception.keyboard import KEYBOARD_KEY_ROLE, KEYBOARD_REGION_ROLE
@@ -21,10 +22,16 @@ def benchmark(screenshot: Path, model_reference: str, render_output: Path | None
     source_bytes = screenshot.read_bytes()
     previous_frame, previous_image = descriptor.observe(source_bytes)
     elements = list(previous_frame.elements)
-    key = min(
+    keys_by_area = sorted(
         (element for element in elements if KEYBOARD_KEY_ROLE in element.semantic_roles),
         key=lambda element: _area(element.bounding_box),
     )
+    if not keys_by_area:
+        raise RuntimeError("benchmark screenshot has no semantic keyboard keys")
+    # The smallest proposals are often clipped edge keys or glyph-sized boxes.
+    # Painting one changes the object being measured instead of simulating a
+    # contained key-state change. A median key leaves a stable interior patch.
+    key = keys_by_area[len(keys_by_area) // 2]
     changed_image = previous_image.copy()
     box = key.bounding_box
     highlight_x = min(box.x_max - 12, box.x_min + 12)
@@ -62,6 +69,10 @@ def benchmark(screenshot: Path, model_reference: str, render_output: Path | None
     full_ms = (time.perf_counter() - started) * 1000
     incremental_texts = _texts(incremental_elements)
     full_texts = _texts(full_elements)
+    incremental_app_elements = keyboard.observe(incremental_elements, True).app_elements
+    full_app_elements = keyboard.observe(full_elements, True).app_elements
+    incremental_app_texts = _texts(incremental_app_elements)
+    full_app_texts = _texts(full_app_elements)
 
     result = {
         "screenshot": str(screenshot),
@@ -85,6 +96,13 @@ def benchmark(screenshot: Path, model_reference: str, render_output: Path | None
         "full_only_text": sorted(set(full_texts) - set(incremental_texts)),
         "incremental_class_counts": _class_counts(incremental_elements),
         "full_class_counts": _class_counts(full_elements),
+        "unique_app_text_equal": set(incremental_app_texts) == set(full_app_texts),
+        "incremental_only_app_text": sorted(
+            set(incremental_app_texts) - set(full_app_texts)
+        ),
+        "full_only_app_text": sorted(set(full_app_texts) - set(incremental_app_texts)),
+        "incremental_app_class_counts": _class_counts(incremental_app_elements),
+        "full_app_class_counts": _class_counts(full_app_elements),
     }
     if render_output is not None:
         render_output.parent.mkdir(parents=True, exist_ok=True)

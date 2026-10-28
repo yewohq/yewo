@@ -1,7 +1,4 @@
-"""
-High-level control interface for interacting with mobile devices (Android/iOS) via Appium.
-Encapsulates driver initialization, screenshots, and gesture/input execution.
-"""
+"""Appium device initialization, screenshots, and input execution."""
 
 import logging
 import time
@@ -20,10 +17,7 @@ from yewo.agent.device.diagnostics import diagnose_avd_launch
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.ios_app import bundle_identifier
 from yewo.agent.device.scope import DeviceScope
-from yewo.defaults import (
-    AVD_LAUNCH_TIMEOUT_MS,
-    IDLE_SESSION_TIMEOUT_SECONDS,
-)
+from yewo.defaults import AVD_LAUNCH_TIMEOUT_MS, IDLE_SESSION_TIMEOUT_SECONDS
 from yewo.errors import DeviceUnavailable, ObservationUnavailable
 
 if TYPE_CHECKING:

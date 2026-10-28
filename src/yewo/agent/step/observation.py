@@ -164,7 +164,7 @@ def _number_refined_targets(snapshot: PerceptionSnapshot, ctx, perception, regio
         "full screen. Select a number only when the requested target is visible."
     )
     logger.info(
-        "Refined %s crop found %d elements; action points remain full-screen.",
+        "Refined %s crop found %d elements. Action points remain full-screen.",
         region,
         len(local_elements),
     )

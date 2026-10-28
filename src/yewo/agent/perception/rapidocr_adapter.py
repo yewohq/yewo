@@ -14,7 +14,7 @@ from yewo.agent.perception.ocr import OCRLine, OCRPoint, OCRResult, OCRTiming
 
 # RapidOCR names this multilingual PP-OCRv6 routing alias ``ch``. For the
 # small v6 model, supported language aliases resolve to the same multilingual
-# detector and recognizer weights; this does not restrict Yewo to Chinese UI.
+# detector and recognizer weights. This does not restrict Yewo to Chinese UI.
 RAPIDOCR_LANGUAGE_ROUTE = "ch"
 OCR_MODEL_VERSION = "PP-OCRv6"
 OCR_MODEL_SIZE = "small"

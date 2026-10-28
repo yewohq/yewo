@@ -52,7 +52,7 @@ class LLMClient:
                 nothing, which is what a client built outside a run gets.
             cache_affinity: Stable identity for calls in one run. OpenRouter
                 uses it for sticky routing to the endpoint holding a prompt
-                cache. It does not ask for caching; a provider that caches
+                cache. It does not ask for caching. A provider that caches
                 only on request is marked in the message payload instead.
         """
         self._model = model
@@ -202,7 +202,7 @@ class LLMClient:
         request_messages = list(messages)
         if response_model:
             # One contract is used through every LiteLLM route. Native schema
-            # grammars differ in supported keywords and complexity ceilings;
+            # grammars differ in supported keywords and complexity ceilings.
             # Yewo instead asks every model for JSON and validates the same
             # Pydantic model locally, with one corrective retry on mismatch.
             request_messages.append(TextMessage(content=JSON_INSTRUCTION))

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from yewo.agent.actuation.actions import ActionType
+from yewo.agent.actuation.actions import ActionType, ShowKeyboardTargetsAction
 from yewo.agent.grounding.runtime import GroundingModels, ground_and_protect_typed_secret
 from yewo.agent.plan.planner import (
     GROUNDING_COORDINATES,
@@ -301,7 +301,7 @@ class DeviceAgent:
             saved_path.describe_terminal_screen(self, step_response.current_screen)
             return ending
 
-        if step_response.action.type == ActionType.SHOW_KEYBOARD_TARGETS:
+        if isinstance(step_response.action, ShowKeyboardTargetsAction):
             return keyboard_targets.expand(
                 step,
                 step_response.action,

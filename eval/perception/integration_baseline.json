@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "detector": "hf://BeccaSaka/yewo-ui@29b9bb30f6ba5ecb22026368ed5438d62a2e4150",
+  "detector": "hf://BeccaSaka/yewo-ui@43ccac8703302adf4b876a055ee925ba1b444db8",
   "ocr": "rapidocr@3.10.0+onnxruntime@1.31.1/PP-OCRv6-small:ch/max-side-960",
   "cases": {
     "android_alpha_keyboard": {
@@ -240,6 +240,7 @@
           5
         ],
         "covered_target_names": [
+          "weather_widget",
           "clock_widget",
           "files_widget",
           "messages",

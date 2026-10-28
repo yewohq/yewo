@@ -97,8 +97,8 @@ def _count(block: dict, name: str) -> int:
 def _first_count(block: dict, *names: str) -> int:
     """A token count one provider reports under a name another does not use.
 
-    Read in the order given, so the first name is the one a record is meant to
-    carry and the rest are the spellings a provider actually sends.
+    Read names in the given order. The first name belongs in the record. The
+    other names are spellings that providers send.
     """
     for name in names:
         value = (block or {}).get(name)

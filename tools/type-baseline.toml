@@ -68,42 +68,6 @@ message = "Expression of type \"None\" cannot be assigned to parameter of type \
 count = 1
 
 [[errors]]
-path = "src/yewo/agent/perception/detector.py"
-rule = "reportArgumentType"
-message = "Argument of type \"list[Unknown] | list[dict[str, Unknown]] | list[str] | list[list[Unknown]]\" cannot be assigned to parameter \"iterable\" of type \"Iterable[str]\" in function \"join\" Type \"list[Unknown] | list[dict[str, Unknown]] | list[str] | list[list[Unknown]]\" is not assignable to type \"Iterable[str]\" \"list[dict[str, Unknown]]\" is not assignable to \"Iterable[str]\" Type parameter \"_T_co@Iterable\" is covariant, but \"dict[str, Unknown]\" is not a subtype of \"str\" \"dict[str, Unknown]\" is not assignable to \"str\""
-count = 1
-
-[[errors]]
-path = "src/yewo/agent/perception/detector.py"
-rule = "reportCallIssue"
-message = "No overloads for \"join\" match the provided arguments"
-count = 1
-
-[[errors]]
-path = "src/yewo/agent/perception/screen.py"
-rule = "reportArgumentType"
-message = "Argument of type \"list[GUIElement] | None\" cannot be assigned to parameter \"obj\" of type \"Sized\" in function \"len\" Type \"list[GUIElement] | None\" is not assignable to type \"Sized\" \"None\" is incompatible with protocol \"Sized\" \"__len__\" is not present"
-count = 1
-
-[[errors]]
-path = "src/yewo/agent/perception/screen.py"
-rule = "reportArgumentType"
-message = "Argument of type \"list[GUIElement] | None\" cannot be assigned to parameter \"prev\" of type \"list[GUIElement]\" in function \"_match_elements\" Type \"list[GUIElement] | None\" is not assignable to type \"list[GUIElement]\" \"None\" is not assignable to \"list[GUIElement]\""
-count = 1
-
-[[errors]]
-path = "src/yewo/agent/perception/screen.py"
-rule = "reportOptionalMemberAccess"
-message = "\"get_screenshot\" is not a known attribute of \"None\""
-count = 1
-
-[[errors]]
-path = "src/yewo/agent/perception/screen.py"
-rule = "reportOptionalOperand"
-message = "Operator \">=\" not supported for \"None\""
-count = 1
-
-[[errors]]
 path = "src/yewo/agent/run/agent.py"
 rule = "reportArgumentType"
 message = "Expression of type \"None\" cannot be assigned to parameter of type \"str\" \"None\" is not assignable to \"str\""

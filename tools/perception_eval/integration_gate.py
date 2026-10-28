@@ -270,10 +270,10 @@ def incremental_failures(result: dict) -> list[str]:
         failures.append("incremental refresh did not reuse detector geometry")
     if KEYBOARD_REGION_ROLE not in result.get("surface_roles", []):
         failures.append("incremental refresh did not identify the keyboard surface")
-    if not result.get("unique_fused_text_equal"):
-        failures.append("incremental refresh changed the fused text set")
-    if result.get("incremental_class_counts") != result.get("full_class_counts"):
-        failures.append("incremental refresh changed detector class counts")
+    if not result.get("unique_app_text_equal"):
+        failures.append("incremental refresh changed app-visible fused text")
+    if result.get("incremental_app_class_counts") != result.get("full_app_class_counts"):
+        failures.append("incremental refresh changed app-visible detector classes")
     if float(result.get("speedup", 0)) <= 1:
         failures.append("incremental refresh was not faster than a same-process full pass")
     return failures

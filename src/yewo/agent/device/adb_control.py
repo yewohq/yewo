@@ -26,10 +26,10 @@ class VisualFeedbackSettings:
 class AdbControl:
     """Provides shell interfaces and wrapper utilities for working with Android devices via ADB.
 
-    Three ways to reach a device, and the choice between them is the whole
-    contract. `adb` and `shell` must succeed and raise when they do not. `ask`
-    is a read, and answers None when the device will not say: a question adb
-    cannot answer is not the same as a command that failed.
+    Three methods reach a device. Their different failure contracts are
+    important. `adb` and `shell` must succeed and raise when they do not.
+    `ask` returns None when the device cannot answer. An unanswered question
+    is not the same as a failed command.
 
     Every one takes the serial and builds the argv, because a call site that
     forgets `-s` does not fail. adb picks the only attached device, which is
@@ -193,7 +193,7 @@ class AdbControl:
     def resolve_launch_activity(
         apk_path: str, package_id: str, serial: Optional[str] = None
     ) -> str:
-        """The activity to name in a launch intent.
+        """The activity to name in an open-app intent.
 
         An intent without a component matches every launcher on the device,
         which Android refuses rather than guessing. So a missing activity has
@@ -311,7 +311,7 @@ class AdbControl:
 
     @staticmethod
     def read_visual_feedback(serial: str) -> VisualFeedbackSettings:
-        """Read feedback settings before a visual session changes them."""
+        """Read feedback settings before a visual session alters them."""
 
         def read_boolean(name: str) -> Optional[bool]:
             value = AdbControl.ask(serial, "settings", "get", "system", name)
@@ -434,8 +434,8 @@ class AdbControl:
     def reset_battery(serial: str):
         """Hands the battery back to the real one after an override.
 
-        There is no 'set it to what it was': the framework either reports the
-        hardware or reports the override, so reset is the only honest undo.
+        The framework reports either the hardware or the override. It cannot
+        set an unknown prior value. A reset is the only accurate undo.
         """
         AdbControl.shell(serial, "dumpsys", "battery", "reset", doing="reset battery")
 
@@ -525,51 +525,21 @@ class AdbControl:
 
     @staticmethod
     def set_accessibility_service(serial: str, service: str, enabled: bool):
-        """Adds or removes one accessibility service, leaving the others alone.
+        """Add or remove one accessibility service without changing others."""
+        from yewo.agent.device.accessibility import set_service
 
-        The setting holds every enabled service as one colon-separated list.
-        Writing the one service replaces that list, and writing an empty list
-        to switch one off turns off every screen reader the owner had running.
-        So the list is read, the one service is added to it or taken out of it,
-        and the result is written back.
-        """
-        listed = AdbControl.enabled_accessibility_services(serial)
-        services = [name for name in (listed or "").split(":") if name]
-
-        if enabled and service not in services:
-            services.append(service)
-        elif not enabled and service in services:
-            services.remove(service)
-
-        logger.info(
-            "%s accessibility service %s",
-            "Registering" if enabled else "Deregistering",
-            service,
-        )
-        AdbControl.set_accessibility_services(serial, ":".join(services))
+        set_service(serial, service, enabled)
 
     @staticmethod
     def enabled_accessibility_services(serial: str) -> Optional[str]:
         """Every enabled accessibility service, as the setting stores them."""
-        listed = AdbControl.ask(
-            serial, "settings", "get", "secure", "enabled_accessibility_services"
-        )
-        return "" if listed in (None, "null") else listed
+        from yewo.agent.device.accessibility import enabled_services
+
+        return enabled_services(serial)
 
     @staticmethod
     def set_accessibility_services(serial: str, services: str):
-        """Writes the whole list back, and the master switch to match it.
+        """Write the complete service list and its master switch."""
+        from yewo.agent.device.accessibility import write_services
 
-        An empty list needs the quoted empty string, because `settings put`
-        takes no argument otherwise and leaves the old value in place.
-        """
-        AdbControl.shell(
-            serial, "settings", "put", "secure",
-            "enabled_accessibility_services", services or '""',
-            doing="set the accessibility services",
-        )
-        AdbControl.shell(
-            serial, "settings", "put", "secure",
-            "accessibility_enabled", "1" if services else "0",
-            doing="set the accessibility master switch",
-        )
+        write_services(serial, services)

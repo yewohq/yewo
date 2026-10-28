@@ -9,10 +9,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, PropertyMock, call, patch
 
 
-from yewo.errors import ObservationUnavailable
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device.platform import Platform
-from yewo.errors import ActionRejected
+from yewo.errors import ActionRejected, ObservationUnavailable
 
 
 class ActionSafetyTests(unittest.TestCase):
@@ -368,10 +367,6 @@ class ScenarioIsolationTests(unittest.TestCase):
         self.assertEqual(report.status, "UNVERIFIED")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DeviceTypingTests(unittest.TestCase):
     def _control(self, rect):
         element = SimpleNamespace(id="field", rect=rect, send_keys=Mock())
@@ -495,10 +490,6 @@ class DeviceTypingTests(unittest.TestCase):
             control.clear(537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class WarmSessionTests(unittest.TestCase):

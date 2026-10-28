@@ -1,6 +1,6 @@
 """Build action variants that identify targets without raw coordinates."""
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, Field, create_model
 
@@ -12,7 +12,7 @@ class RetargetedAction(BaseModel):
 
     @property
     def count(self) -> int:
-        """Model-facing taps are one action; other variants ignore this value."""
+        """Model-facing taps are one action. Other variants ignore this value."""
         return 1
 
     @property
@@ -25,7 +25,8 @@ def _retargeted(
     name: str,
     target: str,
     definition: tuple[type, Any],
-) -> type[BaseModel]:
+    coordinate_form: type[BaseModel] | None = None,
+) -> type[RetargetedAction]:
     fields: dict[str, Any] = {
         field_name: (info.annotation, info)
         for field_name, info in model.model_fields.items()
@@ -43,22 +44,34 @@ def _retargeted(
                 ),
             ),
         )
-    variant = create_model(name, __base__=RetargetedAction, **fields)
-    variant.coordinate_form = model
+    variant = cast(
+        type[RetargetedAction],
+        create_model(name, __base__=RetargetedAction, **fields),
+    )
+    variant.coordinate_form = coordinate_form or model
     return variant
 
 
-def marks_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
+def marks_variant(
+    model: type[BaseModel],
+    name: str,
+    coordinate_form: type[BaseModel] | None = None,
+) -> type[RetargetedAction]:
     """Replace coordinates with a required numbered screenshot mark."""
     return _retargeted(
         model,
         name,
         "mark",
         (int, Field(..., description="Number of the target element on the screenshot.")),
+        coordinate_form,
     )
 
 
-def describe_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
+def describe_variant(
+    model: type[BaseModel],
+    name: str,
+    coordinate_form: type[BaseModel] | None = None,
+) -> type[RetargetedAction]:
     """Replace coordinates with a required visual target description."""
     return _retargeted(
         model,
@@ -74,4 +87,5 @@ def describe_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
                 ),
             ),
         ),
+        coordinate_form,
     )

@@ -42,7 +42,7 @@ HubDownload = Callable[..., str]
 
 
 def parse_model_reference(value: str) -> HuggingFaceModelReference:
-    """Parse one immutable Hub reference; branches and tags are not accepted."""
+    """Parse one immutable Hub reference. Reject branches and tags."""
     match = REFERENCE_PATTERN.fullmatch(value)
     if match is None:
         raise ModelPackageError(
@@ -80,7 +80,7 @@ def resolve_model_package(
     actual_sha256 = _sha256(weights_path)
     if actual_sha256 != manifest.sha256:
         raise ModelPackageError(
-            f"model weights checksum is {actual_sha256}; manifest expects {manifest.sha256}"
+            f"model weights checksum is {actual_sha256}. Manifest expects {manifest.sha256}"
         )
     return ResolvedModelPackage(reference, manifest, weights_path)
 

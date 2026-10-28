@@ -60,7 +60,10 @@ class ActionOrchestrator:
     def _validate(self, action: Action) -> None:
         coordinates = getattr(action, "coordinates", None)
         if coordinates is not None:
-            self._validate_point(coordinates.x, coordinates.y, action.type.value)
+            action_label = (
+                action.type.value if isinstance(action.type, ActionType) else action.type
+            )
+            self._validate_point(coordinates.x, coordinates.y, action_label)
         if action.type == ActionType.DRAG_AND_DROP:
             self._validate_point(action.source_x, action.source_y, "drag source")
             self._validate_point(

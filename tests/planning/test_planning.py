@@ -16,7 +16,6 @@ from yewo.agent.run.context import RunContext
 SENTINEL_OUTCOME = "the sign-in screen remains visible"
 SENTINEL_SECURITY = "the card number is masked"
 
-
 class ProviderNormalizationTests(unittest.TestCase):
     """Schemas are advisory, so equivalent shapes have to be accepted."""
 
