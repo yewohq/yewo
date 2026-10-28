@@ -1,0 +1,25 @@
+# Version overrides for AndroidWorld's requirements.txt, applied with
+# `uv pip install --override`. Upstream's pins predate CPython 3.12, and its
+# unpinned packages now resolve past the protobuf runtime its dependencies
+# generate code for.
+
+# 3.6.1 publishes no CPython 3.12 wheel, and the FreeType 2.6.1 copy it builds
+# from source does not compile against current clang. Only upstream's SeeAct
+# agent and plotting helpers import matplotlib, neither of which Yewo uses.
+matplotlib>=3.8.4
+
+# AndroidWorld pins NumPy 1.26.3. Use the compatible 1.x patch required by
+# current PyWavelets, and keep SciPy below the releases that require NumPy 2.x.
+# Otherwise ImageHash's perceptual hash fails on Yewo's first screenshot.
+numpy==1.26.4
+scipy==1.14.1
+
+# AndroidEnv and googleapis-common-protos ship protobuf 6 gencode, which
+# google-generativeai 0.5.1 forbids through google-ai-generativelanguage.
+google-generativeai>=0.8.5
+protobuf>=6.33.5,<7
+
+# Upstream leaves grpcio-tools unpinned, so protoc emits protobuf 7 gencode.
+# The bindings it generates for AndroidWorld's own protos have to load under
+# the protobuf 6 runtime pinned above.
+grpcio-tools>=1.81,<1.82.1

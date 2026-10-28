@@ -1,4 +1,33 @@
-# The eval corpus
+# Yewo evaluation
+
+`eval/` is the canonical home for Yewo's application journeys, app artifact
+manifest, labelled judge fixtures, perception cases, integrations, baselines,
+and generated evaluation runs.
+
+```text
+eval/
+├── apps/            # Android/iOS manifest and local packages
+├── controlled_app/  # Yewo-owned Flutter app, workflows, and lock
+├── journeys/        # Third-party app workflows
+├── integrations/    # Upstream ground-truth benchmark adapters
+├── perception/      # Detector and OCR corpus
+├── screens/         # Labelled visual-judge cases
+├── verdicts/        # Deterministic verdict cases
+├── baselines/       # Reviewed release measurements
+└── runs/            # Generated output; ignored by Git
+```
+
+Materialize the pinned Android packages from their official upstream releases:
+
+```bash
+uv run yewo eval setup --platform android
+```
+
+Application directories represent deployment platforms only. Compatibility
+targets and known defect pairs are distinguished by metadata and journeys, not
+by a separate filesystem category.
+
+## Labelled judge corpus
 
 Labelled cases that Yewo's own judging must answer correctly. It is a gate on
 Yewo, not a command a user runs against an app. `tools/eval_gate.py` reads it.
@@ -104,7 +133,7 @@ before that happens. A fixture built from a covered screenshot asks the auditor
 about something no run ever shows it.
 
 **It comes from our own demo app.** Every screenshot here is a screen of
-`example/testing_app`, with no real account and no real card. Nothing from a
+`eval/controlled_app`, with no real account and no real card. Nothing from a
 user's run reaches this directory, and there is no path by which it could: a
 user's `run.json` and screenshots are written to their own machine and are
 never sent anywhere.

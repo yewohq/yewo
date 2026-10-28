@@ -83,14 +83,8 @@ uv run yewo test path/to/journey.yaml --app-path path/to/app.apk
 Or keep the settings and the tests in one `yewo.yaml`, which is what a
 project does. A workflow owns an environment and either one app/device pair
 or a target matrix. The journeys inside it are the tests. Run it from the
-directory that holds the file. See
-[`example/testing_app/yewo.yaml`](example/testing_app/yewo.yaml).
-
-```bash
-cd example/testing_app
-uv run yewo test                           # every workflow
-uv run yewo test --workflow notifications  # one
-```
+directory that holds the file. To try Yewo with the maintained test apps and
+journeys, see the [`eval/` guide](eval/README.md).
 
 ## What Yewo generates
 
@@ -234,29 +228,6 @@ uv run yewo run "Sign in and open the settings screen" \
 ```
 
 Android APKs and iOS `.app` or `.ipa` bundles are supported.
-
-## Build the sample app
-
-The example journey targets the Flutter app in `example/testing_app`.
-
-Android:
-
-```bash
-cd example/testing_app
-flutter build apk --debug
-```
-
-iOS Simulator:
-
-```bash
-cd example/testing_app
-flutter build ios --simulator
-```
-
-Return to the repository root before running Yewo. The generated app paths are:
-
-- Android: `example/testing_app/build/app/outputs/flutter-apk/app-debug.apk`
-- iOS: `example/testing_app/build/ios/iphonesimulator/Runner.app`
 
 ## Configuration
 

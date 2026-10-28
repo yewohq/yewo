@@ -54,11 +54,20 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/yewo"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"eval/apps/manifest.yaml" = "yewo/evaluation/manifest.yaml"
+
 # Without this the source distribution takes the whole working directory,
-# including the example app's build files. Those hold the paths of whichever
+# including the controlled app's build files. Those hold the paths of whichever
 # machine built them, and a release cannot be withdrawn.
 [tool.hatch.build.targets.sdist]
-include = ["/src/yewo", "/README.md", "/LICENSE", "/pyproject.toml"]
+include = [
+    "/src/yewo",
+    "/eval/apps/manifest.yaml",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [dependency-groups]
 dev = [

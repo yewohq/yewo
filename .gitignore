@@ -15,7 +15,6 @@ wheels/
 .venv
 .env
 assets/
-example/other_testing_apps/
 docs/
 test_models/
 # macOS
@@ -28,6 +27,16 @@ test_models/
 # Eval sweeps: one run of the screen corpus, kept local like any other run
 sweeps/
 eval/perception/screens/runs/
+eval/runs/
+
+# Evaluation app packages are materialized from the tracked manifest. Keep the
+# small metadata in Git and the large deployable binaries outside its history.
+eval/apps/android/*.apk
+eval/apps/ios/*.app/
+
+# AndroidWorld is pinned by the integration setup, not vendored into Yewo.
+eval/integrations/android_world/.venv/
+eval/integrations/android_world/vendor/
 
 # Legacy local replay caches and temporary files used while replacing a path.
 **/.yewo/replay/

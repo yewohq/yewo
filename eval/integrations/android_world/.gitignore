@@ -1,0 +1,7 @@
+.venv/
+artifacts/
+old_artifacts/
+vendor/
+__pycache__/
+*.pyc
+.ruff_cache/

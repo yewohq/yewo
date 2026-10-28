@@ -12,13 +12,13 @@ from dotenv import find_dotenv, load_dotenv
 
 from yewo import __version__
 from yewo.cli import config as config_command
-from yewo.cli import devices, doctor, lock, run, setup, test
+from yewo.cli import devices, doctor, evaluation, lock, run, setup, test
 from yewo.cli.console import Console, configure_logging
 from yewo.config import load_config
 from yewo.defaults import LOG_LEVELS
 from yewo.errors import UsageError
 
-COMMANDS = (doctor, setup, devices, config_command, test, lock, run)
+COMMANDS = (doctor, setup, devices, config_command, evaluation, test, lock, run)
 
 
 
