@@ -1,0 +1,217 @@
+# Testing with Yewo
+
+This guide covers repeatable, report-producing tests. For a one-off automation
+task, use `yewo run <goal>` instead.
+
+## Journeys and workflows
+
+A journey describes what a user does and what the app must protect. A workflow
+binds one or more journeys to their environment, app, device, model, and policy.
+
+```yaml
+device:
+  name: Pixel_8
+  platform: android
+
+app: build/app-release.apk
+
+workflows:
+  account:
+    env:
+      email: tester@example.com
+      password:
+        value: ${YEWO_TEST_PASSWORD}
+        secret: true
+    journeys:
+      - id: sign_in
+        name: Sign in and open settings
+        journey: |
+          Sign in with {{email}} and {{password}}, then open Settings.
+        security_rules:
+          - The password must never be shown in plain text.
+```
+
+Run every workflow or select one by name:
+
+```bash
+yewo test yewo.yaml
+yewo test yewo.yaml --workflow account
+```
+
+The command-line flags, `YEWO_*` environment variables, the nearest
+`yewo.yaml`, and built-in defaults provide configuration in that order.
+
+## Inputs and secrets
+
+`env` declares values used by a journey. `{{name}}` inserts a declared value
+into the journey text. `${VAR}` reads it from the process environment and fails
+the journey when that variable is absent.
+
+A mapping with `secret: true` marks sensitive data. A top-level `secrets:` list
+of environment names is also supported. Yewo masks declared secrets by name in
+stored reports, records, logs, and scan dumps. It blacks out their screen
+regions in saved screenshots.
+
+The agent receives the real value because it must be able to type and audit it.
+A screen recording cannot be redacted. Yewo therefore keeps no recording for a
+journey with declared secrets unless secret exposure is explicitly allowed.
+
+## Coverage and generated scenarios
+
+Coverage tells Yewo which kinds of scenario to generate:
+
+```yaml
+coverage:
+  - category: functional
+    types: [happy_path, negative]
+    priority: P0
+  - category: security
+    types: [negative]
+    priority: P1
+```
+
+Yewo generates one scenario per coverage cell. A journey with no coverage gets
+one P0 functional happy-path cell. Each cell has a stable identity such as
+`security.negative.0`, so it can be compared between runs.
+
+Generate and review the suite without starting a device:
+
+```bash
+yewo lock yewo.yaml
+```
+
+This writes `yewo.lock` beside the journey file. Commit both files, then use the
+reviewed suite in CI:
+
+```bash
+yewo test yewo.yaml --locked
+```
+
+A locked run refuses a missing or stale lock instead of silently generating a
+different suite. Use `yewo lock yewo.yaml --all` when you deliberately want to
+regenerate every cell.
+
+## Test the same journey on several targets
+
+A workflow can declare a sequential target matrix:
+
+```yaml
+workflows:
+  checkout:
+    targets:
+      - id: android_emulator
+        platform: android
+        device: Pixel_8_API_35
+        app: build/app-release.apk
+      - id: ios_simulator
+        platform: ios
+        device: iPhone 16 Pro
+        app: build/Runner.app
+    journeys:
+      - id: guest_checkout
+        journey: Let a guest complete checkout.
+```
+
+Matrix runs require the locked suite so each target receives the same scenario:
+
+```bash
+yewo lock yewo.yaml
+yewo test yewo.yaml --locked
+yewo test yewo.yaml --locked --target ios_simulator
+```
+
+Targets run one at a time. Each journey and target pair gets its own run ID,
+device session, state transaction, evidence, and verdict. A failure or an
+unsupported capability on one target does not suppress later targets.
+
+## App state and device preconditions
+
+Independent scenarios clear app data by default. A journey can request a
+different app state or a typed device capability:
+
+```yaml
+preconditions:
+  app_state: relaunch
+  capabilities:
+    - kind: permission
+      permission: camera
+      grant: false
+journey: Open the camera while camera access is denied.
+```
+
+Yewo applies and confirms preconditions before model-driven UI work, then
+restores device state after the scenario. Preconditions do not create backend
+data or replace visible actions in the journey. Credentials, payment details,
+and other non-observable values belong in `env`.
+
+## Evidence boundaries
+
+Yewo can support an assertion with:
+
+- A screenshot and the text or controls detected on it.
+- A validated action and the screen change it caused.
+- A supported device measurement or capability receipt.
+
+Network traffic, HTTP headers, screen-reader behavior, focus order, and measured
+contrast need separate tooling. When a scenario requires evidence the current
+target cannot provide, Yewo reports `UNSUPPORTED` rather than guessing.
+
+Accessibility data used for supported iOS measurements never reaches the
+planner and never controls an action.
+
+## Measurements
+
+Android scenarios that restart the app record cold-process launch TTID as
+diagnostic telemetry. A diagnostic sample does not affect the verdict. When a
+journey explicitly declares a launch limit, the same OS-reported value becomes
+required evidence and its threshold is judged deterministically.
+
+On iOS 17 or newer, a journey can require `min_touch_target` or
+`unlabelled_actionable_count`. Yewo derives these from Apple's accessibility
+audit after observing the screen. Raw audit descriptions are not stored.
+
+Every sample carries its unit, source, collection time, target context, app
+state, and whether it was required or diagnostic. Missing required evidence
+produces `UNVERIFIED`. iOS launch timing is not currently available because
+Appium command duration is not an application first-frame measurement.
+
+## Reports and run records
+
+Yewo writes artifacts under `assets/` unless `output_dir` or `--output-dir`
+selects another location. Every run has one `run.json`; Markdown, HTML, and
+JUnit outputs are views over that record. Reports are checkpointed during a run
+so an interruption still leaves the evidence reached so far.
+
+A target-matrix execution also writes an `executions/<execution-id>/index.html`
+summary that links to the independent reports. It combines JSON and JUnit
+results but does not merge screenshots, measurements, or lifecycle receipts
+between targets.
+
+## Verdict semantics
+
+| Verdict | Meaning |
+|---|---|
+| `PASSED` | Every declared outcome was evidenced on an independently judged screen. |
+| `FAILED` | The app crashed, exposed a critical defect, or broke a declared rule. |
+| `UNVERIFIED` | Execution finished but the required proof did not arrive. |
+| `SKIPPED` | The planner established that the scenario could not be carried out here. |
+| `UNSUPPORTED` | The target cannot provide a required state or evidence source. |
+| `ERROR` | A device, model provider, or Yewo failed outside the app. |
+| `ABORTED` | The run was interrupted before reaching a verdict. |
+
+Only `PASSED` is a verified success. Only `FAILED` assigns blame to the app.
+An incomplete run is not converted into an app failure.
+
+## Useful options
+
+```bash
+yewo test --help
+yewo test yewo.yaml --headless
+yewo test yewo.yaml --no-record
+yewo test yewo.yaml --output-dir path/to/results
+yewo --log-level DEBUG test yewo.yaml
+```
+
+See [`yewo-schema.json`](../yewo-schema.json) for the complete configuration
+shape. Maintained applications and journeys for exercising Yewo live under
+[`eval/`](../eval/README.md).

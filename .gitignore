@@ -15,7 +15,9 @@ wheels/
 .venv
 .env
 assets/
-docs/
+docs/*
+!docs/testing.md
+!docs/development.md
 test_models/
 # macOS
 .DS_Store

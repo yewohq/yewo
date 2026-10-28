@@ -1,290 +1,164 @@
 # Yewo
 
-Yewo is an AI-powered end-to-end testing agent for Android and iOS apps. Give it a user journey or a single goal. It reads the screen, plans actions, and drives an emulator or a device through Appium. A separate component judges what the screen then shows.
+Yewo is an AI testing agent for Android and iOS apps. Describe a user journey
+in plain language and Yewo operates the real app, checks what happened, and
+produces an evidence-backed report.
 
-> Yewo is currently alpha software.
+It uses visual perception rather than app-specific selectors and keeps test
+generation separate from the model that judges the result.
 
-## Requirements
+> Yewo is alpha software. Expect breaking changes while its public interface is
+> being established.
 
-- [uv](https://docs.astral.sh/uv/) and Python 3.12+
-- Node.js 18+ (required by Appium)
-- Android Studio and the Android SDK for Android testing
-- Xcode and its command-line tools for iOS testing (macOS only)
+## What it does
 
-The Flutter SDK is only needed to build the included sample app.
+- Runs plain-language journeys against Android and iOS builds.
+- Detects and interacts with visible controls without requiring test IDs.
+- Generates repeatable scenario suites that can be reviewed and locked for CI.
+- Checks functional, security, and supported device-level outcomes.
+- Saves screenshots, actions, model calls, measurements, and verdict evidence.
+- Masks declared secrets in stored text and redacts them from saved screenshots.
 
 ## Quick start
 
-Clone the repository and install Yewo with its vision dependencies:
+You need Python 3.12+, Node.js 18+, and the SDK for the platform you want to
+test:
+
+- Android Studio and the Android SDK for Android.
+- Xcode and its command-line tools for iOS on macOS.
+
+Install Yewo from [PyPI](https://pypi.org/project/yewo/) with
+[uv](https://docs.astral.sh/uv/) and include its vision dependencies:
 
 ```bash
-git clone https://github.com/getyewo/yewo.git
-cd yewo
-uv sync --extra vision
+uv tool install "yewo[vision]"
 ```
 
-Run the guided setup, then check your environment:
+If you prefer an existing virtual environment, use
+`python -m pip install "yewo[vision]"` instead. You only need to clone the
+repository when contributing to Yewo itself.
+
+Install the runtime dependencies, download the perception model, and check the
+machine:
 
 ```bash
-uv run yewo setup
-uv run yewo doctor
-uv run yewo devices
+yewo setup
+yewo doctor
+yewo devices
 ```
 
-`yewo setup` installs Appium, the driver for your configured platform, and the required model files. Use `yewo setup --dry-run` to preview its changes or `yewo setup -y` for non-interactive setup.
-
-Add the API key required by your chosen [LiteLLM-supported model](https://docs.litellm.ai/docs/providers) to a `.env` file or your shell environment. The default model uses OpenRouter:
+Add the API key for your chosen
+[LiteLLM-supported model](https://docs.litellm.ai/docs/providers) to `.env` or
+your shell environment. The default model uses OpenRouter:
 
 ```env
 OPENROUTER_API_KEY=your_key_here
 ```
 
-## Test a user journey
-
-A journey file describes the flow to test and any security rules Yewo should enforce:
-
-```yaml
-id: sign_in
-name: Sign in and open settings
-env:
-  email: test@example.com
-  password:
-    value: ${YEWO_TEST_PASSWORD}
-    secret: true
-journey: >
-  Sign in with {{email}} and {{password}}, then open the settings screen.
-security_rules:
-  - The user's password must never be shown in plain text.
-```
-
-`env` declares the values a journey uses and `{{name}}` inserts them into its
-text. `${VAR}` reads from the environment, so a real credential never has to be
-committed. Write a plain value for ordinary data, or give it a `value` and
-`secret: true` to mark it sensitive — a top-level `secrets:` list of names works
-too. A `${VAR}` that is not set fails the journey rather than running as a
-blank value.
-
-A declared secret is masked by name in everything Yewo writes down. The
-reports, the record, the logs and the scan dumps all show `{{password}}`, and
-the screen regions holding it are blacked out in saved screenshots. **A screen
-recording is not redacted.** A journey that declares a secret keeps no video
-unless you ask for one.
-
-The agent itself always receives the real value. It cannot type a password it
-was not given. It cannot audit a rule like "the card number must never be
-shown in plain text" if the card number is hidden from it.
-
-There are two ways to run one. Point Yewo at a journey file:
+Now point Yewo at an APK, `.app`, or `.ipa` and give it a goal:
 
 ```bash
-uv run yewo test path/to/journey.yaml --app-path path/to/app.apk
+yewo run "Open the app and sign in" --app-path path/to/app.apk
 ```
 
-Or keep the settings and the tests in one `yewo.yaml`, which is what a
-project does. A workflow owns an environment and either one app/device pair
-or a target matrix. The journeys inside it are the tests. Run it from the
-directory that holds the file. To try Yewo with the maintained test apps and
-journeys, see the [`eval/` guide](eval/README.md).
+`yewo run` is useful for exploration. Use a journey when the flow must produce
+a test verdict and a reusable report.
 
-## What Yewo generates
+## Run a repeatable journey
 
-A journey declares its **coverage**: which kinds of test to write, and how
-important each one is. Yewo enumerates the cells and asks for one scenario
-per cell.
+Create `yewo.yaml` beside your app project:
 
 ```yaml
-coverage:
-  - category: functional
-    types: [happy_path, negative]
-    priority: P0
-  - category: security
-    types: [negative]
-    priority: P1
-```
+device:
+  name: Pixel_8
+  platform: android
 
-A file that declares no coverage gets one cell: a P0 functional happy path.
-Such a file tells Yewo nothing about the app, so Yewo writes the most
-conservative test it can.
+app: build/app-release.apk
 
-Each cell keeps a stable name, such as `security.negative.0`, so the same
-test is the same test between runs. `yewo lock` writes those scenarios to
-`yewo.lock`. `yewo test --locked` runs the locked scenarios and refuses a
-lock that is missing or out of date, which is what a build should do.
-
-### Run the locked suite on several targets
-
-A workflow may declare a sequential target matrix. Each target has its own
-platform, device, and optional app artifact:
-
-```yaml
 workflows:
-  checkout:
-    targets:
-      - id: android_emulator
-        platform: android
-        device: Pixel_8_API_35
-        app: build/app-release.apk
-      - id: ios_simulator
-        platform: ios
-        device: iPhone 16 Pro
-        app: build/Runner.app
+  smoke:
     journeys:
-      - id: guest_checkout
-        journey: Let a guest complete checkout.
+      - id: sign_in
+        name: Sign in
+        journey: |
+          Open the app, sign in with the test account, and open Settings.
 ```
 
-Create the lock, then run every target or select named targets:
+Run it:
 
 ```bash
-uv run yewo lock
-uv run yewo test --locked
-uv run yewo test --locked --target ios_simulator
+yewo test yewo.yaml
 ```
 
-Matrix runs require `--locked`, so every target receives the same scenario
-definitions. They run one at a time. Every journey and target pair receives
-an independent run ID, device session, state transaction, artifact tree, and
-verdict. Failure or an unsupported capability on one target does not suppress
-later targets.
+Yewo generates scenarios, drives the app, and writes the run record and reports
+under `assets/` by default. The CLI prints the paths it created.
 
-The output directory contains `executions/<execution-id>/index.html`, a small
-summary linking to each run's full report. Evidence stays in the individual
-`<workflow>/<target>/<journey>/<run-id>/sessions/<session-id>/` tree. The
-execution also writes JSON and combined JUnit summaries; it does not merge
-screenshots, measurements, or lifecycle receipts between targets.
+When the generated scenarios are ready for review, lock them and commit
+`yewo.lock` with the journey file:
 
-Yewo only writes assertions it can evidence from a screenshot, the detected
-text on it, what an action did, or a supported device measurement. Network
-traffic, HTTP headers, screen readers, focus order and measured contrast need
-separate tooling. A scenario that asks for one is reported as unsupported
-rather than guessed at. The iOS accessibility audit is a measurement source;
-its element data never reaches the planner or controls an action.
-
-Independent scenarios start with cleared app data by default. A journey may
-declare a different app state or a typed device precondition:
-
-```yaml
-preconditions:
-  app_state: relaunch
-  capabilities:
-    - kind: permission
-      permission: camera
-      grant: false
-journey: The user opens the camera while camera access is denied.
+```bash
+yewo lock yewo.yaml
+yewo test yewo.yaml --locked
 ```
 
-Yewo applies and confirms these conditions before model-driven UI work, then
-restores device state after the scenario. Preconditions never create backend
-data or replace an action in the visible user journey. Credentials, payment
-details, and other non-observable values still belong in `env`.
+Locked runs execute the reviewed suite and fail if its inputs are missing or
+stale. This is the mode intended for CI.
 
-## Measurements
+## How Yewo works
 
-Android scenarios that restart the app record cold-process launch TTID as
-diagnostic telemetry. A diagnostic value does not affect the verdict. If the
-journey explicitly requires a launch limit, the same OS-reported value becomes
-required evidence and the deterministic judge applies the threshold.
+```text
+journey -> scenarios -> observe -> plan -> act -> verify -> report
+```
 
-On iOS 17 or newer, a journey can require `min_touch_target` or
-`unlabelled_actionable_count`. Yewo derives these values from Apple's
-accessibility audit after the screen is observed. An audit with no small touch
-target proves only the platform floor (`at_least 44 pt`); it does not invent an
-exact minimum. Raw audit descriptions are not stored.
+Yewo reads each screen with a detector and OCR, asks a planner for the next
+action, validates the selected target, and then acts through the platform
+driver. A separate judge evaluates captured evidence without seeing the plan's
+claim that it succeeded.
 
-Every sample records its unit, source, collection time, target context, app
-data state, and whether it was required or diagnostic. Samples are written to
-`telemetry/measurements.jsonl` and exposed consistently in `run.json`,
-Markdown, JUnit, and HTML. Missing required evidence produces `UNVERIFIED`.
-The current iOS launch-time path remains unavailable because Appium command
-duration is not an application first-frame measurement.
+Only visible or measured evidence can prove an outcome. If the app does not
+provide the required evidence, Yewo reports that explicitly instead of turning
+the planner's confidence into a pass.
 
-## What a verdict means
+## Verdicts
 
 | Verdict | Meaning |
 |---|---|
-| `PASSED` | Every declared outcome was evidenced on a screen judged without the plan |
-| `FAILED` | The app. A crash, a critical defect, a broken rule, or a security rule violated |
-| `UNVERIFIED` | The walk finished and the proof did not arrive. The cause says whose problem that is |
-| `SKIPPED` | The planner reported that the scenario cannot be carried out here |
-| `UNSUPPORTED` | This target cannot give the scenario the state or the evidence it declared |
-| `ERROR` | Something outside the app failed: a device, a model provider, or Yewo |
-| `ABORTED` | The run was interrupted and the scenario never reached a verdict |
+| `PASSED` | Every required outcome was evidenced. |
+| `FAILED` | The app crashed, broke a rule, or showed a critical defect. |
+| `UNVERIFIED` | The run finished without enough evidence. |
+| `SKIPPED` | The scenario could not be carried out in this context. |
+| `UNSUPPORTED` | The target cannot provide a required state or measurement. |
+| `ERROR` | Yewo, a device, or an external service failed. |
+| `ABORTED` | The run was interrupted before a verdict was possible. |
 
-Only `PASSED` is a verified success. `FAILED` is the only verdict that blames
-the app.
-
-Every run writes one `run.json`: the record of what was tested and what each
-model call asked. The Markdown and JUnit reports are views over it. All of
-them are written atomically, and the Markdown and JUnit are checkpointed
-during the run, so an interrupted run still leaves what it reached.
-
-## Run a single goal
-
-For one-off automation without generated test scenarios or QA reports:
-
-```bash
-uv run yewo run "Sign in and open the settings screen" \
-  --app-path path/to/app.apk
-```
-
-Android APKs and iOS `.app` or `.ipa` bundles are supported.
-
-## Configuration
-
-Inspect or change the saved configuration with:
-
-```bash
-uv run yewo config
-uv run yewo config set device Pixel_8a
-uv run yewo config set model openrouter/google/gemini-2.5-pro
-```
-
-Configuration is resolved in this order: CLI flags, `YEWO_*` environment variables, the nearest `yewo.yaml`, then built-in defaults. Writes go to `./yewo.yaml`, which is also where the journeys live.
+Only `PASSED` is a verified success. Only `FAILED` assigns the failure to the
+app. See [Testing with Yewo](docs/testing.md) for journeys, secrets, coverage,
+target matrices, measurements, evidence, and report semantics.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `yewo setup` | Install and configure runtime dependencies |
-| `yewo doctor` | Check prerequisites and report fixes |
-| `yewo devices` | List, create, and select devices |
-| `yewo config` | View or change settings |
-| `yewo test <file>` | Generate and run tests from a journey file |
-| `yewo lock` | Write the generated scenarios to `yewo.lock` |
-| `yewo run <goal>` | Drive an app toward a single goal |
+| `yewo setup` | Install and configure runtime dependencies. |
+| `yewo doctor` | Check the local environment and explain failures. |
+| `yewo devices` | List, create, and select test devices. |
+| `yewo config` | Inspect or change saved settings. |
+| `yewo run <goal>` | Drive an app toward one exploratory goal. |
+| `yewo test [file]` | Generate and run a journey-based test suite. |
+| `yewo lock [file]` | Generate and save the suite without running a device. |
+| `yewo eval setup` | Materialize pinned evaluation apps. |
 
-Run `uv run yewo <command> --help` for all options. Add `--log-level DEBUG` before the command for detailed logs.
+Run `yewo <command> --help` for complete options. When working from a source
+checkout, use `uv run yewo` in place of the installed `yewo` command.
 
-## Development
+## Learn more
 
-Install the tooling, then run the checks that CI runs:
+- [Testing with Yewo](docs/testing.md)
+- [Evaluation corpus and maintained test apps](eval/README.md)
+- [Development and quality gates](docs/development.md)
+- [Yewo configuration schema](yewo-schema.json)
+- [Development learnings](docs/development_learnings/README.md)
 
-```bash
-uv sync --group dev --extra jev
-uv run ruff check
-uv run python tools/quality_gate.py
-uv run python tools/ste_gate.py
-uv run python tools/emit_schema.py --check
-uv run coverage run -m pytest && uv run coverage report
-uv run python -m tools.eval_gate
-uv run python -m tools.mutation_sweep
-```
+## License
 
-The type gate runs in its own job, because Pyright reads imports the other
-checks do not install:
-
-```bash
-uv sync --group dev --extra vision --extra jev
-uv run python tools/type_gate.py
-```
-
-What each one holds:
-
-| Gate | Holds |
-|---|---|
-| `quality_gate.py` | 550 lines per file, tests included. No dependencies |
-| `ste_gate.py` | Controlled language in prose a model or a person under pressure reads |
-| `emit_schema.py --check` | The editor schema matches the models a `yewo.yaml` is read through |
-| `eval_gate.py` | The judging still answers a corpus of labelled cases as it should |
-| `mutation_sweep.py` | Deliberate defects are still caught by something |
-| `type_gate.py` | Pyright, against a per-file baseline |
+Yewo is licensed under the [Apache License 2.0](LICENSE).
