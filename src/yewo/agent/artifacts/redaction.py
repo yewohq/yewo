@@ -39,6 +39,49 @@ def _fit_label(draw: ImageDraw.ImageDraw, label: str, font, width: int) -> str:
     return shortened + suffix if shortened else ""
 
 
+def draw_secret_mask(
+    draw: ImageDraw.ImageDraw,
+    bounds: tuple[int, int, int, int],
+    labels: tuple[str, ...],
+    mask_type: ScreenshotMaskType,
+) -> None:
+    """Draw the one branded secret overlay used by images and video frames."""
+    if mask_type is not ScreenshotMaskType.SECRET:
+        raise ValueError(f"Unsupported screenshot mask type: {mask_type}")
+    left, top, right, bottom = bounds
+    draw.rectangle(bounds, fill=SECRET_MASK_BACKGROUND)
+    width = max(0, right - left)
+    height = max(0, bottom - top)
+    if width < 18 or height < 12:
+        return
+
+    seal_size = min(24, height - 6, width // 4)
+    seal_left = left + 4
+    seal_top = top + (height - seal_size) // 2
+    draw_mark(
+        draw,
+        seal_left,
+        seal_top,
+        seal_size,
+        foreground=SECRET_MASK_FOREGROUND,
+        accent=SECRET_MASK_ACCENT,
+    )
+
+    font = _mask_font(height)
+    text_left = seal_left + seal_size + 5
+    label = _fit_label(draw, ", ".join(labels), font, right - text_left - 4)
+    if not label:
+        return
+    text_box = draw.textbbox((0, 0), label, font=font)
+    text_y = top + (height - (text_box[3] - text_box[1])) / 2 - text_box[1]
+    draw.text(
+        (text_left, text_y),
+        label,
+        fill=SECRET_MASK_FOREGROUND,
+        font=font,
+    )
+
+
 class RedactedImages:
     """Every screenshot this run writes, with its declared secrets covered."""
 
@@ -61,7 +104,7 @@ class RedactedImages:
             if not self.scrubber.contains_secret(element.text):
                 continue
             box = element.bounding_box
-            self._draw_mask(
+            draw_secret_mask(
                 draw,
                 (box.x_min, box.y_min, box.x_max, box.y_max),
                 tuple(self.scrubber.declared_labels_in(element.text)),
@@ -81,47 +124,9 @@ class RedactedImages:
             if not labels:
                 continue
             bounds = region.bounds or (0, 0, size[0], size[1])
-            self._draw_mask(draw, bounds, labels, region.mask_type)
+            draw_secret_mask(draw, bounds, labels, region.mask_type)
             drawn = True
         return drawn
-
-    @staticmethod
-    def _draw_mask(draw, bounds, labels, mask_type: ScreenshotMaskType) -> None:
-        """Draw one opaque, typed Yewo overlay without exposing covered pixels."""
-        if mask_type is not ScreenshotMaskType.SECRET:
-            raise ValueError(f"Unsupported screenshot mask type: {mask_type}")
-        left, top, right, bottom = bounds
-        draw.rectangle(bounds, fill=SECRET_MASK_BACKGROUND)
-        width = max(0, right - left)
-        height = max(0, bottom - top)
-        if width < 18 or height < 12:
-            return
-
-        seal_size = min(24, height - 6, width // 4)
-        seal_left = left + 4
-        seal_top = top + (height - seal_size) // 2
-        draw_mark(
-            draw,
-            seal_left,
-            seal_top,
-            seal_size,
-            foreground=SECRET_MASK_FOREGROUND,
-            accent=SECRET_MASK_ACCENT,
-        )
-
-        font = _mask_font(height)
-        text_left = seal_left + seal_size + 5
-        label = _fit_label(draw, ", ".join(labels), font, right - text_left - 4)
-        if not label:
-            return
-        text_box = draw.textbbox((0, 0), label, font=font)
-        text_y = top + (height - (text_box[3] - text_box[1])) / 2 - text_box[1]
-        draw.text(
-            (text_left, text_y),
-            label,
-            fill=SECRET_MASK_FOREGROUND,
-            font=font,
-        )
 
     def redact_model_image(self, data: bytes, elements: list) -> bytes:
         """Covers declared values before screenshot bytes leave the process.
@@ -150,7 +155,7 @@ class RedactedImages:
         draw = ImageDraw.Draw(image)
         for element, labels in labelled:
             box = element.bounding_box
-            self._draw_mask(
+            draw_secret_mask(
                 draw,
                 (box.x_min, box.y_min, box.x_max, box.y_max),
                 labels,

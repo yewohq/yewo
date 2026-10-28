@@ -5,7 +5,14 @@ from yewo.testing.report.manifest import RunInputs, RunManifest, RunSubject
 
 
 def create_manifest(
-    path, journey, scenarios, environment, suite, scrubber, run_id=None
+    path,
+    journey,
+    scenarios,
+    environment,
+    suite,
+    scrubber,
+    run_id=None,
+    allow_secret_exposure=False,
 ) -> RunManifest:
     """Build the same run record at every runner failure boundary."""
     return RunManifest(
@@ -27,7 +34,7 @@ def create_manifest(
             scenarios_generated=suite.generated_count,
         ),
         scrubber=scrubber,
-        artifacts=sensitivity.declared_for(journey),
+        artifacts=sensitivity.declared_for(journey, allow_secret_exposure),
         run_uuid=run_id,
     )
 
@@ -48,6 +55,7 @@ def ensure_interrupted_manifest(
         suite,
         scrubber,
         runner.run_id,
+        runner.allow_secret_exposure,
     )
     recovered.record_unattached_calls(calls)
     return recovered, planned

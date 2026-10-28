@@ -106,9 +106,9 @@ class YewoCLI:
             "--allow-secret-exposure",
             action=argparse.BooleanOptionalAction,
             default=None,
-            help="Allow declared secrets in model input and screen recordings. "
-            "Off by default. Reports, logs, traces and saved screenshots remain "
-            "scrubbed or redacted",
+            help="Allow declared secrets in model input and unredacted screen "
+            "recordings. Off by default. Reports, logs, traces, screenshots and "
+            "default recordings remain scrubbed or redacted",
         )
         parser.add_argument(
             "--locked",

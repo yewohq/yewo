@@ -40,6 +40,7 @@ class DeviceSession(DeviceRecording):
         device_name: str,
         app_path: Optional[str],
         record_session: bool = False,
+        redact_recording: bool = False,
         session_dir: Path = Path("sessions"),
         platform: Platform = Platform.ANDROID,
         session_id: str = None,
@@ -55,6 +56,7 @@ class DeviceSession(DeviceRecording):
             device_name: Name of the emulator/simulator/device to run against.
             app_path: Path to the target mobile app bundle (.apk, .app, or .ipa).
             record_session: If True, records the screen during execution.
+            redact_recording: If True, masks protected secret regions before saving.
             session_dir: Directory where screen recordings will be saved.
             platform: Platform name ('android' or 'ios').
             session_id: Optional existing session ID to reuse.
@@ -98,6 +100,7 @@ class DeviceSession(DeviceRecording):
             run_android_preflight(app_path)
             self.adb_control = None
         self.record_session = record_session
+        self.redact_recording = redact_recording
         self.is_recording = False
         self.session_id = session_id or str(uuid4())
 

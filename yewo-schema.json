@@ -1138,7 +1138,7 @@
             }
           ],
           "default": null,
-          "description": "Allow declared secrets in model input and screen recordings. Off by default. Stored reports and artifacts stay protected.",
+          "description": "Allow declared secrets in model input and unredacted screen recordings. Off by default. Stored reports and default recordings stay protected.",
           "title": "Allow Secret Exposure"
         },
         "env": {
@@ -1572,7 +1572,7 @@
         }
       ],
       "default": null,
-      "description": "Allow declared secrets in model input and screen recordings. Off by default. Stored reports and artifacts stay protected.",
+      "description": "Allow declared secrets in model input and unredacted screen recordings. Off by default. Stored reports and default recordings stay protected.",
       "title": "Allow Secret Exposure"
     },
     "env": {

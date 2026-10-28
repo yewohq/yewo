@@ -11,7 +11,7 @@ does not hide a security failure.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 import re
 from enum import Enum
 
@@ -80,6 +80,7 @@ class SecretScrubber:
         self._display_by_value: dict[str, SecretDisplay] = {}
         self._allow_model_exposure = False
         self._protected_regions: list[ProtectedRegion] = []
+        self.protected_region_callback: Optional[Callable[[ProtectedRegion], None]] = None
 
     def learn_secrets(
         self,
@@ -231,6 +232,8 @@ class SecretScrubber:
         )
         if region not in self._protected_regions:
             self._protected_regions.append(region)
+            if self.protected_region_callback is not None:
+                self.protected_region_callback(region)
         return True
 
     def protect_typed_bounds(
@@ -252,6 +255,8 @@ class SecretScrubber:
         )
         if region not in self._protected_regions:
             self._protected_regions.append(region)
+            if self.protected_region_callback is not None:
+                self.protected_region_callback(region)
         return True
 
     def protected_regions(self) -> tuple[ProtectedRegion, ...]:

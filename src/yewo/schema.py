@@ -177,8 +177,8 @@ class Settings(StrictModel):
     allow_secret_exposure: Optional[bool] = Field(
         default=None,
         description=(
-            "Allow declared secrets in model input and screen recordings. "
-            "Off by default. Stored reports and artifacts stay protected."
+            "Allow declared secrets in model input and unredacted screen recordings. "
+            "Off by default. Stored reports and default recordings stay protected."
         ),
     )
 

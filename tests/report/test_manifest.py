@@ -520,6 +520,6 @@ class GoalRunTests(unittest.TestCase):
             record.write()
             classes = {row["kind"]: row for row in written(record)["artifacts"]}
 
-        self.assertEqual(classes["recordings"]["sensitivity"], "unmasked")
-        self.assertFalse(classes["recordings"]["exportable"])
+        self.assertEqual(classes["recordings"]["sensitivity"], "redacted")
+        self.assertTrue(classes["recordings"]["exportable"])
         self.assertEqual(classes["screenshots"]["sensitivity"], "redacted")

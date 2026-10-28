@@ -227,19 +227,15 @@ class YewoTestRunner:
         if self.locked:
             lock_resolution.require_lock(journey, self._lock_path(), self.workflow)
 
-        # Nothing masks a video frame, so a journey that types a declared
-        # secret on screen is not recorded unless the caller asked for it.
-        refused = sensitivity.recording_refused(journey, self.allow_secret_exposure)
-        if refused:
-            logger.warning("%s", refused)
-        record_session = self.record_session and refused is None
-
+        record_session = self.record_session
+        redact_recording = bool(journey.secrets) and not self.allow_secret_exposure
         session_root = self.assets_dir / "sessions" if self.run_id else self.assets_dir
         session = DeviceSession(
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
             record_session=record_session,
+            redact_recording=redact_recording,
             session_dir=session_root,
             reuse_app=self.reuse_app,
             keep_app=self.keep_app,
@@ -323,6 +319,8 @@ class YewoTestRunner:
             device_control = prepared.device_control
             perception = prepared.perception
             self._device = prepared.device_identity
+            if redact_recording:
+                device_agent.scrubber.protected_region_callback = session.start_recording_mask
             agent._trace_store = prepared.trace_store
             logger.info("Scenarios: %s", suite.note)
             logger.info(
@@ -348,6 +346,7 @@ class YewoTestRunner:
                 suite,
                 artifact_scrubber,
                 self.run_id,
+                self.allow_secret_exposure,
             )
             # Generation happened before this file existed, and it is the one
             # call a run makes that no scenario owns.
@@ -397,6 +396,7 @@ class YewoTestRunner:
                         app_path=self.app_path,
                         platform=self.platform,
                         record_session=record_session,
+                        redact_recording=redact_recording,
                         session_dir=session_root,
                         session_id=session.session_id,
                         reuse_app=self.reuse_app,

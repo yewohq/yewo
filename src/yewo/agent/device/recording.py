@@ -14,8 +14,10 @@ report whether it started.
 
 import base64
 import logging
+import os
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Mapping, Optional, Protocol
 
 from selenium.common.exceptions import WebDriverException
@@ -23,6 +25,8 @@ from selenium.common.exceptions import WebDriverException
 from yewo.agent.device.adb_control import AdbControl
 from yewo.agent.device.files import MEDIA_PROJECTION_DIR, SCREENRECORD_DIR, DeviceFiles
 from yewo.agent.device.platform import Platform
+from yewo.agent.device.recording_redaction import RecordingMask, redact_recording
+from yewo.utils.secrets import ProtectedRegion
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,8 @@ class RecordingTarget(Protocol):
 
     driver: Any
     serial: Optional[str]
+    screen_width: int
+    screen_height: int
 
 
 class DeviceRecording:
@@ -89,6 +95,9 @@ class DeviceRecording:
     is_recording: bool = False
     _remote_path: Optional[str] = None
     _media_projection: bool = False
+    _recording_started_at: Optional[float] = None
+    _recording_masks: list[RecordingMask] = []
+    redact_recording: bool = False
 
     @property
     def _driver(self) -> Any:
@@ -109,10 +118,15 @@ class DeviceRecording:
         # it is stopped. A fallback inheriting the last segment's answer is
         # stopped through a recorder that is not running it.
         self._media_projection = False
+        self._recording_started_at = None
+        self._recording_masks = []
         for attempt, options in enumerate(START_OPTIONS, start=1):
             try:
                 if self._start_once(options):
                     self.is_recording = True
+                    # The device starts somewhere inside the blocking call. Measuring
+                    # from its return masks early rather than exposing a late frame.
+                    self._recording_started_at = time.monotonic()
                     return
                 logger.warning("The device reports a recording already running.")
                 return
@@ -124,6 +138,32 @@ class DeviceRecording:
                     exc,
                 )
         logger.warning("Continuing without a video of this run.")
+
+    def start_recording_mask(
+        self,
+        region: ProtectedRegion,
+        source_size: Optional[tuple[int, int]] = None,
+    ) -> None:
+        """Cover a typed secret from now until the current segment ends."""
+        if not self.redact_recording or not self.is_recording:
+            return
+        if source_size is None:
+            if self.device_control is None:
+                return
+            source_size = (
+                self.device_control.screen_width,
+                self.device_control.screen_height,
+            )
+        started_at = self._recording_started_at
+        if started_at is None or source_size[0] <= 0 or source_size[1] <= 0:
+            return
+        self._recording_masks.append(
+            RecordingMask(
+                region=region,
+                source_size=source_size,
+                starts_at_seconds=max(0.0, time.monotonic() - started_at),
+            )
+        )
 
     def _start_once(self, options: Mapping[str, Any]) -> bool:
         """Starts one recording, reporting whether it is now running."""
@@ -225,11 +265,31 @@ class DeviceRecording:
         if not raw:
             logger.warning("The screen recording came back empty.")
             return None
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(base64.b64decode(raw))
+        if not self._write_recording(base64.b64decode(raw), path):
+            self._discard_remote()
+            return None
         logger.info("Session recording saved to %s", path)
         self._discard_remote()
         return path
+
+    def _write_recording(self, raw: bytes, path: Path) -> bool:
+        """Write raw video directly, or publish only its successfully masked copy."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.redact_recording:
+            path.write_bytes(raw)
+            return True
+        with TemporaryDirectory(prefix=".redacting-", dir=path.parent) as directory:
+            raw_path = Path(directory) / "raw.mp4"
+            raw_path.write_bytes(raw)
+            return self._publish_redacted_recording(raw_path, path)
+
+    def _publish_redacted_recording(self, raw_path: Path, path: Path) -> bool:
+        """Move only a successfully masked temporary video into run artifacts."""
+        safe_path = raw_path.with_name("safe.mp4")
+        if not redact_recording(raw_path, safe_path, tuple(self._recording_masks)):
+            return False
+        os.replace(safe_path, path)
+        return True
 
     def checkpoint_recording(self) -> Optional[Path]:
         """Closes the segment in flight and begins the next one.
@@ -262,7 +322,15 @@ class DeviceRecording:
             DeviceFiles.stop_screenrecord(serial, self._remote_path)
             time.sleep(SCREENRECORD_FLUSH)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if not DeviceFiles.pull_file(serial, self._remote_path, str(path)):
+        if self.redact_recording:
+            with TemporaryDirectory(prefix=".redacting-", dir=path.parent) as directory:
+                raw_path = Path(directory) / "raw.mp4"
+                if not DeviceFiles.pull_file(serial, self._remote_path, str(raw_path)):
+                    return None
+                if not self._publish_redacted_recording(raw_path, path):
+                    self._discard_remote(serial)
+                    return None
+        elif not DeviceFiles.pull_file(serial, self._remote_path, str(path)):
             return None
         logger.info("Recovered the session recording from the device: %s", path)
         self._discard_remote(serial)

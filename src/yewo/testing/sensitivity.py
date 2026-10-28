@@ -1,10 +1,8 @@
 """How sensitive each artifact a run writes is, and what may be done with it.
 
 A run leaves screenshots, prompts, logs, reports and a video. Yewo masks
-what a journey declared across most of them, and covers declared values on
-screen before an image is written. One artifact is covered by neither: the
-recording. Nothing masks a video frame, so a password typed on screen is in
-it.
+what a journey declared across text artifacts, screenshots, and recordings.
+An explicit unsafe opt-in can still keep a recording without masks.
 
 So the class is declared here rather than left to whoever uploads. A list
 kept by an uploader is a list somebody has to remember to update when a run
@@ -140,39 +138,33 @@ ARTIFACTS: tuple[ArtifactClass, ...] = (
 
 RECORDING = "recordings"
 
+REDACTED_RECORDING = ArtifactClass(
+    RECORDING,
+    Sensitivity.REDACTED,
+    Retention.KEEP,
+    True,
+    "Declared values typed by Yewo are covered in every affected video frame.",
+)
 
-def declared_for(_journey: UserJourney) -> tuple[dict, ...]:
+
+def declared_for(
+    journey: UserJourney, allow_secret_exposure: bool = False
+) -> tuple[dict, ...]:
     """The classes for a run's artifacts.
 
-    The same for every journey. An earlier version made a recording
-    `derived` where the journey declared no secret, reasoning that nothing
-    could be exposed. That reasoning is wrong: a declaration says what Yewo
-    was asked to mask, not what the app puts on screen. A video holds
-    whatever the app rendered. That can be another account's data, a
-    notification that arrived mid-run, a token in a debug banner, or a
-    credential the app made up. None of those were declared. None of them is
-    masked.
-
-    What a declaration changes is whether a recording is made at all. See
-    `recording_refused`.
+    A default journey recording masks fields where Yewo types declared
+    secrets. A recording without declared secrets remains unmasked because
+    the app can still render undeclared sensitive content. The explicit
+    exposure opt-in also records without masks.
     """
-    return tuple(artifact.as_dict() for artifact in ARTIFACTS)
-
-
-def recording_refused(journey: UserJourney, opted_in: bool) -> Optional[str]:
-    """Why this journey is not recorded, or None where it may be.
-
-    A journey with declared secrets types them on screen, and nothing covers
-    a video frame. The run still produces every verdict. It keeps no video
-    unless the caller asked for one in so many words.
-    """
-    if not journey.secrets or opted_in:
-        return None
-    named = ", ".join(sorted(journey.secrets))
-    return (
-        f"Journey '{journey.id}' declares secrets ({named}), and a recording "
-        "is not masked. No video is kept. Pass --allow-secret-exposure to "
-        "permit secrets in the recording and model input."
+    recording = (
+        REDACTED_RECORDING
+        if journey.secrets and not allow_secret_exposure
+        else next(artifact for artifact in ARTIFACTS if artifact.kind == RECORDING)
+    )
+    return tuple(
+        (recording if artifact.kind == RECORDING else artifact).as_dict()
+        for artifact in ARTIFACTS
     )
 
 
