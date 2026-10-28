@@ -34,6 +34,9 @@ package boundaries:
 
 - Keep perception independent from actuation. Planning produces validated
   actions; device code owns platform mechanics.
+- Keep observation independent from product policy. Perception describes what
+  is present and which capabilities were observed. Planning and actuation
+  decide whether an observation should be read, selected, or acted upon.
 - Treat model responses and detected coordinates as untrusted. Validate action
   kinds, required fields, dimensions, bounds, and durations before dispatch.
 - Make screenshot-to-device coordinate conversion explicit. Re-observe after an
@@ -56,6 +59,16 @@ Preserve public Pydantic schemas, action values, journey fields, CLI flags,
 defaults, exit behavior, and report formats unless the task changes the
 contract. Update callers, documentation, and tests together when a contract
 changes.
+
+Keep model-provider behavior behind the LiteLLM boundary. Do not add
+provider-specific request rewriting unless the shared interface cannot express
+the required behavior and the limitation is demonstrated. Keep provider names,
+credentials, cache behavior, and usage normalization out of agent logic.
+
+Keep interpretation metadata with the artifact that owns it. A model, app
+artifact, or external package must carry enough versioned metadata for Yewo to
+validate and interpret it. Do not replace missing artifact metadata with a
+runtime compatibility constant.
 
 Sanitize journey-derived artifact paths, isolate parallel runs, and keep
 Markdown, JUnit, progress, and usage results consistent. Surface report-writing

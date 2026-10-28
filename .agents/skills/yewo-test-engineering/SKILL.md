@@ -43,6 +43,19 @@ production Python changes. It defines the enforced complexity and file-size
 ratchets, the coverage and mutation-testing scope, and the policy for types,
 dead code, duplication, and deferred metrics.
 
+Use the lowest validation tier that proves the contract, then broaden only when
+the remaining boundary matters:
+
+1. Unit and offline integration tests exercise deterministic Yewo logic.
+2. Packaged-install checks verify wheel contents, packaged resources, CLI
+   entry points, and writable runtime defaults.
+3. Controlled-app journeys exercise the complete stack under known conditions.
+4. Third-party or release-candidate journeys measure behavior outside the
+   controlled app.
+
+One tier is not evidence for another. A source-checkout test does not prove the
+wheel, and one live journey does not establish reliability.
+
 Ruff, Pyright, pytest, and coverage are declared in the `dev` dependency
 group and configured in `pyproject.toml`; `.github/workflows/checks.yml` runs
 them. The focused mutation sweep in `tools/mutation_sweep.py` checks realistic
@@ -80,6 +93,13 @@ It may start device infrastructure and make paid model requests. Run it only
 when the task requires that validation and the needed app, device, credentials,
 and drivers are available. Record model, settings, app version, platform, and
 run conditions; do not infer reliability from one stochastic success.
+
+For comparative evaluations, change one independent variable at a time and
+name any variable that remains uncontrolled. Use held-out inputs for quality
+claims. Record the exact artifact versions, settings, hardware, and warm or
+cold state needed to reproduce the comparison. Report correctness, latency,
+and memory separately; improvement in one does not imply improvement in the
+others.
 
 A rule that was not observed remains untested. Never turn missing evidence,
 zero generated scenarios, aborted setup, or skipped execution into a pass.
