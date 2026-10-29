@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+import pytest
+
 from PIL import Image
 
 from yewo.agent.actuation.actions import Coordinates, TapAction
@@ -30,6 +32,7 @@ from yewo.testing.warm_execution import (
 )
 from yewo.testing.live_route_runtime import PerceptionRouteRuntimeProvider
 from knowledge_fakes import build_verified_knowledge
+from perception_fakes import frame
 
 SCREEN_SIZE = (400, 800)
 
@@ -277,17 +280,6 @@ def test_failed_route_without_local_boundary_does_not_restart_discovery(
 
 class _Device:
     app_id = "com.example.app"
-    driver = type(
-        "Driver",
-        (),
-        {
-            "page_source": (
-                '<hierarchy><node class="android.widget.Button" '
-                'text="Open form" clickable="true" enabled="true" '
-                'bounds="[20,100][180,160]" /></hierarchy>'
-            )
-        },
-    )()
 
     @staticmethod
     def is_keyboard_open():
@@ -295,6 +287,12 @@ class _Device:
 
 
 class _Perception:
+    """One screen, stated once.
+
+    Reacquisition reads the fused frame, so the elements here are the only
+    account of what is on screen.
+    """
+
     current_hash = "0" * 64
     last_scan_info = ScanInfo(
         mode="full",
@@ -306,6 +304,7 @@ class _Perception:
 
     def __init__(self, elements):
         self.elements = elements
+        self.current_frame = frame(elements=tuple(elements))
 
     def perceive(self):
         image = Image.new("RGB", (400, 800), "white")
@@ -346,24 +345,9 @@ def test_live_provider_reacquires_one_target_without_historical_coordinates(head
 
 def test_live_provider_refuses_ambiguous_semantic_targets(header):
     _, memory = build_verified_knowledge(header)
-    device = _Device()
-    device.driver = type(
-        "Driver",
-        (),
-        {
-            "page_source": (
-                '<hierarchy><node class="android.widget.Button" '
-                'text="Open form" clickable="true" enabled="true" '
-                'bounds="[20,100][180,160]" />'
-                '<node class="android.widget.Button" text="Open form" '
-                'clickable="true" enabled="true" bounds="[20,300][180,360]" />'
-                "</hierarchy>"
-            )
-        },
-    )()
     factory = PerceptionRouteRuntimeProvider().runtime_factory_for(
         _Scenario("scenario", [memory.header.artifact_id]),
-        device,
+        _Device(),
         _Perception([_button(100), _button(300)]),
     )
     context = factory.build(memory, context_id="scenario:scenario:route:memory")
@@ -376,3 +360,18 @@ def test_live_provider_refuses_ambiguous_semantic_targets(header):
         )
         is None
     )
+
+
+def test_reacquisition_refuses_a_reading_that_carries_no_fused_frame(header):
+    """Without a frame there is no surface, and a guess is not a reacquisition."""
+    _, memory = build_verified_knowledge(header)
+    perception = _Perception([_button()])
+    perception.current_frame = None
+    factory = PerceptionRouteRuntimeProvider().runtime_factory_for(
+        _Scenario("scenario", [memory.header.artifact_id]),
+        _Device(),
+        perception,
+    )
+
+    with pytest.raises(RuntimeError, match="fused perception frame"):
+        factory.build(memory, context_id="scenario:scenario:route:memory")

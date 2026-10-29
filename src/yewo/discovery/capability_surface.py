@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from yewo.discovery.control_semantics import (
+from yewo.discovery.control_surface import (
     ControlInteraction,
     ControlSurface,
 )

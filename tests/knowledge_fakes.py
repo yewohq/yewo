@@ -2,7 +2,7 @@
 
 from yewo.discovery.artifacts import seal_artifact
 from yewo.discovery.contracts import CapabilityState
-from yewo.discovery.control_semantics import control_text_digest
+from yewo.discovery.control_surface import control_text_digest
 from yewo.discovery.knowledge import (
     AppMap,
     AppCapabilityEvidence,

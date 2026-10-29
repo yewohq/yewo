@@ -10,12 +10,13 @@ from yewo.agent.grounding.marks import Mark, project_targets
 from yewo.agent.memory.control_identity import build_control_identity
 from yewo.agent.memory.screen_identity import is_same_screen
 from yewo.agent.perception import settle
+from yewo.agent.perception.elements import element_roles
 from yewo.agent.run.settlement import SettlementController, SettlementReceipt
 from yewo.agent.step import observation as step_observation
 from yewo.discovery.contracts import DiscoveryObservation
-from yewo.discovery.control_semantics import (
-    SemanticControl,
-    parse_semantic_controls,
+from yewo.discovery.control_surface import (
+    ControlSurface,
+    build_control_surface,
 )
 from yewo.discovery.knowledge import (
     ControlReacquisition,
@@ -37,10 +38,7 @@ from yewo.testing.warm_execution import (
 
 
 def _roles(mark: Mark) -> frozenset[str]:
-    element = mark.element
-    return frozenset(
-        role.casefold() for role in (element.element, element.type, *element.semantic_roles) if role
-    )
+    return element_roles(mark.element)
 
 
 def _overlay_visible(marks: tuple[Mark, ...]) -> bool:
@@ -68,7 +66,7 @@ def _matches_auxiliary_state(
 class _CapturedRouteState:
     live: RouteMemoryLiveObservation
     marks: tuple[Mark, ...]
-    semantic_controls: tuple[SemanticControl, ...]
+    surface: ControlSurface
 
 
 @dataclass(frozen=True)
@@ -135,11 +133,12 @@ class _PerceptionRouteRuntime:
             screen_family_id=(predicate.screen_family_id if predicate is not None else None),
             screen_size=screen_size,
         )
-        semantic_controls = parse_semantic_controls(self.device_control.driver.page_source)
+        if snapshot.perception_frame is None:
+            raise RuntimeError("RouteMemory reacquisition requires a fused perception frame.")
         captured = _CapturedRouteState(
             live=live,
             marks=projection.marks,
-            semantic_controls=semantic_controls,
+            surface=build_control_surface(snapshot.perception_frame, screen_size),
         )
         self.current = captured
         return captured
@@ -157,7 +156,7 @@ class _PerceptionRouteRuntime:
         role = target.role.casefold()
         candidates = tuple(
             control
-            for control in self.current.semantic_controls
+            for control in self.current.surface.controls
             if role == control.role and target.text_digest == control.text_digest
         )
         if len(candidates) != 1:

@@ -64,6 +64,20 @@ class GUIElement(BaseModel):
     semantic_roles: frozenset[str] = Field(default_factory=frozenset)
 
 
+def element_roles(element: GUIElement) -> frozenset[str]:
+    """Every role name an element declares, from the three places a declaration appears.
+
+    Here rather than in each consumer. A consumer reading only `semantic_roles`
+    cannot see a detector that names the same role through its class. The
+    policy keyed on that role then never fires.
+    """
+    return frozenset(
+        role.casefold()
+        for role in (element.element, element.type, *element.semantic_roles)
+        if role
+    )
+
+
 @dataclass
 class ScanInfo:
     """What one pass over the screen cost and found."""
