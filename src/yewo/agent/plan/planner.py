@@ -27,13 +27,14 @@ from yewo.agent.grounding import (  # noqa: F401 - re-exported for callers
 from yewo.llm.llm_client import LLMClient
 from yewo.llm.messages import Message, MultiPartMessage, SystemMessage
 from yewo.agent.artifacts.redaction import RedactedImages
+from yewo.agent.device.platform import Platform
 from yewo.utils.secrets import SECRET_MASK_GUIDANCE, SecretScrubber
 
 logger = logging.getLogger(__name__)
 
 COMMON_ACTIONS = """
 - "drag_and_drop": Drag from source to destination. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
-- "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
+{key_event_action}
 - "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
 - "wait": Let the screen finish loading or animating. Fields: `type`, `duration` (float seconds), `reason`. Use this instead of giving up when the screen looks empty or half-drawn.
 - "capability": System-level control. Send exactly:
@@ -63,7 +64,7 @@ Each action must have a `type` field set to one of:
 - "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `target` (description), `reason`.
 - "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `target` (description), `reason`.
 - "show_keyboard_targets": Reveal detected visual keys for direct tapping. Use only when the goal tests the keyboard/keypad UI itself, never to enter ordinary text. Fields: `type`, `reason`.
-- "target_not_listed": An app element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like), `region` (one of upper_left, upper_center, upper_right, middle_left, middle_center, middle_right, lower_left, lower_center, lower_right), `reason`."""
+- "target_not_listed": An app element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like), `region` (one of upper_left, upper_center, upper_right, middle_left, middle_center, middle_right, lower_left, lower_center, lower_right), `intent` ("enter_text" if you need to put text into it, "activate" if you need to press it), `anchor_above` and `anchor_below` (the numbered visible controls immediately above and below the missing target), `reason`."""
 COORDINATE_ACTIONS = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
@@ -82,7 +83,7 @@ CRITICAL CONSTRAINTS:
 5. Do not identify it by its position in a sequence. The grounder reads the picture, not a list. Say what makes it different: "the blue Add button with the plus symbol".
 6. The target must be visible on the screen in front of you. Do not name something you remember from an earlier screen, and do not name something you expect to appear.
 7. "type" focuses the field itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-8. If the next target is another input field, you can type into it directly without dismissing the soft keyboard. Only dismiss it with key_event 4 if a button, checkbox, or non-input control you need to tap is blocked behind the keyboard. On Android, back dismisses the keyboard without leaving the app.
+8. {keyboard_recovery}
 9. If a description was not found, describe the same thing by a different visible feature. Use its symbol, shape, colour, or words. Do not add details about its surroundings.
 10. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 11. A tap is exactly one tap. Observe the resulting screen before choosing another action.
@@ -92,10 +93,10 @@ MARKS_CONSTRAINTS = """
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
 2. Numbers identify visible detected regions. A number does not prove that a region is interactive. Name the number in `mark` and describe that same region in `target`. Never send coordinates — they are not accepted.
-3. Use "type" and "clear" only on the actual editable field. A caption, summary value, read-only value, or label with the same words is not the field. If the field is hidden by the keyboard or is not numbered, dismiss the keyboard with key_event 4 or use "target_not_listed". Never type into a same-named label as a substitute.
+3. Use "type" and "clear" only on the actual editable field. A caption, summary value, read-only value, or label with the same words is not the field. If the field is hidden by the keyboard or is not numbered, use "target_not_listed". Never type into a same-named label as a substitute.
 4. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
 5. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
-6. If the next target is another input field, you can type into it directly without dismissing the soft keyboard. Only dismiss the soft keyboard with key_event 4 before targeting a button, link, or lower-screen control that is blocked behind it. On Android, back dismisses the soft keyboard without leaving the app.
+6. {keyboard_recovery}
 7. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 8. A tap is exactly one tap. Observe the resulting screen before choosing another action.
 9. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
@@ -107,7 +108,7 @@ CRITICAL CONSTRAINTS:
 2. Every targeted action MUST provide `target`. Describe the control by its own visible text, symbol, shape, or colour.
 3. For "type", you MUST provide `text`, `target`, AND `coordinates` of the target field.
 4. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-5. If the next target is another input field, you can type into it directly without dismissing the keyboard. Only dismiss it with key_event 4 if a button, link, or non-input control you need to tap is blocked behind the keyboard. On Android, back dismisses the keyboard without leaving the app. Then use the fresh screenshot for coordinates.
+5. {keyboard_recovery}
 6. Do not repeat an action from history. Repeat it only when the outcome shows that it failed or was undone. Uncertain visual evidence does not prove failure.
 7. Read coordinates from the CURRENT screenshot. Never reuse coordinates from an older screenshot.
 8. Re-read coordinates after any layout change. This includes keyboard changes, navigation, modals, and scrolling.
@@ -203,6 +204,7 @@ NO_TARGETS_LISTED = (
 class DevicePlanner:
     # Class-level so a planner built without __init__ still answers sensibly.
     grounding = GROUNDING_COORDINATES
+    platform = Platform.ANDROID
 
     """Builds prompts and calls the LLM to determine the next device action."""
 
@@ -211,11 +213,13 @@ class DevicePlanner:
         llm_client: LLMClient,
         grounding: str = GROUNDING_COORDINATES,
         scrubber: Optional[SecretScrubber] = None,
+        platform: Platform = Platform.ANDROID,
     ):
         self.llm = llm_client
         # "marks" offers numbered elements and no coordinates, so a target the
         # planner cannot find becomes a refusal rather than an invented point.
         self.grounding = grounding
+        self.platform = platform
         self._scrubber = scrubber or SecretScrubber()
         self._model_images = RedactedImages(self._scrubber)
 
@@ -302,12 +306,36 @@ class DevicePlanner:
         their own copies they drifted into contradicting each other.
         """
         targeting = TARGET_ACTIONS.get(self.grounding, COORDINATE_ACTIONS)
-        return targeting + COMMON_ACTIONS.format(capabilities=capability_vocabulary())
+        key_event_action = ""
+        if self.platform is Platform.ANDROID:
+            key_event_action = (
+                '- "key_event": Trigger an Android key event. Fields: `type`, '
+                '`key` (4=back, 3=home, 66=enter, 67=backspace), `reason`.'
+            )
+        return targeting + COMMON_ACTIONS.format(
+            capabilities=capability_vocabulary(),
+            key_event_action=key_event_action,
+        )
 
     def _action_constraints(self) -> str:
         """The rules for choosing an action. Shared with QAPlanner — see above."""
         targeting = TARGET_CONSTRAINTS.get(self.grounding, COORDINATE_CONSTRAINTS)
-        return targeting + APP_LAUNCH_CONSTRAINTS
+        if self.platform is Platform.ANDROID:
+            recovery = (
+                "Type directly into another input field without dismissing the keyboard. "
+                "If the keyboard blocks a non-input control, report the target as not "
+                "listed when that action is available, or scroll. Yewo uses the platform "
+                "driver for keyboard recovery. Use key_event 4 only for deliberate "
+                "navigation, never to dismiss the keyboard."
+            )
+        else:
+            recovery = (
+                "Type directly into another input field without dismissing the keyboard. "
+                "If the keyboard blocks another control, report the target as not listed "
+                "when that action is available, or scroll. Yewo uses the platform driver "
+                "for keyboard recovery. Do not send Android keycodes."
+            )
+        return targeting.format(keyboard_recovery=recovery) + APP_LAUNCH_CONSTRAINTS
 
     def _build_prompt(
         self,

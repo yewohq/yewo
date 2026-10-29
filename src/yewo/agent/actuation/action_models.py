@@ -34,7 +34,7 @@ class ActionType(str, Enum):
     DOUBLE_TAP = "double_tap"
     LONG_PRESS = "long_press"
     DRAG_AND_DROP = "drag_and_drop"
-    KEY_EVENT = "key_event"  # key events (4=back, 3=home, 66=enter, 67=backspace)
+    KEY_EVENT = "key_event"  # Android keycodes: 4=back, 3=home, 66=enter, 67=backspace
     SWIPE = "swipe"
     CAPABILITY = "capability"
     CLEAR = "clear"
@@ -400,7 +400,7 @@ class DragAndDropAction(BaseModel):
 
 class KeyEventAction(BaseModel):
     type: Literal[ActionType.KEY_EVENT] = ActionType.KEY_EVENT
-    key: int = Field(..., description="The key code to press.")
+    key: int = Field(..., description="The Android keycode to press.")
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 

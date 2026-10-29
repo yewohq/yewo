@@ -112,6 +112,20 @@ class DeclarationTests(unittest.TestCase):
         self.assertTrue(journey.coverage)
         self.assertIn("functional.happy_path.0", [c.key for c in journey.coverage])
 
+    def test_a_coverage_matrix_does_not_require_authored_scenarios(self):
+        path = _file(
+            "coverage:\n"
+            "  - {category: functional, types: [happy_path, boundary]}\n"
+            + JOURNEY
+        )
+
+        journey = load_workflows(path)[0].journeys[0]
+
+        self.assertEqual(
+            [cell.key for cell in journey.coverage],
+            ["functional.happy_path.0", "functional.boundary.0"],
+        )
+
     def test_an_empty_coverage_list_is_refused(self):
         """Zero cells writes zero scenarios, and zero failures reads as a pass."""
         path = _file("coverage: []\n" + JOURNEY)

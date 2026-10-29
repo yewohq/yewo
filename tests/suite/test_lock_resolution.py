@@ -35,6 +35,7 @@ def journey(*cells, **extra):
         name="J",
         description="A user signs in.",
         coverage=list(cells) or [HAPPY],
+        security_rules=extra.pop("security_rules", ["Invalid sign-in values must be refused."]),
         **extra,
     )
 
@@ -112,7 +113,7 @@ class ResolutionTests(unittest.TestCase):
     def test_a_changed_journey_regenerates_only_that_cell(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
-            made, _ = generator(draft("A"), draft("B"))
+            made, _ = generator(draft("A"), draft("B", outcomes=("B opens",)))
             two = journey(HAPPY, NEGATIVE)
             suite_for(two, lambda j, cells: made.generate_suite(j, cells), path=path)
 
@@ -173,7 +174,7 @@ class ResolutionTests(unittest.TestCase):
         """A lock is whole or it is a bug, and an entry nothing asks for is neither."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
-            made, _ = generator(draft("A"), draft("B"))
+            made, _ = generator(draft("A"), draft("B", outcomes=("B opens",)))
             suite_for(
                 journey(HAPPY, NEGATIVE),
                 lambda j, c: made.generate_suite(j, c),
@@ -451,7 +452,7 @@ class StaleAndUnregenerableTests(unittest.TestCase):
         mismatch = ValidationError.from_exception_data("ScenarioDraft", [])
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
-            made, _ = generator(draft("A"), draft("B"))
+            made, _ = generator(draft("A"), draft("B", outcomes=("B opens",)))
             two = journey(HAPPY, NEGATIVE)
             suite_for(two, made.generate_suite, path=path)
 
@@ -480,7 +481,7 @@ class PartialRegenerationTests(unittest.TestCase):
     def _half_failed(self, path):
         from pydantic import ValidationError
 
-        made, _ = generator(draft("A"), draft("B"))
+        made, _ = generator(draft("A"), draft("B", outcomes=("B opens",)))
         suite_for(journey(HAPPY, NEGATIVE), made.generate_suite, path=path)
 
         # Both questions change. One is answered, one is not.
@@ -537,7 +538,6 @@ class PartialRegenerationTests(unittest.TestCase):
 
     def test_the_stale_cell_is_still_refused_on_the_next_run(self):
         from pydantic import ValidationError
-
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "yewo.lock"
             _, altered = self._half_failed(path)

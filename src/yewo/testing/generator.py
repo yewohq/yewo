@@ -33,6 +33,7 @@ from yewo.testing import steps
 from yewo.testing.journey_env import substitute
 from yewo.testing.lifecycle import resolve_setup
 from yewo.testing.models import (
+    AssertionScope,
     ExpectedOutcome,
     GeneratedTestCase,
     ReportStatus,
@@ -40,6 +41,9 @@ from yewo.testing.models import (
     UserJourney,
 )
 from yewo.testing.step_language import ACTION_VERBS
+from yewo.testing import generation_policy
+from yewo.testing.generation_evidence import ScenarioGenerationEvidence
+from yewo.testing.generation_prompt import APP_EVIDENCE, CELL_CONTEXT, PROMPT, RULES
 from yewo.testing.taxonomy import (
     SUPPORTED_CATEGORIES,
     Category,
@@ -54,88 +58,6 @@ logger = logging.getLogger(__name__)
 
 GENERATION_ATTEMPTS = 3
 
-TYPES_NEEDING_ANOTHER_ACTOR = frozenset({ScenarioType.ROLE})
-"""Scenario types that cannot compare behavior with only one actor.
-
-A role cell needs another declared actor to make the comparison meaningful.
-Without one, the cell is reported instead of producing a scenario that proves
-nothing.
-"""
-
-
-PROMPT = """Write one test scenario from the app context and coverage cell.
-
-Write a scenario of the requested shape, about the requested concern, and
-nothing else. Yewo covers every other cell in its own call.
-
-### The steps
-
-Give the steps in order. Each one is:
-
-- `enter` — a declared value, and the field it goes in.
-- `capability` — a device state, such as the network going offline.
-- `action` — one action on one control, in prose. Open it with one of:
-  {actions}.
-
-The first step opens the app. The steps after it include every action that
-reaches the screen this cell is about. Name a control by its visible text and
-never by its position.
-
-Put no claim in a step. A separate component judges the outcomes, and the
-agent walking the app never reads them. An agent told what must be true
-steers the app until it is. The finding then goes unreported.
-
-### The outcomes
-
-Say what has to be visible, and give the evidence that settles each one:
-
-- "current_screen" — true or false from one screenshot. Prefer this always.
-- "transition" — the run reached a screen, or moved between two.
-- "measured" — only when the app description explicitly states a measurable
-  requirement. Name one supported metric and copy its numeric threshold:
-  `app_launch_ttid_ms`, `min_touch_target`, or
-  `unlabelled_actionable_count`. Never invent a performance or accessibility
-  threshold. "No unlabelled actionable controls" has threshold zero.
-
-Yewo can read screenshots, on-screen text, and the result of an action. It
-cannot read network traffic, HTTP headers, the app's own logs, an
-accessibility tree, a screen reader, focus order or a contrast ratio. Write
-no outcome that needs one of those. Yewo's separate iOS accessibility audit
-can settle only the two named accessibility metrics; it is not available to
-the planner.
-
-Yewo writes its own outcome for every value the file says this app
-refuses. A step entering one needs no claim from you.
-"""
-
-CELL_CONTEXT = """### The app, as a user walks it
-
-"{description}"
-
-### The cell
-
-Category: {category} — {category_meaning}
-Scenario type: {scenario_type} — {type_meaning}
-
-### The values you may enter
-
-An `enter` step names one of these. Never write a value of your own, because
-only the file knows what this app does with a value.
-
-{lines}
-{rules}
-"""
-
-RULES = """
-### Rules this app must not break
-
-{rules}
-
-Reach the screens where one of these could break. Do not write a claim about
-a rule in a step, because another component judges every rule on every screen
-it sees.
-"""
-
 CAPABILITY_BY_CATEGORY: dict[Category, CapabilityKind] = {
     Category.NETWORK: CapabilityKind.NETWORK,
     Category.PERMISSION: CapabilityKind.PERMISSION,
@@ -148,19 +70,38 @@ carry the capability, and that step carries the typed capability itself.
 """
 
 
-def _requirements(cell: CoverageCell, journey: UserJourney) -> dict:
+def _requirements(
+    cell: CoverageCell,
+    journey: UserJourney,
+    generation_evidence: ScenarioGenerationEvidence | None = None,
+    required_route_memory_ids: tuple[str, ...] | None = None,
+) -> dict:
     """What an answer for this cell is read against, beyond its own shape.
 
     Reaching the validator through the client's context means a cell's own
     requirement is refused on the same path as any other mismatch. So the
     model is asked again with the reason, rather than the cell being lost.
     """
-    context: dict = {"declared": frozenset(journey.values)}
+    context: dict = {
+        "declared": frozenset(journey.values),
+        "source_description": _scrubbed_journey_description(journey),
+        "scenario_type": cell.scenario_type,
+        "outcome_authority": "\n".join(
+            [
+                _scrubbed_journey_description(journey),
+                *(journey.security_rules if cell.category is Category.SECURITY else []),
+            ]
+        ),
+    }
     if cell.scenario_type is ScenarioType.NEGATIVE and journey.refused:
         context["refused"] = frozenset(journey.refused)
     wanted = CAPABILITY_BY_CATEGORY.get(cell.category)
     if wanted is not None:
         context["capability"] = wanted
+    if generation_evidence is not None:
+        context["generation_evidence"] = generation_evidence
+    if required_route_memory_ids is not None:
+        context["required_route_memory_ids"] = required_route_memory_ids
     return context
 
 
@@ -227,9 +168,7 @@ def _value_lines(journey: UserJourney) -> str:
     return "\n".join(lines) or "- none declared"
 
 
-def with_values_filled(
-    scenario: GeneratedTestCase, values: dict[str, str]
-) -> GeneratedTestCase:
+def with_values_filled(scenario: GeneratedTestCase, values: dict[str, str]) -> GeneratedTestCase:
     """The scenario with every `{{name}}` replaced by the value it stands for.
 
     Done after the identity is stamped, because the sentences a planner reads
@@ -241,9 +180,7 @@ def with_values_filled(
                 substitute(line, values) for line in scenario.steps_instructions
             ],
             "expected_outcomes": [
-                outcome.model_copy(
-                    update={"statement": substitute(outcome.statement, values)}
-                )
+                outcome.model_copy(update={"statement": substitute(outcome.statement, values)})
                 for outcome in scenario.expected_outcomes
             ],
         }
@@ -265,34 +202,50 @@ def with_journey_preconditions(
     )
 
 
-def _with_derived_outcomes(
-    draft: ScenarioDraft, refused: frozenset[str]
-) -> ScenarioDraft:
+def _with_derived_outcomes(draft: ScenarioDraft, refused: frozenset[str]) -> ScenarioDraft:
     """The draft, plus an outcome for every value confirmed the wrong shape.
 
     The claim was already held to the value, so the words carrying it are
-    written here rather than left to free prose beside it. A model's own
-    outcomes stay: they cover what this one cannot say.
+    written here rather than left to free prose beside it. A variation replaces
+    model-authored outcomes because an undeclared probe has only a conditional
+    consistency oracle.
     """
-    derived = [
+    refusal_outcomes = [
         ExpectedOutcome(statement=steps.refusal_outcome(entered.field))
         for entered in steps.entered_values(draft.steps)
         if entered.value in refused
     ]
-    if not derived:
+    variations = steps.variations_in(draft.steps)
+    if variations:
+        strategy = variations[0].strategy.value.replace("_", " ")
+        conditional = ExpectedOutcome(
+            statement=(
+                f"The {strategy} attempt follows one coherent result: the app "
+                "either completes the requested variation and declared journey, "
+                "with the resulting accepted state observable, or refuses the probe "
+                "without reporting false success, corrupting journey state, or "
+                "becoming unusable."
+            ),
+            scope=AssertionScope.TRANSITION,
+        )
+        return draft.model_copy(update={"expected_outcomes": [conditional, *refusal_outcomes]})
+    if not refusal_outcomes:
         return draft
     already = {outcome.statement for outcome in draft.expected_outcomes}
-    added = [outcome for outcome in derived if outcome.statement not in already]
-    return draft.model_copy(
-        update={"expected_outcomes": [*draft.expected_outcomes, *added]}
-    )
+    added = [outcome for outcome in refusal_outcomes if outcome.statement not in already]
+    return draft.model_copy(update={"expected_outcomes": [*draft.expected_outcomes, *added]})
 
 
 class ScenarioGenerator:
     """Asks for one scenario per declared cell."""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        generation_evidence: ScenarioGenerationEvidence | None = None,
+    ):
         self.llm = llm_client
+        self.generation_evidence = generation_evidence
 
     def generate_suite(
         self, journey: UserJourney, cells: Optional[list[CoverageCell]] = None
@@ -310,14 +263,23 @@ class ScenarioGenerator:
                 so a run pays for the cells it is missing and no others.
         """
         suite = GeneratedSuite()
-        for cell in sort_cells_by_priority(list(cells if cells is not None else journey.coverage)):
+        requested_cells = sort_cells_by_priority(
+            list(cells if cells is not None else journey.coverage)
+        )
+        evidence_gap = self._evidence_gap(requested_cells)
+        if evidence_gap:
+            suite.uncovered.extend(evidence_gap)
+            return suite
+        semantic_cells: dict[tuple[tuple[str, ...], tuple[str, ...]], str] = {}
+        shared_route_memory_ids: tuple[str, ...] | None = None
+        for cell in requested_cells:
             missing = self._missing_declaration(journey, cell)
             if missing:
                 logger.warning("Cell %s not covered. %s", cell.key, missing.reason)
                 suite.uncovered.append(missing)
                 continue
             try:
-                draft = self._draft(journey, cell)
+                draft = self._draft(journey, cell, shared_route_memory_ids)
             except ValidationError as mismatch:
                 # Three answers that never matched the schema is the model
                 # failing to answer, not the cell asking for the impossible.
@@ -328,35 +290,41 @@ class ScenarioGenerator:
             except ProviderUnavailable as exc:
                 # The service may answer the next cell, and a cell nobody
                 # covered is recorded rather than lost.
-                suite.uncovered.append(
-                    self._failed(cell, Cause.PROVIDER, reportable(exc))
-                )
+                suite.uncovered.append(self._failed(cell, Cause.PROVIDER, reportable(exc)))
                 continue
             except Exception as failure:
                 if cause_of(failure) is Cause.PROVIDER:
                     # A refused request is refused for every later cell, so
                     # asking for them spends calls on the same answer.
                     raise
+                suite.uncovered.append(self._failed(cell, cause_of(failure), reportable(failure)))
+                continue
+            if self.generation_evidence is not None and shared_route_memory_ids is None:
+                shared_route_memory_ids = tuple(draft.route_memory_ids)
+            signature = generation_policy.semantic_signature(draft)
+            duplicate = semantic_cells.get(signature)
+            if duplicate is not None:
                 suite.uncovered.append(
-                    self._failed(cell, cause_of(failure), reportable(failure))
+                    UncoveredCell(
+                        cell,
+                        ReportStatus.UNSUPPORTED,
+                        Cause.SCENARIO,
+                        f"The generated scenario duplicates the semantics already owned by {duplicate}.",
+                    )
                 )
                 continue
+            semantic_cells[signature] = cell.key
             unavailable_metrics = metrics_without_live_collectors(
-                outcome.metric
-                for outcome in draft.expected_outcomes
-                if outcome.metric is not None
+                outcome.metric for outcome in draft.expected_outcomes if outcome.metric is not None
             )
             if unavailable_metrics:
-                metric_names = ", ".join(
-                    metric.value for metric in unavailable_metrics
-                )
+                metric_names = ", ".join(metric.value for metric in unavailable_metrics)
                 suite.uncovered.append(
                     UncoveredCell(
                         cell,
                         ReportStatus.UNVERIFIED,
                         Cause.SCENARIO,
-                        "No live collector is available for required metric(s): "
-                        f"{metric_names}.",
+                        f"No live collector is available for required metric(s): {metric_names}.",
                     )
                 )
                 continue
@@ -378,10 +346,33 @@ class ScenarioGenerator:
         )
         return suite
 
+    def _evidence_gap(self, cells: list[CoverageCell]) -> list[UncoveredCell]:
+        evidence = self.generation_evidence
+        if evidence is None:
+            return []
+        reasons = [
+            f"{item.intent} ({item.state.value})"
+            for item in evidence.unavailable_required_capabilities
+        ]
+        if not evidence.available_capability_ids:
+            reasons.append("the AppMap contains no observed capabilities")
+        if not evidence.route_prefixes:
+            reasons.append("no verified RouteMemory reaches a test subject")
+        if not reasons:
+            return []
+        reason = "Required app evidence is unavailable: " + "; ".join(reasons) + "."
+        return [
+            UncoveredCell(
+                cell,
+                ReportStatus.UNVERIFIED,
+                Cause.SCENARIO,
+                reason,
+            )
+            for cell in cells
+        ]
+
     @staticmethod
-    def _missing_declaration(
-        journey: UserJourney, cell: CoverageCell
-    ) -> UncoveredCell | None:
+    def _missing_declaration(journey: UserJourney, cell: CoverageCell) -> UncoveredCell | None:
         """What this cell needs that the file did not declare, if anything."""
         if cell.category not in SUPPORTED_CATEGORIES:
             return UncoveredCell(
@@ -391,12 +382,13 @@ class ScenarioGenerator:
                 f"Nothing in a run can settle a {cell.category.value} cell yet. "
                 f"Remove it from 'coverage' until it can.",
             )
-        if cell.scenario_type in TYPES_NEEDING_ANOTHER_ACTOR and not journey.actors:
+        reason = generation_policy.unsupported_reason(journey, cell)
+        if reason is not None:
             return UncoveredCell(
                 cell,
                 ReportStatus.UNSUPPORTED,
                 Cause.SCENARIO,
-                "A role scenario needs another declared actor. Add one under 'actors'.",
+                reason,
             )
         return None
 
@@ -407,24 +399,42 @@ class ScenarioGenerator:
         logger.error("Cell %s not covered (%s). %s", cell.key, cause.value, reason)
         return UncoveredCell(cell, ReportStatus.ERROR, cause, reason)
 
-    def _draft(self, journey: UserJourney, cell: CoverageCell) -> ScenarioDraft:
+    def _draft(
+        self,
+        journey: UserJourney,
+        cell: CoverageCell,
+        required_route_memory_ids: tuple[str, ...] | None = None,
+    ) -> ScenarioDraft:
         """One model call for one cell.
 
         Raises:
             Exception: Whatever the last attempt raised, once none are left.
         """
-        stable_prompt, cell_context = self._prompt_sections(journey, cell)
+        stable_prompt, cell_context = self._prompt_sections(
+            journey, cell, required_route_memory_ids
+        )
         messages = [
             SystemMessage(content=stable_prompt),
             TextMessage(content=cell_context),
         ]
-        context = _requirements(cell, journey)
+        context = _requirements(
+            cell,
+            journey,
+            self.generation_evidence,
+            required_route_memory_ids,
+        )
         last_error: Exception | None = None
         for attempt in range(GENERATION_ATTEMPTS):
             try:
-                return self.llm.generate_response(
+                response = self.llm.generate_response(
                     messages=messages,
                     response_model=ScenarioDraft,
+                    context=context,
+                )
+                if self.generation_evidence is None:
+                    return response
+                return ScenarioDraft.model_validate(
+                    response.model_dump(mode="json"),
                     context=context,
                 )
             except Exception as exc:
@@ -450,7 +460,10 @@ class ScenarioGenerator:
         return stable_prompt + cell_context
 
     def _prompt_sections(
-        self, journey: UserJourney, cell: CoverageCell
+        self,
+        journey: UserJourney,
+        cell: CoverageCell,
+        required_route_memory_ids: tuple[str, ...] | None = None,
     ) -> tuple[str, str]:
         """The reusable policy and the cell-specific input it applies to."""
         rules = journey.security_rules if cell.category is Category.SECURITY else []
@@ -462,8 +475,34 @@ class ScenarioGenerator:
             scenario_type=cell.scenario_type.value,
             type_meaning=describe(cell.scenario_type),
             lines=_value_lines(journey),
-            rules=RULES.format(rules="\n".join(f"- {rule}" for rule in rules))
-            if rules
-            else "",
+            rules=RULES.format(rules="\n".join(f"- {rule}" for rule in rules)) if rules else "",
+            app_evidence=self._app_evidence_prompt(required_route_memory_ids),
         )
         return stable_prompt, cell_context
+
+    def _app_evidence_prompt(self, required_route_memory_ids: tuple[str, ...] | None) -> str:
+        evidence = self.generation_evidence
+        if evidence is None:
+            return ""
+        capabilities = "\n".join(
+            f"- {item.capability_id}: {item.intent} [{item.state.value}]"
+            for item in evidence.capabilities
+            if item.is_available
+        )
+        routes = "\n".join(
+            f"- {item.route_memory_artifact_id}: {item.semantic_instruction} "
+            f"({item.segment_count} guarded segments; reaches capability IDs: "
+            f"{', '.join(item.capability_ids)})"
+            for item in evidence.route_prefixes
+        )
+        required_prefix = (
+            "Use this same route_memory_ids sequence: " + ", ".join(required_route_memory_ids)
+            if required_route_memory_ids is not None
+            else "The first coverage variant selects the shared route prefix."
+        )
+        return APP_EVIDENCE.format(
+            app_map_artifact_id=evidence.app_map_artifact_id,
+            capabilities=capabilities or "- none",
+            routes=routes or "- none",
+            required_prefix=required_prefix,
+        )

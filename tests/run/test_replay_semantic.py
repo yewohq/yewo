@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from yewo.agent.actuation.actions import Coordinates, TapAction
+from yewo.agent.actuation import safety as action_safety
 from yewo.agent.grounding.description import ReboundTarget
 from yewo.agent.grounding.placement import Placement
 from yewo.agent.memory import replay_learning, replay_store, replay_walk
@@ -26,6 +27,7 @@ def screen_read(phash):
         ),
         current_phash=phash,
         raw_img_bytes=b"screen",
+        observation_id=f"observation-{phash}",
     )
 
 
@@ -63,9 +65,11 @@ def transition(*, source_phash, sensitive=False):
 class SemanticReplayTests(unittest.TestCase):
     def setUp(self):
         self.device = Device()
-        self.real_orchestrator = replay_walk.ActionOrchestrator
-        replay_walk.ActionOrchestrator = Orchestrator
-        self.addCleanup(setattr, replay_walk, "ActionOrchestrator", self.real_orchestrator)
+        self.real_orchestrator = action_safety.ActionOrchestrator
+        action_safety.ActionOrchestrator = Orchestrator
+        self.addCleanup(
+            setattr, action_safety, "ActionOrchestrator", self.real_orchestrator
+        )
 
     def _rebound(self):
         return ReboundTarget(

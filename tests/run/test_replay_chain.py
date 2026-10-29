@@ -9,6 +9,7 @@ import unittest
 from types import SimpleNamespace
 
 from yewo.agent.actuation.actions import Coordinates, TapAction
+from yewo.agent.actuation import safety as action_safety
 from yewo.agent.memory import replay_learning, replay_store, replay_walk
 
 import replay_driver
@@ -47,6 +48,7 @@ def screen_read(elements, info=None):
         scan_info=info or scan(len(elements)),
         current_phash="p",
         raw_img_bytes=b"",
+        observation_id="observation-p",
     )
 
 
@@ -101,9 +103,9 @@ class FailedStepTests(unittest.TestCase):
             def execute(self, action):
                 raise RuntimeError("the driver said no")
 
-        real = replay_walk.ActionOrchestrator
-        replay_walk.ActionOrchestrator = Refusing
-        self.addCleanup(setattr, replay_walk, "ActionOrchestrator", real)
+        real = action_safety.ActionOrchestrator
+        action_safety.ActionOrchestrator = Refusing
+        self.addCleanup(setattr, action_safety, "ActionOrchestrator", real)
 
     def _walk(self):
         sign_in = element("Sign in")

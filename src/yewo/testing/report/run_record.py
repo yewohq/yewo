@@ -13,6 +13,7 @@ def create_manifest(
     scrubber,
     run_id=None,
     allow_secret_exposure=False,
+    cold_start=None,
 ) -> RunManifest:
     """Build the same run record at every runner failure boundary."""
     return RunManifest(
@@ -32,6 +33,7 @@ def create_manifest(
             lock_sha256=suite.lock_sha256,
             scenarios_from_lock=suite.reused_count,
             scenarios_generated=suite.generated_count,
+            cold_start=cold_start,
         ),
         scrubber=scrubber,
         artifacts=sensitivity.declared_for(journey, allow_secret_exposure),
@@ -56,6 +58,7 @@ def ensure_interrupted_manifest(
         scrubber,
         runner.run_id,
         runner.allow_secret_exposure,
+        runner.cold_start,
     )
     recovered.record_unattached_calls(calls)
     return recovered, planned

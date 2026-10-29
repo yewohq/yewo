@@ -1,6 +1,6 @@
 """The shape of one planning answer, apart from the prompt that asks for it."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -70,6 +70,15 @@ class DeviceStepResponse(BaseModel):
         description=(
             "Set True if this action is expected to temporarily navigate outside the SUT app "
             "(for example, opening a browser link, document picker, or system dialog)."
+        ),
+    )
+    active_instruction_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Diagnostic estimate of the active scenario instruction's one-based "
+            "position. None outside scenario execution. The instruction controller "
+            "does not accept this field as progress evidence."
         ),
     )
 

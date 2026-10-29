@@ -6,13 +6,28 @@ widget tree; these are shipping applications with the ambiguity, density and
 custom UI that actually break perception and grounding.
 
 ```
-android/   17 APKs    — 16 downloaded release builds, 1 built from source
+android/   21 APKs    — 20 downloaded release builds, 1 built from source
 ios/        3 .app    — Simulator bundles, all built from source
 ../journeys/yewo.yaml — settings and 12 executable workflows
 ```
 
 Two apps ship as ABI-split downloads, so VLC and Element X each appear twice,
 once per architecture.
+
+Four of the Android packages are two defect pairs rather than release builds.
+Trainer App appears as `1645-buggy` / `1645-fixed` and `1640-buggy` /
+`1640-fixed`, taken from DroidFixBench, where they are `andror2-1645` and
+`andror2-1640`. Each is a known defect beside the developer's fix for it: same
+app, same journey, one difference. Every other app here is a working release,
+which measures whether Yewo navigates and whether it keeps quiet. The fixed
+half of a pair is the only thing in this directory that can tell you a finding
+was not invented.
+
+`1645` crashes when the Angle box is checked in the Add Exercise dialog, and
+its fix changes one method over two lines, so the two builds differ by 92
+bytes. `1640` renders the licence on the Info screen incomplete, but its fix
+landed 1,783 version codes later and adds the `INTERNET` permission, so that
+pair differs by much more than the defect and is the weaker measurement.
 
 ## Materialize the corpus
 
@@ -120,6 +135,10 @@ pair needs an arm64 rebuild before you can use it this way.
 | `element-x-26.10.0-x86_64.apk` | `io.element.android.x` | 147M | `x86_64` | **yes** | AGPL-3.0 |
 | `bluesky-1.135.0.apk` | `xyz.blueskyweb.app` | 259M | universal | **yes** | MIT |
 | `wonderous-2.2.7-x86_64.apk` | `com.gskinner.flutter.wonders` | 65M | `x86_64` engine | no | MIT |
+| `trainer-app-1645-buggy.apk` | `com.german_software_engineers.trainerapp` | 2.4M | no native code | no | GPL-3.0 |
+| `trainer-app-1645-fixed.apk` | `com.german_software_engineers.trainerapp` | 2.4M | no native code | no | GPL-3.0 |
+| `trainer-app-1640-buggy.apk` | `com.german_software_engineers.trainerapp` | 2.4M | no native code | no | GPL-3.0 |
+| `trainer-app-1640-fixed.apk` | `com.german_software_engineers.trainerapp` | 2.7M | no native code | no | GPL-3.0 |
 
 ### What each one is and what to test
 

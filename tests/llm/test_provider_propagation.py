@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from fakes import refused
+from generation_fakes import scenario_generation_evidence
 from litellm import exceptions
 from pydantic import ValidationError
 
@@ -94,9 +95,8 @@ class PropagationTests(unittest.TestCase):
         from yewo.testing.generator import ScenarioGenerator
 
         generator = object.__new__(ScenarioGenerator)
-        generator.llm = SimpleNamespace(
-            generate_response=mock.Mock(side_effect=failure)
-        )
+        generator.llm = SimpleNamespace(generate_response=mock.Mock(side_effect=failure))
+        generator.generation_evidence = None
         return generator
 
     def test_the_generator_does_not_retry_what_the_client_already_judged(self):
@@ -132,31 +132,34 @@ class PropagationTests(unittest.TestCase):
 
     def test_the_transition_judge_does_not_report_an_outage_as_thin_evidence(self):
         """Missing evidence blames the run for something the service did."""
-        from yewo.testing.qa_agent import QAAgent
-
-        agent = object.__new__(QAAgent)
-        agent._fast_llm = SimpleNamespace()
-        agent._device_agent = SimpleNamespace(scrubber=SimpleNamespace(scrub=str))
+        from yewo.testing import obligation_auditing
 
         with mock.patch(
             "yewo.testing.judge.transitions.settle",
             side_effect=ProviderUnavailable("spent"),
         ), self.assertRaises(ProviderUnavailable):
-            agent._settled_transitions(SimpleNamespace(expected_outcomes=[]), [])
+            obligation_auditing.settle_transitions(
+                SimpleNamespace(),
+                SimpleNamespace(expected_outcomes=[]),
+                [],
+                SimpleNamespace(scrub=str),
+            )
 
     def test_the_transition_judge_still_answers_nothing_for_its_own_failures(self):
-        from yewo.testing.qa_agent import QAAgent
-
-        agent = object.__new__(QAAgent)
-        agent._fast_llm = SimpleNamespace()
-        agent._device_agent = SimpleNamespace(scrubber=SimpleNamespace(scrub=str))
+        from yewo.testing import obligation_auditing
 
         with mock.patch(
             "yewo.testing.judge.transitions.settle",
             side_effect=ValueError("the screen names did not line up"),
         ):
             self.assertEqual(
-                agent._settled_transitions(SimpleNamespace(expected_outcomes=[]), []), []
+                obligation_auditing.settle_transitions(
+                    SimpleNamespace(),
+                    SimpleNamespace(expected_outcomes=[]),
+                    [],
+                    SimpleNamespace(scrub=str),
+                ),
+                [],
             )
 
 
@@ -251,7 +254,7 @@ class SuiteSurvivalTests(unittest.TestCase):
 
         with (
             patch("yewo.testing.runner.DeviceSession", Session),
-            patch("yewo.testing.runner.ScenarioGenerator", Generator),
+            patch("yewo.testing.generation_startup.ScenarioGenerator", Generator),
             patch("yewo.testing.runner.QAAgent", Agent),
             patch("yewo.testing.runner.ensure_device_ready"),
             patch("yewo.testing.runner.for_grounding"),
@@ -259,7 +262,9 @@ class SuiteSurvivalTests(unittest.TestCase):
             patch("yewo.testing.runner.evaluate_package_policy", return_value=[]),
         ):
             report = YewoTestRunner(
-                device_name="Pixel_8", app_path="app.apk"
+                device_name="Pixel_8",
+                app_path="app.apk",
+                generation_evidence=scenario_generation_evidence(),
             ).run_journey(UserJourney(id="j", name="J", description="A journey"))
         return report, asked
 
@@ -300,13 +305,14 @@ class TerminalPropagationTests(unittest.TestCase):
 
     def test_a_rejected_key_leaves_the_transition_judge_too(self):
         """Answering with no verdicts would read as a thin audit of a good run."""
-        from yewo.testing.qa_agent import QAAgent
-
-        agent = object.__new__(QAAgent)
-        agent._fast_llm = SimpleNamespace()
-        agent._device_agent = SimpleNamespace(scrubber=SimpleNamespace(scrub=str))
+        from yewo.testing import obligation_auditing
 
         with mock.patch(
             "yewo.testing.judge.transitions.settle", side_effect=refused()
         ), self.assertRaises(exceptions.AuthenticationError):
-            agent._settled_transitions(SimpleNamespace(expected_outcomes=[]), [])
+            obligation_auditing.settle_transitions(
+                SimpleNamespace(),
+                SimpleNamespace(expected_outcomes=[]),
+                [],
+                SimpleNamespace(scrub=str),
+            )

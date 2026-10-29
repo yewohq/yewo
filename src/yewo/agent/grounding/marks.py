@@ -410,8 +410,9 @@ def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
         return (
             f"Not executed. Element {index} holds no text. Typing there did not "
             "move the cursor, twice. Choose a different number. If no number is "
-            "the field you need, the field is off screen. Close the keyboard "
-            "with key_event 4, or scroll. Then look again."
+            "the field you need, the field is off screen. Scroll it into view. "
+            "If a keyboard is visible, Yewo will dismiss it with the platform "
+            "driver before retrying. Then look again."
         ), None
 
     x, y = mark.center

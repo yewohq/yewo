@@ -11,7 +11,6 @@ from typing import Callable, Optional
 
 from yewo.agent.actuation.actions import (
     Action,
-    ActionType,
     ClearAction,
     DoubleTapAction,
     KeyEventAction,
@@ -19,18 +18,31 @@ from yewo.agent.actuation.actions import (
     TapAction,
     TypeAction,
 )
-from yewo.agent.actuation.orchestrator import ActionOrchestrator
+from yewo.agent.actuation.safety import (
+    ActionSafetyPolicy,
+    ActionSource,
+    REPLAYABLE_ACTION_TYPES,
+    REPLAYABLE_KEYCODES,
+    execute_authorized,
+)
 from yewo.agent.memory.history import ActionEntry, ActionResult
+from yewo.agent.memory.screen_identity import (
+    SCREEN_PHASH_DISTANCE_THRESHOLD,
+    find_matching_screen,
+    is_same_screen,
+)
+from yewo.identity import new_uuid
+from yewo.agent.run.instruction_controller import InstructionController
 
 logger = logging.getLogger(__name__)
 
-PHASH_THRESHOLD = 10
+PHASH_THRESHOLD = SCREEN_PHASH_DISTANCE_THRESHOLD
 MAX_REPLAY_ACTIONS = 30
 
 # Replay re-executes without planning or auditing, so only actions that move
 # between screens qualify. Gestures and capability changes are what destructive
 # scenarios are built from, and must never be inherited by another scenario.
-REPLAYABLE_ACTIONS = {ActionType.TAP, ActionType.TYPE, ActionType.KEY_EVENT}
+REPLAYABLE_ACTIONS = REPLAYABLE_ACTION_TYPES
 
 PLACED_ACTIONS = (
     TypeAction,
@@ -47,7 +59,7 @@ that grew coordinates should be added here on purpose.
 
 # Back, which is how the agent dismisses the keyboard. Other key events reach
 # system surfaces that have nothing to do with navigating the app.
-REPLAYABLE_KEYCODES = {4}
+ACTION_SAFETY_POLICY = ActionSafetyPolicy()
 
 
 @dataclass
@@ -74,19 +86,7 @@ class ReplayLedger:
         """The known screen closest to this one, within the pHash threshold."""
         if not phash:
             return None
-        import imagehash
-
-        try:
-            target = imagehash.hex_to_hash(phash)
-        except Exception:
-            return None
-        for known in self._steps:
-            try:
-                if target - imagehash.hex_to_hash(known) <= self._threshold:
-                    return known
-            except Exception:
-                continue
-        return None
+        return find_matching_screen(phash, self._steps, self._threshold)
 
     def record(
         self,
@@ -111,17 +111,9 @@ class ReplayLedger:
 
     def leads_to(self, step: ReplayStep, phash: Optional[str]) -> bool:
         """Whether the screen reached matches the one this step produced before."""
-        if not phash:
-            return False
-        import imagehash
-
-        try:
-            return (
-                imagehash.hex_to_hash(phash) - imagehash.hex_to_hash(step.result_phash)
-                <= self._threshold
-            )
-        except Exception:
-            return False
+        return phash is not None and is_same_screen(
+            phash, step.result_phash, self._threshold
+        )
 
 
 def is_replayable(step: ReplayStep, goal_text: str) -> bool:
@@ -173,6 +165,8 @@ def replay_known_path(
     quick_phash: Callable[[object], Optional[str]],
     settle: Callable[[object], Optional[str]],
     scrubber=None,
+    instruction_controller: Optional[InstructionController] = None,
+    context_id: Optional[str] = None,
 ) -> int:
     """Re-executes transitions already worked out, without consulting the planner.
 
@@ -187,7 +181,8 @@ def replay_known_path(
     replayed = 0
 
     while replayed < MAX_REPLAY_ACTIONS:
-        step = ledger.lookup(quick_phash(device_control))
+        current_phash = quick_phash(device_control)
+        step = ledger.lookup(current_phash)
         if step is None:
             break
         if not is_replayable(step, goal_text):
@@ -195,7 +190,16 @@ def replay_known_path(
             break
 
         try:
-            ActionOrchestrator(device_control, scrubber).execute(step.action)
+            authorization = ACTION_SAFETY_POLICY.authorize(
+                step.action,
+                source=ActionSource.REPLAY,
+                observation_id=new_uuid(),
+                screen_phash=current_phash,
+                screen_size=None,
+                context_id=context_id,
+                instruction_controller=instruction_controller,
+            )
+            execute_authorized(authorization, device_control, scrubber)
         except Exception as exc:
             logger.info("Replay stopped — %s failed: %s", step.description, exc)
             break

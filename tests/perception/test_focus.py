@@ -13,6 +13,7 @@ from unittest.mock import patch
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device.focus import Focus
 from yewo.agent.device.platform import Platform
+from yewo.defaults import ANDROID_FOCUS_IME_GRACE_TIMEOUT, FOCUS_POLL_TIMEOUT
 from yewo.errors import ActionRejected, TargetNotInteractive
 
 SCREEN = (1080, 2400)
@@ -57,7 +58,7 @@ class FakeDriver:
         return SimpleNamespace(active_element=Field(self) if self.rect else None)
 
 
-def control(driver, keyboard=(False, True), focuses=None):
+def control(driver, keyboard=(False, True), focuses=None, platform=Platform.ANDROID):
     """A DeviceControl with no device: just a driver, a keyboard and a tap.
 
     `keyboard` is what `is_keyboard_open` answers, before the tap and after
@@ -65,7 +66,7 @@ def control(driver, keyboard=(False, True), focuses=None):
     """
     device = DeviceControl.__new__(DeviceControl)
     device.driver = driver
-    device.platform = Platform.ANDROID
+    device.platform = platform
     device.screen_width, device.screen_height = SCREEN
     answers = iter(keyboard)
     device.is_keyboard_open = lambda: next(answers)
@@ -137,7 +138,7 @@ class TypeAfterTheKeyboardOpensTests(unittest.TestCase):
 
     def test_nothing_reporting_focus_is_still_refused(self):
         driver = FakeDriver()
-        device = control(driver, keyboard=(False, True))
+        device = control(driver, keyboard=(False, False))
 
         with (
             patch("yewo.agent.device.focus.time.sleep"),
@@ -146,6 +147,51 @@ class TypeAfterTheKeyboardOpensTests(unittest.TestCase):
             device.type("someone@example.com", *POINT)
 
         self.assertIn("nothing reported focus", str(refusal.exception))
+
+    def test_delayed_focus_gets_a_bounded_input_method_grace_period(self):
+        driver = FakeDriver()
+        device = control(driver, keyboard=(False, True))
+        waits = []
+
+        def settle_focus(_focus, _x, _y, before=None, timeout=FOCUS_POLL_TIMEOUT):
+            waits.append(timeout)
+            if timeout == ANDROID_FOCUS_IME_GRACE_TIMEOUT:
+                driver.rect = AFTER_KEYBOARD
+
+        with patch.object(Focus, "wait_for", autospec=True, side_effect=settle_focus):
+            device.type("someone@example.com", *POINT)
+
+        self.assertEqual(
+            waits, [FOCUS_POLL_TIMEOUT, ANDROID_FOCUS_IME_GRACE_TIMEOUT]
+        )
+        self.assertEqual(driver.typed, ["someone@example.com"])
+
+    def test_input_method_without_verifiable_focus_receives_no_text(self):
+        driver = FakeDriver()
+        device = control(driver, keyboard=(False, True))
+
+        with (
+            patch("yewo.agent.device.focus.time.sleep"),
+            self.assertRaises(ActionRejected) as refusal,
+        ):
+            device.type("someone@example.com", *POINT)
+
+        self.assertIn("input-method UI", str(refusal.exception))
+        self.assertEqual(driver.typed, [])
+
+    def test_ios_text_entry_uses_the_same_verified_focus_contract(self):
+        driver = FakeDriver()
+        device = control(
+            driver,
+            keyboard=(False, True),
+            focuses=AFTER_KEYBOARD,
+            platform=Platform.IOS,
+        )
+
+        device.type("مرحبا 世界", *POINT)
+
+        self.assertEqual(device.taps, [POINT])
+        self.assertEqual(driver.typed, ["مرحبا 世界"])
 
 
 class AssertAtTests(unittest.TestCase):
@@ -235,3 +281,11 @@ class WaitForTests(unittest.TestCase):
             focus.wait_for(*POINT, before=ELSEWHERE)
 
         self.assertGreater(sleep.call_count, 1)
+
+    def test_a_caller_can_request_a_bounded_grace_period(self):
+        focus = self._focus([None])
+
+        with patch("yewo.agent.device.focus.time.sleep") as sleep:
+            focus.wait_for(*POINT, timeout=0.5)
+
+        self.assertEqual(sleep.call_count, 5)

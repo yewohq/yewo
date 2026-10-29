@@ -16,12 +16,20 @@ whoever writes it down.
 """
 
 from enum import Enum
-from typing import Callable, List, Optional, Protocol
+from typing import TYPE_CHECKING, Callable, List, Optional, Protocol
 
 from pydantic import BaseModel, Field
 
 from yewo.llm.usage import CallRecord
 from yewo.identity import new_uuid
+from yewo.agent.memory.control_identity import ControlIdentity
+
+if TYPE_CHECKING:
+    from yewo.agent.actuation.safety import ActionAuthorization
+    from yewo.agent.run.instruction_controller import (
+        InstructionController,
+        PlannerProgressClaim,
+    )
 
 
 class DecisionRecord(BaseModel):
@@ -38,6 +46,16 @@ class DecisionRecord(BaseModel):
     reasoning: str = ""
     goal_satisfied: bool = False
     goal_evidence: str = ""
+
+
+class InstructionAuthorityRecord(BaseModel):
+    """Controller state beside an untrusted planner progress claim."""
+
+    instruction_id: Optional[str] = None
+    authoritative_index: Optional[int] = None
+    planner_claimed_index: Optional[int] = None
+    planner_claimed_goal_satisfied: bool = False
+    planner_claim_accepted: bool = False
 
 
 class PlannedAction(Protocol):
@@ -191,6 +209,7 @@ class StepSource(str, Enum):
     MODEL = "model"
     REPLAY = "replay"
     CACHE = "cache"
+    RECOVERY = "recovery"
 
     def __str__(self) -> str:
         return self.value
@@ -202,6 +221,16 @@ class StepRecord(BaseModel):
     step_uuid: str = Field(default_factory=new_uuid)
     n: int = Field(description="Which step of the scenario this was, from 1.")
     source: StepSource = StepSource.MODEL
+    recovery_id: Optional[str] = Field(
+        default=None, description="The recovery transaction that selected this bridge action."
+    )
+    context_id: Optional[str] = None
+    observation_id: Optional[str] = None
+    instruction_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    settlement_id: Optional[str] = None
+    control_identity: Optional[ControlIdentity] = None
+    instruction_authority: Optional[InstructionAuthorityRecord] = None
     screen_name: str = ""
     phash: Optional[str] = None
 
@@ -272,11 +301,50 @@ class StepLog:
                 {name: value for name, value in screenshot_files.items() if value}
             )
 
-    def observed(self, phash: Optional[str], took_ms: float) -> None:
+    def observed(
+        self, phash: Optional[str], took_ms: float, observation_id: Optional[str] = None
+    ) -> None:
         step = self.current
         if step is not None:
             step.phash = phash
             step.perceive_ms = took_ms
+            step.observation_id = observation_id
+
+    def record_instruction_claim(
+        self,
+        controller: "InstructionController",
+        claim: "PlannerProgressClaim",
+    ) -> None:
+        """Persist the authority decision without applying the planner claim."""
+        step = self.current
+        if step is None:
+            return
+        active = controller.active_instruction
+        step.instruction_id = active.instruction_id if active is not None else None
+        step.instruction_authority = InstructionAuthorityRecord(
+            instruction_id=step.instruction_id,
+            authoritative_index=claim.authoritative_index,
+            planner_claimed_index=claim.claimed_index,
+            planner_claimed_goal_satisfied=claim.claimed_goal_satisfied,
+            planner_claim_accepted=claim.accepted,
+        )
+
+    def record_authorization(self, authorization: "ActionAuthorization") -> None:
+        """Attach stable action ownership to the open step."""
+        step = self.current
+        if step is None:
+            return
+        step.context_id = authorization.context_id
+        step.observation_id = authorization.observation_id
+        step.instruction_id = authorization.instruction_id or step.instruction_id
+        step.attempt_id = authorization.attempt_id
+        step.control_identity = authorization.control_identity
+
+    def record_settlement_id(self, settlement_id: Optional[str]) -> None:
+        """Link the dispatched step to its later settlement receipt."""
+        step = self.current
+        if step is not None:
+            step.settlement_id = settlement_id
 
     def planned(self, response, took_ms: float) -> None:
         """Keeps all five of the planner's prose fields, not the reasoning alone.

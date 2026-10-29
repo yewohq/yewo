@@ -200,7 +200,7 @@ class VerdictEquivalenceTests(unittest.TestCase):
         }
         path.write_text(json.dumps(payload), encoding="utf-8")
 
-    @patch("yewo.testing.qa_agent.QAAuditor", Auditor)
+    @patch("yewo.testing.obligation_auditing.QAAuditor", Auditor)
     @patch("yewo.testing.qa_agent.QAPlanner", Planner)
     @patch("yewo.agent.perception.settle.settle", return_value=None)
     @patch("yewo.agent.memory.replay_walk.time.sleep")
@@ -219,10 +219,14 @@ class VerdictEquivalenceTests(unittest.TestCase):
         self.assertEqual(cached.verdict_inputs, planned.verdict_inputs)
         self.assertTrue(any(step.source is StepSource.CACHE for step in cached.steps))
         self.assertEqual(Planner.calls, 3, "the cached run still called the planner")
-        self.assertEqual(planned_audits, 3)
-        self.assertEqual(Auditor.calls, 6, "the cached run did not audit every screen")
+        self.assertEqual(planned_audits, 4)
+        self.assertEqual(
+            Auditor.calls,
+            8,
+            "each run needs universal screen audits and one final obligation audit",
+        )
 
-    @patch("yewo.testing.qa_agent.QAAuditor", Auditor)
+    @patch("yewo.testing.obligation_auditing.QAAuditor", Auditor)
     @patch("yewo.testing.qa_agent.QAPlanner", Planner)
     @patch("yewo.agent.perception.settle.settle", return_value=None)
     @patch("yewo.agent.memory.replay_walk.time.sleep")
@@ -235,8 +239,8 @@ class VerdictEquivalenceTests(unittest.TestCase):
         self.assertEqual(cached.status, "PASSED")
         self.assertEqual([step.source for step in cached.steps], [StepSource.CACHE] * 2)
         self.assertEqual(Planner.calls, 3)
-        self.assertEqual(planned_audits, 3)
-        self.assertEqual(Auditor.calls, 6)
+        self.assertEqual(planned_audits, 4)
+        self.assertEqual(Auditor.calls, 8)
 
 
 if __name__ == "__main__":

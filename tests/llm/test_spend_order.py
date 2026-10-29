@@ -6,6 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from generation_fakes import scenario_generation_evidence
+from yewo.testing.generation_startup import ScenarioStartupKnowledge
+
 
 class SpendOrderTests(unittest.TestCase):
     """Scenario generation is the most expensive call a run makes.
@@ -49,19 +52,31 @@ class SpendOrderTests(unittest.TestCase):
                 order.append("generator")
                 raise RuntimeError("stop here")
 
+        class DiscoveryProvider:
+            def discover(self, _journey):
+                order.append("discovery")
+                return ScenarioStartupKnowledge(scenario_generation_evidence())
+
         with (
             patch("yewo.testing.runner.DeviceSession", Session),
-            patch("yewo.testing.runner.ScenarioGenerator", Generator),
+            patch("yewo.testing.generation_startup.ScenarioGenerator", Generator),
             patch("yewo.testing.runner.QAAgent"),
             patch("yewo.testing.runner.ensure_device_ready") as ready,
             patch("yewo.testing.runner.for_grounding"),
             patch("yewo.testing.runner.evaluate_package_policy", return_value=[]),
         ):
             ready.side_effect = lambda *_: order.append("asked adb")
-            YewoTestRunner(device_name="Pixel_8", app_path="app.apk").run_journey(
+            YewoTestRunner(
+                device_name="Pixel_8",
+                app_path="app.apk",
+                discovery_provider=DiscoveryProvider(),
+            ).run_journey(
                 UserJourney(id="j", name="J", description="A journey")
             )
         return order
 
     def test_the_device_is_open_before_the_generator_is_asked(self):
-        self.assertEqual(self._run(), ["asked adb", "device", "generator"])
+        self.assertEqual(
+            self._run(),
+            ["asked adb", "device", "discovery", "generator"],
+        )

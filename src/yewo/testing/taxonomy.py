@@ -64,14 +64,22 @@ CATEGORY_DESCRIPTIONS: dict[Category, str] = {
 
 TYPE_DESCRIPTIONS: dict[ScenarioType, str] = {
     ScenarioType.HAPPY_PATH: "the declared flow, with the values that are meant to work",
-    ScenarioType.NEGATIVE: "a value or an action the app has to refuse",
-    ScenarioType.BOUNDARY: "a value at a limit, or past it",
-    ScenarioType.EMPTY: "nothing entered, or nothing there to act on",
+    ScenarioType.NEGATIVE: (
+        "an invalid or malformed probe while pursuing the same declared goal"
+    ),
+    ScenarioType.BOUNDARY: (
+        "a high, low, or repeated probe without assuming an undocumented product limit"
+    ),
+    ScenarioType.EMPTY: (
+        "the same declared goal with a relevant value or item deliberately omitted"
+    ),
     ScenarioType.CONCURRENCY: "two actions at once, the same action twice, or out of order",
     ScenarioType.INTERRUPTION: "something arrives part way through, and the flow has to survive it",
     ScenarioType.RECOVERY: "something broke, and the app has to come back from it",
     ScenarioType.ROLE: "a different actor, who must see and reach different things",
-    ScenarioType.EXPLORATORY: "unscripted use, to find what no declared cell asked about",
+    ScenarioType.EXPLORATORY: (
+        "the same declared goal through an alternate route or action order observed at runtime"
+    ),
 }
 
 

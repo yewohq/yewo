@@ -1,5 +1,3 @@
-
-
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 from yewo.testing import steps
@@ -14,14 +12,14 @@ from yewo.testing.taxonomy import (
 )
 from typing import Dict, FrozenSet, List, Optional
 
-# Trail models live in agent/trail.py — re-exported here for backward compatibility.
 from yewo.agent.actuation.actions import Capability, CapabilityKind
 from yewo.metrics import Measurement, Metric  # noqa: F401
 from yewo.policy import PolicyCheckReport, PolicyCheckStatus  # noqa: F401
 from yewo.agent.run.postconditions import ValueVerificationPolicy
 from yewo.agent.device.launch import SetupMode  # noqa: F401
-from yewo.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
+from yewo.agent.memory.trail import SessionTrail  # noqa: F401
 from yewo.testing.lifecycle import ScenarioPreconditions, SetupOrigin
+from yewo.testing.generation_evidence import ScenarioGenerationEvidence
 
 # Re-exported so a caller reads one module. These live in evidence.py, which
 # holds what a run produces, and the rules it answers.
@@ -63,6 +61,7 @@ class Actor(BaseModel):
 
 class UserJourney(BaseModel):
     """Represents a high-level natural language user journey to test."""
+
     id: str
     name: str
     description: str
@@ -119,6 +118,17 @@ class ScenarioDraft(BaseModel):
     """
 
     scenario_name: str
+    app_capability_ids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Observed AppMap capability identifiers needed by this scenario. "
+            "They do not define requirements or expected outcomes."
+        ),
+    )
+    route_memory_ids: List[str] = Field(
+        default_factory=list,
+        description=("Verified RouteMemory identifiers forming the shared mechanical prefix."),
+    )
     steps: List[Step] = Field(
         min_length=1,
         description=(
@@ -137,6 +147,75 @@ class ScenarioDraft(BaseModel):
             "for every value the file says this app refuses."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_generation_evidence(self, info: ValidationInfo) -> "ScenarioDraft":
+        """Refuse unknown, unavailable, or divergent app knowledge references."""
+        evidence = (info.context or {}).get("generation_evidence")
+        if evidence is None:
+            return self
+        if not isinstance(evidence, ScenarioGenerationEvidence):
+            raise ValueError("generation_evidence must use its typed contract.")
+        capability_ids = set(self.app_capability_ids)
+        route_ids = set(self.route_memory_ids)
+        if len(capability_ids) != len(self.app_capability_ids):
+            raise ValueError("App capability references must be unique.")
+        if len(route_ids) != len(self.route_memory_ids):
+            raise ValueError("RouteMemory references must be unique.")
+        if evidence.capabilities and not capability_ids:
+            raise ValueError(
+                "A generated scenario must reference observed app capability evidence."
+            )
+        unavailable_ids = capability_ids - evidence.available_capability_ids
+        if unavailable_ids:
+            raise ValueError(
+                "The scenario references unknown or unavailable app capability IDs: "
+                + ", ".join(sorted(unavailable_ids))
+            )
+        if evidence.route_prefixes and not route_ids:
+            raise ValueError("A generated scenario must select a verified RouteMemory prefix.")
+        unknown_route_ids = route_ids - evidence.route_memory_ids
+        if unknown_route_ids:
+            raise ValueError(
+                "The scenario references unknown RouteMemory IDs: "
+                + ", ".join(sorted(unknown_route_ids))
+            )
+        route_capability_ids = {
+            capability_id
+            for route in evidence.route_prefixes
+            if route.route_memory_artifact_id in route_ids
+            for capability_id in route.capability_ids
+        }
+        if route_ids and not capability_ids.intersection(route_capability_ids):
+            raise ValueError(
+                "The selected RouteMemory prefix does not reach any referenced app capability."
+            )
+        required_prefix_ids = (info.context or {}).get("required_route_memory_ids")
+        if required_prefix_ids is not None and tuple(self.route_memory_ids) != tuple(
+            required_prefix_ids
+        ):
+            raise ValueError(
+                "Every coverage variant must use the same verified RouteMemory prefix."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_outcome_authority(self, info: ValidationInfo) -> "ScenarioDraft":
+        """Require provenance for model-authored outcomes in strict generation."""
+        context = info.context or {}
+        if context.get("generation_evidence") is None:
+            return self
+        if steps.variations_in(self.steps):
+            return self
+        authority = " ".join(str(context.get("outcome_authority", "")).split()).casefold()
+        for outcome in self.expected_outcomes:
+            evidence = " ".join((outcome.evidence or "").split()).casefold()
+            if not evidence or evidence not in authority:
+                raise ValueError(
+                    "Each generated outcome needs a verbatim journey or rule excerpt "
+                    "in its evidence field."
+                )
+        return self
 
     @model_validator(mode="after")
     def _validate_entered_values_declared(self, info: ValidationInfo) -> "ScenarioDraft":
@@ -162,9 +241,7 @@ class ScenarioDraft(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_refused_value_present(
-        self, info: ValidationInfo
-    ) -> "ScenarioDraft":
+    def _validate_refused_value_present(self, info: ValidationInfo) -> "ScenarioDraft":
         """Holds a cell about a refusal to entering one the file marked refused.
 
         Raises:
@@ -173,9 +250,7 @@ class ScenarioDraft(BaseModel):
         refused = (info.context or {}).get("refused")
         if not refused:
             return self
-        if not any(
-            step.value in refused for step in steps.entered_values(self.steps)
-        ):
+        if not any(step.value in refused for step in steps.entered_values(self.steps)):
             raise ValueError(
                 f"This cell enters a value this app refuses. One 'enter' step "
                 f"has to name one of: {', '.join(sorted(refused))}."
@@ -183,9 +258,7 @@ class ScenarioDraft(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_capability_cell_steps(
-        self, info: ValidationInfo
-    ) -> "ScenarioDraft":
+    def _validate_capability_cell_steps(self, info: ValidationInfo) -> "ScenarioDraft":
         """Holds a cell about a device state to having asked for one.
 
         Raises:
@@ -199,6 +272,66 @@ class ScenarioDraft(BaseModel):
                 f"This cell is about the device being {required_capability.value}. One "
                 f"'capability' step has to carry a {required_capability.value} capability."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_requested_user_strategy(self, info: ValidationInfo) -> "ScenarioDraft":
+        """Require the typed strategy requested by the coverage cell."""
+        context = info.context or {}
+        requested = context.get("scenario_type")
+        if requested is None:
+            return self
+        variations = steps.variations_in(self.steps)
+        if requested not in steps.VARIATION_TYPES:
+            if variations:
+                raise ValueError(
+                    f"A {requested.value} cell must not introduce a variation strategy."
+                )
+            return self
+        if len(variations) != 1 or variations[0].strategy is not requested:
+            raise ValueError(
+                f"A {requested.value} cell needs exactly one 'variation' step "
+                f"whose strategy is {requested.value}."
+            )
+        refused = context.get("refused") or frozenset()
+        enters_declared_refusal = requested is ScenarioType.NEGATIVE and any(
+            entered.value in refused for entered in steps.entered_values(self.steps)
+        )
+        if (
+            requested is ScenarioType.NEGATIVE
+            and variations[0].probe_value is None
+            and not enters_declared_refusal
+        ):
+            raise ValueError(
+                "A negative variation needs a probe_value or an 'enter' step that "
+                "uses a value declared as refused."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ui_claims_have_evidence(self, info: ValidationInfo) -> "ScenarioDraft":
+        """Refuse generated controls the journey never said existed."""
+        source = (info.context or {}).get("source_description")
+        if source is None:
+            return self
+        for step in self.steps:
+            if isinstance(step, steps.ActionStep):
+                unsupported = steps.unsupported_ui_claim(step, source)
+            elif isinstance(step, steps.IntentStep):
+                unsupported = steps.unsupported_intent_claim(step, source)
+            elif isinstance(step, steps.VariationStep):
+                unsupported = steps.unsupported_variation_claim(step, source)
+            else:
+                continue
+            if unsupported:
+                claim = (
+                    step.objective if isinstance(step, steps.VariationStep) else step.instruction
+                )
+                raise ValueError(
+                    f"{claim!r} is unsupported: {unsupported}. "
+                    "Use a verbatim intent when the journey specifies an objective "
+                    "but not its UI."
+                )
         return self
 
 
@@ -260,9 +393,7 @@ class GeneratedTestCase(ScenarioDraft):
             kinds.extend(steps.capability_kinds_in(self.steps))
             self.required_capabilities = list(dict.fromkeys(kinds))
         measured_metrics = [
-            outcome.metric
-            for outcome in self.expected_outcomes
-            if outcome.metric is not None
+            outcome.metric for outcome in self.expected_outcomes if outcome.metric is not None
         ]
         if not self.required_metrics:
             self.required_metrics = list(dict.fromkeys(measured_metrics))

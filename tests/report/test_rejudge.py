@@ -271,6 +271,7 @@ class WhatTheReportCarriesTests(unittest.TestCase):
             duration=1.0,
             security_rules=["The card number is masked"],
             measurement_samples=measurement_samples,
+            settle_transitions=False,
         )
 
     def test_a_report_carries_what_its_verdict_was_decided_from(self):

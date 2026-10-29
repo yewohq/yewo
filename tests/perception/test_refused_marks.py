@@ -58,7 +58,7 @@ class RefusedMarkTests(unittest.TestCase):
         unresolved, _ = self._resolve(self._type(), refuses_text=True)
 
         self.assertIn("Choose a different number", unresolved)
-        self.assertIn("key_event 4", unresolved)
+        self.assertIn("platform driver", unresolved)
 
     def test_a_mark_that_was_never_tried_still_resolves(self):
         unresolved, resolved = self._resolve(self._type(), refuses_text=False)

@@ -64,15 +64,19 @@ class Stall:
         return self.count >= STALL_LIMIT
 
 
-def reveal_behind_keyboard(device_control, snapshot, ctx) -> bool:
-    """Pulls the keyboard down once per screen when a step cannot proceed.
+def reveal_target_behind_keyboard(device_control, snapshot, ctx) -> bool:
+    """Pulls the keyboard down once when it can hide an unmatched target.
 
     The keyboard hides the lower half, and only what is on screen gets a
     number, so a target the planner cannot name is often underneath it.
     Done rather than asked for, because a planner told to scroll does not
     reliably do it.
 
-    Once per screen. If the keyboard returns and the step fails again,
+    This recovery is only for a target that was not listed. A dispatched text
+    action can open delayed input-method UI before focus becomes readable. Its
+    caller must observe that UI instead of pressing Back through it.
+
+    Once per screen. If the keyboard returns and the target is still absent,
     something other than the keyboard is wrong.
     """
     screen = snapshot.current_phash

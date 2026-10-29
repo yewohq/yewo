@@ -18,6 +18,11 @@ from yewo.agent.run.postconditions import (
     PostconditionVerification,
     ValueVerificationPolicy,
 )
+from yewo.agent.run.recovery import RecoveryTransaction
+from yewo.agent.run.evidence_identity import ExecutionContextIdentity
+from yewo.agent.run.instruction_controller import InstructionController
+from yewo.agent.run.input_transaction import InputTransactionReceipt
+from yewo.agent.run.control_discovery import ControlDiscoveryTransaction
 
 
 @dataclass
@@ -36,13 +41,8 @@ class RunContext:
     last_action_type: Optional[str] = None
     screen_height: Optional[int] = None
     pending_loop_nudge: Optional[str] = None
-    unchanged_tap_attempts: dict[tuple[str, str, int, int], int] = field(
-        default_factory=dict
-    )
-    """Delivered taps by stable screen and coarse device point."""
-    pending_visual_refinement: Optional[tuple[str, str]] = None
-    refined_targets: set[tuple[str, str, str]] = field(default_factory=set)
-    """Bound one crop retry to each screen, target description, and region."""
+    control_discovery: Optional[ControlDiscoveryTransaction] = None
+    """The one typed missing-control recovery transaction active in this run."""
     stall: Stall = field(default_factory=Stall)
     """Steps in a row that never reached the device, and where."""
 
@@ -79,6 +79,15 @@ class RunContext:
     steps it never ran.
     """
 
+    intervention_steps: int = 0
+    """Turns a bounded repair owned, rather than the active instruction.
+
+    A probe for a control perception did not report, and a re-observation a
+    recovery needed, are work the scenario had to do to keep going. Charging
+    them to the instruction budget would end a scenario at its step limit
+    having executed almost none of its own steps.
+    """
+
     text_strikes: dict[str, list[marks.Box]] = field(default_factory=dict)
     """Per screen, elements that took no text once. One is not yet proof.
 
@@ -98,6 +107,34 @@ class RunContext:
     value_names: ValueNames = field(default_factory=ValueNames)
     pending_entered_value: Optional[PendingEnteredValue] = None
     postcondition_verifications: list[PostconditionVerification] = field(default_factory=list)
+    input_transactions: list[InputTransactionReceipt] = field(default_factory=list)
     postcondition_blocked: bool = False
     postcondition_recovery_required: bool = False
+    recovery_transactions: list[RecoveryTransaction] = field(default_factory=list)
+    active_recovery: Optional[RecoveryTransaction] = None
+    """The one bounded recovery transaction that may currently affect execution."""
+    active_instruction_index: Optional[int] = None
+    active_instruction: Optional[str] = None
+    instruction_controller: Optional[InstructionController] = None
+    execution_context: Optional[ExecutionContextIdentity] = None
     observation_blocked: bool = False
+
+    @property
+    def turns_spent(self) -> int:
+        """Every turn charged so far, to either budget."""
+        return self.steps_executed + self.intervention_steps
+
+    @property
+    def is_intervening(self) -> bool:
+        """Whether a bounded repair owns this turn rather than the instruction."""
+        discovery = self.control_discovery
+        if discovery is not None and not discovery.is_terminal:
+            return True
+        return self.active_recovery is not None
+
+    def spend_step(self) -> None:
+        """Charge this turn to the budget whose work it performed."""
+        if self.is_intervening:
+            self.intervention_steps += 1
+            return
+        self.steps_executed += 1

@@ -33,6 +33,8 @@ def _tap(
     step: int,
     post_phash: str = "same-screen",
     failure: Exception | None = None,
+    point: tuple[int, int] = (298, 1568),
+    screen_size: tuple[int, int] = (1080, 2400),
 ) -> Mock:
     requested = TapMarkAction(
         mark=25,
@@ -40,7 +42,7 @@ def _tap(
         reason="choose Chrome for this action",
     )
     resolved = TapCoordinateAction(
-        coordinates=Coordinates(x=298, y=1568),
+        coordinates=Coordinates(x=point[0], y=point[1]),
         target="Just once button",
         reason="choose Chrome for this action",
     )
@@ -55,7 +57,7 @@ def _tap(
     ctx.steps.open(step + 1)
 
     with (
-        patch("yewo.agent.step.dispatch.ActionOrchestrator", orchestrator),
+        patch("yewo.agent.actuation.safety.ActionOrchestrator", orchestrator),
         patch("yewo.agent.step.dispatch.settle.settle", return_value=post_phash),
     ):
         dispatch.execute(
@@ -65,7 +67,13 @@ def _tap(
             step_response=response,
             device_control=Mock(),
             snapshot=SimpleNamespace(
-                current_phash="same-screen", gui_elements=[], marks=[]
+                current_phash="same-screen",
+                observation_id=f"observation-{step + 1}",
+                gui_elements=[],
+                marks=[],
+                scan_info=SimpleNamespace(
+                    screen_width=screen_size[0], screen_height=screen_size[1]
+                ),
             ),
             session_trail=None,
             ctx=ctx,
@@ -118,12 +126,21 @@ def test_two_unchanged_taps_nudge_without_blocking_the_second_tap():
     assert "goal explicitly requires repeated taps" in ctx.pending_loop_nudge
 
 
+def test_scaled_taps_share_one_unchanged_control_identity():
+    ctx, scrubber = _context()
+
+    _tap(ctx, scrubber, step=0, point=(540, 1200), screen_size=(1080, 2400))
+    _tap(ctx, scrubber, step=1, point=(270, 600), screen_size=(540, 1200))
+
+    assert ctx.pending_loop_nudge is not None
+    assert "2 delivered taps" in ctx.pending_loop_nudge
+
+
 def test_a_changed_screen_does_not_count_as_an_unchanged_tap():
     ctx, scrubber = _context()
 
     _tap(ctx, scrubber, step=0, post_phash="next-screen")
 
-    assert ctx.unchanged_tap_attempts == {}
     assert ctx.pending_loop_nudge is None
 
 
@@ -132,5 +149,4 @@ def test_a_driver_error_does_not_count_as_a_delivered_tap():
 
     _tap(ctx, scrubber, step=0, failure=RuntimeError("driver rejected the tap"))
 
-    assert ctx.unchanged_tap_attempts == {}
     assert ctx.pending_loop_nudge is None

@@ -10,6 +10,7 @@ from yewo.agent.actuation.actions import (
     ActionType,
 )
 from yewo.agent.device.control import DeviceControl
+from yewo.agent.device.input_adapter import DeviceInputAdapter
 from yewo.agent.device.capability_controller import CapabilityController
 from yewo.agent.device.receipts import Receipt
 from yewo.agent.run.postconditions import TextEntryReceipt
@@ -24,6 +25,7 @@ ALLOWED_KEYCODES = {3, 4, 66, 67}
 class ActionOrchestrator:
     def __init__(self, device_control: DeviceControl, scrubber=None):
         self.device_control = device_control
+        self.input_adapter = DeviceInputAdapter(device_control)
         self.capability_controller = CapabilityController(device_control)
         self._scrubber = scrubber
 
@@ -105,8 +107,9 @@ class ActionOrchestrator:
                     if self._scrubber
                     else action.text
                 )
-                observed = self.device_control.type(typed_text, coordinates.x, coordinates.y)
-                return TextEntryReceipt(observed if isinstance(observed, str) else None)
+                return self.input_adapter.enter_text(
+                    typed_text, coordinates.x, coordinates.y
+                )
             case ActionType.CLEAR:
                 coordinates = action.coordinates
                 logger.info(

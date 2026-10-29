@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 from yewo.agent.run.record import StepRecord, StepSource
-from yewo.testing.models import ReportStatus
+from yewo.agent.run.recovery import RecoveryStatus
 
 from .summary_tiles import seconds
 from .source import ScenarioSource
@@ -135,6 +135,8 @@ def _chips(step: StepRecord, recovered: bool = False) -> Tuple[StatusChip, ...]:
     # stands behind it is the match, not a planner that saw the screen.
     if step.source == StepSource.MODEL:
         chips.append(StatusChip("Used AI", "muted"))
+    if step.source == StepSource.RECOVERY:
+        chips.append(StatusChip("Recovery proposal", "warn"))
     if step.source == StepSource.REPLAY:
         chips.append(StatusChip("Replayed this run", "muted"))
     if step.source == StepSource.CACHE:
@@ -178,12 +180,22 @@ def failed_at(steps: Sequence[StepRecord]) -> Optional[int]:
 def step_views(
     scenario: ScenarioSource, href: str, opened: Optional[int]
 ) -> Tuple[StepView, ...]:
-    recovered = scenario.status == ReportStatus.PASSED
+    recovered_steps = {
+        transaction.failed_step
+        for transaction in scenario.recovery_transactions
+        if transaction.status is RecoveryStatus.RECOVERED
+    }
     views = []
     for step in scenario.steps:
         tone = "muted"
         if step.outcome is not None:
-            tone = "pass" if step.outcome.success else "warn" if recovered else "fail"
+            tone = (
+                "pass"
+                if step.outcome.success
+                else "warn"
+                if step.n in recovered_steps
+                else "fail"
+            )
         views.append(
             StepView(
                 number=f"{step.n:02d}",
@@ -191,7 +203,7 @@ def step_views(
                 title=_title(step),
                 duration=_step_duration(step),
                 anchor=f"{anchor_of(scenario.test_id)}-step-{step.n}",
-                chips=_chips(step, recovered),
+                chips=_chips(step, step.n in recovered_steps),
                 notes=_notes(step),
                 shots=_shots(step, href),
                 opened=step.n == opened,

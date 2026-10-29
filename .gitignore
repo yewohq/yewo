@@ -10,6 +10,7 @@ wheels/
 .coverage
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 
 # Virtual environments
 .venv
@@ -44,3 +45,4 @@ eval/integrations/android_world/vendor/
 **/.yewo/replay/
 **/.yewo/replay-key
 **/.yewo/paths/**/*.part
+**/.yewo/knowledge/

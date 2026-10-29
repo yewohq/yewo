@@ -70,6 +70,29 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(status, "UNVERIFIED")
         self.assertIn("expected:0", reason)
 
+    def test_missing_optional_obligation_does_not_block_required_evidence(self):
+        from yewo.testing.models import ExpectedOutcome, RuleVerification
+
+        status, reason = self._verdict(
+            required_outcomes=[
+                ExpectedOutcome(statement="Order is confirmed"),
+                ExpectedOutcome(
+                    statement="A recommendation is visible",
+                    obligation={"required": False},
+                ),
+            ],
+            all_verifications=[
+                RuleVerification(
+                    rule="Order is confirmed",
+                    rule_id="expected:0",
+                    status="passed",
+                    reasoning="The confirmation is visible.",
+                )
+            ],
+        )
+
+        self.assertEqual(status, "PASSED", reason)
+
     def test_security_rule_a_scenario_never_reached_is_not_required(self):
         from yewo.testing.models import RuleVerification
 
@@ -398,6 +421,38 @@ class AbortReportingTests(unittest.TestCase):
 
         self.assertEqual(failed, 1)
         self.assertEqual([r.test_id for r in reports], ["TS_1", "TS_2"])
+
+    def test_interrupted_active_scenario_keeps_partial_steps(self):
+        from yewo.agent.memory.history import AgentHistory
+        from yewo.agent.run.outcomes import DeviceRunResult
+        from yewo.agent.run.record import StepRecord
+        from yewo.testing.models import GeneratedTestCase
+
+        planned = GeneratedTestCase(
+            test_id="TS_1",
+            scenario_name="S1",
+            cell="functional.happy_path.0",
+            category="functional",
+            scenario_type="happy_path",
+            priority="P0",
+            steps=walk("Launch the app."),
+            expected_outcomes=["ok"],
+        )
+        partial = DeviceRunResult(
+            status="exception",
+            steps_executed=2,
+            failure_reason="interrupted",
+            history=AgentHistory(),
+            steps=[StepRecord(n=1), StepRecord(n=2)],
+        )
+
+        report = infrastructure.interrupted_scenario(
+            planned, partial, KeyboardInterrupt("stopped")
+        )
+
+        self.assertEqual(report.status, "ABORTED")
+        self.assertEqual(report.steps_executed, 2)
+        self.assertEqual([step.n for step in report.steps], [1, 2])
 
 
 class RuleIdentityTests(unittest.TestCase):

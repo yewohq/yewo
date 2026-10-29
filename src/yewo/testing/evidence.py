@@ -1,8 +1,5 @@
 """What a run leaves behind: the evidence, and the reports built from it.
 
-Split from `models.py`, which holds what a run is given. These are what it
-produces, and the rules a run answers, which sit beside the answers to them. One module answered both questions and grew past the file ceiling.
-
 Every name here is re-exported by `models.py`, so no caller has to know
 which of the two it came from.
 """
@@ -16,12 +13,17 @@ from yewo.agent.actuation.actions import CapabilityKind
 from yewo.agent.device.crash_diagnostics import CrashDiagnostic
 from yewo.agent.run.outcomes import RunStatus
 from yewo.agent.run.postconditions import PostconditionVerification
+from yewo.agent.run.recovery import RecoveryTransaction
 from yewo.agent.run.record import StepRecord
+from yewo.agent.run.settlement import SettlementReceipt
+from yewo.agent.run.input_transaction import InputTransactionReceipt
 from yewo.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
 from yewo.metrics import Measurement, Metric, definition_for
 from yewo.policy import PolicyCheckReport, policy_checks_succeeded
 from yewo.testing import provider_shapes
 from yewo.testing.lifecycle import LifecycleOperation, LifecycleStatus
+from yewo.testing.obligations import ObligationActivation, ObligationRunEvidence, ObligationSpec
+from yewo.testing.warm_execution import ScenarioWarmExecution
 
 
 # The model writes this one to point at what it reports. The detector's
@@ -61,9 +63,7 @@ class Rendering(str, Enum):
 class SensitiveFinding(BaseModel):
     """What was seen where a sensitive value could be, and what it looked like."""
 
-    field: str = Field(
-        ..., description="What the value is, named as this screen names it."
-    )
+    field: str = Field(..., description="What the value is, named as this screen names it.")
 
     @model_validator(mode="before")
     @classmethod
@@ -71,6 +71,7 @@ class SensitiveFinding(BaseModel):
         return provider_shapes.normalize_sensitive_finding(
             value, frozenset(rendering.value for rendering in Rendering)
         )
+
     rendering: Rendering = Field(
         ...,
         description=(
@@ -169,6 +170,7 @@ class IssueKind(str, Enum):
 
 class QAIssue(BaseModel):
     """Represents a visual, security, or logical issue found during testing."""
+
     issue_type: IssueKind = Field(
         ...,
         description=(
@@ -202,6 +204,7 @@ class QAIssue(BaseModel):
             return IssueKind(normalized_kind)
         except ValueError:
             return IssueKind.OTHER
+
     description: str
     bounding_box: Optional[BoundingBox] = None
     severity: Literal["low", "medium", "high", "critical"]
@@ -258,6 +261,11 @@ class ExpectedOutcome(BaseModel):
     """One thing a scenario must show, and what could show it."""
 
     statement: str
+    evidence: Optional[str] = Field(
+        default=None,
+        description=("The exact journey or rule excerpt that authorizes a generated outcome."),
+        exclude_if=lambda value: value is None,
+    )
     scope: AssertionScope = Field(
         default=AssertionScope.CURRENT_SCREEN,
         description=(
@@ -281,14 +289,17 @@ class ExpectedOutcome(BaseModel):
         ),
         exclude_if=lambda value: value is None,
     )
+    obligation: ObligationSpec = Field(
+        default_factory=ObligationSpec,
+        description="Activation, evidence-window, and settlement policy.",
+        exclude_if=lambda value: value == ObligationSpec(),
+    )
 
     @model_validator(mode="before")
     @classmethod
     def _normalize_expected_outcome(cls, value):
         """Normalize shorthand and derive the scope of a named metric."""
-        return provider_shapes.normalize_expected_outcome(
-            value, AssertionScope.MEASURED
-        )
+        return provider_shapes.normalize_expected_outcome(value, AssertionScope.MEASURED)
 
     @model_validator(mode="after")
     def _validate_metric_scope(self) -> "ExpectedOutcome":
@@ -303,11 +314,14 @@ class ExpectedOutcome(BaseModel):
                 )
         elif self.metric is not None or self.threshold is not None:
             raise ValueError("Only a measured outcome may name a metric or threshold.")
+        if self.scope is AssertionScope.TRANSITION:
+            self.obligation.activation = ObligationActivation.ON_TRANSITION
         return self
 
 
 class RuleVerification(BaseModel):
     """Represents the status of verifying a specific journey expectation or custom rule."""
+
     rule: str = Field(
         ...,
         description="The words of the rule being answered, as they were listed.",
@@ -325,9 +339,11 @@ class RuleVerification(BaseModel):
     def _normalize_rule_verification(cls, value):
         """Normalize labels while leaving unknown verdicts for Pydantic to reject."""
         from yewo.testing.judge import rules
+
         return provider_shapes.normalize_rule_verification(
             value, status_spellings=STATUS_SPELLINGS, resolve_rule_id=rules.id_in
         )
+
     status: Literal["passed", "failed", "untested"]
     applicable: bool = Field(
         default=True,
@@ -390,14 +406,13 @@ class VerdictInputs(BaseModel):
     required_capabilities: List[CapabilityKind] = Field(default_factory=list)
     measurements: List[Measurement] = Field(default_factory=list)
     receipts: List[ReceiptRecord] = Field(default_factory=list)
-    postcondition_verifications: List[PostconditionVerification] = Field(
-        default_factory=list
-    )
+    postcondition_verifications: List[PostconditionVerification] = Field(default_factory=list)
     crash_diagnostic: Optional[CrashDiagnostic] = None
 
 
 class ScenarioReport(BaseModel):
     """Represents the results of running an individual test scenario."""
+
     scenario_uuid: Optional[str] = Field(
         default=None,
         description=(
@@ -425,6 +440,7 @@ class ScenarioReport(BaseModel):
     )
     duration: float = 0.0
     steps_executed: int = 0
+    intervention_steps: int = 0
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
     screenshots: List[str] = Field(default_factory=list)
@@ -436,8 +452,28 @@ class ScenarioReport(BaseModel):
         default_factory=list,
         description="Secret-free local verifications that ran before dependent actions.",
     )
+    recovery_transactions: List[RecoveryTransaction] = Field(
+        default_factory=list,
+        description=("Explicit recovery attempts and their evidence; no scenario-level inference."),
+    )
+    settlement_receipts: List[SettlementReceipt] = Field(
+        default_factory=list,
+        description="Deterministic action-settlement evidence linked to executed steps.",
+    )
+    input_transactions: List[InputTransactionReceipt] = Field(
+        default_factory=list,
+        description="Secret-free text-entry transactions and their retained-context result.",
+    )
+    obligation_evidence: ObligationRunEvidence = Field(
+        default_factory=ObligationRunEvidence,
+        description="Typed routing, settlement, and readiness evidence.",
+    )
     measurements: List[Measurement] = Field(default_factory=list)
     lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
+    warm_execution: Optional[ScenarioWarmExecution] = Field(
+        default=None,
+        description="Verified route reuse and bounded local rediscovery evidence.",
+    )
     failure_reason: Optional[str] = None
     crash_diagnostic: Optional[CrashDiagnostic] = Field(
         default=None,
@@ -457,6 +493,7 @@ class RunEnvironment(BaseModel):
 
     A failed scenario with no build, target, commit, and job is not evidence.
     """
+
     yewo_version: str
     model: str
     fast_model: Optional[str] = None
@@ -476,6 +513,7 @@ class RunEnvironment(BaseModel):
 
 class JourneyReport(BaseModel):
     """Represents the aggregated results of all scenarios generated for a journey."""
+
     journey_id: str
     journey_name: str
     description: str
@@ -500,9 +538,7 @@ class JourneyReport(BaseModel):
 
     @model_validator(mode="after")
     def _validate_run_level_status(self) -> "JourneyReport":
-        if self.status == ReportStatus.PASSED and not policy_checks_succeeded(
-            self.policy_checks
-        ):
+        if self.status == ReportStatus.PASSED and not policy_checks_succeeded(self.policy_checks):
             raise ValueError("A run with an unsuccessful policy evaluation cannot pass.")
         failed_lifecycle = any(
             operation.status is LifecycleStatus.FAILED

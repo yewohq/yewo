@@ -150,7 +150,35 @@ class WhatTheReaderIsAskedToLookAtTests(unittest.TestCase):
         self.assertEqual(_format_rule_display_name("dynamic:abc"), "dynamic:abc")
 
     def test_an_action_that_failed_inside_a_passing_scenario_says_recovered(self):
-        """The bare word reads as the scenario's own result."""
+        """Only an explicit successful transaction can make this claim."""
+        from yewo.agent.run.recovery import (
+            RecoveryCause,
+            RecoveryMode,
+            RecoveryTransaction,
+        )
+
+        recovery = RecoveryTransaction(
+            failed_step=1,
+            opened_step=2,
+            original_intent="Pay",
+            failure_reason="The action failed.",
+            cause=RecoveryCause.GROUNDING_DRIFT,
+            mode=RecoveryMode.MODEL_PROPOSAL,
+        )
+        recovery.recover("The original postcondition passed.")
+        report = journey(
+            scenarios=[
+                scenario(status="PASSED",
+                         steps=[step(1, "Tap Pay", success=False), step(2, "Tap Pay")],
+                         recovery_transactions=[recovery])
+            ]
+        )
+
+        written = page(report)
+
+        self.assertIn("Action failed · recovered", written)
+
+    def test_a_passing_scenario_does_not_imply_a_failed_action_recovered(self):
         report = journey(
             scenarios=[
                 scenario(status="PASSED",
@@ -160,7 +188,7 @@ class WhatTheReaderIsAskedToLookAtTests(unittest.TestCase):
 
         written = page(report)
 
-        self.assertIn("Action failed · recovered", written)
+        self.assertNotIn("Action failed · recovered", written)
 
     def test_an_action_that_failed_a_scenario_is_not_called_recovered(self):
         report = journey(

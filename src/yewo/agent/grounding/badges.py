@@ -55,6 +55,15 @@ def _font(point_size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(FONT_PATH, point_size)
 
 
+def font(point_size: int) -> ImageFont.FreeTypeFont:
+    """The badge typeface at one size, for anything else that draws on a screenshot.
+
+    Shared so an overlay drawn outside this module cannot end up on a system
+    font that the badges themselves refuse to depend on.
+    """
+    return _font(point_size)
+
+
 def _badge_point_size(box) -> int:
     """Badge text sized to the element, so a small control keeps its picture."""
     shortest_side = min(box.x_max - box.x_min, box.y_max - box.y_min)

@@ -122,11 +122,6 @@ count = 1
 digest = "d50bf603bb121d5a3b69b0df161cf84137181db37f87a32f2b5f6ca2ee5809e8"
 
 [[files]]
-path = "src/yewo/testing/runner.py"
-count = 1
-digest = "f1a8c92b2b741bf2abb00a97f094f935b10dd28c5f65e1c470385806d73b008d"
-
-[[files]]
 path = "src/yewo/utils/jev_deps.py"
 count = 1
 digest = "2939721a8013f63431a0417900cea5cbf8f5f0fea2f015ddaa8c3420d687c91f"

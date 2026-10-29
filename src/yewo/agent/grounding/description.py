@@ -169,8 +169,9 @@ NOT_FOUND = (
     "Not executed. Nothing on this screen was found for: {target}. Describe the "
     "same thing by a different feature of itself — the words on it, its symbol, "
     "its shape, its colour. A target below the fold cannot be found. A target "
-    "behind the keyboard cannot be found. Scroll it into view, or close the "
-    "keyboard with key_event 4, then look again."
+    "behind the keyboard cannot be found. Scroll it into view. If a keyboard "
+    "is visible, Yewo will dismiss it once with the platform driver. Then look "
+    "again."
 )
 
 

@@ -11,6 +11,7 @@ eval/
 ├── journeys/        # Third-party app workflows
 ├── integrations/    # Upstream ground-truth benchmark adapters
 ├── perception/      # Detector and OCR corpus
+├── recorded_traces/ # Reviewed offline execution fragments and run baselines
 ├── screens/         # Labelled visual-judge cases
 ├── verdicts/        # Deterministic verdict cases
 ├── baselines/       # Reviewed release measurements

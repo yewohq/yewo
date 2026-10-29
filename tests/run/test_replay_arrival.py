@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from yewo.agent.actuation.actions import TapAction, TypeAction
+from yewo.agent.actuation import safety as action_safety
 from yewo.agent.memory import replay_store, replay_walk
 from yewo.agent.run.record import StepLog
 
@@ -25,9 +26,9 @@ class ReplayArrivalTests(unittest.TestCase):
         self.names = replay_store.ValueNames(VALUES)
         self.device = Device()
         self.log = StepLog()
-        self._real = replay_walk.ActionOrchestrator
-        replay_walk.ActionOrchestrator = Orchestrator
-        self.addCleanup(setattr, replay_walk, "ActionOrchestrator", self._real)
+        self._real = action_safety.ActionOrchestrator
+        action_safety.ActionOrchestrator = Orchestrator
+        self.addCleanup(setattr, action_safety, "ActionOrchestrator", self._real)
 
     def _trace(self, before, after, action):
         return replay_walk.build_trace(

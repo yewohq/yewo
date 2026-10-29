@@ -255,7 +255,7 @@
     "name": "an-impossible-run-status-is-accepted",
     "owner": "gate",
     "path": "src/yewo/agent/run/outcomes.py",
-    "find": "RunStatus = Literal[\n    \"goal_reached\",\n    \"step_limit\",\n    \"loop_detected\",\n    \"hook_stop\",\n    \"postcondition_stop\",\n    \"exception\",\n]",
+    "find": "RunStatus = Literal[\n    \"goal_reached\",\n    \"step_limit\",\n    \"intervention_limit\",\n    \"loop_detected\",\n    \"hook_stop\",\n    \"postcondition_stop\",\n    \"control_unresolved\",\n    \"exception\",\n]",
     "replace": "RunStatus = str"
   },
   {

@@ -38,6 +38,10 @@ class ActionRejected(YewoError):
     """The device did not do what the action asked. Nothing may assume it did."""
 
 
+class FocusVerificationFailed(ActionRejected):
+    """Text entry stopped because the intended editable field was not verifiable."""
+
+
 class TargetNotInteractive(ActionRejected):
     """The target took no text, so the element behind it is not an input.
 

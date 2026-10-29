@@ -8,7 +8,6 @@ import logging
 from yewo.agent.actuation.actions import PlannerTapAction, TapAction, TypeAction
 from yewo.agent.memory import replay_match, replay_walk
 from yewo.agent.memory.history import ActionEntry, ActionResult
-from yewo.agent.memory.loop_detector import RollingLoopDetector
 from yewo.agent.memory.replay_projection import project_actionable_elements
 from yewo.agent.run.record import StepSource
 from yewo.agent.run.outcomes import (
@@ -23,6 +22,7 @@ from yewo.agent.run.postconditions import (
     pending_for,
     verify_context,
 )
+from yewo.agent.run.recovery import prepare_recovery_proposal, record_recovery_action
 from yewo.agent.step import observation
 
 logger = logging.getLogger(__name__)
@@ -125,18 +125,30 @@ def try_cached_step(
         semantic_grounder=semantic_grounder,
         same_build=replay.is_same_build,
         model_image=model_image,
-        before_action=(
-            lambda action: _allow_cached_action(
-                before_action_hook, action, step + 1, ctx
-            )
-        )
-        if before_action_hook is not None
-        else None,
+        before_action=lambda action: _allow_cached_action(
+            before_action_hook, action, step + 1, ctx, snapshot
+        ),
         grounding=replay.trace.identity.grounding,
+        instruction_controller=ctx.instruction_controller,
+        context_id=(
+            ctx.execution_context.context_id
+            if ctx.execution_context is not None
+            else None
+        ),
     )
     if attempt.stopped:
         return False
     if attempt.step is None:
+        if attempt.resolved_action is not None:
+            nudge = ctx.loop_detector.record_stale(
+                attempt.resolved_action,
+                snapshot.current_phash,
+                observation.screen_size(snapshot),
+            )
+            if nudge is not None:
+                ctx.pending_loop_nudge = "\n".join(
+                    part for part in (ctx.pending_loop_nudge, nudge) if part
+                )
         logger.info("Saved step %d refused: %s. Planning it.", index + 1, attempt.refusal)
         if transition.source.description and not attempt.source_mismatch:
             # This saved step belongs to the screen that was just refused.
@@ -159,16 +171,27 @@ def try_cached_step(
 
 
 def _allow_cached_action(
-    before_action_hook: BeforeActionHookFn,
+    before_action_hook: BeforeActionHookFn | None,
     action,
     step: int,
     ctx,
+    snapshot,
 ) -> bool:
-    directive = before_action_hook(action, step)
-    if directive is ObservationDirective.STOP:
-        ctx.observation_blocked = True
-        return False
-    return True
+    if before_action_hook is not None:
+        directive = before_action_hook(action, step)
+        if directive is ObservationDirective.STOP:
+            ctx.observation_blocked = True
+            return False
+    ctx.pending_loop_nudge = ctx.loop_detector.record_action(
+        action,
+        snapshot.current_phash,
+        observation.screen_size(snapshot),
+        snapshot.observation_id,
+    )
+    return not (
+        ctx.loop_detector.action_blocked
+        or ctx.loop_detector.action_repetition_terminated
+    )
 
 
 def verify_pending_arrival(agent, snapshot, ctx, step: int) -> bool:
@@ -247,10 +270,14 @@ def _record_cached_step(
             ),
         )
     )
-    # Observation already recorded this turn's page hash. Record only the
-    # action here, as the planned-action path does. Counting the page again
-    # makes four cached actions on one screen look like eight stagnant turns.
-    ctx.loop_detector.check(RollingLoopDetector.hash_action(cached.action), None)
+    ctx.steps.record_settlement_id(ctx.loop_detector.active_settlement_id)
+    ctx.loop_detector.record_delivery_outcome(
+        cached.action,
+        snapshot.current_phash,
+        cached.record.phash,
+        observation.screen_size(snapshot),
+        failed=not cached.is_executed,
+    )
     if cached.is_executed:
         if isinstance(cached.action, TypeAction) and cached.entry_receipt is not None:
             specification = (
@@ -265,6 +292,10 @@ def _record_cached_step(
                 cached.entry_receipt.observed,
                 specification,
                 replay.verification_policies,
+                focus=cached.entry_receipt.focus,
+                source_observation_id=cached.record.observation_id,
+                source_context_id=cached.record.context_id,
+                source_phash=snapshot.current_phash,
             )
         replay.record_step(
             cached.action,
@@ -306,6 +337,7 @@ def verify_entered_value(
     )
     if verification is not None and ctx.postcondition_recovery_required:
         reject_last_entered_value(agent, ctx, verification.reason)
+    prepare_recovery_proposal(ctx, snapshot, device_control)
     return verification
 
 
@@ -318,7 +350,7 @@ def _mark_last_action_failed(ctx, refusal: str) -> None:
     ctx.history.mark_last_failed(refusal)
 
 
-def record_planned_step(agent, action, snapshot, ctx, screen_description: str) -> None:
+def record_planned_step(agent, action, snapshot, ctx) -> None:
     """Keeps a planned step for the path this run may save.
 
     Only a step the device took. An action can fail after it is sent, and
@@ -328,13 +360,14 @@ def record_planned_step(agent, action, snapshot, ctx, screen_description: str) -
     The failed action closes one segment. A later successful action starts a
     new segment from a newly observed screen.
     """
+    record_recovery_action(ctx, snapshot)
     replay = agent.durable_replay
     if replay is None:
         return
     record = ctx.steps.current
     outcome = record.outcome if record is not None else None
     if outcome is not None and not outcome.success:
-        replay.close_learning_segment(snapshot, agent.scrubber.scrub(screen_description))
+        replay.close_learning_segment(snapshot, None)
         return
     target_description = (
         action.target
@@ -347,15 +380,8 @@ def record_planned_step(agent, action, snapshot, ctx, screen_description: str) -
         snapshot,
         arrival_ms=arrival_ms,
         target_description=agent.scrubber.scrub(target_description),
-        screen_description=agent.scrubber.scrub(screen_description),
+        screen_description=None,
     )
-
-
-def describe_terminal_screen(agent, screen_description: str) -> None:
-    """Keeps the final planner-observed screen name for destination matching."""
-    replay = agent.durable_replay
-    if replay is not None:
-        replay.describe_arrival(agent.scrubber.scrub(screen_description))
 
 
 def record_arrival(

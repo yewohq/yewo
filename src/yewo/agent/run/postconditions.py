@@ -17,7 +17,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from yewo.agent.actuation.actions import Coordinates, TypeAction
 from yewo.agent.device.focus import FocusedFieldReading
 from yewo.agent.perception.elements import GUIElement
+from yewo.agent.run.input_transaction import (
+    FocusReceipt,
+    InputTransactionReceipt,
+    InputTransactionStatus,
+)
+from yewo.identity import new_uuid
 from yewo.utils.secrets import AppValueRendering
+from yewo.agent.run.recovery import (
+    RecoveryCause,
+    RecoveryTransaction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +85,8 @@ class PostconditionVerification(BaseModel):
     classification: Optional[VerificationClassification] = None
     reason: str
     app_rendering: AppValueRendering = AppValueRendering.UNKNOWN
+    transaction_id: Optional[str] = None
+    context_retained: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +97,11 @@ class PendingEnteredValue:
     expected: str
     coordinates: Coordinates
     entry_receipt: Optional[str] = None
+    transaction_id: str = ""
+    focus: FocusReceipt = FocusReceipt()
+    source_observation_id: Optional[str] = None
+    source_context_id: Optional[str] = None
+    source_phash: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +109,7 @@ class TextEntryReceipt:
     """The focused element value read immediately after the device typed."""
 
     observed: Optional[str]
+    focus: FocusReceipt = FocusReceipt()
 
 
 def specification_for(
@@ -121,6 +139,10 @@ def pending_for(
     entry_receipt: Optional[str],
     specification: Optional[EnteredValuePostcondition] = None,
     verification_policies: Optional[Mapping[str, ValueVerificationPolicy | str]] = None,
+    focus: Optional[FocusReceipt] = None,
+    source_observation_id: Optional[str] = None,
+    source_context_id: Optional[str] = None,
+    source_phash: Optional[str] = None,
 ) -> Optional[PendingEnteredValue]:
     """Build the current-run verification without saving the value in the path."""
     contract = specification or specification_for(action, names, verification_policies)
@@ -134,6 +156,11 @@ def pending_for(
         expected=expected,
         coordinates=action.coordinates,
         entry_receipt=entry_receipt,
+        transaction_id=new_uuid(),
+        focus=focus or FocusReceipt(),
+        source_observation_id=source_observation_id,
+        source_context_id=source_context_id,
+        source_phash=source_phash,
     )
 
 
@@ -163,20 +190,28 @@ def verify(
     example, a previous value, or unrelated content.  OCR is evidence only
     from an element that still contains the action point.
     """
-    settled_value = focused_field.value if focused_field is not None else None
-    target_point = _focused_centre(focused_field) or pending.coordinates
+    retained_field = (
+        focused_field
+        if focused_field is not None
+        and focused_field.bounds is not None
+        and _bounds_contain(focused_field.bounds, pending.coordinates)
+        else None
+    )
+    settled_value = retained_field.value if retained_field is not None else None
     candidates = [
         element.text.strip()
         for element in elements
-        if element.text.strip() and _contains(element, target_point)
+        if element.text.strip() and _contains(element, pending.coordinates)
     ]
-    app_rendering = _app_rendering(pending, focused_field, candidates)
+    context_retained = retained_field is not None or bool(candidates)
+    app_rendering = _app_rendering(pending, retained_field, candidates)
     if settled_value is not None and _matches(pending, settled_value):
         return _result(
             pending,
             VerificationStatus.PASSED,
             "The settled field confirmed it.",
             app_rendering=app_rendering,
+            context_retained=True,
         )
     if any(
         _matches(pending, line.strip())
@@ -188,6 +223,16 @@ def verify(
             VerificationStatus.PASSED,
             "Target-local text confirmed it.",
             app_rendering=app_rendering,
+            context_retained=True,
+        )
+    if not context_retained:
+        return _result(
+            pending,
+            VerificationStatus.UNVERIFIED,
+            "The original field or form context was not retained after text entry.",
+            VerificationClassification.EVIDENCE,
+            app_rendering,
+            context_retained=False,
         )
     receipt_matches = pending.entry_receipt is not None and _matches(
         pending, pending.entry_receipt
@@ -200,6 +245,7 @@ def verify(
                 "The app changed a correctly entered value after the entry action.",
                 VerificationClassification.APPLICATION,
                 app_rendering,
+                context_retained=True,
             )
         if pending.entry_receipt is not None:
             return _result(
@@ -208,6 +254,7 @@ def verify(
                 "The entry action did not deliver the intended declared value.",
                 VerificationClassification.AGENT_ACTION,
                 app_rendering,
+                context_retained=True,
             )
         return _result(
             pending,
@@ -215,6 +262,7 @@ def verify(
             "The field differed, but Yewo could not attribute the mismatch safely.",
             VerificationClassification.EVIDENCE,
             app_rendering,
+            context_retained=True,
         )
     return _result(
         pending,
@@ -222,6 +270,7 @@ def verify(
         "No settled field value or target-local text was available after the entry action.",
         VerificationClassification.EVIDENCE,
         app_rendering,
+        context_retained=context_retained,
     )
 
 
@@ -251,6 +300,9 @@ def verify_context(
             verification.app_rendering,
         )
     ctx.postcondition_verifications.append(verification)
+    ctx.input_transactions.append(
+        _input_transaction_receipt(pending, verification, snapshot)
+    )
     ctx.postcondition_blocked = verification.classification in (
         VerificationClassification.APPLICATION,
         VerificationClassification.EVIDENCE,
@@ -258,12 +310,78 @@ def verify_context(
     ctx.postcondition_recovery_required = (
         verification.classification is VerificationClassification.AGENT_ACTION
     )
+    _settle_recovery(ctx, pending, verification)
     logger.info(
         "Entered-value postcondition for %s: %s.",
         verification.value_name,
         verification.status.value,
     )
     return verification
+
+
+def close_pending_input(ctx, reason: str) -> Optional[PostconditionVerification]:
+    """Persist an interrupted input transaction without inventing an observation."""
+    pending = ctx.pending_entered_value
+    if pending is None:
+        return None
+    ctx.pending_entered_value = None
+    verification = _result(
+        pending,
+        VerificationStatus.UNVERIFIED,
+        reason,
+        VerificationClassification.EVIDENCE,
+    )
+    ctx.postcondition_verifications.append(verification)
+    ctx.input_transactions.append(
+        InputTransactionReceipt(
+            transaction_id=pending.transaction_id,
+            value_name=pending.specification.value_name,
+            status=InputTransactionStatus.UNVERIFIED,
+            value_verified=False,
+            context_retained=False,
+            reason=reason,
+            focus=pending.focus,
+            source_observation_id=pending.source_observation_id,
+            source_context_id=pending.source_context_id,
+            source_phash=pending.source_phash,
+        )
+    )
+    return verification
+
+
+def _settle_recovery(ctx, pending, verification: PostconditionVerification) -> None:
+    """Open or close the transaction; the planner never grades this evidence."""
+    active = ctx.active_recovery
+    if verification.status is VerificationStatus.PASSED:
+        if active is not None and active.value_name == verification.value_name:
+            active.recover(verification.reason)
+            ctx.active_recovery = None
+            ctx.postcondition_recovery_required = False
+        return
+
+    if active is not None and active.value_name == verification.value_name:
+        if verification.classification is VerificationClassification.AGENT_ACTION:
+            return
+        active.fail(verification.reason)
+        ctx.active_recovery = None
+        return
+
+    if verification.classification is not VerificationClassification.AGENT_ACTION:
+        return
+
+    current_step = ctx.steps.current.n if ctx.steps.current is not None else 1
+    transaction = RecoveryTransaction.open(
+        failed_step=max(1, current_step - 1),
+        opened_step=current_step,
+        original_intent=pending.specification.target or (
+            f"Enter the declared value named {pending.specification.value_name}"
+        ),
+        value_name=pending.specification.value_name,
+        failure_reason=verification.reason,
+        cause=RecoveryCause.GROUNDING_DRIFT,
+    )
+    ctx.recovery_transactions.append(transaction)
+    ctx.active_recovery = transaction
 
 
 def _contains(element: GUIElement, point: Coordinates) -> bool:
@@ -276,11 +394,9 @@ HYPHENS = frozenset("-‐‑‒–—")
 GROUPING = frozenset(",'_\u00a0")
 
 
-def _focused_centre(focused_field: Optional[FocusedFieldReading]) -> Optional[Coordinates]:
-    if focused_field is None or focused_field.bounds is None:
-        return None
-    left, top, right, bottom = focused_field.bounds
-    return Coordinates(x=(left + right) // 2, y=(top + bottom) // 2)
+def _bounds_contain(bounds: tuple[int, int, int, int], point: Coordinates) -> bool:
+    left, top, right, bottom = bounds
+    return left <= point.x <= right and top <= point.y <= bottom
 
 
 def _normalize(value: str, normalizers: Sequence[Normalizer]) -> str:
@@ -383,6 +499,7 @@ def _result(
     reason: str,
     classification: Optional[VerificationClassification] = None,
     app_rendering: AppValueRendering = AppValueRendering.UNKNOWN,
+    context_retained: Optional[bool] = None,
 ) -> PostconditionVerification:
     return PostconditionVerification(
         value_name=pending.specification.value_name,
@@ -390,4 +507,37 @@ def _result(
         classification=classification,
         reason=reason,
         app_rendering=app_rendering,
+        transaction_id=pending.transaction_id or None,
+        context_retained=context_retained,
+    )
+
+
+def _input_transaction_receipt(
+    pending: PendingEnteredValue,
+    verification: PostconditionVerification,
+    snapshot,
+) -> InputTransactionReceipt:
+    retained = verification.context_retained is True
+    verified = verification.status is VerificationStatus.PASSED
+    if verified and retained:
+        status = InputTransactionStatus.COMPLETED
+    elif not retained:
+        status = InputTransactionStatus.CONTEXT_LOST
+    elif verification.status is VerificationStatus.FAILED:
+        status = InputTransactionStatus.VALUE_FAILED
+    else:
+        status = InputTransactionStatus.UNVERIFIED
+    return InputTransactionReceipt(
+        transaction_id=pending.transaction_id,
+        value_name=verification.value_name,
+        status=status,
+        value_verified=verified,
+        context_retained=retained,
+        reason=verification.reason,
+        focus=pending.focus,
+        source_observation_id=pending.source_observation_id,
+        destination_observation_id=getattr(snapshot, "observation_id", None),
+        source_context_id=pending.source_context_id,
+        source_phash=pending.source_phash,
+        destination_phash=getattr(snapshot, "current_phash", None),
     )

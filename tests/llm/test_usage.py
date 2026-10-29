@@ -45,7 +45,7 @@ class UsageRecordTests(unittest.TestCase):
         self.assertEqual(call["model"], "provider/model")
 
     def test_a_truncated_answer_is_counted_not_just_recorded(self):
-        """"length" means the answer was cut off, which reads as a bad answer."""
+        """ "length" means the answer was cut off, which reads as a bad answer."""
         payload = self._recorded(self._call(finish_reason="length"))
 
         self.assertEqual(payload["truncated_calls"], 1)
@@ -65,9 +65,7 @@ class UsageRecordTests(unittest.TestCase):
     def test_the_whole_response_is_kept(self):
         payload = self._recorded(self._call(raw={"id": "gen-1", "choices": []}))
 
-        self.assertEqual(
-            payload["components"]["scenario:TS_1"]["calls"][0]["raw"]["id"], "gen-1"
-        )
+        self.assertEqual(payload["components"]["scenario:TS_1"]["calls"][0]["raw"]["id"], "gen-1")
 
     def test_declared_secrets_are_masked_inside_the_dumped_response(self):
         from yewo.testing.report.usage_tracker import LLMUsageTracker
@@ -246,9 +244,7 @@ class ResponseReadingTests(unittest.TestCase):
         The write is the expensive half of a prompt cache, so a zero there
         reads as caching that never engaged.
         """
-        record = self._record(
-            usage={"prompt_tokens_details": {"cache_creation_tokens": 3559}}
-        )
+        record = self._record(usage={"prompt_tokens_details": {"cache_creation_tokens": 3559}})
 
         self.assertEqual(record.cache_write_tokens, 3559)
 
@@ -305,9 +301,7 @@ class AnsweredShapeTests(unittest.TestCase):
     def test_the_shape_asked_for_is_recorded_by_name(self):
         from yewo.llm.usage import record
 
-        kept = record(
-            self._response(), "provider/model", 1, answering="QAStepResponse"
-        )
+        kept = record(self._response(), "provider/model", 1, answering="QAStepResponse")
 
         self.assertEqual(kept.answering, "QAStepResponse")
 
@@ -332,8 +326,11 @@ class AnsweredShapeTests(unittest.TestCase):
         client = LLMClient(model="provider/model", usage_callback=kept.append)
         answer = self._response()
         answer.choices = [
-            type("Choice", (), {"finish_reason": "stop",
-                                "message": type("M", (), {"content": '{"ok": true}'})()})()
+            type(
+                "Choice",
+                (),
+                {"finish_reason": "stop", "message": type("M", (), {"content": '{"ok": true}'})()},
+            )()
         ]
 
         with patch("yewo.llm.llm_client.litellm.completion", return_value=answer):
@@ -345,7 +342,7 @@ class AnsweredShapeTests(unittest.TestCase):
 
 class ScenarioComponentTests(unittest.TestCase):
     def test_answer_shapes_separate_planning_from_fresh_verification(self):
-        from yewo.testing.runner import (
+        from yewo.testing.run_usage import (
             PLANNER,
             SCREEN_AUDITOR,
             TRANSITION_JUDGE,
@@ -353,9 +350,5 @@ class ScenarioComponentTests(unittest.TestCase):
         )
 
         self.assertEqual(component_for(PLANNER, "QAStepResponse"), PLANNER)
-        self.assertEqual(
-            component_for(PLANNER, "ScreenAssessment"), SCREEN_AUDITOR
-        )
-        self.assertEqual(
-            component_for(PLANNER, "TransitionVerdicts"), TRANSITION_JUDGE
-        )
+        self.assertEqual(component_for(PLANNER, "ScreenAssessment"), SCREEN_AUDITOR)
+        self.assertEqual(component_for(PLANNER, "TransitionVerdicts"), TRANSITION_JUDGE)

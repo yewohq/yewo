@@ -28,6 +28,7 @@ from yewo.testing.generator import (
 )
 from yewo.testing.lock_file import Lock, LockEntry, contract_sha256, read, write
 from yewo.testing.models import GeneratedTestCase, UserJourney
+from yewo.testing.generation_evidence import ScenarioGenerationEvidence
 from yewo.testing.taxonomy import CoverageCell, sort_cells_by_priority
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ def staleness(
     journey: UserJourney,
     workflow: str,
     refresh: bool = False,
+    generation_evidence: ScenarioGenerationEvidence | None = None,
 ) -> dict[str, str]:
     """Why each declared cell cannot be read from the lock, by cell key.
 
@@ -87,12 +89,21 @@ def staleness(
             problems[cell.key] = "asked for again"
         elif entry is None:
             problems[cell.key] = "not in the lock"
-        elif entry.contract_sha256 != contract_sha256(journey, cell):
-            problems[cell.key] = "the journey changed since it was locked"
+        elif entry.contract_sha256 != contract_sha256(
+            journey,
+            cell,
+            generation_evidence.evidence_sha256 if generation_evidence is not None else "",
+        ):
+            problems[cell.key] = "the journey or verified app evidence changed since it was locked"
     return problems
 
 
-def require_lock(journey: UserJourney, path: Optional[Path], workflow: str = "") -> None:
+def require_lock(
+    journey: UserJourney,
+    path: Optional[Path],
+    workflow: str = "",
+    generation_evidence: ScenarioGenerationEvidence | None = None,
+) -> None:
     """Refuses a missing or stale lock before anything costly happens.
 
     `--locked` is what CI passes, and a stale lock there has to fail in a
@@ -103,7 +114,16 @@ def require_lock(journey: UserJourney, path: Optional[Path], workflow: str = "")
         UsageError: If the lock does not hold every declared cell.
     """
     lock = read(path) if path is not None else None
-    _refuse(path, lock, staleness(lock, journey, workflow))
+    _refuse(
+        path,
+        lock,
+        staleness(
+            lock,
+            journey,
+            workflow,
+            generation_evidence=generation_evidence,
+        ),
+    )
 
 
 def suite_for(
@@ -113,6 +133,7 @@ def suite_for(
     workflow: str = "",
     locked: bool = False,
     refresh: bool = False,
+    generation_evidence: ScenarioGenerationEvidence | None = None,
 ) -> LockResolution:
     """The scenarios to run, read from the lock wherever the lock still holds.
 
@@ -135,7 +156,13 @@ def suite_for(
             declared cell for this journey.
     """
     lock = read(path) if path is not None else None
-    problems = staleness(lock, journey, workflow, refresh=refresh)
+    problems = staleness(
+        lock,
+        journey,
+        workflow,
+        refresh=refresh,
+        generation_evidence=generation_evidence,
+    )
 
     if locked:
         _refuse(path, lock, problems)
@@ -159,7 +186,19 @@ def suite_for(
             resolution.generated_count += 1
             taken.add(filled[cell.key].scenario_uuid)
             keeping.append(
-                LockEntry.of(fresh[cell.key], journey, workflow, contract_sha256(journey, cell))
+                LockEntry.of(
+                    fresh[cell.key],
+                    journey,
+                    workflow,
+                    contract_sha256(
+                        journey,
+                        cell,
+                        generation_evidence.evidence_sha256
+                        if generation_evidence is not None
+                        else "",
+                    ),
+                    generation_evidence,
+                )
             )
             continue
         entry = locked_entries.get(cell.key)

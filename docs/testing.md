@@ -56,6 +56,19 @@ The agent receives the real value because it must be able to type and audit it.
 A screen recording cannot be redacted. Yewo therefore keeps no recording for a
 journey with declared secrets unless secret exposure is explicitly allowed.
 
+## Step and repair budgets
+
+`max_steps` bounds the steps a scenario's own instructions ask for. Turns a
+scenario spends repairing its execution are counted and bounded separately:
+probing for a control perception did not report, and re-observing after a
+recovery, spend a repair allowance rather than the instruction budget. A
+scenario that exhausts its instructions ends as `step_limit`. One that
+exhausts repair ends as `intervention_limit`. Both are reported as unverified
+and attributed to the agent, not to the app.
+
+`run.json` records both counts per scenario, as `steps_executed` and
+`intervention_steps`, so a slow scenario can be priced.
+
 ## Coverage and generated scenarios
 
 Coverage tells Yewo which kinds of scenario to generate:
@@ -90,6 +103,34 @@ yewo test yewo.yaml --locked
 A locked run refuses a missing or stale lock instead of silently generating a
 different suite. Use `yewo lock yewo.yaml --all` when you deliberately want to
 regenerate every cell.
+
+`yewo lock` generates from app knowledge that was already verified and stored
+beside the journey file. It starts no device, so it cannot discover an app it
+has never seen. When no compatible knowledge exists it reports the missing
+evidence per cell and writes no scenario for it. Run `yewo test` first for an
+unknown app, because only that command can run bounded discovery.
+
+Generation sends journey text to a model, so `yewo lock` applies the same
+secret-exposure gate as `yewo test`. A journey whose declared secrets request
+`last4` or `show` is refused until you pass `--allow-secret-exposure` or set
+their redaction to `hide`.
+
+## Evaluate discovery from a cold start
+
+`--cold` starts from the journey file and the app only. It redirects app
+knowledge and run artifacts under `<output-dir>/cold/`, turns saved-path reuse
+off, and records the empty starting set in `run.json` under
+`inputs.cold_start`. It refuses to start when a reviewed lock sits beside the
+journey file, when that knowledge root already holds an artifact, when the
+output root has been used, or when the same command asks for `--locked`,
+`--replay`, or `--reuse-app`.
+
+```bash
+yewo test yewo.yaml --cold
+```
+
+The refusals exist because a warm run and a cold run write the same kind of
+report. Use this to evaluate discovery, not in CI, where `--locked` is correct.
 
 ## Test the same journey on several targets
 

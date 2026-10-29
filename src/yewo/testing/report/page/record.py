@@ -16,12 +16,15 @@ recognises renders as a verdict. A duration that is a word escapes as
 whatever `float` raises.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, ValidationError
 
 from yewo.agent.run.record import StepRecord
+from yewo.agent.run.recovery import RecoveryTransaction
+from yewo.agent.run.input_transaction import InputTransactionReceipt
+from yewo.agent.run.settlement import SettlementReceipt
 from yewo.errors import UsageError
 from yewo.testing.models import (
     Measurement,
@@ -35,6 +38,7 @@ from yewo.testing.models import (
 )
 from yewo.testing.report.manifest import SCHEMA
 from yewo.testing.lifecycle import LifecycleOperation
+from yewo.testing.obligations import ObligationRunEvidence
 
 from .view import RUN_FILES, ReportView, page_of
 
@@ -80,6 +84,10 @@ class _RecordedScenarioEntry(BaseModel):
     steps_executed: StrictInt = 0
     failure_reason: Optional[str] = None
     steps: List[StepRecord] = Field(default_factory=list)
+    recovery_transactions: List[RecoveryTransaction] = Field(default_factory=list)
+    settlement_receipts: List[SettlementReceipt] = Field(default_factory=list)
+    input_transactions: List[InputTransactionReceipt] = Field(default_factory=list)
+    obligation_evidence: ObligationRunEvidence = Field(default_factory=ObligationRunEvidence)
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
     lifecycle_operations: List[LifecycleOperation] = Field(default_factory=list)
@@ -132,6 +140,10 @@ class RecordedScenario:
     steps_executed: int
     failure_reason: Optional[str]
     steps: Sequence[StepRecord] = ()
+    recovery_transactions: Sequence[RecoveryTransaction] = ()
+    settlement_receipts: Sequence[SettlementReceipt] = ()
+    input_transactions: Sequence[InputTransactionReceipt] = ()
+    obligation_evidence: ObligationRunEvidence = field(default_factory=ObligationRunEvidence)
     rule_verifications: Sequence[RuleVerification] = ()
     detected_issues: Sequence[QAIssue] = ()
     lifecycle_operations: Sequence[LifecycleOperation] = ()
@@ -197,6 +209,10 @@ def _scenario(entry: _RecordedScenarioEntry) -> RecordedScenario:
         steps_executed=entry.steps_executed,
         failure_reason=entry.failure_reason,
         steps=tuple(entry.steps),
+        recovery_transactions=tuple(entry.recovery_transactions),
+        settlement_receipts=tuple(entry.settlement_receipts),
+        input_transactions=tuple(entry.input_transactions),
+        obligation_evidence=entry.obligation_evidence,
         rule_verifications=tuple(entry.rule_verifications),
         detected_issues=tuple(entry.detected_issues),
         lifecycle_operations=tuple(entry.lifecycle_operations),

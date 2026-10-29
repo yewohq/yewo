@@ -18,10 +18,14 @@ blocking every type in such an app.
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
-from yewo.defaults import FOCUS_POLL_INTERVAL, FOCUS_POLL_TIMEOUT
-from yewo.errors import ActionRejected, TargetNotInteractive
+from yewo.defaults import (
+    ANDROID_FOCUS_IME_GRACE_TIMEOUT,
+    FOCUS_POLL_INTERVAL,
+    FOCUS_POLL_TIMEOUT,
+)
+from yewo.errors import ActionRejected, FocusVerificationFailed, TargetNotInteractive
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,29 @@ ELSEWHERE = (
     "landed on a different element. The screen moved after you read it. Read "
     "the screen again. Then choose a target. Nothing was entered."
 )
+
+INPUT_METHOD_WITHOUT_FOCUS = (
+    "opened input-method UI, but the editable field did not become verifiable. "
+    "Nothing was entered. Keep the input-method UI open. Do not use a navigation "
+    "action to dismiss it. Re-observe and choose a verifiable editable field."
+)
+
+
+def bounds_of(rect) -> Optional[tuple[int, int, int, int]]:
+    """A driver rect as edges, or None when it is not a rect at all.
+
+    One conversion for every reader. A comparison of focus before and after a
+    tap then cannot compare a rect against a pair of corners.
+    """
+    if not isinstance(rect, dict):
+        return None
+    x, y = rect.get("x"), rect.get("y")
+    width, height = rect.get("width"), rect.get("height")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+        return None
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return None
+    return (round(x), round(y), round(x + width), round(y + height))
 
 
 class Focus:
@@ -108,13 +135,19 @@ class Focus:
             return False
         return self._holds(rect, x, y)
 
-    def wait_for(self, x, y, before=None) -> None:
+    def wait_for(
+        self,
+        x,
+        y,
+        before=None,
+        timeout: float = FOCUS_POLL_TIMEOUT,
+    ) -> None:
         """Polls until focus settles, instead of sleeping a flat second.
 
         A form that scrolls for the keyboard never puts the field back under
         the point, so waiting for that alone spends the whole budget.
         """
-        for _ in range(max(1, int(FOCUS_POLL_TIMEOUT / FOCUS_POLL_INTERVAL))):
+        for _ in range(max(1, int(timeout / FOCUS_POLL_INTERVAL))):
             rect = self._rect()
             if rect is not None and (
                 self._covers_screen(rect) or self._holds(rect, x, y) or rect != before
@@ -125,6 +158,10 @@ class Focus:
     def rect(self):
         """The focused element's bounds, for comparing focus before and after."""
         return self._rect()
+
+    def bounds(self) -> Optional[tuple[int, int, int, int]]:
+        """The focused element's edges, in the form a probe compares."""
+        return bounds_of(self._rect())
 
     def value(self):
         """The focused field's current text, or None when the driver cannot prove it.
@@ -165,22 +202,9 @@ class Focus:
         except Exception as exc:  # noqa: BLE001 - driver boundary
             logger.debug("Could not read focused element bounds: %s", exc)
             rect = None
-        bounds = None
-        if isinstance(rect, dict):
-            x = rect.get("x")
-            y = rect.get("y")
-            width = rect.get("width")
-            height = rect.get("height")
-            if (
-                isinstance(x, (int, float))
-                and isinstance(y, (int, float))
-                and isinstance(width, (int, float))
-                and isinstance(height, (int, float))
-            ):
-                bounds = (round(x), round(y), round(x + width), round(y + height))
         return FocusedFieldReading(
             value=self._value_of(element),
-            bounds=bounds,
+            bounds=bounds_of(rect),
             is_secure=self._secure_state_of(element),
         )
 
@@ -212,7 +236,15 @@ class Focus:
                 return True
         return None
 
-    def assert_at(self, x, y, action: str, before=None, layout_moved=False) -> None:
+    def assert_at(
+        self,
+        x,
+        y,
+        action: str,
+        before=None,
+        layout_moved: bool = False,
+        input_method_opened: bool = False,
+    ) -> None:
         """Raises unless the tap put the cursor somewhere the text can go.
 
         Focus that did not move from `before` means the tap landed on
@@ -221,7 +253,9 @@ class Focus:
         """
         rect = self._rect()
         if rect is None:
-            raise ActionRejected(
+            if input_method_opened:
+                raise FocusVerificationFailed(f"{action} {INPUT_METHOD_WITHOUT_FOCUS}")
+            raise FocusVerificationFailed(
                 f"{action} at ({x}, {y}) could not be checked, because nothing "
                 "reported focus. Nothing was entered. Read the screen again and "
                 "choose the field to use."
@@ -250,3 +284,70 @@ class Focus:
             return
 
         raise ActionRejected(f"{action} {ELSEWHERE}")
+
+
+@dataclass(frozen=True)
+class FocusProbe:
+    """What one focus-only tap proved about a point nothing was detected at.
+
+    `is_focused` is the only field that accepts a candidate. A probe that moved
+    focus elsewhere proves the point is not the wanted control. That is as
+    useful as a hit, and it costs the same tap.
+    """
+
+    is_focused: bool
+    focus_changed: bool
+    bounds: Optional[tuple[int, int, int, int]] = None
+    """The focused element's own bounds, which are the control's true edges.
+
+    Worth more than the cell that was tapped. A cell guesses where a control
+    is. This is the driver reporting where it is.
+    """
+
+    @property
+    def verdict(self) -> str:
+        if self.is_focused:
+            return "accepted"
+        return "focus_elsewhere" if self.focus_changed else "no_focus"
+
+
+def focus_field(
+    focus: Focus,
+    x: int,
+    y: int,
+    action: str,
+    tap: Callable[[int, int], None],
+    read_keyboard: Callable[[], Optional[bool]],
+) -> None:
+    """Focus one field and verify it through platform-owned input UI changes."""
+    before = focus.rect()
+    if focus.contains(x, y):
+        focus.assert_at(x, y, action, before=before)
+        return
+
+    keyboard_before = read_keyboard()
+    tap(x, y)
+    focus.wait_for(x, y, before=before)
+    keyboard_after = read_keyboard()
+    input_method_opened = keyboard_before is False and keyboard_after is True
+    if focus.rect() is None and input_method_opened:
+        logger.info(
+            "Input-method UI opened without readable focus. Waiting up to %.1fs "
+            "for the editable field.",
+            ANDROID_FOCUS_IME_GRACE_TIMEOUT,
+        )
+        focus.wait_for(
+            x,
+            y,
+            before=before,
+            timeout=ANDROID_FOCUS_IME_GRACE_TIMEOUT,
+        )
+
+    focus.assert_at(
+        x,
+        y,
+        action,
+        before=before,
+        layout_moved=input_method_opened,
+        input_method_opened=input_method_opened,
+    )

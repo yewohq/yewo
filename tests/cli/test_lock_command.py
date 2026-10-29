@@ -12,10 +12,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fakes import walk
+from generation_fakes import scenario_generation_evidence
 
 from yewo.cli import lock as command
 from yewo.config import load_config
+from yewo.errors import UsageError
 from yewo.testing.models import ScenarioDraft
+from yewo.testing.generation_startup import ScenarioStartupKnowledge
 
 YAML = """\
 device: Pixel_8
@@ -31,27 +34,81 @@ journeys:
 """
 
 
+EXPOSING_YAML = """\
+device: Pixel_8
+app_path: app.apk
+env:
+  card:
+    value: "4242424242424242"
+    secret: true
+    redaction: last4
+coverage:
+  - category: functional
+    types: [happy_path]
+    priority: P0
+journeys:
+  - id: checkout
+    name: Checkout
+    description: A user signs in and places an order.
+"""
+
+
 def draft(name="Sign in"):
     return ScenarioDraft(
         scenario_name=name,
+        app_capability_ids=["capability-test"],
+        route_memory_ids=["route-test"],
         steps=walk("Launch the app."),
-        expected_outcomes=["the app opens"],
+        expected_outcomes=[
+            {
+                "statement": "The app opens.",
+                "evidence": "A user signs in and places an order.",
+            }
+        ],
     )
 
 
 class CommandTests(unittest.TestCase):
-    def _run(self, directory, responses=(), refresh=False, written=YAML):
+    def _run(
+        self,
+        directory,
+        responses=(),
+        refresh=False,
+        written=YAML,
+        knowledge=True,
+        allow_secret_exposure=None,
+    ):
         path = Path(directory) / "yewo.yaml"
         path.write_text(written)
         client = SimpleNamespace(generate_response=Mock(side_effect=list(responses)))
         said = []
         args = SimpleNamespace(
-            journey_file=str(path), model=None, workflow=None, refresh=refresh
+            journey_file=str(path),
+            model=None,
+            workflow=None,
+            refresh=refresh,
+            allow_secret_exposure=allow_secret_exposure,
         )
+
+        class KnowledgeSource:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def load_compatible(self, _journey):
+                if not knowledge:
+                    return None
+                return ScenarioStartupKnowledge(scenario_generation_evidence())
+
+            def discover(self, _journey):
+                return None
 
         with (
             patch.object(command, "require_lock"),
             patch("yewo.llm.llm_client.LLMClient", return_value=client),
+            patch(
+                "yewo.testing.runner_knowledge.RunnerStartupKnowledgeSource",
+                KnowledgeSource,
+            ),
             patch.object(command.Console, "write", lambda _self, text: said.append(text)),
         ):
             code = command.run(args, load_config())
@@ -76,7 +133,11 @@ class CommandTests(unittest.TestCase):
             path.write_text(YAML)
             client = SimpleNamespace(generate_response=Mock(return_value=draft()))
             args = SimpleNamespace(
-                journey_file=str(path), model=None, workflow=None, refresh=False
+                journey_file=str(path),
+                model=None,
+                workflow=None,
+                refresh=False,
+                allow_secret_exposure=None,
             )
 
             with (
@@ -123,6 +184,42 @@ class CommandTests(unittest.TestCase):
         self.assertTrue(any("not covered" in line for line in said))
         self.assertFalse(lock_path.exists())
 
+    def test_missing_app_evidence_fails_closed_without_a_model_call(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, said, client, lock_path = self._run(
+                directory,
+                [draft()],
+                knowledge=False,
+            )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(client.generate_response.call_count, 0)
+        self.assertTrue(any("capability_unobserved" in line for line in said))
+        self.assertFalse(lock_path.exists())
+
+    def test_a_secret_offered_to_the_model_is_refused_before_generation(self):
+        """Generation sends journey text to a model, so lock owes the same gate as test."""
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(UsageError) as refusal:
+                self._run(directory, [draft()], written=EXPOSING_YAML)
+
+            self.assertIn("card", str(refusal.exception))
+            self.assertIn("--allow-secret-exposure", str(refusal.exception))
+            self.assertFalse((Path(directory) / "yewo.lock").exists())
+
+    def test_the_declared_opt_in_lets_an_exposing_journey_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, _, client, lock_path = self._run(
+                directory,
+                [draft()],
+                written=EXPOSING_YAML,
+                allow_secret_exposure=True,
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(client.generate_response.call_count, 1)
+            self.assertTrue(lock_path.is_file())
+
     def test_a_file_that_cannot_be_read_is_a_usage_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             code, said, _, _ = self._run(directory, written="journeys: not a list\n")
@@ -132,7 +229,11 @@ class CommandTests(unittest.TestCase):
 
     def test_a_file_that_is_not_there_is_a_usage_failure(self):
         args = SimpleNamespace(
-            journey_file="/no/such/yewo.yaml", model=None, workflow=None, refresh=False
+            journey_file="/no/such/yewo.yaml",
+            model=None,
+            workflow=None,
+            refresh=False,
+            allow_secret_exposure=None,
         )
         said = []
         with (

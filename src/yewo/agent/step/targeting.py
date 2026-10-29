@@ -12,12 +12,14 @@ from yewo.agent.actuation.actions import (
     ActionType,
 )
 from yewo.agent.memory.history import ActionEntry, ActionResult
+from yewo.agent.memory.replay import target_label
 from yewo.agent.grounding import GROUNDING_DESCRIBE
 from yewo.agent.grounding.description import resolve_description
 from yewo.agent.perception.elements import BoundingBox
 from yewo.agent.grounding.marks import resolve_mark
 from yewo.agent.step.staleness import has_target, target_moved
 from yewo.errors import ObservationUnavailable
+from yewo.agent.step import narration
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,22 @@ def record_unexecuted(history, step: int, action_desc: str, observation: str) ->
             action_desc=action_desc,
             result=ActionResult(success=False, observation=observation),
         )
+    )
+
+
+def record_quarantined(ctx, step: int, action, snapshot) -> None:
+    """Record a resolved action refused by the no-progress policy."""
+    description = narration.describe(action)
+    observation = (
+        "The resolved control is quarantined after repeated attempts without "
+        "durable progress. The action was not sent to the device."
+    )
+    record_unexecuted(ctx.history, step, description, observation)
+    ctx.steps.record_blocked_action(
+        action,
+        description,
+        observation,
+        target_label(action, snapshot.gui_elements),
     )
 
 
@@ -85,6 +103,10 @@ class Decision:
 
     target: Optional[str] = None
     """What the planner said it was looking for, when no number named it."""
+    stale: bool = False
+    """The screen under the target moved between planning and acting. Counted
+    per control by the loop, because one control going stale repeatedly is a
+    fact about that control, not about the step that met it."""
     action: Optional[Action] = None
     """The action to run instead, once a number has been turned into a point."""
     target_bounds: Optional[BoundingBox] = None
@@ -127,8 +149,9 @@ def evaluate(
                 f"Not executed. No number names this: {action.description}. Only "
                 "what is on screen gets a number. A target below the fold has no "
                 "number. A target behind the keyboard has no number. Scroll it "
-                "into view, or close the keyboard with key_event 4. Then look "
-                "again. Answer target_not_listed again if it is still absent."
+                "into view. If a keyboard is visible, Yewo will dismiss it once "
+                "with the platform driver. Then look again. Answer "
+                "target_not_listed again if it is still absent."
             ),
             unmatched=True,
             target=action.description,
@@ -142,11 +165,15 @@ def evaluate(
         unresolved, resolved = resolve_mark(action, snapshot.marks, grounding)
         target_bounds = None
     if unresolved:
-        return Decision(ok=False, observation=unresolved)
+        return Decision(
+            ok=False,
+            observation=unresolved,
+            unmatched=grounding == GROUNDING_DESCRIBE,
+        )
     action = resolved or action
 
     stale = stale_target_reason(device_control, snapshot, action)
     if stale:
-        return Decision(ok=False, observation=stale)
+        return Decision(ok=False, observation=stale, stale=True, action=action)
 
     return Decision(action=action, target_bounds=target_bounds)

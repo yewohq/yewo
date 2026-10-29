@@ -243,6 +243,66 @@ artifacts:
       project_url: https://github.com/gskinnerTeam/flutter-wonderous-app
       instructions: Follow the pinned Wonderous build notes in eval/apps/README.md.
 
+  - id: trainer-app-android-1645-buggy
+    platform: android
+    version: "1.0"
+    version_code: "1"
+    architectures: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    path: android/trainer-app-1645-buggy.apk
+    size_bytes: 2463646
+    sha256: d4ee957fbab57ae7d89cc312215a0e02f3f2528e6d7414e3797e31cd1efaf6ed
+    license: GPL-3.0-only
+    source:
+      kind: download
+      project_url: https://github.com/moritz-herzog/Trainer-App
+      download_url: https://github.com/SageSELab/UI-Program-Repair/raw/785431b7aa99959bb74e3d3345d539c0595f0469/Dataset/real-bug-apks/buggy/1645.apk
+      revision: 785431b7aa99959bb74e3d3345d539c0595f0469
+
+  - id: trainer-app-android-1645-fixed
+    platform: android
+    version: "1.0"
+    version_code: "1"
+    architectures: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    path: android/trainer-app-1645-fixed.apk
+    size_bytes: 2463554
+    sha256: 56c9afc65f3d378197cdd438a7ee093667a1a4d6779b7f13031d48fcce4c3286
+    license: GPL-3.0-only
+    source:
+      kind: download
+      project_url: https://github.com/moritz-herzog/Trainer-App
+      download_url: https://github.com/SageSELab/UI-Program-Repair/raw/785431b7aa99959bb74e3d3345d539c0595f0469/Dataset/real-bug-apks/fixed/1645.apk
+      revision: 785431b7aa99959bb74e3d3345d539c0595f0469
+
+  - id: trainer-app-android-1640-buggy
+    platform: android
+    version: "Alpha 0119"
+    version_code: "119"
+    architectures: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    path: android/trainer-app-1640-buggy.apk
+    size_bytes: 2474782
+    sha256: ce28162761e7a49fb91d182ce2995e36054dfd459d64d2c22866b234899fef06
+    license: GPL-3.0-only
+    source:
+      kind: download
+      project_url: https://github.com/moritz-herzog/Trainer-App
+      download_url: https://github.com/SageSELab/UI-Program-Repair/raw/785431b7aa99959bb74e3d3345d539c0595f0469/Dataset/real-bug-apks/buggy/1640.apk
+      revision: 785431b7aa99959bb74e3d3345d539c0595f0469
+
+  - id: trainer-app-android-1640-fixed
+    platform: android
+    version: "Alpha 1902 Build 77"
+    version_code: "1902077"
+    architectures: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    path: android/trainer-app-1640-fixed.apk
+    size_bytes: 2744064
+    sha256: a0900383c147032640d8443f15f398014f090b56cc6c44b00a2c21338018f6ef
+    license: GPL-3.0-only
+    source:
+      kind: download
+      project_url: https://github.com/moritz-herzog/Trainer-App
+      download_url: https://github.com/SageSELab/UI-Program-Repair/raw/785431b7aa99959bb74e3d3345d539c0595f0469/Dataset/real-bug-apks/fixed/1640.apk
+      revision: 785431b7aa99959bb74e3d3345d539c0595f0469
+
   - id: ice-cubes-ios
     platform: ios
     version: 2.1.3

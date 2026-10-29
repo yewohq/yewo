@@ -23,6 +23,8 @@ from yewo.agent.device.platform import Platform
 from yewo.agent.device.scope import DeviceScope
 from yewo.agent.device.recording import DeviceRecording
 from yewo.agent.device.simctl_control import SimctlControl
+from yewo.agent.device import touch_input
+from yewo.agent.device.touch_input import TouchInputSettings
 from yewo.devices.discovery import RUNNING, ios_devices, resolve
 from yewo.utils.platform_checks import run_android_preflight, run_ios_preflight
 
@@ -34,6 +36,7 @@ class DeviceSession(DeviceRecording):
 
     scope = DeviceScope.APP
     _visual_feedback_before_run: Optional[VisualFeedbackSettings] = None
+    _touch_input_before_run: Optional[TouchInputSettings] = None
 
     def __init__(
         self,
@@ -83,6 +86,7 @@ class DeviceSession(DeviceRecording):
         self.keep_app = keep_app
         self.scope = scope
         self._visual_feedback_before_run = None
+        self._touch_input_before_run = None
         self._installed_by_run: Optional[bool] = installed_by_run
         self._ios_simulator_udid: Optional[str] = None
         self._ios_simulator_was_running = False
@@ -261,11 +265,19 @@ class DeviceSession(DeviceRecording):
         if self.platform == Platform.ANDROID:
             serial = self.device_control.serial or self.device_name
             self._visual_feedback_before_run = AdbControl.read_visual_feedback(serial)
-            AdbControl.enable_feedback(
-                serial=serial,
-                pointer_location=False,
-                tap_highlights=self.scope is DeviceScope.APP,
-            )
+            self._touch_input_before_run = touch_input.read_touch_input(serial)
+            try:
+                if self._touch_input_before_run is not None:
+                    touch_input.prepare_touch_input(serial, self._touch_input_before_run)
+                AdbControl.enable_feedback(
+                    serial=serial,
+                    pointer_location=False,
+                    tap_highlights=self.scope is DeviceScope.APP,
+                )
+            except BaseException:
+                self._restore_visual_feedback()
+                self._restore_touch_input()
+                raise
         time.sleep(6)
         self._device_logs.start(self.device_control.driver)
         if self.record_session:
@@ -363,6 +375,7 @@ class DeviceSession(DeviceRecording):
             except Exception as e:  # noqa: BLE001 - evidence must not cost the teardown
                 logger.warning("Failed to save the device log: %s", e)
         self._restore_visual_feedback()
+        self._restore_touch_input()
         self._clean_device(final=final)
         if self.device_control:
             try:
@@ -400,3 +413,19 @@ class DeviceSession(DeviceRecording):
             logger.warning("Failed to restore Android visual feedback: %s", exc)
         finally:
             self._visual_feedback_before_run = None
+
+    def _restore_touch_input(self) -> None:
+        settings = self._touch_input_before_run
+        if self.platform != Platform.ANDROID or settings is None:
+            return
+        serial = (
+            self.device_control.serial
+            if self.device_control is not None and self.device_control.serial
+            else self.device_name
+        )
+        try:
+            touch_input.restore_touch_input(serial, settings)
+        except Exception as exc:  # noqa: BLE001 - cleanup must continue
+            logger.warning("Failed to restore Android touch input: %s", exc)
+        finally:
+            self._touch_input_before_run = None

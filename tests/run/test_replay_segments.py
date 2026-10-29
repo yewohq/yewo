@@ -42,6 +42,7 @@ def reading(item, phash):
         scan_info=scan(phash),
         current_phash=phash,
         raw_img_bytes=b"",
+        observation_id=f"observation-{phash}",
     )
 
 
@@ -86,7 +87,7 @@ class ReplaySegmentTests(unittest.TestCase):
     def setUp(self):
         self.names = replay_store.ValueNames({})
         self.device = Device()
-        self.patcher = patch("yewo.agent.memory.replay_walk.ActionOrchestrator", Orchestrator)
+        self.patcher = patch("yewo.agent.actuation.safety.ActionOrchestrator", Orchestrator)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
 
@@ -299,10 +300,10 @@ class ReplaySegmentTests(unittest.TestCase):
         action = TapAction(coordinates=centre(payment), reason="r")
         trace = replay_walk.build_trace(
             identity(),
-            [action] * 4,
+            [action] * 2,
             [
                 (([payment], scan("payment")), ([payment], scan("payment")))
-                for _ in range(4)
+                for _ in range(2)
             ],
             self.names,
             artifact="build",
@@ -318,8 +319,8 @@ class ReplaySegmentTests(unittest.TestCase):
         screen = reading(payment, "payment")
         settling = replay_driver.Settling("payment")
 
-        for step in range(4):
-            ctx.loop_detector.check(None, screen.current_phash)
+        for step in range(2):
+            ctx.loop_detector.record_screen(screen.current_phash)
             ctx.steps.open(step + 1)
             used_cache = saved_path.try_cached_step(
                 agent, screen, self.device, ctx, settling, Path("unused"), step
@@ -327,6 +328,52 @@ class ReplaySegmentTests(unittest.TestCase):
             self.assertTrue(used_cache)
 
         self.assertFalse(ctx.loop_detector.terminated())
+
+    def test_cached_actions_are_quarantined_before_the_step_limit(self):
+        payment = element("Credit / Debit Card")
+        action = TapAction(coordinates=centre(payment), reason="r")
+        trace = replay_walk.build_trace(
+            identity(),
+            [action] * 5,
+            [
+                (([payment], scan("payment")), ([payment], scan("payment")))
+                for _ in range(5)
+            ],
+            self.names,
+            artifact="build",
+        )
+        replay = replay_learning.DurableReplay(
+            trace=trace,
+            values={},
+            names=self.names,
+            current_artifact="build",
+        )
+        ctx = replay_driver.context()
+        agent = replay_driver.agent_for(replay)
+        screen = reading(payment, "payment")
+        settling = replay_driver.Settling("payment")
+
+        for step in range(3):
+            ctx.steps.open(step + 1)
+            used_cache = saved_path.try_cached_step(
+                agent, screen, self.device, ctx, settling, Path("unused"), step
+            )
+            self.assertTrue(used_cache)
+
+        ctx.steps.open(4)
+        self.assertFalse(
+            saved_path.try_cached_step(
+                agent, screen, self.device, ctx, settling, Path("unused"), 3
+            )
+        )
+        ctx.steps.open(5)
+        self.assertFalse(
+            saved_path.try_cached_step(
+                agent, screen, self.device, ctx, settling, Path("unused"), 4
+            )
+        )
+
+        self.assertTrue(ctx.loop_detector.action_repetition_terminated)
 
 
 if __name__ == "__main__":

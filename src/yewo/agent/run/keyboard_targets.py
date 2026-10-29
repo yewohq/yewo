@@ -52,7 +52,5 @@ def expand(step, action, snapshot, session_trail, ctx, grounding):
     ctx.steps.record_action_duration(0.0)
     ctx.stall.action_dispatched()
     ctx.last_action_type = action.type
-    if session_trail:
-        session_trail.record_action(description)
     logger.info("Expanded visual keyboard targets for the next look.")
     return None

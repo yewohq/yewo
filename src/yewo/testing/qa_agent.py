@@ -12,7 +12,6 @@ from yewo.agent.device.platform import Platform
 from yewo.agent.device.crash_diagnostics import CrashDiagnosticSource
 from yewo.agent.memory.replay import ReplayLedger
 
-from yewo.defaults import STEP_BUDGET_FLOOR, STEP_BUDGET_PER_INSTRUCTION
 from yewo.llm.failures import reportable
 from yewo.llm.llm_client import LLMClient
 from yewo.testing.models import (
@@ -37,9 +36,9 @@ from yewo.testing.judge.capabilities import (
 )
 from yewo.agent.plan.planner import GROUNDING_COORDINATES
 from yewo.testing.judge import decide
-from yewo.testing.judge.qa_auditor import QAAuditor, ScreenAssessment, ScreenAuditSession
+from yewo.testing.judge.qa_auditor import ScreenAssessment
 from yewo.testing.qa_planner import QAPlanner, QAStepResponse
-from yewo.errors import Cause, cause_of
+from yewo.errors import Cause
 from yewo.testing import steps, taxonomy
 from yewo.testing.lifecycle import (
     LifecyclePhase,
@@ -50,27 +49,36 @@ from yewo.testing.lifecycle import (
     restore_app_precondition,
     restoration_operations,
 )
-from yewo.testing.judge import transitions
-from yewo.testing.judge.screen_audits import LiveScreenAudits
 from yewo.testing.measurement_collection import ScenarioMeasurementCollector
 from yewo.testing.report.measurement_log import MeasurementLog
 from yewo.testing.verdict_inputs import build_verdict_inputs
+from yewo.testing import obligation_auditing
+from yewo.testing.obligations import ObligationController, ObligationRunEvidence
+from yewo.testing.warm_execution import (
+    ScenarioRoutePreparer,
+    ScenarioWarmExecution,
+    WarmExecutionTerminal,
+)
+from yewo.testing.warm_execution_reporting import (
+    failed_warm_execution_report,
+    prepare_scenario_route,
+)
+from yewo.testing.scenario_execution_support import (
+    build_scenario_replay,
+    save_scenario_trace,
+    scenario_step_budget,
+)
 
 logger = logging.getLogger(__name__)
-class QAAgent:
-    """Runs one QA scenario, and keeps the clients a journey shares.
 
-    One QAAgent serves every scenario in a journey, so the model clients are
-    built once. Each scenario gets its own QAPlanner and its own QAAuditor,
-    because each carries state that must not reach the next scenario.
-    """
+
+class QAAgent:
+    """Share model clients while isolating each scenario's planner and auditor."""
 
     _trace_store = None
-    """Where a judged path is kept between runs.
-
-    A class default, so an agent built without __init__ still answers
-    the question a scenario asks of it. None is durable replay off.
-    """
+    """A class default keeps agents built without ``__init__`` replay-safe."""
+    _platform = Platform.ANDROID
+    _active_obligation_controller: ObligationController | None = None
 
     def __init__(
         self,
@@ -100,16 +108,16 @@ class QAAgent:
             fast_model=fast_model,
             replay_ledger=replay_ledger,
             grounding=grounding,
+            platform=platform,
         )
+        self._platform = platform
         self._device_agent.llm.set_cache_affinity(cache_affinity)
         self._device_agent.fast_llm.set_cache_affinity(cache_affinity)
         self._fast_llm: LLMClient = self._device_agent.fast_llm
 
     def _step_budget(self, test_case: GeneratedTestCase) -> int:
         """Bound this scenario from its instruction count and the run ceiling."""
-        wanted = len(test_case.steps_instructions) * STEP_BUDGET_PER_INSTRUCTION
-        ceiling = self._device_agent.max_steps
-        return min(ceiling, max(STEP_BUDGET_FLOOR, wanted))
+        return scenario_step_budget(test_case, self._device_agent.max_steps)
 
     def execute_scenario(
         self,
@@ -121,6 +129,7 @@ class QAAgent:
         session_trail: Optional[SessionTrail] = None,
         telemetry_dir: Optional[Path] = None,
         crash_diagnostic_source: Optional[CrashDiagnosticSource] = None,
+        route_preparer: ScenarioRoutePreparer | None = None,
     ) -> ScenarioReport:
         """Execute one test scenario and return a complete ScenarioReport."""
         start_time = time.time()
@@ -128,24 +137,21 @@ class QAAgent:
         qa_outputs: List[QAStepResponse] = []
         stop_reason: dict = {"value": None}  # mutable so the nested hook can write out
 
-        # Only what one screen can settle is put to the auditor. Asked whether
-        # the app hung, it answers from pixels that cannot carry the fact.
-        auditor = QAAuditor(
+        obligation_controller, screen_audits = obligation_auditing.build_audit_lanes(
             self._fast_llm,
-            test_case.expected_outcomes,
+            test_case,
             security_rules,
-            scrubber=self._device_agent.scrubber,
+            self._device_agent.scrubber,
         )
+        self._active_obligation_controller = obligation_controller
 
         replay = self._build_replay(test_case)
-        screen_audits = LiveScreenAudits(ScreenAuditSession(auditor))
 
         def step_hook(step_response: DeviceStepResponse, snapshot) -> Optional[bool]:
             if not isinstance(step_response, QAStepResponse):
                 return None
 
             qa_outputs.append(step_response)
-            screen_audits.label_latest(step_response.current_screen)
             if screen_audits.apply_launch_recheck(step_response):
                 return None
 
@@ -215,14 +221,11 @@ class QAAgent:
             setup=test_case.setup,
             scrubber=self._device_agent.scrubber,
             grounding=self._grounding,
+            platform=self._platform,
         )
 
         in_run_ledger = self._device_agent.replay_ledger
-        # The in-run ledger walks screens without reading them. A security
-        # rule becomes required only once a screen reported it applicable,
-        # so a screen it skipped takes that rule out of the required set
-        # and a violation there passes. Durable replay audits what it
-        # arrives at, which is why only this one is dropped.
+        # Security scenarios must audit every reached screen, including replay.
         audits_every_screen = taxonomy.must_audit_every_screen(
             test_case.category, test_case.scenario_type, security_rules
         )
@@ -243,6 +246,7 @@ class QAAgent:
         initial_receipts: list[Receipt] = []
         restoration_events: list[restoration.RestorationEvent] = []
         precondition_failure: Optional[Exception] = None
+        warm_execution: ScenarioWarmExecution | None = None
         try:
             # Preserve every typed state this scenario can change.
             with restoration.preserved(
@@ -266,13 +270,9 @@ class QAAgent:
                         )
                         lifecycle_operations.append(setup_evidence.operation)
                         if setup_evidence.launch_timing is not None:
-                            measurement_collector.record_launch(
-                                setup_evidence.launch_timing
-                            )
+                            measurement_collector.record_launch(setup_evidence.launch_timing)
                         if setup_evidence.measurement_failure:
-                            measurement_collector.record_failure(
-                                setup_evidence.measurement_failure
-                            )
+                            measurement_collector.record_failure(setup_evidence.measurement_failure)
                         controller = CapabilityController(device_control)
                         for capability in test_case.initial_capabilities:
                             operation, receipt = apply_capability_precondition(
@@ -292,7 +292,17 @@ class QAAgent:
                                 reportable(exc),
                             )
                         )
-                    if precondition_failure is None:
+                    if precondition_failure is None and test_case.route_memory_ids:
+                        warm_execution = prepare_scenario_route(
+                            test_case,
+                            route_preparer,
+                            device_control,
+                            perception,
+                        )
+                    if precondition_failure is None and (
+                        warm_execution is None
+                        or warm_execution.terminal is WarmExecutionTerminal.READY
+                    ):
                         measurement_collector.begin_frame_diagnostics()
                         try:
                             run_result: DeviceRunResult = self._device_agent.run(
@@ -331,10 +341,26 @@ class QAAgent:
                 measurements=list(measurement_collector.samples),
                 lifecycle_operations=lifecycle_operations,
             )
+        if (
+            warm_execution is not None
+            and warm_execution.terminal is not WarmExecutionTerminal.READY
+        ):
+            return failed_warm_execution_report(
+                test_case,
+                warm_execution,
+                duration=time.time() - start_time,
+                measurements=measurement_collector.samples,
+                lifecycle_operations=lifecycle_operations,
+            )
         run_result.capability_receipts[0:0] = initial_receipts
 
-        # Nothing ever leaves the screen a scenario ended on, so read it here.
-        screen_audits.finalize()
+        obligation_auditing.finalize_run_end(
+            self._fast_llm,
+            test_case,
+            self._device_agent.scrubber,
+            obligation_controller,
+            screen_audits,
+        )
         stop_reason["value"] = stop_reason["value"] or screen_audits.stop_reason
 
         crash_diagnostic = (
@@ -353,8 +379,11 @@ class QAAgent:
             security_rules=security_rules,
             measurement_samples=measurement_collector.samples,
             crash_diagnostic=crash_diagnostic,
+            obligation_controller=obligation_controller,
         )
+        self._active_obligation_controller = None
         report.lifecycle_operations = lifecycle_operations
+        report.warm_execution = warm_execution
         failed_restorations = [
             operation
             for operation in lifecycle_operations
@@ -370,6 +399,12 @@ class QAAgent:
         self._save_trace(test_case, replay, report)
         return report
 
+    def _build_replay(self, test_case: GeneratedTestCase):
+        return build_scenario_replay(self._trace_store, test_case)
+
+    def _save_trace(self, test_case, replay, report) -> None:
+        save_scenario_trace(self._trace_store, test_case, replay, report.status)
+
     def _build_report(
         self,
         test_case: GeneratedTestCase,
@@ -382,6 +417,7 @@ class QAAgent:
         settle_transitions: bool = True,
         measurement_samples: Sequence[Measurement] = (),
         crash_diagnostic: Optional[CrashDiagnostic] = None,
+        obligation_controller: ObligationController | None = None,
     ) -> ScenarioReport:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
@@ -417,7 +453,16 @@ class QAAgent:
                 )
 
         if settle_transitions:
-            all_verifications.extend(self._settled_transitions(test_case, assessments))
+            if obligation_controller is not None:
+                obligation_auditing.route_aggregate_evidence(obligation_controller)
+            all_verifications.extend(
+                obligation_auditing.settle_transitions(
+                    self._fast_llm,
+                    test_case,
+                    assessments,
+                    self._device_agent.scrubber,
+                )
+            )
 
         status, failure_reason, cause = self._determine_status(
             run_result=run_result,
@@ -433,7 +478,11 @@ class QAAgent:
             measurement_samples=measurement_samples,
             crash_diagnostic=crash_diagnostic,
         )
-
+        obligation_evidence = (
+            obligation_auditing.settle_obligations(obligation_controller, all_verifications)
+            if obligation_controller is not None
+            else ObligationRunEvidence()
+        )
         return ScenarioReport(
             scenario_uuid=test_case.scenario_uuid,
             test_id=test_case.test_id,
@@ -443,10 +492,15 @@ class QAAgent:
             cause=cause.value if cause else None,
             duration=round(duration, 2),
             steps_executed=run_result.steps_executed,
+            intervention_steps=run_result.intervention_steps,
             rule_verifications=all_verifications,
             detected_issues=all_issues,
             steps=list(run_result.steps),
             postcondition_verifications=list(run_result.postcondition_verifications),
+            recovery_transactions=list(run_result.recovery_transactions),
+            settlement_receipts=list(run_result.settlement_receipts),
+            input_transactions=list(run_result.input_transactions),
+            obligation_evidence=obligation_evidence,
             measurements=list(measurement_samples),
             failure_reason=scrub(failure_reason or "") or None,
             crash_diagnostic=crash_diagnostic,
@@ -462,57 +516,6 @@ class QAAgent:
                 crash_diagnostic,
             ),
         )
-
-    def _settled_transitions(
-        self, test_case: GeneratedTestCase, assessments: List[ScreenAssessment]
-    ) -> List[RuleVerification]:
-        """Judge transition outcomes. Preserve provider failures as errors.
-
-        Other failures leave the outcome unevidenced instead of inventing it.
-        """
-        try:
-            return transitions.settle(
-                self._fast_llm,
-                test_case.expected_outcomes,
-                assessments,
-                scrubber=self._device_agent.scrubber,
-            )
-        except Exception as exc:  # noqa: BLE001 - model boundary
-            if cause_of(exc) is Cause.PROVIDER:
-                raise
-            logger.warning(
-                "Could not judge the transitions of this scenario: %s",
-                reportable(exc),
-            )
-            return []
-
-    def _build_replay(self, test_case: GeneratedTestCase):
-        """The path an earlier run saved for this scenario, if there is one.
-
-        None when durable replay is off, or when nothing saved one. None
-        too when this run's identity does not match the path's.
-
-        The path supplies actions only. This run's screen hook independently
-        earns all evidence used by its verdict.
-        """
-        if self._trace_store is None:
-            return None
-
-        identity = self._trace_store.resolve_identity(test_case)
-        if identity is None:
-            return None
-
-        return self._trace_store.build_replay(identity)
-
-    def _save_trace(self, test_case, replay, report) -> None:
-        """Writes the path this scenario walked, once it has been judged.
-
-        Only after a pass. A path to a failure is a path to a result already
-        known, and walking it again would spend a run reaching it.
-        """
-        if self._trace_store is None or replay is None:
-            return
-        self._trace_store.save_trace(test_case, replay, report.status)
 
     def _determine_status(
         self,

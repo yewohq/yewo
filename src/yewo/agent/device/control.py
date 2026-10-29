@@ -12,20 +12,22 @@ from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from yewo.agent.device.adb_control import AdbControl
-from yewo.agent.device.focus import Focus
+from yewo.agent.device import probe
+from yewo.agent.device.focus import Focus, FocusProbe, focus_field
 from yewo.agent.device.diagnostics import diagnose_avd_launch
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.ios_app import bundle_identifier
 from yewo.agent.device.scope import DeviceScope
-from yewo.defaults import AVD_LAUNCH_TIMEOUT_MS, IDLE_SESSION_TIMEOUT_SECONDS
+from yewo.defaults import (
+    AVD_LAUNCH_TIMEOUT_MS,
+    IDLE_SESSION_TIMEOUT_SECONDS,
+)
 from yewo.errors import DeviceUnavailable, ObservationUnavailable
 
 if TYPE_CHECKING:
     from yewo.agent.device.state import DeviceState
 
 logger = logging.getLogger(__name__)
-
-ANDROID_KEYCODE_BACK = 4
 
 
 def _listed_udid(device_name: str) -> Optional[str]:
@@ -304,7 +306,7 @@ class DeviceControl:
         self._coordinate_scale_x = driver_width / width
         self._coordinate_scale_y = driver_height / height
 
-    def _driver_point(self, x: int, y: int) -> tuple[int, int]:
+    def driver_point(self, x: int, y: int) -> tuple[int, int]:
         """Convert a perception pixel to the coordinate space of the driver."""
         return (
             round(x * getattr(self, "_coordinate_scale_x", 1.0)),
@@ -335,50 +337,33 @@ class DeviceControl:
         builder.perform()
 
     def tap(self, x, y, with_feedback: bool = True):
-        x, y = self._driver_point(x, y)
+        x, y = self.driver_point(x, y)
         if with_feedback:
             self.__tap_screen(x, y)
         else:
             self.driver.tap([(x, y)])
-    def __focus_field(self, x, y, action: str) -> None:
-        """Puts the cursor in the field at (x, y), or refuses the action.
+    def type(self, text, x, y):
+        focus_field(self.focus, x, y, "TYPE", self.tap, self.is_keyboard_open)
+        # XCUITest and UiAutomator both support standard WebDriver text entry.
+        self.driver.switch_to.active_element.send_keys(text)
+        return self.focus.value()
 
-        A field that is already focused at that point is left alone. Tapping
-        it again would open the keyboard, which scrolls the form away from the
-        very point that named the field.
-
-        When it does tap, it reads the keyboard on either side. A keyboard
-        that was closed and is now open is the form moving, so the point stops
-        being evidence of where the field is.
-        """
-        focus = self.focus
-        before = focus.rect()
-        if focus.contains(x, y):
-            focus.assert_at(x, y, action, before=before)
-            return
-        keyboard = self.is_keyboard_open()
-        self.tap(x, y)
-        focus.wait_for(x, y, before=before)
-        focus.assert_at(
-            x,
-            y,
-            action,
-            before=before,
-            layout_moved=keyboard is False and self.is_keyboard_open() is True,
+    def perception_box(self, bounds):
+        """Convert driver bounds back to the pixel space perception works in."""
+        if bounds is None:
+            return None
+        scale_x = getattr(self, "_coordinate_scale_x", 1.0) or 1.0
+        scale_y = getattr(self, "_coordinate_scale_y", 1.0) or 1.0
+        return (
+            round(bounds[0] / scale_x),
+            round(bounds[1] / scale_y),
+            round(bounds[2] / scale_x),
+            round(bounds[3] / scale_y),
         )
 
-    def type(self, text, x, y):
-        if self.platform == Platform.IOS:
-            self.tap(x, y)
-            time.sleep(1.0)
-            # XCUITest 12.20 removed the legacy `mobile: type` extension.
-            # Standard WebDriver text entry remains supported and writes to
-            # the exact element the preceding tap focused.
-            self.driver.switch_to.active_element.send_keys(text)
-        else:
-            self.__focus_field(x, y, "TYPE")
-            self.driver.switch_to.active_element.send_keys(text)
-        return self.focus.value()
+    def probe_focus(self, x, y) -> FocusProbe:
+        """Tap one point to find out whether anything focusable is there."""
+        return probe.focus_at(self, x, y)
 
     def read_focused_field(self):
         """Read the active field after the app has settled."""
@@ -388,10 +373,12 @@ class DeviceControl:
         try:
             if self.platform == Platform.IOS:
                 self.tap(x, y)
-                self.focus.wait_for(*self._driver_point(x, y))
+                self.focus.wait_for(*self.driver_point(x, y))
                 self.driver.switch_to.active_element.clear()
                 return
-            self.__focus_field(x, y, "CLEAR")
+            focus_field(
+                self.focus, x, y, "CLEAR", self.tap, self.is_keyboard_open
+            )
             try:
                 # Select All (Ctrl+A), then press Backspace to clear the field.
                 self.driver.press_keycode(29, metastate=28672)
@@ -406,7 +393,7 @@ class DeviceControl:
             raise
 
     def double_tap(self, x, y, with_feedback: bool = True):
-        x, y = self._driver_point(x, y)
+        x, y = self.driver_point(x, y)
         if self.platform == Platform.IOS:
             self.execute_script("mobile: doubleTap", {"x": x, "y": y})
         else:
@@ -414,7 +401,7 @@ class DeviceControl:
         time.sleep(0.5)
 
     def long_press(self, x, y, duration):
-        x, y = self._driver_point(x, y)
+        x, y = self.driver_point(x, y)
         if self.platform == Platform.IOS:
             self.execute_script(
                 "mobile: touchAndHold", {"x": x, "y": y, "duration": duration}
@@ -427,8 +414,8 @@ class DeviceControl:
         time.sleep(duration + 0.5)
 
     def drag_and_drop(self, source_x, source_y, destination_x, destination_y):
-        source_x, source_y = self._driver_point(source_x, source_y)
-        destination_x, destination_y = self._driver_point(destination_x, destination_y)
+        source_x, source_y = self.driver_point(source_x, source_y)
+        destination_x, destination_y = self.driver_point(destination_x, destination_y)
         if self.platform == Platform.IOS:
             self.execute_script(
                 "mobile: dragFromToForDuration",
@@ -453,34 +440,28 @@ class DeviceControl:
         time.sleep(0.5)
 
     def key_event(self, key):
-        if self.platform == Platform.ANDROID:
-            self.driver.press_keycode(key)
-        else:
-            self.execute_script("mobile: pressButton", {"name": key})
+        if self.platform != Platform.ANDROID:
+            raise ValueError("Integer key events are available only on Android.")
+        self.driver.press_keycode(key)
         time.sleep(0.5)
 
     def dismiss_keyboard(self) -> bool:
         """Closes the soft keyboard, which covers the lower half of the screen.
 
-        Back is the Android way and is what the planner is told to use, so the
-        two agree. iOS has no back key and Appium hides the keyboard directly.
+        Appium's keyboard API is used on both platforms. Android Back is a
+        navigation action and is never repurposed as an input-method command.
 
         Returns whether it closed, read back rather than assumed. A key press
         that raised nothing is not a keyboard that went away, and the caller
         spends the screen's one attempt on the answer.
         """
         try:
-            if self.platform == Platform.ANDROID:
-                self.key_event(ANDROID_KEYCODE_BACK)
-            else:
-                self.driver.hide_keyboard()
+            self.driver.hide_keyboard()
         except Exception as exc:  # noqa: BLE001 - driver boundary
             logger.warning("Could not close the keyboard: %s", exc)
             return False
 
-        # None means no check could answer. Treated as closed, because the
-        # press was made and refusing to believe it would retry forever.
-        return self.is_keyboard_open() is not True
+        return self.is_keyboard_open() is False
 
     def swipe(self, start_x, start_y, end_x, end_y, duration_ms: int = 400):
         """Performs a swipe gesture using W3C pointer actions.
@@ -492,8 +473,8 @@ class DeviceControl:
             end_y: Ending y coordinate.
             duration_ms: Duration of the swipe gesture in milliseconds.
         """
-        start_x, start_y = self._driver_point(start_x, start_y)
-        end_x, end_y = self._driver_point(end_x, end_y)
+        start_x, start_y = self.driver_point(start_x, start_y)
+        end_x, end_y = self.driver_point(end_x, end_y)
         touch = PointerInput("touch", "finger")
         builder = ActionBuilder(self.driver, mouse=touch, duration=duration_ms)
         builder.pointer_action.move_to_location(start_x, start_y)

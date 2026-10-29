@@ -13,6 +13,7 @@ from yewo.agent.plan.planner import (
     DeviceStepResponse,
 )
 from yewo.agent.device.launch import SetupMode
+from yewo.agent.device.platform import Platform
 from yewo.agent.run import (
     keyboard_targets,
     observing,
@@ -23,15 +24,12 @@ from yewo.agent.run import (
 )
 from yewo.agent.run.outcomes import DeviceRunResult, ObservationHookFn, StepHookFn
 from yewo.agent.perception import settle
-from yewo.agent.step import dispatch, observation
+from yewo.agent.step import dispatch, intervention
 from yewo.agent.step.observation import PerceptionSnapshot
-from yewo.agent.artifacts import steps as artifacts
 from yewo.agent.artifacts.steps import StepArtifacts
 from yewo.agent.step import narration
-from yewo.agent.memory.loop_detector import RollingLoopDetector
 from yewo.agent.run.context import RunContext
 from yewo.agent.memory import stall
-from yewo.agent.memory.stall import STALL_LIMIT_MESSAGE
 from yewo.agent.memory.replay import ReplayLedger, target_label
 from yewo.agent.memory.replay_store import ValueNames
 from yewo.agent.step import targeting
@@ -64,6 +62,7 @@ class DeviceAgent:
     declared_values: dict[str, str] = {}
     value_verifications: dict[str, postconditions.ValueVerificationPolicy] = {}
     value_names = ValueNames()
+    interrupted_result: Optional[DeviceRunResult] = None
 
     def __init__(
         self,
@@ -77,6 +76,7 @@ class DeviceAgent:
         durable_replay=None,
         grounding: str = GROUNDING_COORDINATES,
         grounder=None,
+        platform: Platform = Platform.ANDROID,
     ):
         self.max_steps = max_steps
         self._step_limit = max_steps
@@ -103,10 +103,9 @@ class DeviceAgent:
             self._default_planner = planner
             self._default_fast_planner = planner
         else:
-            self._default_planner = DevicePlanner(self.llm, grounding, scrubber=self.scrubber)
-            self._default_fast_planner = DevicePlanner(
-                self.fast_llm, grounding, scrubber=self.scrubber
-            )
+            planner_arguments = (grounding, self.scrubber, platform)
+            self._default_planner = DevicePlanner(self.llm, *planner_arguments)
+            self._default_fast_planner = DevicePlanner(self.fast_llm, *planner_arguments)
 
         self.images = RedactedImages(self.scrubber)
         self.artifacts = StepArtifacts(self.images, self.scrubber)
@@ -155,6 +154,7 @@ class DeviceAgent:
         replay: bool = True,
     ) -> DeviceRunResult:
         """Run until the goal, a safety boundary, the limit, or an exception."""
+        self.interrupted_result = None
         task = self.start_task(
             goal=goal,
             device_control=device_control,
@@ -240,7 +240,7 @@ class DeviceAgent:
         snapshot = observing.capture(
             self, step, device_control, perception, session_dir, session_trail, ctx
         )
-        ctx.steps.observed(snapshot.current_phash, observing.elapsed_ms(started))
+        ctx.steps.observed(snapshot.current_phash, observing.elapsed_ms(started), snapshot.observation_id)
 
         arrived_as_expected = saved_path.verify_pending_arrival(self, snapshot, ctx, step)
         verification = saved_path.verify_entered_value(
@@ -253,10 +253,10 @@ class DeviceAgent:
         )
         audit_directive = observation_hook(snapshot, step + 1) if observation_hook else None
         if audit_directive is outcomes.ObservationDirective.STOP:
-            ctx.steps_executed += 1
+            ctx.spend_step()
             return outcomes.observation_stop(ctx, session_trail, snapshot.current_phash)
         if ctx.postcondition_blocked:
-            ctx.steps_executed += 1
+            ctx.spend_step()
             return outcomes.postcondition_stop(ctx, session_trail, snapshot.current_phash)
 
         # A saved step that fits costs no planning call.
@@ -276,29 +276,41 @@ class DeviceAgent:
             before_action_hook,
         )
         if ctx.observation_blocked:
-            ctx.steps_executed += 1
+            ctx.spend_step()
             return outcomes.observation_stop(ctx, session_trail, snapshot.current_phash)
         if cached_step_used:
-            return None
-
+            return outcomes.action_repetition(ctx, session_trail, snapshot.current_phash)
+        if ctx.loop_detector.action_repetition_terminated:
+            return outcomes.action_repetition(ctx, session_trail, snapshot.current_phash)
         cached_result = saved_path.finish_cached_path(self, snapshot, ctx, session_trail)
         if cached_result is not None:
             return cached_result
-
-        ctx.steps_executed += 1
-        ending = outcomes.page_stagnation(ctx, session_trail, snapshot.current_phash)
+        ctx.spend_step()
+        discovery = ctx.control_discovery
+        ending = None if discovery and not discovery.is_terminal else outcomes.page_stagnation(
+            ctx, session_trail, snapshot.current_phash
+        )
         if ending is not None:
             return ending
 
         started = time.perf_counter()
         step_response = self._plan(
-            step, goal, planner, perception, snapshot, session_dir, session_trail, ctx
+            step, goal, planner, perception, snapshot, session_dir, session_trail, ctx,
+            device_control,
         )
+        if isinstance(step_response, intervention.InterventionDirective):
+            if step_response is intervention.InterventionDirective.REOBSERVE:
+                settle.settle(device_control, self.settle_time)
+                return None
+            reason = discovery.failure_reason if discovery is not None else None
+            reason = reason or "Deterministic control discovery could not verify the control."
+            return outcomes.control_unresolved(
+                ctx, session_trail, snapshot.current_phash, reason
+            )
         ctx.steps.planned(step_response, observing.elapsed_ms(started))
 
         ending = self._ending_after_planning(step_response, snapshot, session_trail, step_hook, ctx)
         if ending is not None:
-            saved_path.describe_terminal_screen(self, step_response.current_screen)
             return ending
 
         if isinstance(step_response.action, ShowKeyboardTargetsAction):
@@ -339,6 +351,10 @@ class DeviceAgent:
             if directive is outcomes.ObservationDirective.STOP:
                 return outcomes.observation_stop(ctx, session_trail, snapshot.current_phash)
 
+        blocked, ending = outcomes.guard_control(ctx, action, snapshot, session_trail, step)
+        if blocked:
+            return ending
+
         return self._act(
             step,
             action,
@@ -351,18 +367,24 @@ class DeviceAgent:
             decision.target_bounds,
         )
 
-    def _plan(
-        self, step, goal, planner, perception, snapshot, session_dir, session_trail, ctx
-    ) -> DeviceStepResponse:
+    def _plan(self, step, goal, planner, perception, snapshot, session_dir,
+              session_trail, ctx, device_control=None) -> (
+                  DeviceStepResponse | intervention.InterventionDirective
+              ):
         """Numbers the targets, asks for an action, and records what came back."""
-        # Saved before the model is called, so a planning failure still leaves
-        # the image the planner was given.
-        observation.number_targets(snapshot, ctx, self.grounding, perception)
+        record, directive = intervention.prepare(
+            snapshot, ctx, device_control, perception, self.grounding
+        )
+        files = intervention.save_records(
+            record, self.images, session_dir, step, snapshot.timestamp
+        )
+        ctx.steps.files(files)
+        if directive is not intervention.InterventionDirective.PLAN:
+            return directive
         ctx.steps.files({"marked": self.artifacts.save_planner_view(session_dir, step, snapshot)})
         refinement_files = self.artifacts.save_refinement(session_dir, step, snapshot)
         if isinstance(refinement_files, dict):
             ctx.steps.files(refinement_files)
-
         nudge, ctx.pending_loop_nudge = ctx.pending_loop_nudge, None
         step_response = self._plan_step(
             planner=planner,
@@ -372,13 +394,13 @@ class DeviceAgent:
             session_trail=session_trail,
             loop_nudge=nudge,
         )
-        observing.apply_plan_result(self, step_response, snapshot, session_trail, ctx)
+        observing.apply_plan_result(self, step_response, snapshot, session_trail, ctx, goal)
         return step_response
 
     def _ending_after_planning(
         self, step_response, snapshot, session_trail, step_hook, ctx
     ) -> Optional[DeviceRunResult]:
-        """The three ways a plan ends the run instead of reaching the device."""
+        """Handle planning outcomes that do not reach the device."""
         if step_hook:
             stopped = outcomes.hook_stop(
                 step_hook,
@@ -401,10 +423,7 @@ class DeviceAgent:
         if done is not None:
             return done
 
-        ctx.pending_loop_nudge = ctx.loop_detector.check(
-            RollingLoopDetector.hash_action(step_response.action), None
-        )
-        return outcomes.action_repetition(ctx, session_trail, snapshot.current_phash)
+        return None
 
     def _blocked(
         self, step, action, decision, snapshot, device_control, session_dir, session_trail, ctx
@@ -419,25 +438,15 @@ class DeviceAgent:
             target_label(action, snapshot.gui_elements),
         )
         if decision.unmatched:
-            artifacts.save_unmatched_screen(
-                self.images,
-                session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_not_listed.png",
-                snapshot,
+            intervention.record_unmatched_target(
+                self.images, action, decision, snapshot, ctx, session_dir, step
             )
-            region = getattr(action, "region", None)
-            key = (snapshot.current_phash or "", decision.target or "", region or "")
-            if (
-                region
-                and not ctx.keyboard_open
-                and snapshot.current_phash
-                and key not in ctx.refined_targets
-            ):
-                ctx.refined_targets.add(key)
-                ctx.pending_visual_refinement = (snapshot.current_phash, region)
-                logger.info(
-                    "Will inspect the %s region more closely on the next look.", region
-                )
-        if stall.reveal_behind_keyboard(device_control, snapshot, ctx):
+        outcomes.unresolved_control(ctx, action, decision, snapshot)
+        if ctx.loop_detector.action_repetition_terminated:
+            return outcomes.action_repetition(ctx, session_trail, snapshot.current_phash)
+        if decision.unmatched and stall.reveal_target_behind_keyboard(
+            device_control, snapshot, ctx
+        ):
             return None
         ctx.stall.record_blocked(snapshot.current_phash)
         if ctx.stall.is_exhausted:
@@ -487,16 +496,12 @@ class DeviceAgent:
             requested_action=step_response.action,
         )
         ctx.steps.record_action_duration(observing.elapsed_ms(started))
-        saved_path.record_planned_step(self, action, snapshot, ctx, step_response.current_screen)
-        if ctx.stall.is_blocked and stall.reveal_behind_keyboard(device_control, snapshot, ctx):
-            return None
-        # An action that runs and fails stalls a screen as surely as one refused
-        # before dispatch. Burning a mark pushes the planner to try a different
-        # one, so a fresh target each time is still a screen going nowhere.
-        if ctx.stall.is_exhausted:
-            return outcomes.loop_detected(
-                ctx, session_trail, snapshot.current_phash, STALL_LIMIT_MESSAGE
-            )
+        saved_path.record_planned_step(self, action, snapshot, ctx)
+        failed_action = outcomes.failed_action(
+            ctx, session_trail, snapshot.current_phash
+        )
+        if failed_action is not None:
+            return failed_action
         ctx.prev_phash = snapshot.current_phash
         return None
 

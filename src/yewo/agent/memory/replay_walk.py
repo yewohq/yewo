@@ -17,7 +17,11 @@ from yewo.agent.actuation.actions import (
     WaitAction,
     SwipeAction,
 )
-from yewo.agent.actuation.orchestrator import ActionOrchestrator
+from yewo.agent.actuation.safety import (
+    ActionSafetyPolicy,
+    ActionSource,
+    execute_authorized,
+)
 from yewo.agent.grounding.description import SCREEN_MISMATCH
 from yewo.agent.memory import replay_match
 from yewo.agent.memory.replay import REPLAYABLE_KEYCODES
@@ -41,8 +45,10 @@ from yewo.agent.memory.replay_builder import (
 )
 from yewo.agent.run.record import StepRecord, StepSource
 from yewo.agent.run.postconditions import TextEntryReceipt
+from yewo.agent.run.instruction_controller import InstructionController
 
 logger = logging.getLogger(__name__)
+ACTION_SAFETY_POLICY = ActionSafetyPolicy()
 
 TARGETED_KINDS = frozenset({ActionType.TAP.value, ActionType.TYPE.value})
 """Actions that need a matched element before execution."""
@@ -157,6 +163,7 @@ class StepAttempt:
     refusal: Optional[str] = None
     source_mismatch: bool = False
     stopped: bool = False
+    resolved_action: Optional[Action] = None
 
 
 def confirm_arrival(
@@ -262,6 +269,8 @@ def take_cached_step(
     model_image: Optional[bytes] = None,
     before_action: Optional[Callable[[Action], bool]] = None,
     grounding: str = "",
+    instruction_controller: Optional[InstructionController] = None,
+    context_id: Optional[str] = None,
 ) -> StepAttempt:
     """Runs one saved step against the screen in front of the run.
 
@@ -345,17 +354,27 @@ def take_cached_step(
     # no planner to notice, so this is the only thing that would.
     stale_reason = targeting.stale_target_reason(device_control, screen, action)
     if stale_reason:
-        return StepAttempt(refusal=stale_reason)
+        return StepAttempt(refusal=stale_reason, resolved_action=action)
     if before_action is not None and not before_action(action):
         return StepAttempt(stopped=True)
 
     started_at = time.monotonic()
     failure_reason: Optional[str] = None
     entry_receipt: Optional[TextEntryReceipt] = None
+    authorization = None
     try:
         if isinstance(action, TypeAction) and scrubber is not None:
             scrubber.protect_typed_region(action.text, action.coordinates, screen.gui_elements)
-        receipt = ActionOrchestrator(device_control, scrubber).execute(action)
+        authorization = ACTION_SAFETY_POLICY.authorize(
+            action,
+            source=ActionSource.SAVED_ROUTE,
+            observation_id=screen.observation_id,
+            screen_phash=screen.current_phash,
+            screen_size=(scan.screen_width, scan.screen_height),
+            context_id=context_id,
+            instruction_controller=instruction_controller,
+        )
+        receipt = execute_authorized(authorization, device_control, scrubber)
         if isinstance(receipt, TextEntryReceipt):
             entry_receipt = receipt
     except Exception as exc:  # noqa: BLE001 - a saved path must not fail a run
@@ -403,6 +422,8 @@ def take_cached_step(
         observation=failure_reason or "Replayed a saved step.",
         took_ms=took_ms,
     )
+    if authorization is not None:
+        step_log.record_authorization(authorization)
     return StepAttempt(
         step=CachedStep(
             action=action,

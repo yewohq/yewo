@@ -17,13 +17,13 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from yewo.testing.judge import rules, verdicts
 from yewo.metrics import Measurement, MeasurementRelation
 from yewo.testing.models import QAIssue, ReportStatus
-
 from .policy_checks import (
     PolicyCheckView,
     policy_check_views,
     policy_checks_succeeded,
 )
 from .scenario_steps import StepView, anchor_of, failed_at, step_views
+from .contract_evidence import contract_evidence_rows
 from .source import RunSource, ScenarioSource
 from .lifecycle import lifecycle_rows
 from .statuses import TONES, VERBS
@@ -112,6 +112,7 @@ class ScenarioView:
     failure_reason: str = ""
     lifecycle: Tuple[str, ...] = ()
     measurements: Tuple[str, ...] = ()
+    contract_evidence: Tuple[str, ...] = ()
     steps: Tuple[StepView, ...] = ()
     checks: Tuple[CheckView, ...] = ()
 
@@ -261,6 +262,7 @@ def _scenarios(report: RunSource, href: str) -> Tuple[ScenarioView, ...]:
                 failure_reason=scenario.failure_reason or "",
                 lifecycle=lifecycle_rows(scenario.lifecycle_operations),
                 measurements=_measurement_rows(scenario.measurements),
+                contract_evidence=contract_evidence_rows(scenario),
                 steps=step_views(scenario, href, opened),
                 checks=_checks(scenario),
             )

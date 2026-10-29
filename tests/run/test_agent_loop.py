@@ -109,7 +109,7 @@ class ReplayTests(unittest.TestCase):
     def _context(self):
         return RunContext(history=AgentHistory(), loop_detector=RollingLoopDetector())
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_replays_a_known_transition(self, orchestrator):
         ledger = self._ledger()
         agent = self._agent(ledger, ["0" * 64, "1" * 64, "1" * 64])
@@ -120,7 +120,7 @@ class ReplayTests(unittest.TestCase):
         orchestrator.return_value.execute.assert_called_once()
         self.assertEqual(len(context.history._entries), 1)
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_stops_when_the_screen_is_not_where_it_used_to_lead(self, orchestrator):
         ledger = self._ledger()
         agent = self._agent(ledger, ["0" * 64, "f" * 64])
@@ -131,7 +131,7 @@ class ReplayTests(unittest.TestCase):
         orchestrator.return_value.execute.assert_called_once()
         self.assertEqual(len(context.history._entries), 0)
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_does_not_replay_text_the_scenario_never_mentions(self, orchestrator):
         from yewo.agent.memory.replay import ReplayLedger
 
@@ -143,7 +143,7 @@ class ReplayTests(unittest.TestCase):
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_gestures_are_never_replayed(self, orchestrator):
         """Destructive scenarios are built from gestures, which must not carry over."""
         from yewo.agent.actuation.actions import ActionType, Coordinates, LongPressAction
@@ -164,7 +164,7 @@ class ReplayTests(unittest.TestCase):
 
         self.assertEqual(len(ledger), 0)
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_unknown_screen_plans_as_usual(self, orchestrator):
         agent = self._agent(self._ledger(), ["e" * 64])
 
@@ -172,7 +172,7 @@ class ReplayTests(unittest.TestCase):
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_does_not_replay_a_tap_this_scenario_never_asked_for(self, orchestrator):
         """A 'Place Order' tap learned elsewhere must not fire in another scenario."""
         from yewo.agent.memory.replay import ReplayLedger
@@ -185,7 +185,7 @@ class ReplayTests(unittest.TestCase):
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("yewo.agent.memory.replay.ActionOrchestrator")
+    @patch("yewo.agent.actuation.safety.ActionOrchestrator")
     def test_only_back_is_replayable_among_key_events(self, orchestrator):
         from yewo.agent.actuation.actions import ActionType, KeyEventAction
         from yewo.agent.memory.replay import ReplayLedger

@@ -16,6 +16,7 @@ from unittest import mock
 from PIL import Image
 
 from capability_fakes import EVERY_CAPABILITY as EVERY_CAPABILITY
+from generation_fakes import bind_scenarios_to_evidence, scenario_generation_evidence
 from yewo.agent.device import capability_receipts
 from yewo.agent.device.capability_controller import CapabilityController
 from yewo.agent.device.platform import Platform
@@ -368,6 +369,9 @@ def suite_run(
     from yewo.testing.runner import YewoTestRunner
 
     root = Path(directory)
+    generation_evidence = runner.setdefault(
+        "generation_evidence", scenario_generation_evidence()
+    )
 
     def passing(scenario):
         return ScenarioReport(
@@ -419,9 +423,12 @@ def suite_run(
             pass
 
         def generate_suite(self, _journey, cells=None):
+            knowledge_bound = bind_scenarios_to_evidence(
+                scenarios, generation_evidence
+            )
             return GeneratedSuite(
-                scenarios=list(scenarios),
-                locked=list(scenarios),
+                scenarios=knowledge_bound,
+                locked=knowledge_bound,
                 uncovered=list(uncovered or []),
             )
 
@@ -434,6 +441,7 @@ def suite_run(
                 llm=llm,
                 fast_llm=llm,
                 scrubber=SecretScrubber(),
+                interrupted_result=None,
                 record_prompts=lambda _store: None,
             )
 
@@ -442,7 +450,7 @@ def suite_run(
 
     with (
         patch("yewo.testing.runner.DeviceSession", Session),
-        patch("yewo.testing.runner.ScenarioGenerator", Generator),
+        patch("yewo.testing.generation_startup.ScenarioGenerator", Generator),
         patch("yewo.testing.runner.QAAgent", Agent),
         patch("yewo.testing.runner.ensure_device_ready"),
         patch("yewo.testing.runner.for_grounding"),

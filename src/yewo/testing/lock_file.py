@@ -31,7 +31,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from yewo import __version__
 from yewo.agent.device.launch import SetupMode
@@ -42,6 +42,7 @@ from yewo.testing.models import (
     ScenarioDraft,
     UserJourney,
 )
+from yewo.testing.generation_evidence import ScenarioGenerationEvidence
 from yewo.testing.steps import Step
 from yewo.testing.lifecycle import SetupOrigin
 from yewo.testing.taxonomy import Category, CoverageCell, Priority, ScenarioType
@@ -49,11 +50,14 @@ from yewo.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = 1
+SCHEMA = 2
 """The version of this file's shape. Read before anything else in it."""
 
 LOCK_NAME = "yewo.lock"
 """What the file is called, beside the journey file it locks."""
+
+GENERATION_POLICY_REVISION = 6
+"""Generation semantics included in every contract digest."""
 
 
 def _extract_journey_contract(journey: UserJourney) -> dict:
@@ -67,16 +71,14 @@ def _extract_journey_contract(journey: UserJourney) -> dict:
     scrubber = SecretScrubber()
     scrubber.learn_secrets(journey.secrets)
     contract = {
+        "generation_policy": GENERATION_POLICY_REVISION,
         "journey": journey.id,
         "name": scrubber.scrub(journey.name),
         "description": scrubber.scrub(journey.description),
         "security_rules": [scrubber.scrub(rule) for rule in journey.security_rules],
         "values": sorted(journey.values),
         "refused": sorted(journey.refused),
-        "actors": {
-            name: sorted(actor.values)
-            for name, actor in sorted(journey.actors.items())
-        },
+        "actors": {name: sorted(actor.values) for name, actor in sorted(journey.actors.items())},
     }
     if journey.preconditions.app_state is not None or journey.preconditions.capabilities:
         contract["preconditions"] = scrubber.scrub(
@@ -95,10 +97,19 @@ def _digest(payload: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def contract_sha256(journey: UserJourney, cell: CoverageCell) -> str:
+def contract_sha256(
+    journey: UserJourney,
+    cell: CoverageCell,
+    generation_evidence_sha256: str = "",
+) -> str:
     """What the file asked for at this cell, so a changed question reads as stale."""
     return _digest(
-        {**_extract_journey_contract(journey), "cell": cell.key, "priority": cell.priority.value}
+        {
+            **_extract_journey_contract(journey),
+            "cell": cell.key,
+            "priority": cell.priority.value,
+            "generation_evidence_sha256": generation_evidence_sha256,
+        }
     )
 
 
@@ -115,6 +126,8 @@ def journey_sha256(journey: UserJourney) -> str:
 class LockEntry(BaseModel):
     """One scenario, as the lock holds it."""
 
+    model_config = ConfigDict(extra="forbid")
+
     scenario_uuid: str
     workflow: str = ""
     journey: str
@@ -128,10 +141,48 @@ class LockEntry(BaseModel):
     setup: SetupMode
     steps: List[Step]
     expected_outcomes: List[ExpectedOutcome]
+    app_capability_ids: List[str] = Field(default_factory=list)
+    route_memory_ids: List[str] = Field(default_factory=list)
+    app_map_artifact_id: str = ""
+    generation_evidence_sha256: str = ""
+
+    @model_validator(mode="after")
+    def _validate_generation_evidence_identity(self) -> "LockEntry":
+        if len(self.app_capability_ids) != len(set(self.app_capability_ids)):
+            raise ValueError("Lock capability references must be unique.")
+        if len(self.route_memory_ids) != len(set(self.route_memory_ids)):
+            raise ValueError("Lock RouteMemory references must be unique.")
+        evidence_fields_present = any(
+            (
+                self.app_map_artifact_id,
+                self.generation_evidence_sha256,
+                self.app_capability_ids,
+                self.route_memory_ids,
+            )
+        )
+        evidence_fields_complete = all(
+            (
+                self.app_map_artifact_id,
+                self.generation_evidence_sha256,
+                self.app_capability_ids,
+                self.route_memory_ids,
+            )
+        )
+        if evidence_fields_present and not evidence_fields_complete:
+            raise ValueError(
+                "A knowledge-bound lock entry requires its AppMap, evidence digest, "
+                "capability IDs, and RouteMemory IDs."
+            )
+        return self
 
     @classmethod
     def of(
-        cls, scenario: GeneratedTestCase, journey: UserJourney, workflow: str, digest: str
+        cls,
+        scenario: GeneratedTestCase,
+        journey: UserJourney,
+        workflow: str,
+        digest: str,
+        generation_evidence: ScenarioGenerationEvidence | None = None,
     ) -> "LockEntry":
         """The entry for one scenario, taken before any value was substituted."""
         return cls(
@@ -148,6 +199,14 @@ class LockEntry(BaseModel):
             setup=scenario.setup,
             steps=list(scenario.steps),
             expected_outcomes=list(scenario.expected_outcomes),
+            app_capability_ids=list(scenario.app_capability_ids),
+            route_memory_ids=list(scenario.route_memory_ids),
+            app_map_artifact_id=(
+                generation_evidence.app_map_artifact_id if generation_evidence is not None else ""
+            ),
+            generation_evidence_sha256=(
+                generation_evidence.evidence_sha256 if generation_evidence is not None else ""
+            ),
         )
 
     def cell_of(self) -> CoverageCell:
@@ -163,6 +222,8 @@ class LockEntry(BaseModel):
         """The scenario as a run holds it, still carrying the declared names."""
         draft = ScenarioDraft.model_construct(
             scenario_name=self.scenario_name,
+            app_capability_ids=list(self.app_capability_ids),
+            route_memory_ids=list(self.route_memory_ids),
             steps=list(self.steps),
             expected_outcomes=list(self.expected_outcomes),
         )
@@ -177,6 +238,8 @@ class LockEntry(BaseModel):
 
 class Lock(BaseModel):
     """Every locked scenario in one file, so a partial lock is a bug and not a state."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: int = SCHEMA
     yewo_version: str = __version__

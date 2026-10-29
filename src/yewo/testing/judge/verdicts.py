@@ -71,7 +71,12 @@ def _terminal_outcome(
             run_result.failure_reason or "Execution exception",
             run_result.cause or Cause.UNKNOWN,
         )
-    if run_result.status in ("loop_detected", "step_limit"):
+    if run_result.status in (
+        "loop_detected",
+        "step_limit",
+        "intervention_limit",
+        "control_unresolved",
+    ):
         return ReportStatus.UNVERIFIED, run_result.failure_reason, Cause.AGENT
     agent_entry_failure = next(
         (
@@ -264,7 +269,11 @@ def _missing_required_ids(
     evidences it. It stays evidenced whatever later screens show, because a
     failure anywhere already failed the scenario.
     """
-    expected_ids = rules.ids(required_outcomes, rules.EXPECTED)
+    expected_ids = {
+        rules.rule_id(rules.EXPECTED, index)
+        for index, outcome in enumerate(required_outcomes)
+        if not isinstance(outcome, ExpectedOutcome) or outcome.obligation.required
+    }
     security_ids = rules.ids(security_rules, rules.SECURITY)
     applicable = {
         verification.rule_id

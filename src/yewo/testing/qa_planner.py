@@ -15,6 +15,7 @@ from typing import List, Optional
 from pydantic import Field, model_validator
 
 from yewo.agent.device.launch import SetupMode
+from yewo.agent.device.platform import Platform
 from yewo.agent.plan.planner import (
     DRIFT_SECTION,
     DescribeDeviceAction,
@@ -82,15 +83,17 @@ RESPONSE_INSTRUCTIONS = """
 3. Set `evaluation_previous_goal` to what the last action did. Leave it empty
    on the first step.
 4. Set `reasoning` to the next instruction that is not complete.
-5. Set `action` to one action that advances that instruction. An instruction
+5. Report your estimate of `active_instruction_index` for diagnostics. The
+   deterministic instruction controller ignores this claim when deciding progress.
+6. Set `action` to one action that advances that instruction. An instruction
    may need several actions.
-6. Keep `goal_satisfied` false while any instruction is not complete.
-7. Set `goal_satisfied` true after the history shows the last instruction ran.
+7. Keep `goal_satisfied` false while any instruction is not complete.
+8. Set `goal_satisfied` true after the history shows the last instruction ran.
    Select `done`. Do not read completion from the session trail. Do not read it
    from an earlier scenario.
-8. Set `goal_evidence` to the visible state the app ended on.
-9. Set `external_navigation` true only when the action leaves the app.
-10. Set `infeasibility_reason` only when you set `is_scenario_feasible` false.
+9. Set `goal_evidence` to the visible state the app ended on.
+10. Set `external_navigation` true only when the action leaves the app.
+11. Set `infeasibility_reason` only when you set `is_scenario_feasible` false.
 """
 
 
@@ -137,6 +140,14 @@ class QAStepResponse(DeviceStepResponse):
         default=None,
         description="Detailed reason why the scenario is infeasible. None if feasible.",
     )
+    active_instruction_index: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Diagnostic estimate of the next incomplete instruction's one-based "
+            "position. The instruction controller does not accept this as progress evidence."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_infeasibility_reason(self) -> "QAStepResponse":
@@ -173,8 +184,14 @@ class QAPlanner(DevicePlanner):
         setup: SetupMode,
         scrubber=None,
         grounding: str = GROUNDING_COORDINATES,
+        platform: Platform = Platform.ANDROID,
     ):
-        super().__init__(llm_client, grounding, scrubber=scrubber)
+        super().__init__(
+            llm_client,
+            grounding,
+            scrubber=scrubber,
+            platform=platform,
+        )
         # The setup state, and not the scenario. A GeneratedTestCase carries
         # the assertions, so holding one would put them a prompt edit away.
         self._setup = setup

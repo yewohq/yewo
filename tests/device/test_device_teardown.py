@@ -15,7 +15,9 @@ from fakes import PACKAGE, SERIAL, LoggingDriver, log_entries
 
 from yewo.agent.artifacts.layout import RunLayout
 from yewo.agent.device.device_logs import DeviceLogRecorder
+from yewo.agent.device import touch_input
 from yewo.agent.device.adb_control import AdbControl, VisualFeedbackSettings
+from yewo.agent.device.touch_input import TouchInputSettings
 from yewo.agent.device.files import DeviceFiles
 from yewo.agent.device.session import DeviceSession
 from yewo.agent.device.simctl_control import SimctlControl
@@ -253,6 +255,10 @@ class UninstallPolicyTests(unittest.TestCase):
                 "read_visual_feedback",
                 return_value=VisualFeedbackSettings(False, False),
             ),
+            patch.object(
+                touch_input, "read_touch_input", return_value=TouchInputSettings(None)
+            ),
+            patch.object(touch_input, "prepare_touch_input"),
             patch.object(AdbControl, "enable_feedback"),
             patch("yewo.agent.device.session.DeviceControl", return_value=control),
             patch("yewo.agent.device.session.time.sleep"),
@@ -300,6 +306,56 @@ class UninstallPolicyTests(unittest.TestCase):
 
         restore.assert_called_once_with(SERIAL, settings)
         self.assertIsNone(session._visual_feedback_before_run)
+
+    def test_android_touch_input_is_restored_before_disconnect(self):
+        settings = TouchInputSettings(stylus_handwriting=None)
+        session = self._session(
+            _owns_appium=False,
+            _touch_input_before_run=settings,
+            device_control=self._control(),
+        )
+        with (
+            patch.object(DeviceSession, "save_recording"),
+            patch.object(AdbControl, "uninstall_app"),
+            patch.object(touch_input, "restore_touch_input") as restore,
+        ):
+            session.close(final=True, interrupted=True)
+
+        restore.assert_called_once_with(SERIAL, settings)
+        self.assertIsNone(session._touch_input_before_run)
+
+    def test_android_input_settings_are_restored_when_startup_fails(self):
+        settings = TouchInputSettings(stylus_handwriting=True)
+        session = self._session(
+            app_path="app.apk",
+            record_session=False,
+            _appium_url="http://127.0.0.1:4723",
+        )
+        control = self._control()
+        with (
+            patch.object(DeviceSession, "_start_appium"),
+            patch.object(DeviceSession, "_note_app_ownership"),
+            patch("yewo.agent.device.session.DeviceControl", return_value=control),
+            patch.object(
+                AdbControl,
+                "read_visual_feedback",
+                return_value=VisualFeedbackSettings(False, False),
+            ),
+            patch.object(
+                touch_input,
+                "read_touch_input",
+                return_value=settings,
+            ),
+            patch.object(touch_input, "prepare_touch_input"),
+            patch.object(AdbControl, "enable_feedback", side_effect=RuntimeError("offline")),
+            patch.object(AdbControl, "restore_visual_feedback") as restore_feedback,
+            patch.object(touch_input, "restore_touch_input") as restore_touch,
+            self.assertRaisesRegex(RuntimeError, "offline"),
+        ):
+            session.start()
+
+        restore_feedback.assert_called_once()
+        restore_touch.assert_called_once_with(SERIAL, settings)
 
     def test_a_session_with_no_driver_still_closes(self):
         """A session that died before it opened one has nothing to read."""

@@ -32,6 +32,8 @@ def context() -> SimpleNamespace:
         loop_detector=RollingLoopDetector(),
         steps_executed=0,
         prev_phash=None,
+        instruction_controller=None,
+        execution_context=None,
     )
 
 

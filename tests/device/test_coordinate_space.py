@@ -2,7 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device.platform import Platform
@@ -34,23 +34,23 @@ class ScreenshotCoordinateSpaceTests(unittest.TestCase):
         control._calibrate_coordinate_space(self._png_header(880, 1912))
 
         self.assertEqual((control.screen_width, control.screen_height), (880, 1912))
-        self.assertEqual(control._driver_point(396, 1510), (198, 755))
+        self.assertEqual(control.driver_point(396, 1510), (198, 755))
 
     def test_a_same_size_screenshot_keeps_android_coordinates_unchanged(self):
         control = self._control()
 
         control._calibrate_coordinate_space(self._png_header(440, 956))
 
-        self.assertEqual(control._driver_point(396, 755), (396, 755))
+        self.assertEqual(control.driver_point(396, 755), (396, 755))
 
 
 class IOSTextEntryTests(unittest.TestCase):
-    @patch("yewo.agent.device.control.time.sleep")
-    def test_ios_types_through_the_focused_element(self, _sleep):
+    def test_ios_verifies_focus_then_types_through_the_focused_element(self):
         element = SimpleNamespace(
             send_keys=Mock(),
             get_attribute=Mock(return_value=None),
             text="",
+            rect={"x": 0, "y": 0, "width": 20, "height": 20},
         )
         control = DeviceControl.__new__(DeviceControl)
         control.platform = Platform.IOS
@@ -59,7 +59,12 @@ class IOSTextEntryTests(unittest.TestCase):
         )
         control._driver_width = 440
         control._driver_height = 956
-        control.tap = Mock()
+        control.is_keyboard_open = Mock(side_effect=(False, True))
+
+        def focus_target(_x, _y):
+            element.rect = {"x": 500, "y": 1100, "width": 100, "height": 300}
+
+        control.tap = Mock(side_effect=focus_target)
 
         control.type("test@email.com", 537, 1260)
 

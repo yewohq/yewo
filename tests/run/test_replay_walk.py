@@ -9,6 +9,7 @@ from yewo.agent.actuation.actions import (
     TapAction,
     TypeAction,
 )
+from yewo.agent.actuation import safety as action_safety
 from yewo.agent.memory import replay_learning, replay_store, replay_walk
 
 import replay_driver
@@ -50,6 +51,7 @@ def screen_read(elements, info=None):
         scan_info=info or scan(len(elements)),
         current_phash="p",
         raw_img_bytes=b"",
+        observation_id="observation-p",
     )
 
 
@@ -265,9 +267,9 @@ class WalkTests(unittest.TestCase):
         self.names = replay_store.ValueNames(VALUES)
         self.device = Device()
         self.log = StepLog()
-        self._real = replay_walk.ActionOrchestrator
-        replay_walk.ActionOrchestrator = Orchestrator
-        self.addCleanup(setattr, replay_walk, "ActionOrchestrator", self._real)
+        self._real = action_safety.ActionOrchestrator
+        action_safety.ActionOrchestrator = Orchestrator
+        self.addCleanup(setattr, action_safety, "ActionOrchestrator", self._real)
 
     def _trace(self, before, after, action):
         return replay_walk.build_trace(

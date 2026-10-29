@@ -136,13 +136,17 @@ class ValueTests(unittest.TestCase):
         self.assertNotIn("confidential-workspace", prompt)
         self.assertNotIn("account", prompt.lower())
 
-    def test_the_prompt_never_asks_for_a_value_of_the_models_own(self):
-        """It used to forbid that and then ask for malformed values anyway."""
+    def test_generated_probe_values_cannot_be_used_as_declared_enter_values(self):
+        """A probe explores behavior without becoming app-owned test data."""
         prompt = _prompt(NEGATIVE)
 
+        self.assertIn("An `enter` step names one of these", prompt)
         self.assertIn("Never write a value of your own", prompt)
-        for invited in ("malformed", "wrong shape", "checksum"):
-            self.assertNotIn(invited, prompt, invited)
+        self.assertIn(
+            "Otherwise choose a concrete invalid, malformed, or extreme `probe_value`",
+            prompt,
+        )
+        self.assertIn("A probe is test input. It is not a product limit", prompt)
 
 
 class RequirementTests(unittest.TestCase):

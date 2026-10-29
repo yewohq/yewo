@@ -20,6 +20,11 @@ DEFAULT_OUTPUT_DIR = "assets"
 DEFAULT_MAX_STEPS = 40
 STEP_BUDGET_FLOOR = 15
 STEP_BUDGET_PER_INSTRUCTION = 2
+# Turns a scenario may spend repairing its own execution, apart from the steps
+# its instructions asked for. One control-discovery transaction can probe ten
+# cells, and a settled recovery re-observes a few times after that. A scenario
+# that needs more than this is not short of steps: its target is not there.
+DEFAULT_INTERVENTION_STEPS = 16
 DEFAULT_SETTLE_TIME = 2.0
 DEFAULT_APP_PATH = None
 DEFAULT_GROUNDING = "marks"
@@ -51,6 +56,10 @@ SETTLE_POLL_INTERVAL = 0.35
 SETTLE_STABLE_READINGS = 2
 FOCUS_POLL_INTERVAL = 0.1
 FOCUS_POLL_TIMEOUT = 1.5
+# Android input-method UI can appear before Appium exposes the field that owns
+# focus. Keep the ordinary miss fast, but allow that observed transition to
+# settle before refusing text entry.
+ANDROID_FOCUS_IME_GRACE_TIMEOUT = 8.0
 
 # Launching is over once the screen has something on it and has stopped
 # changing — an empty body means nothing is drawn yet, an unstable one means a

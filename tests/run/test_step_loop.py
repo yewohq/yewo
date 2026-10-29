@@ -51,6 +51,7 @@ class LoopRecordTests(unittest.TestCase):
         agent.stop_when_satisfied = False
         agent.artifacts = Mock()
         agent.images = Mock()
+        agent.grounding_models = Mock()
         agent.artifacts.save_step.return_value = {"raw": "step001_raw.png"}
         agent.artifacts.save_planner_view.return_value = None
         agent.artifacts.save_action.return_value = "step001_action.png"
@@ -75,6 +76,9 @@ class LoopRecordTests(unittest.TestCase):
         observation_hook=None,
         pending_entered_value=None,
         focused_field=None,
+        keyboard_open=False,
+        action_failure=None,
+        before_action_hook=None,
     ):
         from pathlib import Path
         from unittest.mock import Mock, patch
@@ -92,17 +96,22 @@ class LoopRecordTests(unittest.TestCase):
         )
         ctx.pending_entered_value = pending_entered_value
         device = Mock()
-        device.is_keyboard_open.return_value = False
+        device.is_keyboard_open.return_value = keyboard_open
+        device.dismiss_keyboard.return_value = True
         device.read_focused_field.return_value = focused_field
+        self.last_device = device
         agent.durable_replay = None
 
         with (
             patch("yewo.agent.step.observation.capture", return_value=self._snapshot()),
             patch("yewo.agent.step.dispatch.settle.settle", return_value="phash-2"),
-            patch("yewo.agent.step.dispatch.ActionOrchestrator") as orchestrator,
+            patch("yewo.agent.actuation.safety.ActionOrchestrator") as orchestrator,
             patch("yewo.agent.device.state.context_drift", return_value=None),
         ):
-            orchestrator.return_value.execute.return_value = None
+            if action_failure is None:
+                orchestrator.return_value.execute.return_value = None
+            else:
+                orchestrator.return_value.execute.side_effect = action_failure
             agent._run_step(
                 step=0,
                 goal="sign in",
@@ -114,6 +123,7 @@ class LoopRecordTests(unittest.TestCase):
                 observation_hook=observation_hook,
                 step_hook=None,
                 ctx=ctx,
+                before_action_hook=before_action_hook,
             )
         return ctx.steps.records
 
@@ -133,9 +143,11 @@ class LoopRecordTests(unittest.TestCase):
         step = records[0]
         self.assertEqual(step.n, 1)
         self.assertEqual(step.phash, "phash-1")
+        self.assertTrue(step.observation_id)
         self.assertEqual(step.screen_name, "Sign in")
         self.assertIsNotNone(step.decision)
         self.assertIsNotNone(step.action)
+        self.assertIsNotNone(step.control_identity)
         self.assertIsNotNone(step.grounding)
         self.assertIsNotNone(step.outcome)
         self.assertTrue(step.outcome.success)
@@ -186,6 +198,35 @@ class LoopRecordTests(unittest.TestCase):
         self.assertFalse(step.outcome.success)
         self.assertIsNotNone(step.decision)
 
+    def test_an_unlisted_target_can_reveal_content_behind_the_keyboard(self):
+        from yewo.agent.actuation.actions import TargetNotListedAction
+
+        self._run_one(
+            TargetNotListedAction(
+                description="a Pay button", region="lower_center", reason="pay"
+            ),
+            keyboard_open=True,
+        )
+
+        self.last_device.dismiss_keyboard.assert_called_once_with()
+
+    def test_a_failed_dispatched_action_does_not_press_back_through_input_ui(self):
+        from yewo.agent.actuation.actions import Coordinates
+        from yewo.agent.actuation.coordinate_actions import TypeCoordinateAction
+
+        self._run_one(
+            TypeCoordinateAction(
+                text="Leg Day",
+                coordinates=Coordinates(x=10, y=20),
+                target="Name field",
+                reason="name the schedule",
+            ),
+            keyboard_open=True,
+            action_failure=RuntimeError("focus was not readable"),
+        )
+
+        self.last_device.dismiss_keyboard.assert_not_called()
+
     def test_an_observation_stop_prevents_cache_selection_and_planning(self):
         from unittest.mock import patch
 
@@ -208,6 +249,26 @@ class LoopRecordTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertIsNone(records[0].decision)
         self.assertIsNone(records[0].action)
+
+    def test_a_before_action_stop_is_not_counted_as_a_repeated_action(self):
+        from unittest.mock import patch
+
+        from yewo.agent.actuation.actions import Coordinates
+        from yewo.agent.actuation.coordinate_actions import TapCoordinateAction
+        from yewo.agent.run.outcomes import ObservationDirective
+
+        action = TapCoordinateAction(
+            coordinates=Coordinates(x=10, y=20),
+            target="Sign in button",
+            reason="sign in",
+        )
+        with patch("yewo.agent.run.outcomes.repeated_control") as repeated:
+            self._run_one(
+                action,
+                before_action_hook=lambda _action, _step: ObservationDirective.STOP,
+            )
+
+        repeated.assert_not_called()
 
     def test_a_failed_entry_forces_planner_recovery_before_more_replay(self):
         from unittest.mock import patch
@@ -410,7 +471,7 @@ class FailedActionTests(unittest.TestCase):
 
         with (
             patch("yewo.agent.step.dispatch.settle.settle", return_value="phash-2"),
-            patch("yewo.agent.step.dispatch.ActionOrchestrator") as orchestrator,
+            patch("yewo.agent.actuation.safety.ActionOrchestrator") as orchestrator,
         ):
             orchestrator.return_value.execute.side_effect = failure
             dispatch.execute(
@@ -423,7 +484,12 @@ class FailedActionTests(unittest.TestCase):
                     action=action,
                 ),
                 device_control=Mock(),
-                snapshot=SimpleNamespace(current_phash="phash-1", gui_elements=[], marks=[]),
+                snapshot=SimpleNamespace(
+                    current_phash="phash-1",
+                    gui_elements=[],
+                    marks=[],
+                    observation_id="observation-1",
+                ),
                 session_trail=None,
                 ctx=ctx,
                 scrubber=scrubber,
@@ -453,6 +519,16 @@ class FailedActionTests(unittest.TestCase):
 
         self.assertFalse(step.outcome.success)
         self.assertIn("took no text", step.outcome.error)
+
+    def test_an_unverifiable_focus_is_counted_by_failure_type(self):
+        from yewo.errors import FocusVerificationFailed
+
+        ctx = self._dispatched(FocusVerificationFailed("focus unavailable"))
+
+        self.assertFalse(ctx.loop_detector.focus_verification_terminated)
+        ctx.loop_detector.record_focus_verification_failure()
+        ctx.loop_detector.record_focus_verification_failure()
+        self.assertTrue(ctx.loop_detector.focus_verification_terminated)
 
     def test_a_declared_value_in_a_device_error_is_masked(self):
         ctx = self._dispatched(RuntimeError("could not type password123"))

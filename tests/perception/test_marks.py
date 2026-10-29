@@ -222,29 +222,18 @@ class UnresolvedMarkTests(unittest.TestCase):
 
         self.assertIn("element 47", narration.describe(self._action()))
 
-    def test_an_unresolved_mark_can_be_hashed_for_loop_detection(self):
-        from yewo.agent.actuation.actions import TapMarkAction
-        from yewo.agent.memory.loop_detector import RollingLoopDetector
-
-        same = RollingLoopDetector.hash_action(self._action())
-        other = RollingLoopDetector.hash_action(
-            TapMarkAction(mark=48, target="Continue button", reason="continue")
-        )
-
-        self.assertEqual(same, RollingLoopDetector.hash_action(self._action()))
-        self.assertNotEqual(same, other)
-
-    def test_a_not_listed_action_can_be_described_and_hashed(self):
+    def test_a_not_listed_action_can_be_described_and_identified(self):
         from yewo.agent.step import narration
         from yewo.agent.actuation.actions import TargetNotListedAction
-        from yewo.agent.memory.loop_detector import RollingLoopDetector
+        from yewo.agent.memory.control_identity import build_control_identity
 
         action = TargetNotListedAction(
             description="blue button", region="lower_center", reason="r"
         )
 
         self.assertIn("target_not_listed", narration.describe(action))
-        self.assertTrue(RollingLoopDetector.hash_action(action))
+        identity = build_control_identity(action, "screen-a", (1080, 2400))
+        self.assertEqual(identity.qualifier, "lower_center")
 
 
 class NestCollapseTests(unittest.TestCase):

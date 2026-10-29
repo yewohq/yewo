@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from yewo.agent.actuation.actions import Capability, CapabilityKind
 from yewo.testing.step_language import ACTION_VERBS, leaked_assertion, unknown_action
+from yewo.testing.taxonomy import ScenarioType
 
 
 class EnterStep(BaseModel):
@@ -55,6 +56,13 @@ class ActionStep(BaseModel):
     kind: Literal["action"] = "action"
     instruction: str = Field(
         description="One action on one control, such as 'Tap the Save button.'"
+    )
+    evidence: Optional[str] = Field(
+        default=None,
+        description=(
+            "The same instruction copied verbatim from the journey. Omit only for "
+            "the synthetic app-launch step."
+        ),
     )
 
     @model_validator(mode="before")
@@ -104,6 +112,128 @@ class ActionStep(BaseModel):
         return self.instruction
 
 
+class IntentStep(BaseModel):
+    """A user objective whose mechanics must come from the observed application."""
+
+    kind: Literal["intent"] = "intent"
+    instruction: str = Field(
+        min_length=1,
+        description=(
+            "One outcome-oriented user objective copied from the journey."
+        ),
+    )
+    evidence: str = Field(
+        min_length=1,
+        description="The same objective copied verbatim from the journey.",
+    )
+
+    def rendered(self) -> str:
+        return self.instruction
+
+
+VARIATION_TYPES = frozenset(
+    {
+        ScenarioType.NEGATIVE,
+        ScenarioType.BOUNDARY,
+        ScenarioType.EMPTY,
+        ScenarioType.EXPLORATORY,
+    }
+)
+
+
+class VariationStep(BaseModel):
+    """A different user strategy for pursuing the same complete journey.
+
+    The strategy may choose a probe. It does not declare how the product must
+    handle that probe. The runtime planner grounds the mechanics against the
+    observed application, while the unchanged goal prevents a coverage cell
+    from becoming an isolated control check.
+    """
+
+    kind: Literal["variation"] = "variation"
+    goal: str = Field(
+        min_length=1,
+        description="The complete journey copied verbatim from the app context.",
+    )
+    objective: str = Field(
+        min_length=1,
+        description="The journey objective to vary, copied verbatim from the context.",
+    )
+    evidence: str = Field(
+        min_length=1,
+        description="The same objective copied verbatim from the app context.",
+    )
+    strategy: ScenarioType = Field(
+        description="The requested negative, boundary, empty, or exploratory strategy."
+    )
+    probe_value: Optional[str] = Field(
+        default=None,
+        description=(
+            "A generated test input used as a probe, not a claimed product limit or "
+            "expected result."
+        ),
+    )
+    repetitions: Optional[int] = Field(
+        default=None,
+        ge=2,
+        le=1000,
+        description="A bounded number of attempts used to probe repeated or high-volume use.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_strategy_parameters(self) -> "VariationStep":
+        if self.strategy not in VARIATION_TYPES:
+            raise ValueError(
+                "A variation strategy must be negative, boundary, empty, or exploratory."
+            )
+        if (
+            self.strategy is ScenarioType.BOUNDARY
+            and self.probe_value is None
+            and self.repetitions is None
+        ):
+            raise ValueError("A boundary variation needs a probe_value or repetitions.")
+        if self.strategy in {ScenarioType.EMPTY, ScenarioType.EXPLORATORY} and (
+            self.probe_value is not None or self.repetitions is not None
+        ):
+            raise ValueError(
+                f"A {self.strategy.value} variation does not accept probe parameters."
+            )
+        return self
+
+    def rendered(self) -> str:
+        goal_instruction = f"Complete this journey: {self.goal}"
+        if self.strategy is ScenarioType.NEGATIVE and self.probe_value is not None:
+            variation = (
+                f"use probe value {self.probe_value!r} while attempting this objective: "
+                f"{self.objective}"
+            )
+        elif self.strategy is ScenarioType.NEGATIVE:
+            variation = (
+                "use the separately declared refused value while attempting this "
+                f"objective: {self.objective}"
+            )
+        elif self.strategy is ScenarioType.BOUNDARY and self.repetitions is not None:
+            variation = (
+                f"attempt this objective exactly {self.repetitions} times: {self.objective}"
+            )
+        elif self.strategy is ScenarioType.BOUNDARY:
+            variation = (
+                f"use probe value {self.probe_value!r} while attempting this objective: "
+                f"{self.objective}"
+            )
+        elif self.strategy is ScenarioType.EMPTY:
+            variation = (
+                "omit the relevant value or item while attempting this objective: "
+                f"{self.objective}"
+            )
+        else:
+            variation = (
+                "use an alternate route or action order that the observed app supports "
+                f"while attempting this objective: {self.objective}"
+            )
+        return f"{goal_instruction} While doing so, {variation}."
+
+
 class CapabilityStep(BaseModel):
     """A device state the scenario needs, carrying the capability itself.
 
@@ -138,7 +268,8 @@ class CapabilityStep(BaseModel):
 
 
 Step = Annotated[
-    Union[EnterStep, ActionStep, CapabilityStep], Field(discriminator="kind")
+    Union[EnterStep, ActionStep, IntentStep, VariationStep, CapabilityStep],
+    Field(discriminator="kind"),
 ]
 """One thing a scenario does. The kind says which, so nothing is parsed."""
 
@@ -175,6 +306,64 @@ def capabilities_in(steps: list) -> list[Capability]:
 def entered_values(steps: list) -> list[EnterStep]:
     """Every value these steps enter, in order."""
     return [step for step in steps if isinstance(step, EnterStep)]
+
+
+def variations_in(steps: list) -> list[VariationStep]:
+    """Every user-strategy variation in scenario order."""
+    return [step for step in steps if isinstance(step, VariationStep)]
+
+
+APP_LAUNCH_INSTRUCTIONS = frozenset({"launch the app", "open the app"})
+
+
+def _provenance_text(value: str) -> str:
+    """Normalize presentation-only whitespace without translating text."""
+    return " ".join(value.split()).casefold()
+
+
+def unsupported_ui_claim(step: ActionStep, source: str) -> Optional[str]:
+    """Return why an executable action is not a verbatim journey instruction.
+
+    This deliberately does not classify words such as ``button`` or ``tap``.
+    A vocabulary-based gate would be language-specific and would always miss
+    some future control type. Verbatim provenance is deterministic in every
+    language; everything else remains an intent for the runtime planner to
+    ground against the observed application.
+    """
+    if _provenance_text(step.instruction).rstrip(".!?…") in APP_LAUNCH_INSTRUCTIONS:
+        return None
+    evidence = (step.evidence or "").strip()
+    if not evidence:
+        return "the executable action provides no verbatim source instruction"
+    normalized_evidence = _provenance_text(evidence)
+    if normalized_evidence not in _provenance_text(source):
+        return "the action evidence is not an exact excerpt from the journey"
+    if normalized_evidence != _provenance_text(step.instruction):
+        return "the executable action is not copied verbatim from its evidence"
+    return None
+
+
+def unsupported_intent_claim(step: IntentStep, source: str) -> Optional[str]:
+    """Return why an intent is not a verbatim journey objective."""
+    normalized_evidence = _provenance_text(step.evidence)
+    if normalized_evidence not in _provenance_text(source):
+        return "the intent evidence is not an exact excerpt from the journey"
+    if normalized_evidence != _provenance_text(step.instruction):
+        return "the intent is not copied verbatim from its evidence"
+    return None
+
+
+def unsupported_variation_claim(step: VariationStep, source: str) -> Optional[str]:
+    """Return why a varied journey or objective lacks verbatim provenance."""
+    normalized_source = _provenance_text(source)
+    if _provenance_text(step.goal) != normalized_source:
+        return "the variation does not preserve the complete journey verbatim"
+    normalized_evidence = _provenance_text(step.evidence)
+    if normalized_evidence not in normalized_source:
+        return "the variation evidence is not an exact excerpt from the journey"
+    if _provenance_text(step.objective) != normalized_evidence:
+        return "the varied objective is not copied verbatim from its evidence"
+    return None
 
 
 def refusal_outcome(field: str) -> str:

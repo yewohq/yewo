@@ -110,9 +110,9 @@ class KeyboardRevealTests(unittest.TestCase):
         return SimpleNamespace(current_phash=phash)
 
     def _reveal(self, device, snapshot, ctx):
-        from yewo.agent.memory.stall import reveal_behind_keyboard
+        from yewo.agent.memory.stall import reveal_target_behind_keyboard
 
-        return reveal_behind_keyboard(device, snapshot, ctx)
+        return reveal_target_behind_keyboard(device, snapshot, ctx)
 
     def test_a_blocked_step_with_the_keyboard_up_closes_it(self):
         device, pressed = self._device(keyboard_open=True)

@@ -27,6 +27,9 @@ from typing import List, Literal, Optional, Sequence
 from pydantic import BaseModel, Field
 
 from yewo.agent.run.record import CallRow, StepRecord
+from yewo.agent.run.recovery import RecoveryTransaction, scrub_recovery_transaction
+from yewo.agent.run.input_transaction import InputTransactionReceipt
+from yewo.agent.run.settlement import SettlementReceipt
 from yewo.agent.device.crash_diagnostics import CrashDiagnostic
 from yewo.identity import new_uuid
 from yewo.testing.models import (
@@ -44,17 +47,13 @@ from yewo.testing.models import (
 from yewo.policy import policy_checks_succeeded
 from yewo.utils.secrets import SecretScrubber
 from yewo.testing.lifecycle import LifecycleOperation
+from yewo.testing.cold_start import ColdStartEvidence
+from yewo.testing.obligations import ObligationRunEvidence
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = 5
-"""The version of this file's shape.
-
-5 adds app-scoped crash diagnostics to each scenario. Schema 4 added direct
-measurement samples to each scenario. Schema 3 added lifecycle
-operations. Schema 2 added `verdict_inputs`.
-A record written under 1 holds too little to reach its verdict again.
-"""
+SCHEMA = 7
+"""Schema 7 adds settlement, input-transaction, and obligation evidence."""
 
 ABORTED = ReportStatus.ABORTED
 """A run that was interrupted. It never reached a verdict of its own."""
@@ -76,13 +75,7 @@ def _now() -> str:
 
 
 class ScenarioEntry(BaseModel):
-    """One scenario's row, from listed to finished.
-
-    A field a scenario only has once it has run stays None until then, and
-    the writer leaves it out. So a row grows as the run learns. The fields a
-    row can hold are fixed here, rather than accruing wherever a status is
-    set.
-    """
+    """One scenario's row, grown from listed to finished as evidence arrives."""
 
     position: int
     scenario_uuid: str
@@ -105,10 +98,17 @@ class ScenarioEntry(BaseModel):
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     steps_executed: Optional[int] = None
+    intervention_steps: Optional[int] = None
     duration_seconds: Optional[float] = None
     failure_reason: Optional[str] = None
     issues_found: Optional[int] = None
     steps: List[StepRecord] = Field(default_factory=list)
+    recovery_transactions: List[RecoveryTransaction] = Field(default_factory=list)
+    settlement_receipts: List[SettlementReceipt] = Field(default_factory=list)
+    input_transactions: List[InputTransactionReceipt] = Field(default_factory=list)
+    obligation_evidence: ObligationRunEvidence = Field(
+        default_factory=ObligationRunEvidence
+    )
     calls: List[CallRow] = Field(
         default_factory=list,
         description=(
@@ -155,6 +155,7 @@ class RunInputs(BaseModel):
     lock_sha256: Optional[str] = None
     scenarios_from_lock: int = 0
     scenarios_generated: int = 0
+    cold_start: Optional[ColdStartEvidence] = None
 
 
 class FailureSummary(BaseModel):
@@ -291,10 +292,18 @@ class RunManifest:
             entry.status = report.status
             entry.cause = report.cause
             entry.steps_executed = report.steps_executed
+            entry.intervention_steps = report.intervention_steps
             entry.duration_seconds = round(report.duration, 1)
             entry.failure_reason = self._scrub(report.failure_reason)
             entry.issues_found = len(report.detected_issues or [])
             entry.steps = list(report.steps)
+            entry.recovery_transactions = [
+                scrub_recovery_transaction(transaction, self._scrub)
+                for transaction in report.recovery_transactions
+            ]
+            entry.settlement_receipts = list(report.settlement_receipts)
+            entry.input_transactions = list(report.input_transactions)
+            entry.obligation_evidence = report.obligation_evidence.model_copy(deep=True)
             entry.rule_verifications = list(report.rule_verifications)
             entry.detected_issues = list(report.detected_issues)
             entry.lifecycle_operations = [

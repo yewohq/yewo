@@ -2,7 +2,6 @@
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
 from yewo import identity
@@ -16,6 +15,7 @@ from yewo.testing.judge.capabilities import (
     unsupported_metric,
 )
 from yewo.testing.models import GeneratedTestCase, ReportStatus, ScenarioReport, UserJourney
+from yewo.testing.runner_startup import RunnerStartupAuthority
 from yewo.testing.taxonomy import sort_cells_by_priority
 from yewo.policy import PolicyCheckReport, policy_checks_succeeded
 
@@ -33,8 +33,7 @@ class RunnerBoundary(Protocol):
     grounding: str
     perception_model: str | None
     _device: identity.DeviceIdentity
-
-    def _lock_path(self) -> Path | None: ...
+    startup: RunnerStartupAuthority
 
     def _suite(self, journey: UserJourney, llm) -> lock_resolution.LockResolution: ...
 
@@ -82,11 +81,7 @@ def preflight_metrics_before_device(
                 test_id=scenario.test_id,
                 scenario_name=scenario.scenario_name,
                 cell=scenario.cell,
-                status=(
-                    ReportStatus.UNSUPPORTED
-                    if platform_reasons
-                    else ReportStatus.UNVERIFIED
-                ),
+                status=(ReportStatus.UNSUPPORTED if platform_reasons else ReportStatus.UNVERIFIED),
                 cause=Cause.SCENARIO.value,
                 failure_reason=reason,
             )
@@ -105,13 +100,18 @@ def _known_locked_scenarios(
     journey: UserJourney,
 ) -> tuple[list[GeneratedTestCase], bool]:
     """Return fresh locked scenarios and whether they cover the whole journey."""
-    path = runner._lock_path()
+    path = runner.startup.lock_path
     if path is None:
         return [], False
     stored = lock_file.read(path)
     if stored is None:
         return [], False
-    problems = lock_resolution.staleness(stored, journey, runner.workflow)
+    problems = lock_resolution.staleness(
+        stored,
+        journey,
+        runner.workflow,
+        generation_evidence=runner.startup.generation_evidence,
+    )
     entries_by_cell = stored.entries_for(runner.workflow, journey.id)
     scenarios = [
         with_journey_preconditions(
@@ -163,9 +163,7 @@ def prepare_execution(
         ensure_target_ready(runner.platform, runner.device_name)
         logger.info("Initializing emulator and starting remote webdriver session...")
         device_control = session.start(is_headless=runner.headless)
-        perception = build_perception(
-            runner.grounding, session, runner.perception_model
-        )
+        perception = build_perception(runner.grounding, session, runner.perception_model)
         device_identity = identity.device_identity(device_control)
         runner._device = device_identity
         trace_store = runner._trace_store_for(journey)
@@ -174,9 +172,7 @@ def prepare_execution(
         suite = runner._suite(journey, device_agent.llm)
         refused_ids = {report.scenario_uuid for report in refused_reports}
         scenarios = [
-            scenario
-            for scenario in suite.scenarios
-            if scenario.scenario_uuid not in refused_ids
+            scenario for scenario in suite.scenarios if scenario.scenario_uuid not in refused_ids
         ]
     return PreparedExecution(
         suite=suite,

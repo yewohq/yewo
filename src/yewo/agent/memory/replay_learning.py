@@ -33,6 +33,9 @@ class ScreenReading(Protocol):
     @property
     def raw_img_bytes(self) -> bytes: ...
 
+    @property
+    def observation_id(self) -> str: ...
+
 
 @dataclass
 class DurableReplay:

@@ -230,7 +230,8 @@ class KeyboardDismissTests(unittest.TestCase):
         control, pressed = self._control(Platform.ANDROID, keyboard_after=True)
 
         self.assertFalse(control.dismiss_keyboard())
-        self.assertEqual(pressed, [4])
+        self.assertEqual(pressed, [])
+        control.driver.hide_keyboard.assert_called_once_with()
 
     def test_android_reports_success_when_the_keyboard_went_away(self):
         from yewo.agent.device.platform import Platform
@@ -239,13 +240,12 @@ class KeyboardDismissTests(unittest.TestCase):
 
         self.assertTrue(control.dismiss_keyboard())
 
-    def test_an_unanswerable_check_is_taken_as_closed(self):
-        """Refusing to believe the press would retry it forever."""
+    def test_an_unanswerable_check_is_not_claimed_as_closed(self):
         from yewo.agent.device.platform import Platform
 
         control, _pressed = self._control(Platform.ANDROID, keyboard_after=None)
 
-        self.assertTrue(control.dismiss_keyboard())
+        self.assertFalse(control.dismiss_keyboard())
 
     def test_a_press_that_raised_is_a_failure(self):
         from yewo.agent.device.platform import Platform

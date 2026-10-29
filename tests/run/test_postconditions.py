@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from yewo.agent.actuation.actions import Coordinates, TypeAction
 from yewo.agent.device.focus import FocusedFieldReading
@@ -8,11 +9,13 @@ from yewo.agent.run.postconditions import (
     VerificationStatus,
     VerificationClassification,
     ValueVerificationPolicy,
+    close_pending_input,
     pending_for,
     specification_for,
     verify,
 )
 from yewo.utils.secrets import AppValueRendering
+from yewo.agent.run.input_transaction import InputTransactionStatus
 
 
 def field(text: str) -> GUIElement:
@@ -121,6 +124,21 @@ class EnteredValuePostconditionTests(unittest.TestCase):
         result = verify(pending, [elsewhere])
 
         self.assertIs(result.status, VerificationStatus.UNVERIFIED)
+        self.assertFalse(result.context_retained)
+
+    def test_same_value_in_a_different_focused_field_does_not_complete_input(self):
+        pending = pending_for(action(), self.names, self.values, "125.00")
+        assert pending is not None
+
+        result = verify(
+            pending,
+            [],
+            FocusedFieldReading("125.00", (300, 300, 500, 380)),
+        )
+
+        self.assertIs(result.status, VerificationStatus.UNVERIFIED)
+        self.assertFalse(result.context_retained)
+        self.assertIn("original field or form context", result.reason)
 
     def test_auto_recognizes_an_observed_mask_without_app_specific_configuration(self):
         automatic = pending_for(action(), self.names, self.values, "••••••")
@@ -214,6 +232,38 @@ class EnteredValuePostconditionTests(unittest.TestCase):
 
         reading = FocusedFieldReading("£ 125.00", (10, 10, 200, 80))
         self.assertIs(verify(pending, [], reading).status, VerificationStatus.PASSED)
+
+    def test_interruption_preserves_an_unverified_input_transaction(self):
+        pending = pending_for(
+            action(),
+            self.names,
+            self.values,
+            "125.00",
+            source_observation_id="observation-source",
+            source_context_id="context-1",
+            source_phash="a" * 64,
+        )
+        ctx = SimpleNamespace(
+            pending_entered_value=pending,
+            postcondition_verifications=[],
+            input_transactions=[],
+        )
+
+        verification = close_pending_input(
+            ctx, "Execution ended before another observation."
+        )
+
+        assert verification is not None
+        self.assertIs(verification.status, VerificationStatus.UNVERIFIED)
+        self.assertIs(
+            ctx.input_transactions[0].status,
+            InputTransactionStatus.UNVERIFIED,
+        )
+        self.assertEqual(
+            ctx.input_transactions[0].source_observation_id,
+            "observation-source",
+        )
+        self.assertIsNone(ctx.pending_entered_value)
 
 
 if __name__ == "__main__":

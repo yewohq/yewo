@@ -1,5 +1,6 @@
 import logging
 import time
+from functools import partial
 from pathlib import Path
 from typing import List, Optional
 
@@ -16,16 +17,15 @@ from yewo.agent.memory.replay_store import ValueNames
 from yewo.errors import ProviderUnavailable
 from yewo.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
-from . import lock_file, lock_resolution, replay_paths
-from .generator import ScenarioGenerator
+from . import interruption, lock_resolution, replay_paths
 from .report.run_record import create_manifest, ensure_interrupted_manifest
 from .report import infrastructure
+from .report.aggregation import aggregate_journey_status, tally
 from . import sensitivity
 from yewo.llm.prompts import PromptStore
 from yewo.defaults import DEFAULT_PERCEPTION_MODEL
 from .models import (
     JourneyReport,
-    JourneyStatus,
     ReportStatus,
     RunEnvironment,
     ScenarioReport,
@@ -37,49 +37,22 @@ from .report.usage_tracker import LLMUsageTracker
 from yewo.utils.secrets import SecretScrubber
 from yewo.package_policy import evaluate_package_policy
 from .report import writing
+from .run_usage import (
+    GENERATION,
+    PLANNER,
+    SCENARIO_COMPONENTS,
+    SEMANTIC_GROUNDER,
+    component_for,
+    record_scenario_execution_cost,
+)
+from .warm_execution import ScenarioRoutePreparer
+from .runner_session import is_session_responsive
+from .generation_evidence import ScenarioGenerationEvidence
+from .runner_knowledge import RunnerDiscoveryProvider
+from .runner_startup import build_runner_startup_authority
+from .cold_start import ColdStartEvidence
 
 logger = logging.getLogger(__name__)
-GENERATION = "generator"
-"""The call that wrote the suite. It happens once, before any scenario."""
-PLANNER = "planner"
-SCREEN_AUDITOR = "screen_auditor"
-TRANSITION_JUDGE = "transition_judge"
-SEMANTIC_GROUNDER = "semantic_grounder"
-SCENARIO_COMPONENTS = (PLANNER, SCREEN_AUDITOR, TRANSITION_JUDGE, SEMANTIC_GROUNDER)
-def component_for(current: str, answering: Optional[str]) -> str:
-    """Name a call from the answer shape it actually requested."""
-    if current == GENERATION:
-        return GENERATION
-    if answering == "ScreenAssessment":
-        return SCREEN_AUDITOR
-    if answering == "TransitionVerdicts":
-        return TRANSITION_JUDGE
-    return PLANNER
-def is_session_responsive(device_control) -> bool:
-    """Checks whether the driver connection and the instrumentation server are alive."""
-    if not device_control or not device_control.driver:
-        return False
-    try:
-        if device_control.platform == Platform.ANDROID:
-            _ = device_control.driver.current_package
-        else:
-            _ = device_control.driver.orientation
-        return True
-    except Exception as e:
-        logger.warning("Session responsiveness check failed: %s", e)
-        return False
-
-
-def tally(reports: List[ScenarioReport]) -> tuple[int, int, int]:
-    """Passed, failed and skipped, where anything else that ran counts as failed."""
-    passed = sum(1 for report in reports if report.status == ReportStatus.PASSED)
-    skipped = sum(1 for report in reports if report.status == ReportStatus.SKIPPED)
-    return passed, len(reports) - passed - skipped, skipped
-
-
-def aggregate_journey_status(passed_count: int, failed_count: int) -> JourneyStatus:
-    """A suite passes only when at least one scenario has verified evidence."""
-    return ReportStatus.PASSED if passed_count > 0 and failed_count == 0 else ReportStatus.FAILED
 
 
 class YewoTestRunner:
@@ -113,6 +86,11 @@ class YewoTestRunner:
         run_id: Optional[str] = None,
         execution_id: Optional[str] = None,
         target_id: Optional[str] = None,
+        route_preparer: ScenarioRoutePreparer | None = None,
+        generation_evidence: ScenarioGenerationEvidence | None = None,
+        knowledge_root: Path | None = None,
+        discovery_provider: RunnerDiscoveryProvider | None = None,
+        cold_start: ColdStartEvidence | None = None,
     ):
         self.journey_file = journey_file
         self.workflow = workflow
@@ -121,6 +99,18 @@ class YewoTestRunner:
         self.allow_secret_exposure = allow_secret_exposure
         self.policy_waivers = dict(policy_waivers or {})
         self.run_id, self.execution_id, self.target_id = run_id, execution_id, target_id
+        self.knowledge_root = knowledge_root
+        self.cold_start = cold_start
+        self.startup = build_runner_startup_authority(
+            partial(sensitivity.require_safe_secret_policy, opted_in=allow_secret_exposure),
+            journey_file,
+            workflow,
+            locked,
+            knowledge_root,
+            discovery_provider,
+            generation_evidence,
+            route_preparer,
+        )
         self.grounding = grounding
         self.reuse_app = reuse_app
         self.keep_app = keep_app
@@ -144,6 +134,7 @@ class YewoTestRunner:
         self._device = identity.DeviceIdentity()
         self._git: Optional[identity.GitIdentity] = None
         self.last_report_paths: dict[str, Path] = {}
+
     def _trace_store_for(self, journey):
         """Build this journey's saved-path store when replay is enabled."""
         if not self.durable_replay:
@@ -160,14 +151,7 @@ class YewoTestRunner:
         )
 
     def _environment(self) -> RunEnvironment:
-        """What was in play for this run, so a reader can explain a difference.
-
-        The app and the commit are read once and kept. Hashing a build costs
-        seconds, and a checkpoint is written after every scenario. The commit
-        is kept for a second reason. A checkout that changes mid-run would
-        give the record one answer and the report another, and the two are
-        one page.
-        """
+        """Cache the immutable app and commit identity used by every checkpoint."""
         if self._app is None:
             self._app = identity.app_identity(self.app_path, installed=not self.reuse_app)
         if self._git is None:
@@ -195,37 +179,25 @@ class YewoTestRunner:
         )
 
     def _suite(self, journey: UserJourney, llm) -> lock_resolution.LockResolution:
-        """The scenarios to run, from the lock where the lock still holds.
-
-        Already in priority order, so a run that dies part way has done the
-        P0 cells.
-        """
-        generator = ScenarioGenerator(llm)
-        return lock_resolution.suite_for(
-            journey,
-            lambda wanted, cells: generator.generate_suite(wanted, cells),
-            path=self._lock_path(),
-            workflow=self.workflow,
-            locked=self.locked,
-        )
-
-    def _lock_path(self) -> Optional[Path]:
-        """Where this run's lock is, or None for a journey file off disk."""
-        return lock_file.path_beside(self.journey_file) if self.journey_file else None
+        """Resolve scenarios only through the fail-closed startup authority."""
+        return self.startup.resolve_suite(journey, llm)
 
     def run_journey(self, journey: UserJourney) -> JourneyReport:
         """Run one journey, refusing invalid inputs before opening the device."""
         start_time = time.time()
-        sensitivity.require_safe_secret_policy(journey, self.allow_secret_exposure)
+        self.startup.inspect_knowledge(journey)
         if self.durable_replay:
             replay_paths.validate_path_key(
                 self.journey_file.parent if self.journey_file else Path.cwd()
             )
 
-        # Read the lock before the device boots. A stale lock in CI must fail
-        # in a second rather than after an emulator starts.
         if self.locked:
-            lock_resolution.require_lock(journey, self._lock_path(), self.workflow)
+            lock_resolution.require_lock(
+                journey,
+                self.startup.lock_path,
+                self.workflow,
+                self.startup.generation_evidence,
+            )
 
         record_session = self.record_session
         redact_recording = bool(journey.secrets) and not self.allow_secret_exposure
@@ -267,9 +239,6 @@ class YewoTestRunner:
         )
         current_component = GENERATION
         device_agent = agent._device_agent
-        # Named for the component, not the scenario. The scenario is already
-        # said by which entry the call is nested under, and two components
-        # share one client when no fast model is configured.
         device_agent.llm.usage_callback = lambda call: usage_tracker.add_call(
             component_for(current_component, call.answering), call
         )
@@ -280,8 +249,6 @@ class YewoTestRunner:
         device_agent.grounding_usage_callback = lambda call: usage_tracker.add_call(
             SEMANTIC_GROUNDER, call
         )
-        # So each call lands under the step that paid for it. The loop knows
-        # which step it is on; the planner that makes the call does not.
         device_agent.step_opened = usage_tracker.mark
         device_agent.record_prompts(prompt_store)
 
@@ -290,6 +257,7 @@ class YewoTestRunner:
         manifest = None
         policy_checks = []
         run_was_aborted = False
+        current_scenario = None
         artifact_scrubber.learn_secrets(journey.secrets)
         device_agent.scrubber.learn_secrets(
             journey.secrets,
@@ -302,7 +270,8 @@ class YewoTestRunner:
 
         try:
             policy_checks = evaluate_package_policy(
-                Path(self.app_path), self.platform, self.policy_waivers, artifact_scrubber)
+                Path(self.app_path), self.platform, self.policy_waivers, artifact_scrubber
+            )
             prepared = prepare_execution(
                 self,
                 journey,
@@ -347,6 +316,7 @@ class YewoTestRunner:
                 artifact_scrubber,
                 self.run_id,
                 self.allow_secret_exposure,
+                self.cold_start,
             )
             # Generation happened before this file existed, and it is the one
             # call a run makes that no scenario owns.
@@ -365,6 +335,7 @@ class YewoTestRunner:
             current_component = PLANNER
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
+                current_scenario = scenario
                 # Scenario evidence must not inherit screen names, actions, or
                 # navigation claims from a previous scenario.
                 trail = SessionTrail()
@@ -427,6 +398,7 @@ class YewoTestRunner:
                         session_trail=trail,
                         telemetry_dir=session.telemetry_dir,
                         crash_diagnostic_source=session,
+                        route_preparer=self.startup.route_preparer,
                     )
                 except ProviderUnavailable as exc:
                     # The service was asked again and still would not answer.
@@ -435,10 +407,12 @@ class YewoTestRunner:
                     # the device state was restored on the way out.
                     scen_report = infrastructure.provider_error(scenario, exc, artifact_scrubber)
 
+                scenario_level_calls = usage_tracker.take_calls_outside_steps(SCENARIO_COMPONENTS)
+                record_scenario_execution_cost(scen_report, scenario_level_calls)
                 manifest.record(
                     scenario.test_id,
                     scen_report,
-                    calls=usage_tracker.take_calls_outside_steps(SCENARIO_COMPONENTS),
+                    calls=scenario_level_calls,
                 )
 
                 scenario_reports.append(scen_report)
@@ -465,8 +439,23 @@ class YewoTestRunner:
             safe_error = artifact_scrubber.scrub(reportable(e))
             logger.error("Fatal run interruption (%s): %s", type(e).__name__, safe_error)
             manifest, scenarios = ensure_interrupted_manifest(
-                manifest, self, journey, scenarios, device_agent.llm, session,
-                artifact_scrubber, usage_tracker.calls_outside_steps(GENERATION),
+                manifest,
+                self,
+                journey,
+                scenarios,
+                device_agent.llm,
+                session,
+                artifact_scrubber,
+                usage_tracker.calls_outside_steps(GENERATION),
+            )
+            interruption.record_active_scenario(
+                manifest,
+                current_scenario,
+                agent,
+                e,
+                scenario_reports,
+                usage_tracker,
+                SCENARIO_COMPONENTS,
             )
             prior_reports = len(scenario_reports)
             infrastructure.record_aborted(scenarios, scenario_reports, e)
@@ -497,7 +486,11 @@ class YewoTestRunner:
             for rule in unevidenced:
                 logger.warning("No scenario evidenced security rule: %s", rule)
             passed_count, failed_count, skipped_count = tally(scenario_reports)
-            journey_status = ReportStatus.ABORTED if run_was_aborted else aggregate_journey_status(passed_count, failed_count)
+            journey_status = (
+                ReportStatus.ABORTED
+                if run_was_aborted
+                else aggregate_journey_status(passed_count, failed_count)
+            )
             report = JourneyReport(
                 journey_id=journey.id,
                 journey_name=journey.name,

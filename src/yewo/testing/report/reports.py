@@ -242,6 +242,28 @@ def _append_scenario(
                 f"{_scrub(scrubber, measurement.collector)}"
             )
         lines.append("")
+    if (
+        scenario.settlement_receipts
+        or scenario.input_transactions
+        or scenario.obligation_evidence.settlements
+    ):
+        lines.append("### Execution Contracts:")
+        for receipt in scenario.settlement_receipts:
+            lines.append(
+                f"  * **Settlement `{receipt.settlement_id}`**: "
+                f"{receipt.status.value} — {_scrub(scrubber, receipt.reason)}"
+            )
+        for receipt in scenario.input_transactions:
+            lines.append(
+                f"  * **Input `{receipt.transaction_id}`**: "
+                f"{receipt.status.value} — {_scrub(scrubber, receipt.reason)}"
+            )
+        for receipt in scenario.obligation_evidence.settlements:
+            lines.append(
+                f"  * **Obligation `{receipt.obligation_id}`**: "
+                f"{receipt.state.value} — {_scrub(scrubber, receipt.reason)}"
+            )
+        lines.append("")
     rule_verdicts = verdicts.per_rule(list(scenario.rule_verifications))
     if rule_verdicts:
         lines.append("### Verification Results:")
@@ -432,10 +454,22 @@ def _append_junit_case(
         )
         for measurement in scenario.measurements
     ]
-    if verification_lines or lifecycle_lines or measurement_lines:
+    contract_lines = [
+        f"settlement_id={receipt.settlement_id} status={receipt.status.value} reason={_scrub(scrubber, receipt.reason)}"
+        for receipt in scenario.settlement_receipts
+    ]
+    contract_lines.extend(
+        f"input_transaction_id={receipt.transaction_id} status={receipt.status.value} reason={_scrub(scrubber, receipt.reason)}"
+        for receipt in scenario.input_transactions
+    )
+    contract_lines.extend(
+        f"obligation_id={receipt.obligation_id} state={receipt.state.value} reason={_scrub(scrubber, receipt.reason)}"
+        for receipt in scenario.obligation_evidence.settlements
+    )
+    if verification_lines or lifecycle_lines or measurement_lines or contract_lines:
         output = ET.SubElement(testcase, "system-out")
         output.text = "\n".join(
-            [*lifecycle_lines, *measurement_lines, *verification_lines]
+            [*lifecycle_lines, *measurement_lines, *contract_lines, *verification_lines]
         )
 
 

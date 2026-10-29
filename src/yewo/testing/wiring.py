@@ -15,6 +15,7 @@ from yewo.app_discovery import resolve_app_path
 from yewo.config import SETTINGS, Config
 from yewo.defaults import DEFAULT_GROUNDING
 
+from .cold_start import require_clean_room
 from .runner import YewoTestRunner
 from .suite import Target, Workflow
 
@@ -64,6 +65,25 @@ def runner_for(
         Path.cwd(),
         filepath.resolve().parent,
     )
+    output_root = assets_dir or Path(setting("output_dir", args.output_dir))
+    # A saved path is on unless somebody says no, so a cold run turning it off
+    # is not overriding a request. Asking for reuse and for a cold run is.
+    durable_replay = args.durable_replay and as_bool(setting("durable_replay", None), True)
+    knowledge_root: Optional[Path] = None
+    cold_start = None
+    if bool(getattr(args, "cold", False)):
+        output_root = output_root / "cold"
+        knowledge_root = output_root / "knowledge"
+        durable_replay = False
+        cold_start = require_clean_room(
+            filepath,
+            knowledge_root,
+            output_root,
+            replay=bool(args.replay),
+            durable_replay=durable_replay,
+            reuse_app=bool(args.reuse_app),
+            locked=bool(args.locked),
+        )
     return YewoTestRunner(
         platform=Platform.named(platform_str),
         device_name=setting("device", args.device),
@@ -72,17 +92,14 @@ def runner_for(
         perception_model=setting(
             "perception_model", getattr(args, "perception_model", None)
         ),
-        assets_dir=assets_dir or Path(setting("output_dir", args.output_dir)),
+        assets_dir=output_root,
         max_steps=int(setting("max_steps", args.max_steps)),
         settle_time=float(setting("settle_time", args.settle_time)),
         headless=as_bool(setting("headless", args.headless)),
         fast_model=setting("fast_model", args.fast_model),
         record_session=(False if args.no_record else as_bool(setting("record", None))),
         replay=bool(args.replay),
-        # The flag only ever says no, so a file may say no as well, and
-        # neither saying anything means yes.
-        durable_replay=args.durable_replay
-        and as_bool(setting("durable_replay", None), True),
+        durable_replay=durable_replay,
         update_paths=bool(args.update_paths),
         reuse_app=bool(args.reuse_app),
         keep_app=bool(args.keep_app),
@@ -98,6 +115,8 @@ def runner_for(
         run_id=run_id,
         execution_id=execution_id,
         target_id=target.id if target is not None else None,
+        knowledge_root=knowledge_root,
+        cold_start=cold_start,
     )
 
 

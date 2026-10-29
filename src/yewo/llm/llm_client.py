@@ -26,8 +26,29 @@ Answer = TypeVar("Answer", bound=BaseModel)
 
 JSON_INSTRUCTION = (
     "Return only one JSON object matching the requested fields and action instructions. "
-    "Do not wrap it in prose."
+    "Do not wrap it in prose. "
+    "Use the property names the schema below declares, and no others."
 )
+
+
+def build_json_contract(response_model: type[BaseModel]) -> str:
+    """The JSON contract for one answer, carrying the schema it must match.
+
+    The schema travels with the request because no provider is asked to
+    enforce it. Asked for the shape in prose alone, a model infers property
+    names from the surrounding words: `description` for `instruction`, and
+    `type` for a `kind` discriminator. A correction naming only the invalid
+    paths then renames one field per attempt without converging, because the
+    names it has to choose between were never stated.
+
+    Serialized with sorted keys so one model yields one string. The prompt
+    prefix is cached by content, and an unordered mapping would reorder
+    between calls and read as a different prompt.
+    """
+    schema = json.dumps(
+        response_model.model_json_schema(), sort_keys=True, separators=(",", ":")
+    )
+    return f"{JSON_INSTRUCTION}\n{schema}"
 
 
 class LLMClient:
@@ -202,9 +223,10 @@ class LLMClient:
         if response_model:
             # One contract is used through every LiteLLM route. Native schema
             # grammars differ in supported keywords and complexity ceilings.
-            # Yewo instead asks every model for JSON and validates the same
-            # Pydantic model locally, with one corrective retry on mismatch.
-            request_messages.append(TextMessage(content=JSON_INSTRUCTION))
+            # Yewo instead sends the schema as part of the request, asks every
+            # model for JSON, and validates the same Pydantic model locally,
+            # with one corrective retry on mismatch.
+            request_messages.append(TextMessage(content=build_json_contract(response_model)))
 
         kwargs: dict = {
             "model": self._model,

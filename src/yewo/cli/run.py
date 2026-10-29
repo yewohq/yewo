@@ -96,6 +96,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
         settle_time=config.resolve("settle_time", args.settle_time),
         # A single goal is done when it is done; journeys keep auditing past it.
         stop_when_satisfied=True,
+        platform=Platform.named(platform),
     )
 
     try:

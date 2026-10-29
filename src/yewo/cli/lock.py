@@ -1,9 +1,8 @@
-"""`yewo lock` — write the suite a run will execute, with no device.
+"""`yewo lock` — refresh a suite from already verified app knowledge.
 
-Generation needs the journey and a model. It does not need an emulator, an
-app or a driver. So a separate command writes the lock, and leaves it to be
-reviewed as a commit. A typo in a journey file then costs one model call
-rather than a device boot.
+Cold generation belongs to `yewo test`, because only that command can run
+bounded discovery. This command can refresh a lock without a device when the
+lock already identifies verified knowledge.
 
 Two jobs an ordinary run cannot do: lock with no device attached, and refresh
 deliberately rather than as a side effect of testing.
@@ -11,6 +10,7 @@ deliberately rather than as a side effect of testing.
 
 import argparse
 import logging
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,11 +26,10 @@ logger = logging.getLogger(__name__)
 def register(subcommands: argparse._SubParsersAction) -> None:
     parser = subcommands.add_parser(
         "lock",
-        help="Generate the test suite and write yewo.lock, with no device",
+        help="Refresh yewo.lock from verified app knowledge, with no device",
         description=(
-            "Generate one scenario per declared cell and write yewo.lock "
-            "beside the journey file. Commit the result: 'yewo test --locked' "
-            "then runs exactly what was reviewed."
+            "Refresh scenarios from verified app knowledge and write yewo.lock "
+            "beside the journey file. Run 'yewo test' first when discovery is required."
         ),
     )
     parser.add_argument(
@@ -42,6 +41,13 @@ def register(subcommands: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--workflow",
         help="Which workflow(s) to lock, comma separated. Every one by default",
+    )
+    parser.add_argument(
+        "--allow-secret-exposure",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Allow declared secrets in the model input that generation sends. "
+        "Off by default, exactly as in 'yewo test'",
     )
     parser.add_argument(
         "--all",
@@ -62,13 +68,17 @@ def run(args: argparse.Namespace, config: Config) -> int:
     """
     from yewo.llm.llm_client import LLMClient
     from yewo.testing import lock_file
-    from yewo.testing import lock_resolution
-    from yewo.testing.generator import ScenarioGenerator
+    from yewo.testing.generation_startup import GenerationStartupCoordinator
+    from yewo.testing.runner_knowledge import RunnerStartupKnowledgeSource
+    from yewo.testing.sensitivity import require_safe_secret_policy
     from yewo.testing.suite import load_workflows, select
 
     console = Console()
     model = config.resolve("model", args.model)
     require_lock(model)
+    allow_secret_exposure = bool(
+        config.resolve("allow_secret_exposure", args.allow_secret_exposure)
+    )
 
     try:
         path = resolve_journey_file(args.journey_file)
@@ -81,21 +91,35 @@ def run(args: argparse.Namespace, config: Config) -> int:
         return 2
 
     target = lock_file.path_beside(Path(path))
-    generator = ScenarioGenerator(
-        LLMClient(model=model, cache_affinity=f"lock-{uuid4()}")
-    )
+    llm_client = LLMClient(model=model, cache_affinity=f"lock-{uuid4()}")
     uncovered = 0
 
     for workflow in workflows:
         for journey in workflow.journeys:
-            resolution = lock_resolution.suite_for(
+            coordinator = GenerationStartupCoordinator(
+                partial(require_safe_secret_policy, opted_in=allow_secret_exposure),
+                RunnerStartupKnowledgeSource(
+                    Path(path),
+                    workflow.name,
+                    Path(path).parent / ".yewo" / "knowledge",
+                ),
+            )
+            startup = coordinator.resolve_suite(
                 journey,
-                lambda wanted, cells: generator.generate_suite(wanted, cells),
-                path=target,
+                llm_client,
+                lock_path=target,
                 workflow=workflow.name,
                 refresh=args.refresh,
             )
             label = f"{workflow.name}/{journey.id}" if workflow.name else journey.id
+            if startup.suite is None:
+                uncovered += len(journey.coverage)
+                console.write(
+                    f"{label}: {startup.readiness.state.value}: "
+                    f"{startup.readiness.reason}"
+                )
+                continue
+            resolution = startup.suite
             console.write(f"{label}: {resolution.note}")
             for gap in resolution.uncovered:
                 uncovered += 1

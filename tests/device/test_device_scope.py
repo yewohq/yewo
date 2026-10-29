@@ -6,7 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from yewo.agent.device import touch_input
 from yewo.agent.device.adb_control import AdbControl, VisualFeedbackSettings
+from yewo.agent.device.touch_input import TouchInputSettings
 from yewo.agent.device.control import DeviceControl
 from yewo.agent.device.platform import Platform
 from yewo.agent.device.scope import DeviceScope
@@ -118,6 +120,12 @@ class DeviceScopedSessionTests(unittest.TestCase):
                     "read_visual_feedback",
                     return_value=VisualFeedbackSettings(True, True),
                 ) as read_feedback,
+                patch.object(
+                    touch_input,
+                    "read_touch_input",
+                    return_value=TouchInputSettings(None),
+                ),
+                patch.object(touch_input, "prepare_touch_input"),
                 patch.object(AdbControl, "enable_feedback") as enable_feedback,
                 patch.object(session._device_logs, "start"),
                 patch("yewo.agent.device.session.time.sleep"),

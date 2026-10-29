@@ -17,6 +17,7 @@ import logging
 from typing import List, Optional
 
 from yewo.errors import Cause, cause_of
+from yewo.agent.run.outcomes import DeviceRunResult
 from yewo.llm.failures import reportable
 from yewo.testing.models import (
     GeneratedTestCase,
@@ -24,6 +25,7 @@ from yewo.testing.models import (
     ReportStatus,
     ScenarioReport,
 )
+from yewo.testing.obligations import ObligationRunEvidence
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,33 @@ def record_aborted(
         )
         recorded += 1
     return recorded
+
+
+def interrupted_scenario(
+    scenario: GeneratedTestCase,
+    run_result: DeviceRunResult,
+    error: BaseException,
+    obligation_evidence: ObligationRunEvidence | None = None,
+) -> ScenarioReport:
+    """Preserve the active scenario's partial walk when its run is interrupted."""
+    reason = f"Aborted due to run failure/interrupt: {reportable(error)}"
+    cause = None if isinstance(error, KeyboardInterrupt) else cause_of(error).value
+    return ScenarioReport(
+        scenario_uuid=scenario.scenario_uuid,
+        test_id=scenario.test_id,
+        scenario_name=scenario.scenario_name,
+        cell=scenario.cell,
+        status=ReportStatus.ABORTED,
+        cause=cause,
+        steps_executed=run_result.steps_executed,
+        steps=list(run_result.steps),
+        postcondition_verifications=list(run_result.postcondition_verifications),
+        recovery_transactions=list(run_result.recovery_transactions),
+        settlement_receipts=list(run_result.settlement_receipts),
+        input_transactions=list(run_result.input_transactions),
+        obligation_evidence=obligation_evidence or ObligationRunEvidence(),
+        failure_reason=reason,
+    )
 
 
 def provider_error(

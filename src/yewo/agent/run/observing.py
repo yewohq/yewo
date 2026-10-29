@@ -6,6 +6,9 @@ import time
 from yewo.agent.device import state
 from yewo.agent.perception import keyboard
 from yewo.agent.step import narration, observation
+from yewo.agent.run.recovery import (
+    open_semantic_cycle_recovery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +47,29 @@ def capture(agent, step, device_control, perception, session_dir, session_trail,
         narration.reaction(snapshot.scan_info, ctx.prev_element_count, ctx.keyboard_open)
     )
     ctx.prev_element_count = snapshot.scan_info.element_count if snapshot.scan_info else None
+    controller = ctx.instruction_controller
+    active_instruction = controller.active_instruction if controller is not None else None
+    obligation = (
+        active_instruction.instruction_id
+        if controller is not None
+        and not controller.shadow_mode
+        and active_instruction is not None
+        else None
+    )
+    semantic_nudge = ctx.loop_detector.record_semantic_state(
+        snapshot.current_phash, obligation
+    )
+    open_semantic_cycle_recovery(ctx, ctx.loop_detector.take_semantic_cycle())
     ctx.pending_loop_nudge = (
         "\n".join(
             filter(
                 None,
                 [
                     ctx.pending_loop_nudge,
-                    ctx.loop_detector.check(None, snapshot.current_phash),
+                    ctx.loop_detector.record_screen(
+                        snapshot.current_phash, snapshot.observation_id
+                    ),
+                    semantic_nudge,
                 ],
             )
         )
@@ -59,7 +78,7 @@ def capture(agent, step, device_control, perception, session_dir, session_trail,
     return snapshot
 
 
-def apply_plan_result(agent, step_response, snapshot, session_trail, ctx) -> None:
+def apply_plan_result(agent, step_response, snapshot, session_trail, ctx, goal) -> None:
     """Record the planner's safe screen description and previous-step view."""
     logger.info("Screen: %s", step_response.current_screen)
     logger.info("Reasoning: %s", agent.scrubber.scrub(step_response.reasoning))
@@ -68,10 +87,10 @@ def apply_plan_result(agent, step_response, snapshot, session_trail, ctx) -> Non
             "Previous step eval: %s",
             agent.scrubber.scrub(step_response.evaluation_previous_goal),
         )
-    ctx.history.update_last_evaluation(step_response.evaluation_previous_goal)
-    if session_trail and snapshot.current_phash:
-        session_trail.record_screen(
-            snapshot.current_phash,
-            step_response.current_screen,
-            snapshot.gui_elements,
+    controller = ctx.instruction_controller
+    if controller is not None:
+        claim = controller.record_planner_claim(
+            step_response.active_instruction_index,
+            step_response.goal_satisfied,
         )
+        ctx.steps.record_instruction_claim(controller, claim)

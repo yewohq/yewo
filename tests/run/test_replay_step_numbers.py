@@ -117,7 +117,7 @@ class StampedIssueTests(unittest.TestCase):
                 return []
 
         agent = self._agent(replay)
-        with patch("yewo.testing.qa_agent.ScreenAuditSession", OneLook):
+        with patch("yewo.testing.obligation_auditing.ScreenAuditSession", OneLook):
             agent.execute_scenario(
                 self._case(),
                 [],

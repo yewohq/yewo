@@ -235,12 +235,14 @@ class TargetlessActionTests(unittest.TestCase):
                 scan_info=scan(1, phash=source_phash),
                 current_phash=source_phash,
                 raw_img_bytes=b"",
+                observation_id=f"observation-{source_phash}",
             ),
             SimpleNamespace(
                 gui_elements=[email],
                 scan_info=scan(1, phash="login"),
                 current_phash="login",
                 raw_img_bytes=b"",
+                observation_id="observation-login",
             ),
         ]
 
@@ -248,7 +250,7 @@ class TargetlessActionTests(unittest.TestCase):
             trace=trace, values={}, names=replay_store.ValueNames(), key=TEST_KEY
         )
         with (
-            patch("yewo.agent.memory.replay_walk.ActionOrchestrator") as orchestrator,
+            patch("yewo.agent.actuation.safety.ActionOrchestrator") as orchestrator,
             patch("yewo.agent.memory.replay_walk.time.sleep"),
         ):
             sources, ctx = replay_driver.drive(
@@ -305,7 +307,7 @@ class TargetlessActionTests(unittest.TestCase):
         self.assertFalse(result.is_whole)
         execute.assert_not_called()
 
-    def test_only_android_back_is_kept_as_a_key_event(self):
+    def test_key_events_are_not_learned_without_navigation_postconditions(self):
         field = element("Card number", (100, 900, 900, 1100))
 
         back_trace = build_trace(
@@ -315,43 +317,8 @@ class TargetlessActionTests(unittest.TestCase):
             KeyEventAction(key=3, reason="go home"), [field], [field]
         )
 
-        self.assertEqual(back_trace.transitions[0].action.key, 4)
+        self.assertIsNone(back_trace)
         self.assertIsNone(home_trace)
-
-    def test_android_back_replays_without_an_element_target(self):
-        field = element("Card number", (100, 900, 900, 1100))
-        trace = build_trace(
-            KeyEventAction(key=4, reason="hide keyboard"), [field], [field]
-        )
-        readings = [
-            SimpleNamespace(
-                gui_elements=[field],
-                scan_info=scan(1),
-                current_phash="screen",
-                raw_img_bytes=b"",
-            ),
-            SimpleNamespace(
-                gui_elements=[field],
-                scan_info=scan(1),
-                current_phash="screen",
-                raw_img_bytes=b"",
-            ),
-        ]
-
-        replay = replay_learning.DurableReplay(
-            trace=trace, values={}, names=replay_store.ValueNames(), key=TEST_KEY
-        )
-        with patch(
-            "yewo.agent.memory.replay_walk.ActionOrchestrator"
-        ) as orchestrator:
-            sources, ctx = replay_driver.drive(
-                replay, object(), readings, settle_phash="screen"
-            )
-
-        self.assertEqual(sources[0], "cache")
-        self.assertIsInstance(
-            orchestrator.return_value.execute.call_args.args[0], KeyEventAction
-        )
 
 
 if __name__ == "__main__":

@@ -12,6 +12,9 @@ decides what a run recorded, and it writes nothing back.
 from typing import Optional, Protocol, Sequence
 
 from yewo.agent.run.record import StepRecord
+from yewo.agent.run.recovery import RecoveryTransaction
+from yewo.agent.run.input_transaction import InputTransactionReceipt
+from yewo.agent.run.settlement import SettlementReceipt
 from yewo.testing.models import (
     Measurement,
     PolicyCheckReport,
@@ -22,6 +25,7 @@ from yewo.testing.models import (
     VerdictInputs,
 )
 from yewo.testing.lifecycle import LifecycleOperation
+from yewo.testing.obligations import ObligationRunEvidence
 
 
 class ScenarioSource(Protocol):
@@ -57,6 +61,18 @@ class ScenarioSource(Protocol):
 
     @property
     def steps(self) -> Sequence[StepRecord]: ...
+
+    @property
+    def recovery_transactions(self) -> Sequence[RecoveryTransaction]: ...
+
+    @property
+    def settlement_receipts(self) -> Sequence[SettlementReceipt]: ...
+
+    @property
+    def input_transactions(self) -> Sequence[InputTransactionReceipt]: ...
+
+    @property
+    def obligation_evidence(self) -> ObligationRunEvidence: ...
 
     @property
     def rule_verifications(self) -> Sequence[RuleVerification]: ...

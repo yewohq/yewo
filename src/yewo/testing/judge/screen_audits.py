@@ -34,10 +34,15 @@ def record_issue_step(assessments: Sequence[ScreenAssessment], step: int) -> Non
 class LiveScreenAudits:
     """Send every observation through one run-local audit session."""
 
-    def __init__(self, session: ScreenAuditSession):
+    def __init__(
+        self,
+        session: ScreenAuditSession,
+        obligation_session: ScreenAuditSession | None = None,
+    ):
         self._session = session
+        self._obligation_session = obligation_session
+        self._last_snapshot = None
         self._observations = 0
-        self._latest: list[ScreenAssessment] = []
         self._launch_recheck_pending = False
         self._last_step = 0
         self.assessments: list[ScreenAssessment] = []
@@ -48,6 +53,9 @@ class LiveScreenAudits:
         self._observations += 1
         self._last_step = step
         current = self._session.audit_snapshot(snapshot)
+        if self._obligation_session is not None:
+            current.extend(self._obligation_session.audit_snapshot(snapshot))
+        self._last_snapshot = snapshot
         return self._record(current, step, allow_launch_recheck=True)
 
     def before_action(self, action: Action, step: int) -> ObservationDirective:
@@ -67,8 +75,6 @@ class LiveScreenAudits:
     ) -> ObservationDirective:
         """Store fresh assessments and apply their immediate directive."""
         record_issue_step(current, step)
-        self._latest = current
-
         crashes = [
             issue
             for assessment in current
@@ -125,11 +131,6 @@ class LiveScreenAudits:
             return ObservationDirective.STOP
         return ObservationDirective.CONTINUE
 
-    def label_latest(self, screen_name: str) -> None:
-        """Use the planner's screen name only when the auditor supplied none."""
-        for assessment in self._latest:
-            assessment.screen_name = assessment.screen_name or screen_name
-
     def apply_launch_recheck(self, step_response) -> bool:
         """Replace the action selected for a withdrawn first-look crash."""
         if not self._launch_recheck_pending:
@@ -148,9 +149,11 @@ class LiveScreenAudits:
         self._session.request_repeat_audit()
         self._wait(step_response)
 
-    def finalize(self) -> None:
-        """Audit the last stable state, which no navigation will flush."""
+    def finalize(self, final_obligation_session: ScreenAuditSession | None = None) -> None:
+        """Audit run-end obligations against the final observed state."""
         final = self._session.finalize_audit()
+        if final_obligation_session is not None and self._last_snapshot is not None:
+            final.extend(final_obligation_session.audit_snapshot(self._last_snapshot))
         record_issue_step(final, max(1, self._last_step))
         self.assessments.extend(final)
 

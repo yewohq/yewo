@@ -399,7 +399,9 @@ class ScenarioGenerationTests(unittest.TestCase):
         first = CoverageCell(Category.FUNCTIONAL, ScenarioType.HAPPY_PATH, Priority.P0)
         second = CoverageCell(Category.SECURITY, ScenarioType.NEGATIVE, Priority.P0)
 
-        suite = generator.generate_suite(self._journey(first, second))
+        journey = self._journey(first, second)
+        journey.security_rules = ["Malformed addresses must be refused."]
+        suite = generator.generate_suite(journey)
 
         self.assertEqual([s.cell for s in suite.scenarios], ["security.negative.0"])
         self.assertEqual([gap.cell.key for gap in suite.uncovered], ["functional.happy_path.0"])
@@ -544,7 +546,3 @@ class ScenarioGenerationTests(unittest.TestCase):
 
         self.assertEqual([s.cell for s in suite.scenarios], ["security.role.0"])
         self.assertEqual(suite.uncovered, [])
-
-
-if __name__ == "__main__":
-    unittest.main()

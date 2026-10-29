@@ -7,18 +7,21 @@ state is known.
 import io
 import logging
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from PIL import Image
 
 from yewo.agent.grounding import GROUNDING_MARKS
-from yewo.agent.grounding import marks
+from yewo.agent.grounding import grid, marks, region as region_geometry
 from yewo.agent.perception.screen import ScreenPerception
 from yewo.agent.perception.elements import BoundingBox, GUIElement, ScanInfo
 from yewo.agent.perception.fusion import PerceptionFrame
 from yewo.agent.perception.keyboard import KeyboardObservation
 from yewo.agent.memory.trail import SessionTrail
+from yewo.agent.run.evidence_identity import new_observation_id
+from yewo.agent.run.control_discovery import ControlDiscoveryState
+from yewo.agent.memory.screen_identity import is_same_screen
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +42,26 @@ class PerceptionSnapshot:
     planner_elements: Optional[list] = None
     planner_screen_height: Optional[int] = None
     refinement: Optional[dict] = None
+    intervention: Optional["InterventionPlan"] = None
+    """A magnified region that still detected nothing, and the cells to try.
+
+    Set by numbering, consumed by the step loop, because resolving it needs
+    the device and numbering has none."""
+    intervention_failure_reason: Optional[str] = None
+    """Why an evidence-bounded intervention could not be constructed."""
     view_note: Optional[str] = None
     perception_frame: Optional[PerceptionFrame] = None
     planner_perception_frame: Optional[PerceptionFrame] = None
     keyboard_observation: Optional[KeyboardObservation] = None
+    observation_id: str = field(default_factory=new_observation_id)
+
+
+def screen_size(snapshot: PerceptionSnapshot) -> Optional[tuple[int, int]]:
+    """Return the screenshot coordinate space used by actions on this reading."""
+    scan_info = getattr(snapshot, "scan_info", None)
+    if scan_info is None:
+        return None
+    return scan_info.screen_width, scan_info.screen_height
 
 
 def capture(
@@ -64,7 +83,7 @@ def capture(
     if session_trail and current_phash:
         if prev_phash and current_phash != prev_phash:
             session_trail.flush_transition(current_phash)
-        session_trail.record_screen(current_phash, "", gui_elements)
+        session_trail.record_screen(current_phash, gui_elements)
 
     buf = io.BytesIO()
     raw_img.save(buf, format="PNG")
@@ -81,22 +100,6 @@ def capture(
         scan_info=perception.last_scan_info,
         prev_phash=prev_phash,
         perception_frame=getattr(perception, "current_frame", None),
-    )
-
-
-def _crop_box(region: str, width: int, height: int) -> tuple[int, int, int, int]:
-    """Return a padded third-of-screen crop for a coarse region name."""
-    vertical, horizontal = region.split("_", 1)
-    column = {"left": 0, "center": 1, "right": 2}[horizontal]
-    row = {"upper": 0, "middle": 1, "lower": 2}[vertical]
-    x0, x1 = column * width // 3, (column + 1) * width // 3
-    y0, y1 = row * height // 3, (row + 1) * height // 3
-    pad_x, pad_y = width // 12, height // 12
-    return (
-        max(0, x0 - pad_x),
-        max(0, y0 - pad_y),
-        min(width, x1 + pad_x),
-        min(height, y1 + pad_y),
     )
 
 
@@ -125,11 +128,61 @@ def _full_screen_mark(mark, crop, scale: int):
     return replace(mark, element=mapped, point=point)
 
 
-def _number_refined_targets(snapshot: PerceptionSnapshot, ctx, perception, region: str) -> None:
+@dataclass(frozen=True)
+class InterventionPlan:
+    """What to try, where, when a magnified region came back empty."""
+
+    region: str
+    crop: tuple[int, int, int, int]
+    scale: int
+    close_up: bytes
+    candidates: tuple
+    intent: str
+    description: str
+    anchor_above: Optional[tuple[int, int, int, int]] = None
+    anchor_below: Optional[tuple[int, int, int, int]] = None
+    derived: Optional[dict] = None
+    redaction: tuple = ()
+    """What to cover on the overlay, in the magnified crop's own coordinates.
+
+    Carried with the plan because the snapshot's copy is replaced the moment a
+    control is found and the full screen is numbered again."""
+
+    dropped_cells: int = 0
+    """Cells the region had room for that the budget would not pay to probe.
+
+    Recorded rather than discarded. A report listing ten tried cells over a
+    region that held twelve has to say so, or it reads as full coverage."""
+
+
+def _number_refined_targets(
+    snapshot: PerceptionSnapshot,
+    ctx,
+    perception,
+    region: str,
+    description: str = "",
+    intent: str = "activate",
+    anchor_above=None,
+    anchor_below=None,
+) -> None:
     """Detect and number a magnified crop, while keeping action points global."""
     source = Image.open(io.BytesIO(snapshot.raw_img_bytes))
-    crop = _crop_box(region, *source.size)
-    scale = 2
+    derived = region_geometry.derive_between(
+        anchor_above, anchor_below, snapshot.gui_elements, source.size
+    )
+    if derived is None:
+        snapshot.intervention_failure_reason = (
+            f"The {region} region could not be bounded by surrounding controls. "
+            "No candidate points were probed."
+        )
+        snapshot.view_note = (
+            "VISUAL INTERVENTION UNAVAILABLE: surrounding controls did not "
+            "bound the requested region."
+        )
+        logger.info("No surrounding controls bound the %s region.", region)
+        return
+    crop = derived.crop
+    scale = region_geometry.scale_for(crop)
     close_up = source.crop(crop).resize(
         ((crop[2] - crop[0]) * scale, (crop[3] - crop[1]) * scale),
         Image.Resampling.LANCZOS,
@@ -157,6 +210,7 @@ def _number_refined_targets(snapshot: PerceptionSnapshot, ctx, perception, regio
         "scale": scale,
         "full_screen_size": list(source.size),
         "detected_elements": len(local_elements),
+        "derivation": derived.as_record() if derived else None,
     }
     snapshot.view_note = (
         f"VISUAL REFINEMENT: The screenshot is a {scale}x magnified {region} "
@@ -167,6 +221,72 @@ def _number_refined_targets(snapshot: PerceptionSnapshot, ctx, perception, regio
         "Refined %s crop found %d elements. Action points remain full-screen.",
         region,
         len(local_elements),
+    )
+    if not snapshot.marks:
+        snapshot.intervention = _grid_plan(
+            region,
+            crop,
+            scale,
+            close_up_bytes,
+            local_elements,
+            description,
+            intent,
+            derived,
+            anchor_above,
+            anchor_below,
+            _close_up_redaction(snapshot, local_elements),
+        )
+
+
+def _close_up_redaction(snapshot: PerceptionSnapshot, local_elements) -> tuple:
+    """Secrets to cover on the magnified crop, measured in that crop."""
+    frame = snapshot.planner_perception_frame
+    ocr = frame.ocr_redaction_evidence() if frame is not None else ()
+    return (*local_elements, *ocr)
+
+
+def _grid_plan(
+    region,
+    crop,
+    scale,
+    close_up_bytes,
+    local_elements,
+    description,
+    intent,
+    derived,
+    anchor_above,
+    anchor_below,
+    redaction,
+) -> "InterventionPlan":
+    """Cells to try where magnifying a bounded region still numbered nothing.
+
+    The raw detections go with them. A cell over one of those covers something
+    numbering dropped. A cell over none covers something never detected. The
+    two are allowed different things.
+    """
+    local_marks_elements = [
+        _full_screen_element(element, crop, scale) for element in local_elements
+    ]
+    candidates = grid.build(crop, local_marks_elements)
+    room = grid.cell_capacity(crop)
+    logger.info(
+        "Magnified %s region numbered nothing. Offering %d candidate cells.",
+        region,
+        len(candidates),
+    )
+    return InterventionPlan(
+        region=region,
+        crop=crop,
+        scale=scale,
+        close_up=close_up_bytes,
+        candidates=tuple(candidates),
+        intent=intent,
+        description=description,
+        anchor_above=anchor_above,
+        anchor_below=anchor_below,
+        derived=derived.as_record() if derived else None,
+        redaction=tuple(redaction),
+        dropped_cells=max(0, room - len(candidates)),
     )
 
 
@@ -181,15 +301,26 @@ def number_targets(
     """
     if grounding != GROUNDING_MARKS:
         return
-    pending = getattr(ctx, "pending_visual_refinement", None)
-    if hasattr(ctx, "pending_visual_refinement"):
-        ctx.pending_visual_refinement = None
+    pending = getattr(ctx, "control_discovery", None)
     if (
         pending is not None
-        and pending[0] == snapshot.current_phash
+        and pending.state in (
+            ControlDiscoveryState.REQUESTED,
+            ControlDiscoveryState.PROBING,
+        )
+        and is_same_screen(pending.source_phash, snapshot.current_phash)
         and perception is not None
     ):
-        _number_refined_targets(snapshot, ctx, perception, pending[1])
+        _number_refined_targets(
+            snapshot,
+            ctx,
+            perception,
+            pending.region,
+            pending.description,
+            pending.intent,
+            pending.anchor_above,
+            pending.anchor_below,
+        )
         return
     snapshot.marks, snapshot.planner_img_bytes = marks.number(
         snapshot.gui_elements,

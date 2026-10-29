@@ -49,7 +49,6 @@ class ActionSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "gesture failed"):
             ActionOrchestrator(control).execute(self._tap(50, 50))
 
-
 class DeviceFailureTests(unittest.TestCase):
     """A failed device instruction has to say what it was, and keep its cause."""
 

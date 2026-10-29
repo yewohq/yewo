@@ -130,6 +130,13 @@ class YewoCLI:
             "passing run saved. This disables local path and verdict reuse",
         )
         parser.add_argument(
+            "--cold",
+            action="store_true",
+            help="Start from the journey and the app only. Refuses an existing lock, "
+            "stored knowledge, or reuse of any kind, and records the empty starting "
+            "set in the run record. Use it to evaluate discovery, not in CI",
+        )
+        parser.add_argument(
             "--update-paths",
             action="store_true",
             help="Accept changed local replay paths after a passing run. CI is always "
