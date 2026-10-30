@@ -78,6 +78,34 @@ class PerceptionArtifactIdentity(DiscoveryContract):
     sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
 
+COMPATIBILITY_FIELDS = (
+    "app_id",
+    "app_artifact_sha256",
+    "platform",
+    "viewport_class",
+    "orientation",
+    "setup_contract_sha256",
+    "discovery_policy_version",
+    "screen_identity_version",
+    "control_identity_version",
+    "perception_artifacts",
+)
+"""Every dimension that must match before stored mechanics may be replayed."""
+
+DEVICE_SHAPE_FIELDS = ("viewport_class", "orientation")
+"""The dimensions that describe a screen rather than an application.
+
+A pHash and a coordinate belong to one screen size, so mechanics learned on
+one shape cannot be replayed on another. What the application is, and what it
+offers, does not change with the shape of the screen reading it.
+"""
+
+APP_SCOPE_FIELDS = tuple(
+    name for name in COMPATIBILITY_FIELDS if name not in DEVICE_SHAPE_FIELDS
+)
+"""Every dimension that must match before one run's map describes another's app."""
+
+
 class DiscoveryCompatibilityKey(DiscoveryContract):
     """Exact context in which discovery knowledge may be interpreted."""
 
@@ -94,22 +122,31 @@ class DiscoveryCompatibilityKey(DiscoveryContract):
 
     def incompatibilities(self, other: "DiscoveryCompatibilityKey") -> tuple[str, ...]:
         """Return every dimension that requires revalidation."""
-        fields = (
-            "app_id",
-            "app_artifact_sha256",
-            "platform",
-            "viewport_class",
-            "orientation",
-            "setup_contract_sha256",
-            "discovery_policy_version",
-            "screen_identity_version",
-            "control_identity_version",
-            "perception_artifacts",
+        return tuple(
+            name
+            for name in COMPATIBILITY_FIELDS
+            if getattr(self, name) != getattr(other, name)
         )
-        return tuple(name for name in fields if getattr(self, name) != getattr(other, name))
 
     def is_compatible_with(self, other: "DiscoveryCompatibilityKey") -> bool:
         return not self.incompatibilities(other)
+
+    def app_incompatibilities(self, other: "DiscoveryCompatibilityKey") -> tuple[str, ...]:
+        """Return every dimension that makes this a different application.
+
+        Device shape is excluded. Two runs of one build on a phone and on a
+        tablet learned about the same application, so what either learned can
+        guide the other. What neither can do is replay the other's mechanics,
+        because a fingerprint and a coordinate belong to one screen size.
+        """
+        return tuple(
+            name
+            for name in APP_SCOPE_FIELDS
+            if getattr(self, name) != getattr(other, name)
+        )
+
+    def describes_same_app_as(self, other: "DiscoveryCompatibilityKey") -> bool:
+        return not self.app_incompatibilities(other)
 
 
 class DiscoveryArtifactHeader(DiscoveryContract):
@@ -134,7 +171,7 @@ class DiscoveryArtifact(DiscoveryContract):
 DiscoveryArtifactT = TypeVar("DiscoveryArtifactT", bound=DiscoveryArtifact)
 
 
-SHARED_KNOWLEDGE_FORBIDDEN_FIELDS = frozenset(
+SCENARIO_OWNED_FIELDS = frozenset(
     {
         "scenario_uuid",
         "scenario_id",
@@ -161,44 +198,44 @@ def artifact_sha256(artifact: DiscoveryArtifact) -> str:
     return hashlib.sha256(_canonical_payload(artifact)).hexdigest()
 
 
-def _validate_isolated_payload(value: object, forbidden_values: frozenset[str]) -> None:
+def _validate_isolated_payload(value: object, scenario_owned_values: frozenset[str]) -> None:
     if isinstance(value, dict):
-        forbidden_fields = SHARED_KNOWLEDGE_FORBIDDEN_FIELDS.intersection(value)
-        if forbidden_fields:
-            names = ", ".join(sorted(forbidden_fields))
+        scenario_owned_fields = SCENARIO_OWNED_FIELDS.intersection(value)
+        if scenario_owned_fields:
+            names = ", ".join(sorted(scenario_owned_fields))
             raise ValueError(f"Shared app knowledge cannot contain scenario fields: {names}.")
         for nested in value.values():
-            _validate_isolated_payload(nested, forbidden_values)
+            _validate_isolated_payload(nested, scenario_owned_values)
         return
     if isinstance(value, list | tuple):
         for nested in value:
-            _validate_isolated_payload(nested, forbidden_values)
+            _validate_isolated_payload(nested, scenario_owned_values)
         return
     if (
         isinstance(value, str)
         and value
-        and any(forbidden in value for forbidden in forbidden_values)
+        and any(owned in value for owned in scenario_owned_values)
     ):
         raise ValueError("Shared app knowledge contains an isolated scenario value.")
 
 
 def validate_shared_knowledge_payload(
-    value: object, *, forbidden_scenario_values: Sequence[str] = ()
+    value: object, *, scenario_owned_values: Sequence[str] = ()
 ) -> None:
     """Refuse scenario-owned fields and values before shared-schema validation."""
-    forbidden_values = frozenset(value for value in forbidden_scenario_values if value)
-    _validate_isolated_payload(value, forbidden_values)
+    declared = frozenset(owned for owned in scenario_owned_values if owned)
+    _validate_isolated_payload(value, declared)
 
 
 def seal_artifact(
     artifact: DiscoveryArtifactT,
     *,
-    forbidden_scenario_values: Sequence[str] = (),
+    scenario_owned_values: Sequence[str] = (),
 ) -> DiscoveryArtifactT:
     """Validate isolation and return a copy sealed with its canonical digest."""
     validate_shared_knowledge_payload(
         artifact.model_dump(mode="json"),
-        forbidden_scenario_values=forbidden_scenario_values,
+        scenario_owned_values=scenario_owned_values,
     )
     digest = artifact_sha256(artifact)
     header = artifact.header.model_copy(update={"integrity_sha256": digest})
@@ -212,7 +249,7 @@ def verify_artifact(artifact: DiscoveryArtifact) -> bool:
 
 
 def serialize_artifact(artifact: DiscoveryArtifact) -> bytes:
-    """Serialize only a sealed artifact; drafts are not durable evidence."""
+    """Serialize only a sealed artifact because drafts are not durable evidence."""
     if not verify_artifact(artifact):
         raise ValueError("A discovery artifact must have a valid integrity digest.")
     payload = artifact.model_dump(mode="json")

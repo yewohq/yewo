@@ -60,7 +60,7 @@ def compile_route_memory_candidate(
     app_map: AppMap,
     request: RouteMemoryRequest,
     *,
-    forbidden_scenario_values: Sequence[str] = (),
+    scenario_owned_values: Sequence[str] = (),
 ) -> RouteMemoryCandidate:
     """Compile a shortest deterministic chain of independently verified edges."""
     if not verify_artifact(app_map):
@@ -111,7 +111,7 @@ def compile_route_memory_candidate(
     )
     return seal_artifact(
         candidate,
-        forbidden_scenario_values=forbidden_scenario_values,
+        scenario_owned_values=scenario_owned_values,
     )
 
 
@@ -231,7 +231,7 @@ def transition_route_memory_lifecycle(
     *,
     authority: str,
 ) -> RouteMemory:
-    """Create a new lifecycle artifact; runtime quarantine cannot call this boundary."""
+    """Create a lifecycle artifact outside the runtime quarantine boundary."""
     if authority != "post_run_policy":
         raise ValueError("Only post-run policy may change RouteMemory lifecycle.")
     if not verify_artifact(route_memory):

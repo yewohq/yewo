@@ -2,33 +2,48 @@
 
 from __future__ import annotations
 
+import logging
 import time
-from collections.abc import Callable, Sequence
-from typing import Literal
+from collections.abc import Callable, Iterable, Sequence
 
-from yewo.agent.actuation.actions import ActionType
 from yewo.agent.actuation.safety import (
     ActionAuthorization,
     ActionSafetyPolicy,
-    ActionSource,
 )
-from yewo.agent.memory.control_identity import control_identity_id
-from yewo.agent.memory.screen_identity import is_same_screen
-from yewo.agent.run.settlement import SettlementStatus
 from yewo.discovery.artifacts import seal_artifact, validate_shared_knowledge_payload
 from yewo.discovery import budgeting
+from yewo.discovery.candidate_selection import (
+    CandidateSelection,
+    authorize_candidates,
+    prioritize_authorized_candidates,
+    select_available_candidates,
+)
 from yewo.discovery.contracts import (
     CapabilityState,
     DiscoveryBlocker,
     DiscoveryBudgetDimension,
     DiscoveryRun,
     DiscoveryTerminationSignals,
-    DiscoveryTransitionEvidence,
     FrontierState,
-    RelevantFrontierEntry,
     SideEffectClass,
     finalize_discovery,
 )
+from yewo.discovery.frontier import extend_frontier
+from yewo.discovery.frontier_navigation import (
+    FrontierReachability,
+    select_frontier_replay_candidate,
+    stranded_frontier_ids,
+)
+from yewo.discovery.frontier_state import (
+    ClosableFrontierState,
+    WindowClosureState,
+    close_all_available_frontier,
+    close_available_frontier_ids,
+    close_frontier_entry,
+    close_unresolved_goals,
+)
+from yewo.discovery.goal_settlement import settle_goals
+from yewo.discovery.reached_screens import merge_reached_screen_candidates
 from yewo.discovery.runtime import (
     CapabilityEvidenceReceipt,
     DiscoveryActionCandidate,
@@ -40,7 +55,9 @@ from yewo.discovery.runtime import (
     DiscoveryResult,
     DiscoveryRuntime,
 )
-from yewo.identity import derived_uuid
+from yewo.discovery.transition_acceptance import build_accepted_transition
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DISCOVERY_SIDE_EFFECTS = frozenset(
     {SideEffectClass.READ_ONLY, SideEffectClass.REVERSIBLE}
@@ -55,20 +72,21 @@ class DiscoveryController:
         run: DiscoveryRun,
         *,
         allowed_side_effects: frozenset[SideEffectClass] = DEFAULT_DISCOVERY_SIDE_EFFECTS,
-        forbidden_scenario_values: Sequence[str] = (),
+        scenario_owned_values: Sequence[str] = (),
         clock: Callable[[], float] = time.monotonic,
     ):
         if run.terminal is not None:
             raise ValueError("Discovery requires an open run.")
         self.run = run
         self.allowed_side_effects = allowed_side_effects
-        self.forbidden_scenario_values = tuple(forbidden_scenario_values)
+        self.scenario_owned_values = tuple(scenario_owned_values)
         self.clock = clock
         self.action_policy = ActionSafetyPolicy()
         self._findings: list[DiscoveryFinding] = []
         self._started_at = 0.0
         self._root_screen_state_id: str | None = None
         self._reset_since_action = False
+        self._proposer: DiscoveryProposer | None = None
 
     def run_to_terminal(
         self,
@@ -79,6 +97,7 @@ class DiscoveryController:
     ) -> DiscoveryResult:
         """Execute at most one authorized action per observation until terminal."""
         self._started_at = self.clock()
+        self._proposer = proposer
         initial = self._initial_observation(runtime)
         if isinstance(initial, DiscoveryResult):
             return initial
@@ -92,46 +111,24 @@ class DiscoveryController:
             batch_result = self._accept_batch_or_finish(current)
             if batch_result is not None:
                 return batch_result
-            if self._required_questions_succeeded():
+            if self._required_goals_succeeded():
                 return self._finish()
 
-            authorized = self._authorize_current_candidates(current)
-            if not authorized:
-                relevant = self._relevant_candidates(current)
-                if relevant:
-                    self._refuse_frontier(relevant)
-                    return self._finish(blocker=DiscoveryBlocker.POLICY)
-                if (
-                    current.observation.screen_state_id != self._root_screen_state_id
-                    and not self._reset_since_action
-                ):
-                    reset_result = self._reset(runtime)
-                    if isinstance(reset_result, DiscoveryResult):
-                        return reset_result
-                    current = reset_result
+            selection = self._select_candidate(current, proposer)
+            if isinstance(selection, DiscoveryResult):
+                return selection
+            if selection is None:
+                outcome = self._leave_dead_end(runtime, current)
+                if isinstance(outcome, DiscoveryResult):
+                    return outcome
+                if isinstance(outcome, CandidateSelection):
+                    selection = outcome
+                else:
+                    current = outcome
                     continue
-                self._close_unresolved(CapabilityState.UNAVAILABLE)
-                return self._finish(frontier_remaining=False)
 
-            authorized, action_budget = budgeting.budget_authorized(self.run, authorized)
-            if action_budget is not None:
-                return self._finish(exhausted=action_budget)
-
-            proposal_budget = budgeting.proposal_budget(self.run, proposer)
-            if proposal_budget is not None:
-                return self._finish(exhausted=proposal_budget)
-            proposal = proposer.select(
-                self.run, tuple(candidate for candidate, _ in authorized.values())
-            )
-            proposal_error = self._record_proposal(proposal, proposer)
-            if proposal_error is not None:
-                return self._finish(blocker=proposal_error)
-            if proposal.selected_frontier_id not in authorized:
-                self._mark_available_frontier_attempted()
-                self._close_unresolved(CapabilityState.AMBIGUOUS)
-                return self._finish(frontier_remaining=False)
-
-            candidate, authorization = authorized[proposal.selected_frontier_id]
+            candidate = selection.candidate
+            authorization = selection.authorization
             action_budget = budgeting.action_budget(self.run, candidate)
             if action_budget is not None:
                 return self._finish(exhausted=action_budget)
@@ -140,28 +137,37 @@ class DiscoveryController:
             try:
                 execution = runtime.execute(authorization, candidate)
             except Exception:  # noqa: BLE001 - runtime is an external boundary
-                self._close_frontier(candidate.frontier_id, FrontierState.ATTEMPTED)
-                return self._finish(blocker=DiscoveryBlocker.INFRASTRUCTURE)
+                return self._finish_execution_failure(selection)
 
             self._record_findings(execution.findings)
             batch_result = self._accept_batch_or_finish(execution.destination)
             if batch_result is not None:
                 return batch_result
             transition_identity = self._accept_transition(candidate, authorization, execution)
+            replay_destination = selection.replay_destination_state_id
+            if replay_destination is not None and (
+                transition_identity is None
+                or execution.destination.observation.screen_state_id
+                != replay_destination
+            ):
+                return self._finish_navigation_unavailable()
             if transition_identity is None:
                 self._close_frontier(candidate.frontier_id, FrontierState.ATTEMPTED)
-            else:
+            elif replay_destination is None:
                 self._close_frontier(
                     candidate.frontier_id,
                     FrontierState.VERIFIED,
                     transition_identity,
                 )
-                self._accept_capability_evidence(
-                    execution.capability_evidence,
-                    execution.destination.observation.observation_id,
-                    transition_identity,
-                )
-            if self._required_questions_succeeded():
+                try:
+                    self._accept_capability_evidence(
+                        execution.capability_evidence,
+                        execution.destination.observation.observation_id,
+                        transition_identity,
+                    )
+                except (TypeError, ValueError):
+                    return self._finish(blocker=DiscoveryBlocker.INFRASTRUCTURE)
+            if self._required_goals_succeeded():
                 return self._finish()
 
             if candidate.reset_after:
@@ -171,6 +177,33 @@ class DiscoveryController:
                 current = reset_result
             else:
                 current = execution.destination
+
+    def _finish_execution_failure(
+        self, selection: CandidateSelection
+    ) -> DiscoveryResult:
+        if selection.replay_destination_state_id is not None:
+            return self._finish_navigation_unavailable()
+        self._close_frontier(selection.candidate.frontier_id, FrontierState.ATTEMPTED)
+        return self._finish(blocker=DiscoveryBlocker.INFRASTRUCTURE)
+
+    def _finish_navigation_unavailable(self) -> DiscoveryResult:
+        """End a run that still holds work no route of its own can reach.
+
+        Ambiguous rather than unreachable, because the run never found out.
+        Every open offer closes with the same reading, so a later reader does
+        not take an unvisited screen for a tried one.
+        """
+        self._validated_run(
+            frontier=close_all_available_frontier(
+                self.run.frontier,
+                FrontierState.NAVIGATION_UNAVAILABLE,
+            )
+        )
+        self._close_unresolved(CapabilityState.AMBIGUOUS)
+        return self._finish(
+            frontier_remaining=False,
+            navigation_unavailable=True,
+        )
 
     def _loop_terminal(
         self, interrupted: Callable[[], bool]
@@ -186,9 +219,12 @@ class DiscoveryController:
         expected_setup = self.run.header.compatibility.setup_contract_sha256
         try:
             setup = runtime.prepare(expected_setup)
-        except Exception:  # noqa: BLE001 - runtime is an external boundary
-            return self._finish(blocker=DiscoveryBlocker.SETUP)
+        except Exception:
+            # A raise is a broken runtime, not a device reporting it is not ready.
+            logger.exception("The discovery runtime failed to prepare.")
+            return self._finish(blocker=DiscoveryBlocker.INFRASTRUCTURE)
         if not setup.success or setup.setup_contract_sha256 != expected_setup:
+            logger.error("Discovery setup was refused: %s", setup.reason or "no reason given")
             return self._finish(blocker=DiscoveryBlocker.SETUP)
         if not self._can_spend(DiscoveryBudgetDimension.OBSERVATIONS, 1):
             return self._finish(exhausted=DiscoveryBudgetDimension.OBSERVATIONS)
@@ -237,12 +273,34 @@ class DiscoveryController:
         if self._root_screen_state_id is None:
             self._root_screen_state_id = observation.screen_state_id
         self._record_findings(batch.findings)
+        self._record_capability_candidates(batch)
         self._accept_capability_evidence(
             batch.capability_evidence,
             observation.observation_id,
             None,
         )
         self._record_frontier(batch)
+
+    def _charge_unreported_spend(
+        self,
+    ) -> tuple[DiscoveryBlocker | None, DiscoveryBudgetDimension | None]:
+        """Charge pending model spend before the run is sealed."""
+        if self._proposer is None:
+            return None, None
+        usage, blocker, exhausted = budgeting.charge_unreported_proposal_spend(
+            self.run, self._proposer
+        )
+        self._proposer = None
+        if usage is not None:
+            self._validated_run(usage=usage)
+        return blocker, exhausted
+
+    def _record_capability_candidates(self, batch: DiscoveryObservationBatch) -> None:
+        kept = merge_reached_screen_candidates(
+            self.run, batch.capability_candidates, self.scenario_owned_values
+        )
+        if kept is not None:
+            self._validated_run(capability_candidates=kept)
 
     def _accept_batch_or_finish(
         self, batch: DiscoveryObservationBatch
@@ -259,50 +317,64 @@ class DiscoveryController:
             return self._finish(blocker=DiscoveryBlocker.INFRASTRUCTURE)
         return None
 
-    def _record_frontier(self, batch: DiscoveryObservationBatch) -> None:
-        known_controls = {
-            control.control_identity
-            for control in batch.observation.controls
-            if control.actionable
+    def _select_candidate(
+        self,
+        batch: DiscoveryObservationBatch,
+        proposer: DiscoveryProposer,
+    ) -> CandidateSelection | DiscoveryResult | None:
+        """Select one authorized candidate or return a typed terminal."""
+        relevant = select_available_candidates(self.run, batch)
+        authorized = authorize_candidates(
+            self.run,
+            batch,
+            relevant,
+            self.action_policy,
+            self.allowed_side_effects,
+        )
+        if not authorized:
+            if not relevant:
+                return None
+            self._refuse_frontier(relevant)
+            return self._finish(blocker=DiscoveryBlocker.POLICY)
+
+        authorized, action_budget = budgeting.budget_authorized(self.run, authorized)
+        if action_budget is not None:
+            return self._finish(exhausted=action_budget)
+        proposal_budget = budgeting.proposal_budget(self.run, proposer)
+        if proposal_budget is not None:
+            return self._finish(exhausted=proposal_budget)
+        prioritized = prioritize_authorized_candidates(batch, authorized)
+        window = prioritized[: self.run.budgets.proposal_window_size]
+        window_by_id = {
+            candidate.frontier_id: (candidate, receipt)
+            for candidate, receipt in window
         }
-        questions_by_id = {question.question_id: question for question in self.run.questions}
-        frontier = list(self.run.frontier)
-        known_frontier_ids = {entry.frontier_id for entry in frontier}
-        questions = list(self.run.questions)
-        for candidate in batch.candidates:
-            if candidate.source_observation_id != batch.observation.observation_id:
-                raise ValueError("A frontier candidate requires its exact source observation.")
-            if candidate.source_screen_state_id != batch.observation.screen_state_id:
-                raise ValueError("A frontier candidate requires its exact source state.")
-            if candidate.control_identity not in known_controls:
-                raise ValueError("A frontier candidate requires an actionable observed control.")
-            if not candidate.relevant_question_ids or not set(
-                candidate.relevant_question_ids
-            ).issubset(questions_by_id):
-                raise ValueError("A frontier candidate requires known capability questions.")
-            unresolved_ids = tuple(
-                question_id
-                for question_id in candidate.relevant_question_ids
-                if not questions_by_id[question_id].is_terminal
-            )
-            if not unresolved_ids or candidate.frontier_id in known_frontier_ids:
-                continue
-            for question_id in unresolved_ids:
-                question = questions_by_id[question_id]
-                if question.state is CapabilityState.PENDING:
-                    activated = question.activate()
-                    questions_by_id[question_id] = activated
-                    questions[questions.index(question)] = activated
-            frontier.append(
-                RelevantFrontierEntry(
-                    frontier_id=candidate.frontier_id,
-                    source_observation_id=candidate.source_observation_id,
-                    control_identity=candidate.control_identity,
-                    relevant_question_ids=unresolved_ids,
-                )
-            )
-            known_frontier_ids.add(candidate.frontier_id)
-        self._validated_run(questions=tuple(questions), frontier=tuple(frontier))
+        proposal = proposer.select(
+            self.run, tuple(candidate for candidate, _ in window)
+        )
+        proposal_error = self._record_proposal(proposal, proposer)
+        if proposal_error is not None:
+            return self._finish(blocker=proposal_error)
+        if proposal.provider_failed:
+            return self._finish(blocker=DiscoveryBlocker.INFRASTRUCTURE)
+        selected_frontier_id = proposal.selected_frontier_id
+        if selected_frontier_id is None:
+            self._close_frontier_ids(window_by_id, FrontierState.DECLINED)
+            return self._select_candidate(batch, proposer)
+        if selected_frontier_id not in window_by_id:
+            self._close_frontier_ids(window_by_id, FrontierState.DECLINED)
+            return self._finish_navigation_unavailable()
+        candidate, authorization = window_by_id[selected_frontier_id]
+        return CandidateSelection(candidate, authorization)
+
+    def _record_frontier(self, batch: DiscoveryObservationBatch) -> None:
+        extension = extend_frontier(
+            batch.observation,
+            batch.candidates,
+            self.run.goals,
+            self.run.frontier,
+        )
+        self._validated_run(goals=extension.goals, frontier=extension.frontier)
 
     def _accept_capability_evidence(
         self,
@@ -310,75 +382,14 @@ class DiscoveryController:
         observation_id: str,
         transition_identity: str | None,
     ) -> None:
-        questions = list(self.run.questions)
-        questions_by_id = {question.question_id: question for question in questions}
-        question_indexes = {
-            question.question_id: index for index, question in enumerate(questions)
-        }
-        for receipt in receipts:
-            if receipt.observation_id != observation_id:
-                raise ValueError("Capability evidence requires its exact observation.")
-            question = questions_by_id.get(receipt.question_id)
-            if question is None:
-                raise ValueError("Capability evidence names an unknown question.")
-            if question.is_terminal:
-                continue
-            if receipt.kind == "route_verified":
-                if transition_identity is None or receipt.transition_identity != transition_identity:
-                    raise ValueError("Route capability evidence requires its accepted transition.")
-                state = CapabilityState.ROUTE_VERIFIED
-            else:
-                if receipt.transition_identity is not None:
-                    raise ValueError("Observed capability evidence cannot claim a transition.")
-                state = CapabilityState.CAPABILITY_OBSERVED
-            if question.state is CapabilityState.PENDING:
-                question = question.activate()
-            closed = question.close(state, (observation_id,))
-            questions_by_id[question.question_id] = closed
-            questions[question_indexes[question.question_id]] = closed
-        self._validated_run(questions=tuple(questions))
-
-    def _relevant_candidates(
-        self, batch: DiscoveryObservationBatch
-    ) -> tuple[DiscoveryActionCandidate, ...]:
-        frontier_by_id = {entry.frontier_id: entry for entry in self.run.frontier}
-        return tuple(
-            candidate
-            for candidate in batch.candidates
-            if candidate.frontier_id in frontier_by_id
-            and frontier_by_id[candidate.frontier_id].state is FrontierState.AVAILABLE
+        settlement = settle_goals(
+            receipts,
+            self.run.goals,
+            self.run.frontier,
+            observation_id,
+            transition_identity,
         )
-
-    def _authorize_current_candidates(
-        self, batch: DiscoveryObservationBatch
-    ) -> dict[str, tuple[DiscoveryActionCandidate, ActionAuthorization]]:
-        authorized: dict[
-            str, tuple[DiscoveryActionCandidate, ActionAuthorization]
-        ] = {}
-        for candidate in self._relevant_candidates(batch):
-            if candidate.side_effect not in self.allowed_side_effects:
-                continue
-            if not self.run.usage.can_attempt_transition(
-                candidate.attempt_identity, self.run.budgets
-            ):
-                continue
-            try:
-                authorization = self.action_policy.authorize(
-                    candidate.action,
-                    source=ActionSource.DISCOVERY,
-                    observation_id=candidate.source_observation_id,
-                    screen_phash=candidate.source_phash,
-                    screen_size=candidate.screen_size,
-                    context_id=self.run.header.artifact_id,
-                    keyboard_visible=batch.observation.keyboard_visible,
-                    expected_destination_phash=candidate.expected_destination_phash,
-                )
-            except (TypeError, ValueError):
-                continue
-            if control_identity_id(authorization.control_identity) != candidate.control_identity:
-                continue
-            authorized[candidate.frontier_id] = (candidate, authorization)
-        return authorized
+        self._validated_run(goals=settlement.goals, frontier=settlement.frontier)
 
     def _record_proposal(
         self,
@@ -399,99 +410,89 @@ class DiscoveryController:
         authorization: ActionAuthorization,
         execution: DiscoveryExecutionReceipt,
     ) -> str | None:
-        dispatch = execution.dispatch
-        settlement = execution.settlement
-        destination = execution.destination.observation
-        if dispatch.authorization_id != authorization.authorization_id or not dispatch.success:
+        transition = build_accepted_transition(candidate, authorization, execution)
+        if transition is None:
             return None
-        if settlement.status is not SettlementStatus.DURABLE_PROGRESS:
-            return None
-        if not settlement.control_identity.matches(authorization.control_identity):
-            return None
-        if not {
-            candidate.source_observation_id,
-            destination.observation_id,
-        }.issubset(set(settlement.observation_ids)):
-            return None
-        if not is_same_screen(settlement.destination_phash, destination.phash):
-            return None
-        transition_identity = derived_uuid(
-            "discovery-transition-v1",
-            candidate.source_observation_id,
-            candidate.control_identity,
-            destination.observation_id,
-        )
-        transition = DiscoveryTransitionEvidence(
-            transition_identity=transition_identity,
-            source_observation_id=candidate.source_observation_id,
-            destination_observation_id=destination.observation_id,
-            control_identity=candidate.control_identity,
-            action_kind=(
-                candidate.action.type.value
-                if isinstance(candidate.action.type, ActionType)
-                else candidate.action.type
-            ),
-            authorization_receipt_id=authorization.authorization_id,
-            dispatch_receipt_id=dispatch.dispatch_id,
-            settlement_receipt_id=settlement.settlement_id,
-            side_effect=candidate.side_effect,
-            reversible=candidate.reversible,
-        )
         self._validated_run(transitions=(*self.run.transitions, transition))
-        return transition_identity
+        return transition.transition_identity
 
     def _close_frontier(
         self,
         frontier_id: str,
-        state: Literal[
-            FrontierState.ATTEMPTED,
-            FrontierState.VERIFIED,
-            FrontierState.POLICY_REFUSED,
-        ],
+        state: ClosableFrontierState,
         transition_identity: str | None = None,
     ) -> None:
-        frontier = tuple(
-            entry.close(state, transition_identity)
-            if entry.frontier_id == frontier_id
-            else entry
-            for entry in self.run.frontier
+        self._validated_run(
+            frontier=close_frontier_entry(
+                self.run.frontier,
+                frontier_id,
+                state,
+                transition_identity,
+            )
         )
-        self._validated_run(frontier=frontier)
+
+    def _close_frontier_ids(
+        self,
+        frontier_ids: Iterable[str],
+        state: WindowClosureState,
+    ) -> None:
+        self._validated_run(
+            frontier=close_available_frontier_ids(
+                self.run.frontier,
+                set(frontier_ids),
+                state,
+            )
+        )
 
     def _refuse_frontier(self, candidates: Sequence[DiscoveryActionCandidate]) -> None:
         for candidate in candidates:
             self._close_frontier(candidate.frontier_id, FrontierState.POLICY_REFUSED)
 
-    def _mark_available_frontier_attempted(self) -> None:
-        frontier = tuple(
-            entry.close(FrontierState.ATTEMPTED)
-            if entry.state is FrontierState.AVAILABLE
-            else entry
-            for entry in self.run.frontier
-        )
-        self._validated_run(frontier=frontier)
-
     def _close_unresolved(self, state: CapabilityState) -> None:
-        questions = []
-        for question in self.run.questions:
-            if question.is_terminal:
-                questions.append(question)
-                continue
-            if question.state is CapabilityState.PENDING and state not in (
-                CapabilityState.NOT_EVALUATED,
-                CapabilityState.BLOCKED_BY_POLICY,
-                CapabilityState.BLOCKED_BY_SETUP,
-            ):
-                question = question.activate()
-            questions.append(question.close(state))
-        self._validated_run(questions=tuple(questions))
+        self._validated_run(goals=close_unresolved_goals(self.run.goals, state))
 
-    def _required_questions_succeeded(self) -> bool:
+    def _required_goals_succeeded(self) -> bool:
         return all(
-            not question.required
-            or question.state
-            in (CapabilityState.ROUTE_VERIFIED, CapabilityState.CAPABILITY_OBSERVED)
-            for question in self.run.questions
+            not goal.required
+            or goal.state
+            in (CapabilityState.ROUTE_VERIFIED, CapabilityState.REACHED)
+            for goal in self.run.goals
+        )
+
+    def _leave_dead_end(
+        self,
+        runtime: DiscoveryRuntime,
+        current: DiscoveryObservationBatch,
+    ) -> DiscoveryObservationBatch | CandidateSelection | DiscoveryResult:
+        """Replay known navigation, reset, or close a genuinely spent frontier."""
+        replay = self._select_replay(current)
+        if replay is FrontierReachability.WORK_IS_HERE:
+            self._close_frontier_ids(
+                stranded_frontier_ids(self.run, current),
+                FrontierState.NAVIGATION_UNAVAILABLE,
+            )
+            replay = self._select_replay(current)
+        if isinstance(replay, CandidateSelection):
+            return replay
+        if (
+            current.observation.screen_state_id != self._root_screen_state_id
+            and not self._reset_since_action
+        ):
+            return self._reset(runtime)
+        if any(entry.state is FrontierState.AVAILABLE for entry in self.run.frontier):
+            return self._finish_navigation_unavailable()
+        self._close_unresolved(CapabilityState.UNREACHABLE)
+        return self._finish(frontier_remaining=False)
+
+    def _select_replay(
+        self,
+        current: DiscoveryObservationBatch,
+    ) -> CandidateSelection | FrontierReachability:
+        return select_frontier_replay_candidate(
+            self.run,
+            current,
+            self.action_policy,
+            self.allowed_side_effects,
         )
 
     def _reset(self, runtime: DiscoveryRuntime) -> DiscoveryObservationBatch | DiscoveryResult:
@@ -513,7 +514,7 @@ class DiscoveryController:
         for finding in findings:
             validate_shared_knowledge_payload(
                 finding.model_dump(mode="json"),
-                forbidden_scenario_values=self.forbidden_scenario_values,
+                scenario_owned_values=self.scenario_owned_values,
             )
             self._findings.append(finding)
 
@@ -524,7 +525,11 @@ class DiscoveryController:
         exhausted: DiscoveryBudgetDimension | None = None,
         blocker: DiscoveryBlocker | None = None,
         frontier_remaining: bool = True,
+        navigation_unavailable: bool = False,
     ) -> DiscoveryResult:
+        spend_blocker, spend_exhausted = self._charge_unreported_spend()
+        blocker = blocker or spend_blocker
+        exhausted = exhausted or spend_exhausted
         if blocker is DiscoveryBlocker.POLICY:
             self._close_unresolved(CapabilityState.BLOCKED_BY_POLICY)
         terminal = finalize_discovery(
@@ -534,10 +539,11 @@ class DiscoveryController:
                 exhausted_budget=exhausted,
                 blocker=blocker,
                 relevant_frontier_remaining=frontier_remaining,
+                navigation_unavailable=navigation_unavailable,
             ),
         )
         sealed = seal_artifact(
             terminal,
-            forbidden_scenario_values=self.forbidden_scenario_values,
+            scenario_owned_values=self.scenario_owned_values,
         )
         return DiscoveryResult(run=sealed, findings=tuple(self._findings))

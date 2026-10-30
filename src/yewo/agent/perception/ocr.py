@@ -34,6 +34,13 @@ class OCRLine(BaseModel):
     text: str
     confidence: float = Field(ge=0, le=1)
 
+    @property
+    def bounds(self) -> tuple[float, float, float, float]:
+        """The axis-aligned box around this line's four points."""
+        xs = [point.x for point in self.box]
+        ys = [point.y for point in self.box]
+        return min(xs), min(ys), max(xs), max(ys)
+
     @field_validator("confidence")
     @classmethod
     def _validate_finite_confidence(cls, value: float) -> float:

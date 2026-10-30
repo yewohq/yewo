@@ -111,6 +111,20 @@ class DriverCommands:
         normalized = answer.lower()
         return normalized if normalized in ("portrait", "landscape") else None
 
+    def android_system_bars(self) -> Optional[dict]:
+        """Android system-bar rectangles in the driver's screen coordinates."""
+        try:
+            answer = self.driver.get_system_bars()
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            logger.warning("The Android driver could not read system bars: %s", exc)
+            return None
+        return answer if isinstance(answer, dict) else None
+
+    def ios_viewport_rect(self) -> Optional[dict]:
+        """The iOS application viewport inside the complete screenshot."""
+        answer = self.ask("viewportRect")
+        return answer if isinstance(answer, dict) else None
+
     def set_orientation(self, orientation: str) -> None:
         try:
             self.driver.orientation = orientation.upper()

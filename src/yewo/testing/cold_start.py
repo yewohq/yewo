@@ -16,13 +16,17 @@ from yewo.testing.lock_file import path_beside
 
 
 class ColdStartEvidence(BaseModel):
-    """The isolation one cold run was granted, as its record keeps it."""
+    """The isolation one cold run was granted, as its record keeps it.
+
+    Every field here is checked before the run starts. A cold run does not
+    clear the application's own state, so it claims nothing about it. Each
+    scenario states what it needs through its own lifecycle.
+    """
 
     knowledge_root: str
     output_root: str
     prior_artifact_count: int
     durable_replay_disabled: bool
-    app_state_cleared: bool
 
 
 def _existing_artifact_paths(root: Path) -> tuple[Path, ...]:
@@ -93,5 +97,4 @@ def require_clean_room(
         output_root=str(output_root),
         prior_artifact_count=0,
         durable_replay_disabled=True,
-        app_state_cleared=True,
     )

@@ -49,7 +49,7 @@ from .warm_execution import ScenarioRoutePreparer
 from .runner_session import is_session_responsive
 from .generation_evidence import ScenarioGenerationEvidence
 from .runner_knowledge import RunnerDiscoveryProvider
-from .runner_startup import build_runner_startup_authority
+from .runner_startup import DiscoveryProviderFactory, build_runner_startup_authority
 from .cold_start import ColdStartEvidence
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ class YewoTestRunner:
         generation_evidence: ScenarioGenerationEvidence | None = None,
         knowledge_root: Path | None = None,
         discovery_provider: RunnerDiscoveryProvider | None = None,
+        discovery_factory: DiscoveryProviderFactory | None = None,
         cold_start: ColdStartEvidence | None = None,
     ):
         self.journey_file = journey_file
@@ -110,6 +111,7 @@ class YewoTestRunner:
             discovery_provider,
             generation_evidence,
             route_preparer,
+            discovery_factory,
         )
         self.grounding = grounding
         self.reuse_app = reuse_app

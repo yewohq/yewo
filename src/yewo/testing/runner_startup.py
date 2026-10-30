@@ -38,12 +38,16 @@ class RunnerStartupAuthority:
         workflow: str,
         locked: bool,
         selected_knowledge: ScenarioStartupKnowledge | None = None,
+        knowledge_source: RunnerStartupKnowledgeSource | None = None,
+        discovery_factory: DiscoveryProviderFactory | None = None,
     ):
         self.coordinator = coordinator
         self.lock_path = lock_path
         self.workflow = workflow
         self.locked = locked
         self.selected_knowledge = selected_knowledge
+        self.knowledge_source = knowledge_source
+        self.discovery_factory = discovery_factory
 
     @property
     def generation_evidence(self) -> ScenarioGenerationEvidence | None:
@@ -54,6 +58,35 @@ class RunnerStartupAuthority:
     def route_preparer(self) -> ScenarioRoutePreparer | None:
         knowledge = self.selected_knowledge
         return knowledge.route_preparer if knowledge is not None else None
+
+    def attach_discovery(
+        self,
+        device_control,
+        perception,
+        llm_client,
+        scrubber,
+        artifact_writer=None,
+        diagnostic_dir=None,
+    ) -> None:
+        """Build the discovery boundary, now that a device is running.
+
+        Called between opening the device and resolving the suite. Discovery
+        observes a live screen, so its provider cannot exist when the runner is
+        built. A run that wants no discovery was given no factory, and this
+        does nothing.
+        """
+        if self.discovery_factory is None or self.knowledge_source is None:
+            return
+        self.knowledge_source.use_discovery_provider(
+            self.discovery_factory(
+                device_control,
+                perception,
+                llm_client,
+                scrubber,
+                artifact_writer,
+                diagnostic_dir,
+            )
+        )
 
     def inspect_knowledge(self, journey: UserJourney) -> None:
         """Run journey preflight and select compatible knowledge, before any device."""
@@ -86,6 +119,10 @@ class RunnerStartupAuthority:
         return startup.suite
 
 
+DiscoveryProviderFactory = Callable[..., RunnerDiscoveryProvider]
+"""Builds the discovery boundary from a started device, perception, a client, and the run's scrubber."""
+
+
 def build_runner_startup_authority(
     journey_preflight: Callable[[UserJourney], None],
     journey_file: Path | None,
@@ -95,6 +132,7 @@ def build_runner_startup_authority(
     discovery_provider: RunnerDiscoveryProvider | None,
     generation_evidence: ScenarioGenerationEvidence | None,
     route_preparer: ScenarioRoutePreparer | None,
+    discovery_factory: DiscoveryProviderFactory | None = None,
 ) -> RunnerStartupAuthority:
     """Wire the one startup path a runner may resolve scenarios through."""
     explicit_knowledge = (
@@ -115,4 +153,6 @@ def build_runner_startup_authority(
         workflow,
         locked,
         explicit_knowledge,
+        source,
+        discovery_factory,
     )

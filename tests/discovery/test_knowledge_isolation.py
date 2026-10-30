@@ -122,7 +122,7 @@ def test_shared_knowledge_guard_refuses_scenario_values(header):
     route = _route(header, instruction="Use private-probe-value")
 
     with pytest.raises(ValueError, match="scenario value"):
-        seal_artifact(route, forbidden_scenario_values=("private-probe-value",))
+        seal_artifact(route, scenario_owned_values=("private-probe-value",))
 
 
 def test_sealed_route_detects_later_mutation(header):
@@ -184,7 +184,7 @@ def test_app_map_shares_navigation_without_scenario_outcomes(header):
     )
     sealed = seal_artifact(
         app_map,
-        forbidden_scenario_values=("one-exercise", "one-hundred-exercises", "-100"),
+        scenario_owned_values=("one-exercise", "one-hundred-exercises", "-100"),
     )
 
     assert verify_artifact(sealed)

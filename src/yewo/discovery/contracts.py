@@ -21,8 +21,8 @@ class CapabilityState(str, Enum):
     PENDING = "pending"
     ACTIVE = "active"
     ROUTE_VERIFIED = "route_verified"
-    CAPABILITY_OBSERVED = "capability_observed"
-    UNAVAILABLE = "unavailable"
+    REACHED = "reached"
+    UNREACHABLE = "unreachable"
     BLOCKED_BY_POLICY = "blocked_by_policy"
     BLOCKED_BY_SETUP = "blocked_by_setup"
     AMBIGUOUS = "ambiguous"
@@ -30,7 +30,7 @@ class CapabilityState(str, Enum):
 
 
 SUCCESSFUL_CAPABILITY_STATES = frozenset(
-    {CapabilityState.ROUTE_VERIFIED, CapabilityState.CAPABILITY_OBSERVED}
+    {CapabilityState.ROUTE_VERIFIED, CapabilityState.REACHED}
 )
 TERMINAL_CAPABILITY_STATES = frozenset(
     state
@@ -39,11 +39,11 @@ TERMINAL_CAPABILITY_STATES = frozenset(
 )
 
 
-class CapabilityQuestion(DiscoveryContract):
-    """One semantic capability discovery must settle exactly once."""
+class JourneyGoal(DiscoveryContract):
+    """One journey goal discovery must settle exactly once."""
 
-    question_id: str = Field(default_factory=new_uuid)
-    intent: str = Field(min_length=1)
+    goal_id: str = Field(default_factory=new_uuid)
+    statement: str = Field(min_length=1)
     required: bool = True
     state: CapabilityState = CapabilityState.PENDING
     evidence_observation_ids: tuple[str, ...] = ()
@@ -52,26 +52,26 @@ class CapabilityQuestion(DiscoveryContract):
     def is_terminal(self) -> bool:
         return self.state in TERMINAL_CAPABILITY_STATES
 
-    def activate(self) -> "CapabilityQuestion":
+    def activate(self) -> "JourneyGoal":
         if self.state is not CapabilityState.PENDING:
-            raise ValueError("Only a pending capability question can become active.")
+            raise ValueError("Only a pending journey goal can become active.")
         return self.model_copy(update={"state": CapabilityState.ACTIVE})
 
     def close(
         self,
         state: CapabilityState,
         evidence_observation_ids: tuple[str, ...] = (),
-    ) -> "CapabilityQuestion":
+    ) -> "JourneyGoal":
         if self.is_terminal:
-            raise ValueError("A terminal capability question is immutable.")
+            raise ValueError("A terminal journey goal is immutable.")
         if state not in TERMINAL_CAPABILITY_STATES:
-            raise ValueError("A capability question must close with a terminal state.")
+            raise ValueError("A journey goal must close with a terminal state.")
         if self.state is CapabilityState.PENDING and state not in (
             CapabilityState.BLOCKED_BY_POLICY,
             CapabilityState.BLOCKED_BY_SETUP,
             CapabilityState.NOT_EVALUATED,
         ):
-            raise ValueError("This capability terminal requires an active question.")
+            raise ValueError("This terminal state requires an active journey goal.")
         if state in SUCCESSFUL_CAPABILITY_STATES and not evidence_observation_ids:
             raise ValueError("A successful capability state requires accepted evidence.")
         return self.model_copy(
@@ -111,16 +111,18 @@ class CapabilityCandidate(DiscoveryContract):
 
     candidate_id: str = Field(default_factory=new_uuid)
     capability: str = Field(min_length=1)
-    question_ids: tuple[str, ...] = ()
+    goal_ids: tuple[str, ...] = ()
     observation_ids: tuple[str, ...] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
 
 
 class FrontierState(str, Enum):
     AVAILABLE = "available"
+    DECLINED = "declined"
     ATTEMPTED = "attempted"
     VERIFIED = "verified"
     POLICY_REFUSED = "policy_refused"
+    NAVIGATION_UNAVAILABLE = "navigation_unavailable"
 
 
 class SideEffectClass(str, Enum):
@@ -135,7 +137,7 @@ class SideEffectClass(str, Enum):
 
 
 class DiscoveryTransitionEvidence(DiscoveryContract):
-    """Accepted local edge evidence; it is not scenario or product evidence."""
+    """Accepted local edge evidence that is not scenario or product evidence."""
 
     transition_identity: str
     source_observation_id: str
@@ -150,21 +152,23 @@ class DiscoveryTransitionEvidence(DiscoveryContract):
 
 
 class RelevantFrontierEntry(DiscoveryContract):
-    """One control owned by its source observation and relevant questions."""
+    """One control owned by its source observation and relevant goals."""
 
     frontier_id: str = Field(default_factory=new_uuid)
     source_observation_id: str
     control_identity: str
-    relevant_question_ids: tuple[str, ...] = Field(min_length=1)
+    relevant_goal_ids: tuple[str, ...] = Field(min_length=1)
     state: FrontierState = FrontierState.AVAILABLE
     transition_identity: str | None = None
 
     def close(
         self,
         state: Literal[
+            FrontierState.DECLINED,
             FrontierState.ATTEMPTED,
             FrontierState.VERIFIED,
             FrontierState.POLICY_REFUSED,
+            FrontierState.NAVIGATION_UNAVAILABLE,
         ],
         transition_identity: str | None = None,
     ) -> "RelevantFrontierEntry":
@@ -189,7 +193,7 @@ class DiscoveryBudgetDimension(str, Enum):
 
 
 class DiscoveryBudgets(DiscoveryContract):
-    """Independent ceilings; spending one dimension cannot borrow from another."""
+    """Independent ceilings that do not permit borrowing between dimensions."""
 
     observations: int = Field(gt=0)
     actions: int = Field(ge=0)
@@ -200,6 +204,7 @@ class DiscoveryBudgets(DiscoveryContract):
     cost_micro_usd: int = Field(ge=0)
     side_effect_actions: int = Field(ge=0)
     attempts_per_transition: int = Field(gt=0)
+    proposal_window_size: int = Field(default=20, gt=0)
 
 
 class TransitionAttemptUsage(DiscoveryContract):
@@ -243,6 +248,8 @@ class DiscoveryBudgetUsage(DiscoveryContract):
             0,
         )
         return attempts < limits.attempts_per_transition
+
+
 class DiscoveryTerminal(str, Enum):
     DISCOVERY_COMPLETE = "discovery_complete"
     DISCOVERY_INCOMPLETE = "discovery_incomplete"
@@ -277,18 +284,26 @@ class DiscoveryTerminalRecord(DiscoveryContract):
         else:
             if self.exhausted_budget is not None or self.blocker is not None:
                 raise ValueError("This discovery terminal cannot carry a budget or blocker.")
-            expected = {
-                DiscoveryTerminal.DISCOVERY_COMPLETE: (
+            expected_reasons = {
+                DiscoveryTerminal.DISCOVERY_COMPLETE: {
                     "Every required discovery capability was verified."
-                ),
-                DiscoveryTerminal.DISCOVERY_INCOMPLETE: (
-                    "The relevant safe frontier was exhausted before every capability "
-                    "was verified."
-                ),
-                DiscoveryTerminal.DISCOVERY_INTERRUPTED: (
+                },
+                DiscoveryTerminal.DISCOVERY_INCOMPLETE: {
+                    "The relevant safe frontier was exhausted before every capability was verified.",
+                    (
+                        "Discovery could not revisit known safe frontier work before every "
+                        "capability was verified."
+                    ),
+                },
+                DiscoveryTerminal.DISCOVERY_INTERRUPTED: {
                     "Discovery was interrupted externally."
-                ),
+                },
             }[self.terminal]
+            if self.reason not in expected_reasons:
+                raise ValueError(
+                    "A discovery terminal reason must use its canonical wording."
+                )
+            return self
         if self.reason != expected:
             raise ValueError("A discovery terminal reason must use its canonical wording.")
         return self
@@ -299,13 +314,14 @@ class DiscoveryTerminationSignals(DiscoveryContract):
     exhausted_budget: DiscoveryBudgetDimension | None = None
     blocker: DiscoveryBlocker | None = None
     relevant_frontier_remaining: bool = True
+    navigation_unavailable: bool = False
 
 
 class DiscoveryRun(DiscoveryArtifact):
     """Non-verdict-bearing evidence and state for one bounded discovery run."""
 
     header: DiscoveryArtifactHeader
-    questions: tuple[CapabilityQuestion, ...] = Field(min_length=1)
+    goals: tuple[JourneyGoal, ...] = Field(min_length=1)
     observations: tuple[DiscoveryObservation, ...] = ()
     transitions: tuple[DiscoveryTransitionEvidence, ...] = ()
     capability_candidates: tuple[CapabilityCandidate, ...] = ()
@@ -318,19 +334,19 @@ class DiscoveryRun(DiscoveryArtifact):
     def _validate_contract(self) -> "DiscoveryRun":
         if self.header.schema_name != "discovery-run":
             raise ValueError("A discovery run requires the discovery-run schema.")
-        question_ids = [question.question_id for question in self.questions]
+        goal_ids = [goal.goal_id for goal in self.goals]
         observation_ids = [observation.observation_id for observation in self.observations]
-        if len(question_ids) != len(set(question_ids)):
-            raise ValueError("Capability question identifiers must be unique.")
+        if len(goal_ids) != len(set(goal_ids)):
+            raise ValueError("Journey goal identifiers must be unique.")
         if len(observation_ids) != len(set(observation_ids)):
             raise ValueError("Discovery observation identifiers must be unique.")
-        known_questions = set(question_ids)
-        questions_by_id = {question.question_id: question for question in self.questions}
+        known_goals = set(goal_ids)
+        goals_by_id = {goal.goal_id: goal for goal in self.goals}
         known_observations = set(observation_ids)
-        self._validate_evidence_graph(known_questions, known_observations, questions_by_id)
-        for question in self.questions:
-            if not set(question.evidence_observation_ids).issubset(known_observations):
-                raise ValueError("A capability question requires accepted observations.")
+        self._validate_evidence_graph(known_goals, known_observations, goals_by_id)
+        for goal in self.goals:
+            if not set(goal.evidence_observation_ids).issubset(known_observations):
+                raise ValueError("A journey goal requires accepted observations.")
         for dimension in DiscoveryBudgetDimension:
             if getattr(self.usage, dimension.value) > getattr(
                 self.budgets, dimension.value
@@ -342,15 +358,15 @@ class DiscoveryRun(DiscoveryArtifact):
         ):
             raise ValueError("Transition attempts cannot exceed their independent limit.")
         if self.terminal is not None and any(
-            not question.is_terminal for question in self.questions
+            not goal.is_terminal for goal in self.goals
         ):
-            raise ValueError("A terminal discovery run cannot retain an open question.")
-        required = tuple(question for question in self.questions if question.required)
+            raise ValueError("A terminal discovery run cannot retain an open goal.")
+        required = tuple(goal for goal in self.goals if goal.required)
         if (
             self.terminal is not None
             and self.terminal.terminal is DiscoveryTerminal.DISCOVERY_COMPLETE
             and any(
-                question.state not in SUCCESSFUL_CAPABILITY_STATES for question in required
+                goal.state not in SUCCESSFUL_CAPABILITY_STATES for goal in required
             )
         ):
             raise ValueError("A complete discovery requires every required capability.")
@@ -358,9 +374,9 @@ class DiscoveryRun(DiscoveryArtifact):
 
     def _validate_evidence_graph(
         self,
-        known_questions: set[str],
+        known_goals: set[str],
         known_observations: set[str],
-        questions_by_id: dict[str, CapabilityQuestion],
+        goals_by_id: dict[str, JourneyGoal],
     ) -> None:
         transition_ids = [transition.transition_identity for transition in self.transitions]
         if len(transition_ids) != len(set(transition_ids)):
@@ -372,21 +388,21 @@ class DiscoveryRun(DiscoveryArtifact):
             }
             if not referenced.issubset(known_observations):
                 raise ValueError("A discovery transition requires both exact observations.")
-        self._validate_frontier(known_questions, known_observations, questions_by_id)
+        self._validate_frontier(known_goals, known_observations, goals_by_id)
         candidate_ids = [candidate.candidate_id for candidate in self.capability_candidates]
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("Capability candidate identifiers must be unique.")
         for candidate in self.capability_candidates:
-            if not set(candidate.question_ids).issubset(known_questions):
-                raise ValueError("A capability candidate names an unknown question.")
+            if not set(candidate.goal_ids).issubset(known_goals):
+                raise ValueError("A capability candidate names an unknown goal.")
             if not set(candidate.observation_ids).issubset(known_observations):
                 raise ValueError("A capability candidate requires accepted observations.")
 
     def _validate_frontier(
         self,
-        known_questions: set[str],
+        known_goals: set[str],
         known_observations: set[str],
-        questions_by_id: dict[str, CapabilityQuestion],
+        goals_by_id: dict[str, JourneyGoal],
     ) -> None:
         frontier_ids = [entry.frontier_id for entry in self.frontier]
         if len(frontier_ids) != len(set(frontier_ids)):
@@ -394,45 +410,45 @@ class DiscoveryRun(DiscoveryArtifact):
         for entry in self.frontier:
             if entry.source_observation_id not in known_observations:
                 raise ValueError("A frontier entry requires its source observation.")
-            if not set(entry.relevant_question_ids).issubset(known_questions):
-                raise ValueError("A frontier entry names an unknown capability question.")
+            if not set(entry.relevant_goal_ids).issubset(known_goals):
+                raise ValueError("A frontier entry names an unknown journey goal.")
             if entry.state is FrontierState.AVAILABLE and any(
-                questions_by_id[question_id].is_terminal
-                for question_id in entry.relevant_question_ids
+                goals_by_id[goal_id].is_terminal
+                for goal_id in entry.relevant_goal_ids
             ):
-                raise ValueError("Available frontier work requires an unresolved question.")
+                raise ValueError("Available frontier work requires an unresolved goal.")
 
 
-def _close_open_questions(
-    questions: tuple[CapabilityQuestion, ...], state: CapabilityState
-) -> tuple[CapabilityQuestion, ...]:
+def _close_open_goals(
+    goals: tuple[JourneyGoal, ...], state: CapabilityState
+) -> tuple[JourneyGoal, ...]:
     closed = []
-    for question in questions:
-        if question.is_terminal:
-            closed.append(question)
+    for goal in goals:
+        if goal.is_terminal:
+            closed.append(goal)
             continue
-        if question.state is CapabilityState.PENDING and state not in (
+        if goal.state is CapabilityState.PENDING and state not in (
             CapabilityState.BLOCKED_BY_POLICY,
             CapabilityState.BLOCKED_BY_SETUP,
             CapabilityState.NOT_EVALUATED,
         ):
-            question = question.activate()
-        closed.append(question.close(state))
+            goal = goal.activate()
+        closed.append(goal.close(state))
     return tuple(closed)
 
 
 def finalize_discovery(
     run: DiscoveryRun, signals: DiscoveryTerminationSignals
 ) -> DiscoveryRun:
-    """Select one terminal by fixed precedence and close every open question."""
+    """Select one terminal by fixed precedence and close every open goal."""
     if run.terminal is not None:
         raise ValueError("A terminal discovery run is immutable.")
 
-    questions = run.questions
+    goals = run.goals
     exhausted = signals.exhausted_budget
-    required = tuple(question for question in questions if question.required)
+    required = tuple(goal for goal in goals if goal.required)
     all_required_succeeded = all(
-        question.state in SUCCESSFUL_CAPABILITY_STATES for question in required
+        goal.state in SUCCESSFUL_CAPABILITY_STATES for goal in required
     )
 
     if signals.externally_interrupted:
@@ -440,14 +456,14 @@ def finalize_discovery(
             terminal=DiscoveryTerminal.DISCOVERY_INTERRUPTED,
             reason="Discovery was interrupted externally.",
         )
-        questions = _close_open_questions(questions, CapabilityState.NOT_EVALUATED)
+        goals = _close_open_goals(goals, CapabilityState.NOT_EVALUATED)
     elif exhausted is not None:
         terminal = DiscoveryTerminalRecord(
             terminal=DiscoveryTerminal.DISCOVERY_BUDGET_EXHAUSTED,
             reason=f"The {exhausted.value} discovery budget was exhausted.",
             exhausted_budget=exhausted,
         )
-        questions = _close_open_questions(questions, CapabilityState.NOT_EVALUATED)
+        goals = _close_open_goals(goals, CapabilityState.NOT_EVALUATED)
     elif signals.blocker is not None:
         terminal = DiscoveryTerminalRecord(
             terminal=DiscoveryTerminal.DISCOVERY_BLOCKED,
@@ -458,20 +474,29 @@ def finalize_discovery(
             DiscoveryBlocker.POLICY: CapabilityState.BLOCKED_BY_POLICY,
             DiscoveryBlocker.SETUP: CapabilityState.BLOCKED_BY_SETUP,
         }.get(signals.blocker, CapabilityState.NOT_EVALUATED)
-        questions = _close_open_questions(questions, blocked_state)
+        goals = _close_open_goals(goals, blocked_state)
     elif all_required_succeeded:
         terminal = DiscoveryTerminalRecord(
             terminal=DiscoveryTerminal.DISCOVERY_COMPLETE,
             reason="Every required discovery capability was verified.",
         )
-        questions = _close_open_questions(questions, CapabilityState.NOT_EVALUATED)
+        goals = _close_open_goals(goals, CapabilityState.NOT_EVALUATED)
+    elif signals.navigation_unavailable:
+        terminal = DiscoveryTerminalRecord(
+            terminal=DiscoveryTerminal.DISCOVERY_INCOMPLETE,
+            reason=(
+                "Discovery could not revisit known safe frontier work before every "
+                "capability was verified."
+            ),
+        )
+        goals = _close_open_goals(goals, CapabilityState.AMBIGUOUS)
     elif not signals.relevant_frontier_remaining:
         terminal = DiscoveryTerminalRecord(
             terminal=DiscoveryTerminal.DISCOVERY_INCOMPLETE,
             reason="The relevant safe frontier was exhausted before every capability was verified.",
         )
-        questions = _close_open_questions(questions, CapabilityState.UNAVAILABLE)
+        goals = _close_open_goals(goals, CapabilityState.UNREACHABLE)
     else:
         raise ValueError("Discovery cannot terminate while relevant safe work remains.")
 
-    return run.model_copy(update={"questions": questions, "terminal": terminal})
+    return run.model_copy(update={"goals": goals, "terminal": terminal})

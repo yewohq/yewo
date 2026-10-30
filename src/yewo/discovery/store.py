@@ -28,6 +28,7 @@ class DiscoveryStore:
         self.root = root
 
     def find_compatible_app_map(self, compatibility: DiscoveryCompatibilityKey) -> AppMap | None:
+        """The one map whose mechanics may be replayed in this exact context."""
         maps = tuple(
             app_map
             for app_map in self._read_app_maps()
@@ -36,6 +37,28 @@ class DiscoveryStore:
         if len(maps) > 1:
             raise ValueError("More than one compatible AppMap requires explicit selection.")
         return maps[0] if maps else None
+
+    def find_maps_of_same_app(
+        self, compatibility: DiscoveryCompatibilityKey
+    ) -> tuple[AppMap, ...]:
+        """Every stored map of this application, whatever shape of screen read it.
+
+        These describe the same application and cannot replay this one's
+        mechanics. A pHash and a coordinate belong to one screen size. What
+        they carry that does travel is the shape of the application: which
+        screens exist, what their controls read as, and which order reached
+        what.
+
+        Returned so a run can say an application is already known rather than
+        reporting it as unknown. A later version explores under that map's
+        guidance instead of from nothing.
+        """
+        return tuple(
+            app_map
+            for app_map in self._read_app_maps()
+            if app_map.header.compatibility.describes_same_app_as(compatibility)
+            and not app_map.header.compatibility.is_compatible_with(compatibility)
+        )
 
     def save_discovery_run(self, run: DiscoveryRun) -> Path:
         if run.terminal is None:
@@ -60,7 +83,7 @@ class DiscoveryStore:
         return destination
 
     def load_app_map(self, artifact_id: str) -> AppMap:
-        """Load one exact sealed map; callers must not select by filename guesses."""
+        """Load one exact sealed map without selecting by a filename guess."""
         path = self.root / "app_maps" / f"{artifact_id}.json"
         if not path.is_file():
             raise FileNotFoundError(f"AppMap {artifact_id} is absent from the knowledge store.")

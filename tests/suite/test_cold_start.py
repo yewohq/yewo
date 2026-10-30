@@ -37,7 +37,6 @@ class CleanRoomTests(unittest.TestCase):
             self.assertIsInstance(evidence, ColdStartEvidence)
             self.assertEqual(evidence.prior_artifact_count, 0)
             self.assertTrue(evidence.durable_replay_disabled)
-            self.assertTrue(evidence.app_state_cleared)
             self.assertEqual(evidence.knowledge_root, str(Path(directory) / "cold" / "knowledge"))
             self.assertEqual(evidence.output_root, str(Path(directory) / "cold"))
 
@@ -199,7 +198,7 @@ class ColdRecordTests(unittest.TestCase):
             recorded = written["inputs"]["cold_start"]
             self.assertEqual(recorded["prior_artifact_count"], 0)
             self.assertTrue(recorded["durable_replay_disabled"])
-            self.assertTrue(recorded["app_state_cleared"])
+            self.assertNotIn("app_state_cleared", recorded)
             self.assertEqual(recorded["knowledge_root"], evidence.knowledge_root)
 
     def test_an_ordinary_run_records_no_cold_start(self):

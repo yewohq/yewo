@@ -23,6 +23,7 @@ from yewo.agent.perception.elements import GUIElement, element_roles
 from yewo.agent.perception.fusion import PerceptionFrame
 from yewo.agent.perception.keyboard import KEYBOARD_KEY_ROLE, KEYBOARD_REGION_ROLE
 from yewo.agent.perception.ocr import OCRLine
+from yewo.discovery.system_chrome import is_inside_system_chrome
 
 
 def control_text_digest(text: str) -> str:
@@ -65,8 +66,19 @@ vocabulary. A package declaring none of these yields no editable control,
 which is the fail-closed reading: unobserved, not absent.
 """
 
-NON_INTERACTIVE_ROLES = frozenset({"text", "line", "statusbar"})
-"""Detector classes that are reading matter or system chrome, not controls."""
+SYSTEM_CHROME_ROLES = frozenset({"statusbar"})
+"""Detector classes the platform draws, not the application.
+
+Separate from reading matter because the two answer different questions. A
+screen's own heading is reading matter and must survive. The clock in the
+status bar is not the application's and must not.
+"""
+
+STRUCTURAL_ROLES = frozenset({"line"})
+"""Detector classes that describe layout rather than a bounded tap target."""
+
+NON_INTERACTIVE_ROLES = STRUCTURAL_ROLES | SYSTEM_CHROME_ROLES
+"""Every class that is not a control."""
 
 KEYBOARD_ROLES = frozenset({KEYBOARD_REGION_ROLE, KEYBOARD_KEY_ROLE})
 """The input surface itself, keyed on the roles `perception.keyboard` owns.
@@ -164,6 +176,7 @@ class ControlSurface:
 def build_control_surface(
     frame: PerceptionFrame,
     viewport: tuple[int, int],
+    platform_chrome_bounds: tuple[tuple[int, int, int, int], ...] = (),
 ) -> ControlSurface:
     """Project one perceived frame's interaction surface.
 
@@ -180,13 +193,24 @@ def build_control_surface(
     text_lines = tuple(
         _build_text_line(line) for line in frame.text_lines if line.text.strip()
     )
+    detected_chrome_bounds = tuple(
+        _element_bounds(element)
+        for element in frame.elements
+        if element_roles(element) & SYSTEM_CHROME_ROLES
+    )
+    system_chrome_bounds = (*detected_chrome_bounds, *platform_chrome_bounds)
     controls = []
     for element in frame.elements:
-        control = _build_surface_control(element, text_lines, viewport)
+        control = _build_surface_control(
+            element,
+            text_lines,
+            viewport,
+            system_chrome_bounds,
+        )
         if control is not None:
             controls.append(control)
     return ControlSurface(
-        controls=tuple(controls),
+        controls=_deduplicate_overlapping_controls(tuple(controls)),
         viewport=viewport,
         unassociated_text_digests=tuple(
             control_text_digest(text) for text in frame.unmatched_text()
@@ -220,13 +244,15 @@ def _build_surface_control(
     element: GUIElement,
     text_lines: tuple[_TextLine, ...],
     viewport: tuple[int, int],
+    system_chrome_bounds: tuple[tuple[int, int, int, int], ...],
 ) -> SurfaceControl | None:
     """Project one detection, or decline it as keyboard, scenery, or chrome."""
     roles = element_roles(element)
     if roles & KEYBOARD_ROLES:
         return None
-    box = element.bounding_box
-    bounds = (box.x_min, box.y_min, box.x_max, box.y_max)
+    bounds = _element_bounds(element)
+    if is_inside_system_chrome(bounds, system_chrome_bounds):
+        return None
     if _is_container_sized(bounds, viewport):
         return None
     interaction = _resolve_interaction(roles)
@@ -277,6 +303,11 @@ def _resolve_role(element: GUIElement) -> str:
         if normalized:
             return normalized
     return "control"
+
+
+def _element_bounds(element: GUIElement) -> tuple[int, int, int, int]:
+    box = element.bounding_box
+    return box.x_min, box.y_min, box.x_max, box.y_max
 
 
 def _select_nearest_line(
@@ -330,6 +361,48 @@ def _is_clipped_by_viewport(
 
 def _area_px(bounds: tuple[int, int, int, int]) -> int:
     return max(0, bounds[2] - bounds[0]) * max(0, bounds[3] - bounds[1])
+
+
+def _deduplicate_overlapping_controls(
+    controls: tuple[SurfaceControl, ...],
+) -> tuple[SurfaceControl, ...]:
+    kept: list[SurfaceControl] = []
+    for control in controls:
+        duplicate_index = next(
+            (
+                index
+                for index, existing in enumerate(kept)
+                if _is_same_labeled_target(existing, control)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            kept.append(control)
+            continue
+        existing = kept[duplicate_index]
+        if _control_preference(control) < _control_preference(existing):
+            kept[duplicate_index] = control
+    return tuple(kept)
+
+
+def _is_same_labeled_target(first: SurfaceControl, second: SurfaceControl) -> bool:
+    if not first.text_digest or first.text_digest != second.text_digest:
+        return False
+    intersection = (
+        max(first.bounds[0], second.bounds[0]),
+        max(first.bounds[1], second.bounds[1]),
+        min(first.bounds[2], second.bounds[2]),
+        min(first.bounds[3], second.bounds[3]),
+    )
+    smaller_area = min(_area_px(first.bounds), _area_px(second.bounds))
+    return smaller_area > 0 and _area_px(intersection) / smaller_area >= 0.8
+
+
+def _control_preference(control: SurfaceControl) -> tuple[bool, int]:
+    return (
+        control.interaction is not ControlInteraction.EDIT,
+        _area_px(control.bounds),
+    )
 
 
 def select_control_at(

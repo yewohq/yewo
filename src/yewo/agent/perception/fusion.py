@@ -144,9 +144,7 @@ def _best_element(
 
 
 def _line_bounds(line: OCRLine) -> tuple[float, float, float, float]:
-    xs = [point.x for point in line.box]
-    ys = [point.y for point in line.box]
-    return min(xs), min(ys), max(xs), max(ys)
+    return line.bounds
 
 
 def _reading_order(line: OCRLine) -> tuple[float, float]:

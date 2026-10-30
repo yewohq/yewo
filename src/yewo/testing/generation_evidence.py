@@ -38,6 +38,10 @@ class GenerationRoutePrefix(DiscoveryContract):
     segment_count: int = Field(gt=0)
 
 
+REPORTED_ONLY_FIELDS = {"reached_capabilities", "known_from_other_device_shapes"}
+"""Fields a run reported about itself, which authorize nothing."""
+
+
 class ScenarioGenerationEvidence(DiscoveryContract):
     """The only app evidence semantic generation may consume."""
 
@@ -45,6 +49,21 @@ class ScenarioGenerationEvidence(DiscoveryContract):
     app_map_integrity_sha256: str
     capabilities: tuple[GenerationCapabilityEvidence, ...]
     route_prefixes: tuple[GenerationRoutePrefix, ...] = ()
+    reached_capabilities: tuple[str, ...] = ()
+    """What the run reached that no requirement asked for.
+
+    Reported, never generated from. A reachable screen is not a product rule
+    that it should be reachable, so these cannot authorize a scenario. They
+    exist so a run that misses its goal says how far it got.
+    """
+
+    known_from_other_device_shapes: int = 0
+    """How many stored maps already describe this app on another screen shape.
+
+    Nothing is reused from them, because a fingerprint and a coordinate belong
+    to one screen size. A non-zero count says this run re-learned an
+    application something already knew.
+    """
 
     @model_validator(mode="after")
     def _validate_unique_evidence(self) -> "ScenarioGenerationEvidence":
@@ -58,8 +77,15 @@ class ScenarioGenerationEvidence(DiscoveryContract):
 
     @property
     def evidence_sha256(self) -> str:
+        """Identify what authorizes generation, and nothing a run only reported.
+
+        A lock records this digest and refuses knowledge that does not match.
+        A reported field differs between the run that discovered a map and a
+        later run that reused it. Including one would make the first run's lock
+        unreadable by the second.
+        """
         payload = json.dumps(
-            self.model_dump(mode="json"),
+            self.model_dump(mode="json", exclude=REPORTED_ONLY_FIELDS),
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -83,6 +109,8 @@ class ScenarioGenerationEvidence(DiscoveryContract):
 def build_scenario_generation_evidence(
     app_map: AppMap,
     route_memories: tuple[RouteMemory, ...] = (),
+    reached_capabilities: tuple[str, ...] = (),
+    known_from_other_device_shapes: int = 0,
 ) -> ScenarioGenerationEvidence:
     """Project verified knowledge into a narrow, model-safe generation contract."""
     if not verify_artifact(app_map):
@@ -138,4 +166,6 @@ def build_scenario_generation_evidence(
         route_prefixes=tuple(
             sorted(route_prefixes, key=lambda item: item.route_memory_artifact_id)
         ),
+        reached_capabilities=tuple(sorted(set(reached_capabilities))),
+        known_from_other_device_shapes=known_from_other_device_shapes,
     )

@@ -22,7 +22,7 @@ from yewo.discovery.artifacts import (
 )
 from yewo.discovery.contracts import (
     CapabilityCandidate,
-    CapabilityQuestion,
+    JourneyGoal,
     DiscoveryObservation,
     DiscoveryRun,
     DiscoveryTransitionEvidence,
@@ -132,9 +132,9 @@ def build_app_map(
         (item for source in sources for item in source.capability_candidates),
         lambda item: item.candidate_id,
     )
-    questions = _deduplicate_evidence(
-        (item for run in discovery_runs for item in run.questions),
-        lambda item: item.question_id,
+    goals = _deduplicate_evidence(
+        (item for run in discovery_runs for item in run.goals),
+        lambda item: item.goal_id,
     )
     classifications = _validated_classifications(
         observations,
@@ -154,7 +154,16 @@ def build_app_map(
         node_by_observation,
         observations,
     )
-    capabilities = _build_capabilities(questions, candidates)
+    capabilities = _build_capabilities(goals, candidates)
+    root_node_ids = tuple(
+        sorted(
+            {
+                node_by_observation[run.observations[0].observation_id]
+                for run in discovery_runs
+                if run.observations
+            }
+        )
+    )
     source_ids = tuple(sorted(source.header.artifact_id for source in sources))
     calibration_id = (
         calibration.artifact_id if classifications and calibration is not None else None
@@ -194,6 +203,7 @@ def build_app_map(
         ),
         identity_calibration_artifact_id=calibration_id,
         nodes=nodes,
+        root_node_ids=root_node_ids,
         edges=edges,
         capabilities=capabilities,
     )
@@ -405,25 +415,25 @@ def _build_edges(transitions, candidates, node_by_observation, observations):
 
 
 def _build_capabilities(
-    questions: tuple[CapabilityQuestion, ...],
+    goals: tuple[JourneyGoal, ...],
     candidates: tuple[CapabilityCandidate, ...],
 ) -> tuple[AppCapabilityEvidence, ...]:
     return tuple(
         AppCapabilityEvidence(
-            capability_id=question.question_id,
-            intent=question.intent,
-            state=question.state,
-            required=question.required,
-            evidence_observation_ids=question.evidence_observation_ids,
+            capability_id=goal.goal_id,
+            intent=goal.statement,
+            state=goal.state,
+            required=goal.required,
+            evidence_observation_ids=goal.evidence_observation_ids,
             capability_candidate_ids=tuple(
                 sorted(
                     candidate.candidate_id
                     for candidate in candidates
-                    if question.question_id in candidate.question_ids
+                    if goal.goal_id in candidate.goal_ids
                 )
             ),
         )
-        for question in sorted(questions, key=lambda item: item.question_id)
+        for goal in sorted(goals, key=lambda item: item.goal_id)
     )
 
 

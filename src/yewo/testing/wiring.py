@@ -13,9 +13,10 @@ from typing import Any, Optional
 from yewo.agent.device.platform import Platform
 from yewo.app_discovery import resolve_app_path
 from yewo.config import SETTINGS, Config
-from yewo.defaults import DEFAULT_GROUNDING
+from yewo.defaults import DEFAULT_GROUNDING, DEFAULT_PERCEPTION_MODEL
 
 from .cold_start import require_clean_room
+from .discovery_wiring import NO_SETUP_CONTRACT_SHA256, LiveDiscoveryProvider
 from .runner import YewoTestRunner
 from .suite import Target, Workflow
 
@@ -117,6 +118,16 @@ def runner_for(
         target_id=target.id if target is not None else None,
         knowledge_root=knowledge_root,
         cold_start=cold_start,
+        discovery_factory=_discovery_factory(
+            knowledge_root,
+            app_path=str(app_path),
+            platform=platform_str,
+            model=setting("model", args.model),
+            perception_model=setting(
+                "perception_model", getattr(args, "perception_model", None)
+            )
+            or DEFAULT_PERCEPTION_MODEL,
+        ),
     )
 
 
@@ -127,3 +138,49 @@ def output_dir_for(workflow: Workflow, args: Any, config: Config) -> Path:
     if "output_dir" in workflow.settings:
         return Path(workflow.settings["output_dir"])
     return Path(config.get("output_dir"))
+
+
+def _discovery_factory(
+    knowledge_root: Optional[Path],
+    *,
+    app_path: str,
+    platform: str,
+    model: str,
+    perception_model: str,
+):
+    """How this run builds bounded discovery, or nothing when it may not.
+
+    Discovery writes an AppMap and RouteMemory, so it needs somewhere of its
+    own to write them. A run with no knowledge root reuses a reviewed lock
+    instead, and asks for no discovery at all.
+    """
+    if knowledge_root is None:
+        return None
+
+    def build(
+        device_control,
+        perception,
+        llm_client,
+        scrubber,
+        artifact_writer=None,
+        diagnostic_dir=None,
+    ) -> LiveDiscoveryProvider:
+        return LiveDiscoveryProvider(
+            device_control,
+            perception,
+            model=model,
+            perception_model=perception_model,
+            app_path=app_path,
+            platform=platform,
+            setup_contract_sha256=NO_SETUP_CONTRACT_SHA256,
+            knowledge_root=knowledge_root,
+            scrubber=scrubber,
+            usage_callback=llm_client.usage_callback,
+            # The run's store, so discovery's prompts land beside every other
+            # lane's rather than going unrecorded.
+            prompt_store=llm_client.prompt_store,
+            artifact_writer=artifact_writer,
+            diagnostic_dir=diagnostic_dir,
+        )
+
+    return build

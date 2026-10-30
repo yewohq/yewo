@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -50,6 +50,7 @@ class DiscoveryCoordinator:
         runtime: DiscoveryRuntime,
         proposer: DiscoveryProposer,
         *,
+        scenario_owned_values: Sequence[str] = (),
         interrupted: Callable[[], bool] = lambda: False,
     ) -> DiscoveryCoordinationResult:
         app_map = self.repository.find_compatible_app_map(compatibility)
@@ -59,7 +60,9 @@ class DiscoveryCoordinator:
         run = run_factory()
         if not run.header.compatibility.is_compatible_with(compatibility):
             raise ValueError("The discovery run does not match the requested compatibility.")
-        discovery = DiscoveryController(run).run_to_terminal(
+        discovery = DiscoveryController(
+            run, scenario_owned_values=scenario_owned_values
+        ).run_to_terminal(
             runtime,
             proposer,
             interrupted=interrupted,

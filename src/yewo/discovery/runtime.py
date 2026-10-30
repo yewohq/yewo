@@ -12,6 +12,7 @@ from yewo.agent.actuation.safety import ActionAuthorization
 from yewo.agent.run.settlement import SettlementReceipt
 from yewo.discovery.artifacts import DiscoveryContract
 from yewo.discovery.contracts import (
+    CapabilityCandidate,
     DiscoveryObservation,
     DiscoveryRun,
     SideEffectClass,
@@ -30,11 +31,18 @@ class DiscoveryFinding(DiscoveryContract):
 
 
 class CapabilityEvidenceReceipt(DiscoveryContract):
-    """Local predicate receipt; model proposals cannot construct this contract."""
+    """Evidence that one goal was satisfied, recorded with who judged it.
+
+    A model may judge that a screen satisfies a goal. It cannot invent the
+    route it took, because the controller checks the observation and, for a
+    verified route, the transition it accepted. The owner travels with the
+    receipt so a later reader can separate a judged capability from a
+    measured one.
+    """
 
     receipt_id: str = Field(default_factory=new_uuid)
-    evidence_owner: Literal["local_predicate"] = "local_predicate"
-    question_id: str
+    evidence_owner: Literal["local_predicate", "model_proposal"] = "local_predicate"
+    goal_id: str
     observation_id: str
     kind: Literal["observed", "route_verified"]
     predicate_id: str
@@ -48,7 +56,7 @@ class DiscoveryActionCandidate:
     source_observation_id: str
     source_screen_state_id: str
     control_identity: str
-    relevant_question_ids: tuple[str, ...]
+    relevant_goal_ids: tuple[str, ...]
     action: Action | PlannerTapAction
     side_effect: SideEffectClass
     reversible: bool
@@ -63,7 +71,7 @@ class DiscoveryActionCandidate:
             "discovery-frontier-v1",
             self.source_screen_state_id,
             self.control_identity,
-            *sorted(self.relevant_question_ids),
+            *sorted(self.relevant_goal_ids),
         )
 
     @property
@@ -80,6 +88,7 @@ class DiscoveryObservationBatch:
     observation: DiscoveryObservation
     candidates: tuple[DiscoveryActionCandidate, ...] = ()
     capability_evidence: tuple[CapabilityEvidenceReceipt, ...] = ()
+    capability_candidates: tuple[CapabilityCandidate, ...] = ()
     findings: tuple[DiscoveryFinding, ...] = ()
     state_depth: int = 0
 
@@ -89,6 +98,7 @@ class DiscoveryProposalReceipt:
     selected_frontier_id: str | None
     model_calls: int
     cost_micro_usd: int
+    provider_failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -128,6 +138,26 @@ class DiscoveryResult:
     findings: tuple[DiscoveryFinding, ...]
 
 
+def transition_identity_for(
+    source_observation_id: str,
+    control_identity: str,
+    destination_observation_id: str,
+) -> str:
+    """Name one observed transition.
+
+    Here rather than in each caller. A runtime claiming a verified route must
+    name the transition the controller accepted, and the controller refuses a
+    claim that does not match. Two copies of this derivation could disagree
+    without either being obviously wrong.
+    """
+    return derived_uuid(
+        "discovery-transition-v1",
+        source_observation_id,
+        control_identity,
+        destination_observation_id,
+    )
+
+
 class DiscoveryProposer(Protocol):
     """A model or deterministic chooser that can select only offered IDs."""
 
@@ -139,6 +169,10 @@ class DiscoveryProposer(Protocol):
         run: DiscoveryRun,
         candidates: tuple[DiscoveryActionCandidate, ...],
     ) -> DiscoveryProposalReceipt: ...
+
+    def drain_unreported_spend(self) -> tuple[int, int]:
+        """Drain model calls and micro-USD not carried by a proposal receipt."""
+        ...
 
 
 class DiscoveryRuntime(Protocol):

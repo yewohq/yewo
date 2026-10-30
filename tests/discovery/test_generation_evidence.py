@@ -17,7 +17,11 @@ from yewo.discovery.route_memory import (
     compile_route_memory_candidate,
     promote_route_memory,
 )
-from yewo.testing.generation_evidence import build_scenario_generation_evidence
+from yewo.testing.generation_evidence import (
+    GenerationCapabilityEvidence,
+    ScenarioGenerationEvidence,
+    build_scenario_generation_evidence,
+)
 
 
 def _app_map(header, artifact_id=None):
@@ -136,7 +140,7 @@ def test_evidence_digest_changes_with_capability_terminal(header):
                 "capabilities": (
                     available_map.capabilities[0].model_copy(
                         update={
-                            "state": CapabilityState.UNAVAILABLE,
+                            "state": CapabilityState.UNREACHABLE,
                             "evidence_observation_ids": (),
                         }
                     ),
@@ -150,3 +154,50 @@ def test_evidence_digest_changes_with_capability_terminal(header):
 
     assert available.evidence_sha256 != unavailable.evidence_sha256
     assert unavailable.unavailable_required_capabilities[0].capability_id == "capability-form"
+
+
+def test_a_partial_run_says_how_far_it_got():
+    """Otherwise a shortfall reads as having learned nothing."""
+    from yewo.testing.generation_readiness import assess_generation_readiness
+    from yewo.testing.models import UserJourney
+
+    journey = UserJourney(
+        id="checkout", name="Checkout", description="A user places an order."
+    )
+    evidence = ScenarioGenerationEvidence(
+        app_map_artifact_id="map-1",
+        app_map_integrity_sha256="a" * 64,
+        capabilities=(
+            GenerationCapabilityEvidence(
+                capability_id="goal-1",
+                intent="A user places an order.",
+                state=CapabilityState.UNREACHABLE,
+                required=True,
+            ),
+        ),
+        reached_capabilities=("reach the screen headed Bag",),
+        known_from_other_device_shapes=2,
+    )
+
+    readiness = assess_generation_readiness(journey, evidence, discovery_completed=True)
+
+    assert not readiness.is_ready
+    assert "The run did reach: reach the screen headed Bag." in readiness.reason
+    assert "2 stored map(s) already describe this app" in readiness.reason
+
+
+def test_a_reported_field_does_not_change_what_a_lock_records():
+    """A lock refuses knowledge whose digest moved. A report must not move it."""
+    base = ScenarioGenerationEvidence(
+        app_map_artifact_id="map-1",
+        app_map_integrity_sha256="a" * 64,
+        capabilities=(),
+    )
+    reported = base.model_copy(
+        update={
+            "reached_capabilities": ("reach the screen headed Bag",),
+            "known_from_other_device_shapes": 3,
+        }
+    )
+
+    assert reported.evidence_sha256 == base.evidence_sha256

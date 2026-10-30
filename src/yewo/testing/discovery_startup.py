@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Callable, Sequence
 
 from yewo.discovery.artifacts import DiscoveryCompatibilityKey
@@ -24,6 +26,9 @@ from yewo.testing.models import UserJourney
 from yewo.testing.warm_execution import VerifiedScenarioRoutePreparer
 
 
+logger = logging.getLogger(__name__)
+
+
 class DiscoveryStartupKnowledgeProvider:
     """Own discovery, knowledge compilation, and execution preparation."""
 
@@ -42,25 +47,46 @@ class DiscoveryStartupKnowledgeProvider:
         self.proposer = proposer
 
     def discover(self, journey: UserJourney) -> ScenarioStartupKnowledge | None:
+        scenario_owned_values = tuple(journey.values.values())
         coordination = DiscoveryCoordinator(self.store).ensure_knowledge(
             self.compatibility,
             self.run_factory,
             self.runtime,
             self.proposer,
+            scenario_owned_values=scenario_owned_values,
         )
+        reached: tuple[str, ...] = ()
         if coordination.app_map is not None:
             app_map = coordination.app_map
         else:
             discovery = coordination.discovery
             if discovery is None:
                 raise AssertionError("Discovery coordination lost its knowledge source.")
+            if not discovery.run.observations:
+                # A blocked run reached no screen, so there is no map to build.
+                # Returning nothing lets readiness report the shortfall per
+                # cell. Building one would raise and abort the whole journey.
+                logger.error(
+                    "Discovery observed no screen and ended as %s.",
+                    discovery.run.terminal.terminal.value
+                    if discovery.run.terminal
+                    else "an open run",
+                )
+                return None
             app_map = build_app_map((discovery.run,))
             self.store.save_app_map(app_map)
-        route_memories = self._load_or_compile_routes(
+            reached = tuple(
+                candidate.capability for candidate in discovery.run.capability_candidates
+            )
+        route_memories = self._load_or_compile_routes(app_map, scenario_owned_values)
+        evidence = build_scenario_generation_evidence(
             app_map,
-            tuple(journey.values.values()),
+            route_memories,
+            reached_capabilities=reached,
+            known_from_other_device_shapes=len(
+                self.store.find_maps_of_same_app(self.compatibility)
+            ),
         )
-        evidence = build_scenario_generation_evidence(app_map, route_memories)
         return ScenarioStartupKnowledge(
             evidence,
             VerifiedScenarioRoutePreparer(
@@ -74,7 +100,7 @@ class DiscoveryStartupKnowledgeProvider:
     def _load_or_compile_routes(
         self,
         app_map: AppMap,
-        forbidden_scenario_values: Sequence[str],
+        scenario_owned_values: Sequence[str],
     ) -> tuple[RouteMemory, ...]:
         route_memories: list[RouteMemory] = []
         for capability in app_map.capabilities:
@@ -91,7 +117,7 @@ class DiscoveryStartupKnowledgeProvider:
                 app_map,
                 capability.intent,
                 capability.evidence_observation_ids,
-                forbidden_scenario_values,
+                scenario_owned_values,
             )
             if route_memory is not None:
                 route_memories.append(route_memory)
@@ -104,12 +130,16 @@ class DiscoveryStartupKnowledgeProvider:
         app_map: AppMap,
         capability_intent: str,
         evidence_observation_ids: tuple[str, ...],
-        forbidden_scenario_values: Sequence[str],
+        scenario_owned_values: Sequence[str],
     ) -> RouteMemory | None:
-        destination_ids = {edge.destination_node_id for edge in app_map.edges}
-        source_node_ids = sorted(
-            node.node_id for node in app_map.nodes if node.node_id not in destination_ids
-        )
+        source_node_ids = list(app_map.root_node_ids)
+        if not source_node_ids:
+            destination_ids = {edge.destination_node_id for edge in app_map.edges}
+            source_node_ids = sorted(
+                node.node_id
+                for node in app_map.nodes
+                if node.node_id not in destination_ids
+            )
         if not source_node_ids:
             raise ValueError("The AppMap has no discovery root node.")
         source_node_id = source_node_ids[0]
@@ -129,7 +159,7 @@ class DiscoveryStartupKnowledgeProvider:
                 destination_node_id=destination_node_ids[0],
                 max_segments=max(1, len(app_map.edges)),
             ),
-            forbidden_scenario_values=forbidden_scenario_values,
+            scenario_owned_values=scenario_owned_values,
         )
         self.store.save_route_memory_candidate(candidate)
         receipt = RouteMemoryPromotionReceipt(

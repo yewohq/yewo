@@ -160,7 +160,7 @@ def test_compiler_is_deterministic_and_enforces_budget_and_side_effect_policy(he
         compile_route_memory_candidate(
             app_map,
             _request(semantic_instruction="Use private-probe-value"),
-            forbidden_scenario_values=("private-probe-value",),
+            scenario_owned_values=("private-probe-value",),
         )
 
 

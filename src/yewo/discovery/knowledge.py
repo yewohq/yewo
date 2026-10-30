@@ -14,7 +14,7 @@ from yewo.discovery.contracts import CapabilityState, SideEffectClass
 
 
 class ScreenPredicate(DiscoveryContract):
-    """A secret-safe observed state predicate; no planner screen name is authority."""
+    """A secret-safe observed state predicate with no planner-owned screen name."""
 
     screen_state_id: str
     screen_family_id: str | None = None
@@ -34,7 +34,7 @@ class ControlReacquisition(DiscoveryContract):
 
 
 class RouteActionTemplate(DiscoveryContract):
-    """Semantic action mechanics; values and coordinates belong to the live scenario."""
+    """Semantic action mechanics without live scenario values or coordinates."""
 
     action_kind: str
     target: ControlReacquisition
@@ -94,7 +94,7 @@ class RouteMemoryCandidate(DiscoveryArtifact):
         if self.header.schema_name != "route-memory-candidate":
             raise ValueError("A RouteMemory candidate requires its own schema.")
         if self.segments[0].source != self.start:
-            raise ValueError("The first route segment must begin at the route start predicate.")
+            raise ValueError("The first route segment must start at the route start predicate.")
         segment_ids = [segment.segment_id for segment in self.segments]
         if len(segment_ids) != len(set(segment_ids)):
             raise ValueError("Route segment identifiers must be unique.")
@@ -105,7 +105,7 @@ class RouteMemoryCandidate(DiscoveryArtifact):
 
 
 class RouteMemory(DiscoveryArtifact):
-    """Promoted reusable mechanics; live execution still validates every segment."""
+    """Promoted reusable mechanics whose segments require live validation."""
 
     header: DiscoveryArtifactHeader
     lifecycle: Literal[
@@ -127,7 +127,7 @@ class RouteMemory(DiscoveryArtifact):
         if self.header.schema_name != "route-memory":
             raise ValueError("RouteMemory requires its own schema.")
         if self.segments[0].source != self.start:
-            raise ValueError("RouteMemory must begin at its declared start guard.")
+            raise ValueError("RouteMemory must start at its declared start guard.")
         segment_ids = [segment.segment_id for segment in self.segments]
         if len(segment_ids) != len(set(segment_ids)):
             raise ValueError("RouteMemory segment identifiers must be unique.")
@@ -160,7 +160,7 @@ class AppMapNode(DiscoveryContract):
 
 
 class AppMapEdge(DiscoveryContract):
-    """One observed transition variant; execution authority remains elsewhere."""
+    """One observed transition variant without execution authority."""
 
     transition_identity: str
     source_node_id: str
@@ -179,7 +179,7 @@ class AppMapEdge(DiscoveryContract):
 
 
 class AppCapabilityEvidence(DiscoveryContract):
-    """One discovery question and its terminal, non-verdict app evidence."""
+    """One journey goal and its terminal, non-verdict app evidence."""
 
     capability_id: str
     intent: str = Field(min_length=1)
@@ -197,6 +197,7 @@ class AppMap(DiscoveryArtifact):
     source_scenario_evidence_artifact_ids: tuple[str, ...] = ()
     identity_calibration_artifact_id: str | None = None
     nodes: tuple[AppMapNode, ...] = Field(min_length=1)
+    root_node_ids: tuple[str, ...] = ()
     edges: tuple[AppMapEdge, ...] = ()
     capabilities: tuple[AppCapabilityEvidence, ...] = ()
     route_memory_candidate_ids: tuple[str, ...] = ()
@@ -209,6 +210,10 @@ class AppMap(DiscoveryArtifact):
         if len(node_ids) != len(set(node_ids)):
             raise ValueError("AppMap node identifiers must be unique.")
         known_nodes = set(node_ids)
+        if not set(self.root_node_ids).issubset(known_nodes):
+            raise ValueError("Every AppMap root must name a node in the map.")
+        if len(self.root_node_ids) != len(set(self.root_node_ids)):
+            raise ValueError("AppMap root node identifiers must be unique.")
         nodes_by_id = {node.node_id: node for node in self.nodes}
         observation_ids = [
             observation_id for node in self.nodes for observation_id in node.observation_ids

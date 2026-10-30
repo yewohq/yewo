@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from yewo.discovery.artifacts import seal_artifact, verify_artifact
 from yewo.discovery.contracts import (
     CapabilityCandidate,
-    CapabilityQuestion,
+    JourneyGoal,
     CapabilityState,
     DiscoveryObservation,
     DiscoveryRun,
@@ -24,6 +24,7 @@ from yewo.discovery.identity_calibration import (
     build_calibration_result,
     seal_identity_calibration,
 )
+from yewo.discovery.knowledge import AppMap
 from yewo.discovery.map_builder import (
     RevalidationScope,
     ScenarioMapEvidence,
@@ -85,7 +86,7 @@ def _observations():
 def _discovery_run(header, budgets):
     run = DiscoveryRun(
         header=header("discovery-run"),
-        questions=(CapabilityQuestion(intent="reach the editor"),),
+        goals=(JourneyGoal(statement="reach the editor"),),
         observations=_observations(),
         transitions=(_transition(),),
         capability_candidates=(
@@ -150,6 +151,7 @@ def test_map_is_reproducible_and_ignores_uncalibrated_family_candidates(header, 
     second = build_app_map((run,))
 
     assert first == second
+    assert len(first.root_node_ids) == 1
     assert verify_artifact(first)
     assert len(first.nodes) == 2
     assert all(node.identity_scope == "exact_state" for node in first.nodes)
@@ -158,6 +160,24 @@ def test_map_is_reproducible_and_ignores_uncalibrated_family_candidates(header, 
     assert len(first.capabilities) == 1
     assert first.capabilities[0].intent == "reach the editor"
     assert first.capabilities[0].state is CapabilityState.NOT_EVALUATED
+
+
+@pytest.mark.parametrize(
+    ("root_node_ids", "error"),
+    (
+        (("missing",), "must name a node"),
+        (("duplicate", "duplicate"), "must be unique"),
+    ),
+)
+def test_map_rejects_invalid_root_nodes(header, budgets, root_node_ids, error):
+    app_map = build_app_map((_discovery_run(header, budgets),))
+    payload = app_map.model_dump(mode="json")
+    if root_node_ids[0] == "duplicate":
+        root_node_ids = (app_map.root_node_ids[0],) * 2
+    payload["root_node_ids"] = root_node_ids
+
+    with pytest.raises(ValidationError, match=error):
+        AppMap.model_validate(payload)
 
 
 def test_map_groups_only_classifier_receipts_backed_by_passing_calibration(header, budgets):

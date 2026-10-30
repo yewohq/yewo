@@ -120,12 +120,40 @@ def test_fused_text_names_a_control_in_its_own_right():
     assert save.label_source is ControlLabelSource.OWN
 
 
-def test_reading_matter_and_system_chrome_are_not_controls():
+def test_detector_confirmed_text_is_an_activation_target():
+    """A bounded text detection can represent a text-only drawer row."""
+    drawer = frame(
+        elements=(detected((40, 500, 500, 580), name="Text", text="Edit Schedule"),)
+    )
+
+    surface = build_control_surface(drawer, VIEWPORT)
+
+    assert len(surface.controls) == 1
+    assert surface.controls[0].interaction is ControlInteraction.ACTIVATE
+    assert surface.controls[0].text_digest == control_text_digest("Edit Schedule")
+
+
+def test_structural_lines_and_system_chrome_are_not_controls():
     chrome = frame(
         elements=(
             detected((0, 0, 1080, 60), name="StatusBar"),
-            detected((40, 300, 300, 360), name="Text", text="Name"),
             detected((40, 700, 1040, 702), name="Line"),
+            detected((40, 380, 400, 470), name="View", text="Go"),
+        )
+    )
+
+    surface = build_control_surface(chrome, VIEWPORT)
+
+    assert len(surface.controls) == 1
+    assert surface.controls[0].text_digest == control_text_digest("Go")
+
+
+def test_a_control_inside_system_chrome_is_not_an_app_control():
+    """A nested detection belongs to the platform region that contains it."""
+    chrome = frame(
+        elements=(
+            detected((0, 0, 1080, 60), name="StatusBar"),
+            detected((900, 15, 960, 45), name="ImageView"),
             detected((40, 380, 400, 470), name="View", text="Go"),
         )
     )
@@ -247,6 +275,31 @@ def test_the_control_under_a_point_is_the_smallest_one_containing_it():
     chosen = select_control_at(surface, (100, 240))
     assert chosen is not None
     assert chosen.text_digest == control_text_digest("Open")
+
+
+def test_overlapping_detections_with_one_label_are_one_target():
+    nested = frame(
+        elements=(
+            detected((20, 100, 900, 300), name="View", text="Edit"),
+            detected((40, 120, 300, 200), name="Text", text="Edit"),
+        )
+    )
+
+    surface = build_control_surface(nested, VIEWPORT)
+
+    assert len(surface.controls) == 1
+    assert surface.controls[0].bounds == (40, 120, 300, 200)
+
+
+def test_repeated_labels_in_separate_rows_remain_separate_targets():
+    repeated = frame(
+        elements=(
+            detected((40, 120, 300, 200), name="Text", text="Edit"),
+            detected((40, 320, 300, 400), name="Text", text="Edit"),
+        )
+    )
+
+    assert len(build_control_surface(repeated, VIEWPORT).controls) == 2
 
 
 def test_a_point_on_no_control_selects_nothing():

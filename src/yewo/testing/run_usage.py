@@ -3,19 +3,31 @@
 from typing import Optional
 
 from yewo.agent.run.record import CallRow
+from yewo.discovery.model_proposer import ControlChoice, GoalJudgement
 from yewo.testing.models import ScenarioReport
 from yewo.testing.warm_execution import ExecutionCost
 
 GENERATION = "generator"
+DISCOVERY = "discovery"
 PLANNER = "planner"
 SCREEN_AUDITOR = "screen_auditor"
 TRANSITION_JUDGE = "transition_judge"
 SEMANTIC_GROUNDER = "semantic_grounder"
 SCENARIO_COMPONENTS = (PLANNER, SCREEN_AUDITOR, TRANSITION_JUDGE, SEMANTIC_GROUNDER)
 
+DISCOVERY_ANSWERS = (ControlChoice.__name__, GoalJudgement.__name__)
+"""The shapes only bounded discovery asks for.
+
+Named from the models themselves, so the record cannot drift from the thing it
+describes. Discovery runs before any scenario and borrows the generation
+callback, so without this its spend is filed under generation.
+"""
+
 
 def component_for(current: str, answering: Optional[str]) -> str:
     """Name a call from the answer shape it actually requested."""
+    if answering in DISCOVERY_ANSWERS:
+        return DISCOVERY
     if current == GENERATION:
         return GENERATION
     if answering == "ScreenAssessment":

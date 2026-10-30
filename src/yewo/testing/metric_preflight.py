@@ -167,6 +167,17 @@ def prepare_execution(
         device_identity = identity.device_identity(device_control)
         runner._device = device_identity
         trace_store = runner._trace_store_for(journey)
+        # Discovery observes a live screen, so its boundary can only exist
+        # now. This is the one window: after the device starts and before
+        # startup resolves the suite that may ask for it.
+        runner.startup.attach_discovery(
+            device_control,
+            perception,
+            device_agent.llm,
+            device_agent.scrubber,
+            getattr(device_agent, "artifacts", None),
+            getattr(session, "screenshots_dir", None),
+        )
 
     if suite is None:
         suite = runner._suite(journey, device_agent.llm)

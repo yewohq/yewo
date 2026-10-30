@@ -19,7 +19,7 @@ def load_locked_runner_knowledge(
     journey: UserJourney,
     knowledge_root: Path | None = None,
 ) -> ScenarioStartupKnowledge | None:
-    """Load by lock identity before device startup; never choose a nearby artifact."""
+    """Load by lock identity before device startup. Never choose a nearby artifact."""
     if journey_file is None:
         return None
     lock_path = journey_file.with_name("yewo.lock")
@@ -93,6 +93,15 @@ class RunnerStartupKnowledgeSource:
             journey,
             self.knowledge_root,
         )
+
+    def use_discovery_provider(self, provider: RunnerDiscoveryProvider) -> None:
+        """Install the boundary that needs a device, once one is running.
+
+        Discovery observes a live screen, so its provider cannot exist when the
+        runner is built. This is the one way in, rather than a later step
+        reaching through the source to set the attribute itself.
+        """
+        self.discovery_provider = provider
 
     def discover(self, journey: UserJourney) -> ScenarioStartupKnowledge | None:
         if self.discovery_provider is None:

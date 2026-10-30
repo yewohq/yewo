@@ -82,6 +82,34 @@ def record_proposal(
     return usage, None
 
 
+def charge_unreported_proposal_spend(
+    run: DiscoveryRun, proposer: DiscoveryProposer
+) -> tuple[
+    DiscoveryBudgetUsage | None,
+    DiscoveryBlocker | None,
+    DiscoveryBudgetDimension | None,
+]:
+    """Validate and charge spend that no proposal receipt carried."""
+    model_calls, micro_usd = proposer.drain_unreported_spend()
+    if not model_calls and not micro_usd:
+        return None, None, None
+    if (
+        model_calls < 0
+        or model_calls > proposer.model_calls_per_proposal
+        or micro_usd < 0
+        or micro_usd > proposer.maximum_cost_micro_usd
+    ):
+        return None, DiscoveryBlocker.INFRASTRUCTURE, None
+    if not can_spend(
+        run, DiscoveryBudgetDimension.MODEL_PROPOSALS, model_calls
+    ):
+        return None, None, DiscoveryBudgetDimension.MODEL_PROPOSALS
+    if not can_spend(run, DiscoveryBudgetDimension.COST_MICRO_USD, micro_usd):
+        return None, None, DiscoveryBudgetDimension.COST_MICRO_USD
+    usage = spend(run.usage, DiscoveryBudgetDimension.MODEL_PROPOSALS, model_calls)
+    return spend(usage, DiscoveryBudgetDimension.COST_MICRO_USD, micro_usd), None, None
+
+
 def pre_proposal_action_budget(run: DiscoveryRun) -> DiscoveryBudgetDimension | None:
     if not can_spend(run, DiscoveryBudgetDimension.ACTIONS, 1):
         return DiscoveryBudgetDimension.ACTIONS

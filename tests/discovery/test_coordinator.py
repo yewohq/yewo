@@ -1,7 +1,7 @@
 from yewo.discovery import coordinator as coordinator_module
 from yewo.discovery.artifacts import seal_artifact
 from yewo.discovery.contracts import (
-    CapabilityQuestion,
+    JourneyGoal,
     DiscoveryRun,
     DiscoveryTerminationSignals,
     finalize_discovery,
@@ -15,7 +15,7 @@ def test_coordinator_automatically_discovers_and_persists_when_map_is_absent(
 ):
     run = DiscoveryRun(
         header=header("discovery-run"),
-        questions=(CapabilityQuestion(intent="reach the editor"),),
+        goals=(JourneyGoal(statement="reach the editor"),),
         budgets=budgets,
     )
     terminal = seal_artifact(
@@ -25,9 +25,12 @@ def test_coordinator_automatically_discovers_and_persists_when_map_is_absent(
         )
     )
 
+    received_scenario_values: list[tuple[str, ...]] = []
+
     class Controller:
-        def __init__(self, received):
+        def __init__(self, received, *, scenario_owned_values=()):
             assert received is run
+            received_scenario_values.append(tuple(scenario_owned_values))
 
         def run_to_terminal(self, runtime, proposer, *, interrupted):
             del runtime, proposer
@@ -52,8 +55,10 @@ def test_coordinator_automatically_discovers_and_persists_when_map_is_absent(
         lambda: run,
         object(),
         object(),
+        scenario_owned_values=("4242424242424242",),
     )
 
+    assert received_scenario_values == [("4242424242424242",)]
     assert result.app_map is None
     assert result.discovery.run == terminal
     assert repository.saved == terminal

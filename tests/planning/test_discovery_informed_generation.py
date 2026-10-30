@@ -163,13 +163,13 @@ def test_unobserved_required_capability_is_an_explicit_gap_without_model_calls()
 
     suite = ScenarioGenerator(
         client,
-        _evidence(CapabilityState.UNAVAILABLE),
+        _evidence(CapabilityState.UNREACHABLE),
     ).generate_suite(_journey(ScenarioType.HAPPY_PATH, ScenarioType.BOUNDARY))
 
     assert suite.scenarios == []
     assert len(suite.uncovered) == 2
     assert all(
-        "reach the schedule entry form (unavailable)" in gap.reason for gap in suite.uncovered
+        "reach the schedule entry form (unreachable)" in gap.reason for gap in suite.uncovered
     )
     client.generate_response.assert_not_called()
 

@@ -82,10 +82,27 @@ def assess_generation_readiness(
         )
         return GenerationReadiness(
             state,
-            "Required app evidence is unavailable: " + "; ".join(reasons) + ".",
+            "Required app evidence is unavailable: "
+            + "; ".join(reasons)
+            + "."
+            + _format_discovery_shortfall(evidence),
         )
     return GenerationReadiness(
         GenerationReadinessState.READY,
         "Verified app evidence authorizes semantic scenario generation.",
         evidence,
     )
+
+
+def _format_discovery_shortfall(evidence: ScenarioGenerationEvidence) -> str:
+    """Format report-only progress from an incomplete discovery run."""
+    sentences = []
+    if evidence.reached_capabilities:
+        reached_summary = ", ".join(evidence.reached_capabilities)
+        sentences.append(f" The run did reach: {reached_summary}.")
+    if evidence.known_from_other_device_shapes:
+        sentences.append(
+            f" {evidence.known_from_other_device_shapes} stored map(s) already "
+            "describe this app on another screen shape."
+        )
+    return "".join(sentences)

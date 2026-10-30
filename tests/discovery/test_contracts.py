@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from yewo.discovery.contracts import (
-    CapabilityQuestion,
+    JourneyGoal,
     CapabilityCandidate,
     CapabilityState,
     DiscoveryBlocker,
@@ -22,10 +22,10 @@ from yewo.discovery.contracts import (
 )
 
 
-def _run(header, budgets, question=None, usage=None, frontier=()):
+def _run(header, budgets, goal=None, usage=None, frontier=()):
     return DiscoveryRun(
         header=header("discovery-run"),
-        questions=(question or CapabilityQuestion(intent="reach the editor"),),
+        goals=(goal or JourneyGoal(statement="reach the editor"),),
         observations=(
             DiscoveryObservation(
                 observation_id="observation-1",
@@ -39,18 +39,18 @@ def _run(header, budgets, question=None, usage=None, frontier=()):
     )
 
 
-def test_capability_questions_have_one_legal_terminal():
-    question = CapabilityQuestion(intent="reach the editor").activate().close(
+def test_journey_goals_have_one_legal_terminal():
+    goal = JourneyGoal(statement="reach the editor").activate().close(
         CapabilityState.ROUTE_VERIFIED, ("observation-1",)
     )
 
-    assert question.is_terminal
+    assert goal.is_terminal
     with pytest.raises(ValueError, match="immutable"):
-        question.close(CapabilityState.UNAVAILABLE)
+        goal.close(CapabilityState.UNREACHABLE)
 
 
-def test_capability_question_cannot_activate_twice_or_close_as_active():
-    active = CapabilityQuestion(intent="reach the editor").activate()
+def test_journey_goal_cannot_activate_twice_or_close_as_active():
+    active = JourneyGoal(statement="reach the editor").activate()
 
     with pytest.raises(ValueError, match="pending"):
         active.activate()
@@ -60,23 +60,23 @@ def test_capability_question_cannot_activate_twice_or_close_as_active():
 
 def test_success_requires_accepted_observation_evidence():
     with pytest.raises(ValueError, match="evidence"):
-        CapabilityQuestion(intent="find the form").activate().close(
-            CapabilityState.CAPABILITY_OBSERVED
+        JourneyGoal(statement="find the form").activate().close(
+            CapabilityState.REACHED
         )
 
 
 def test_success_cannot_skip_the_active_state():
-    with pytest.raises(ValueError, match="active question"):
-        CapabilityQuestion(intent="find the form").close(
-            CapabilityState.CAPABILITY_OBSERVED, ("observation-1",)
+    with pytest.raises(ValueError, match="active journey goal"):
+        JourneyGoal(statement="find the form").close(
+            CapabilityState.REACHED, ("observation-1",)
         )
 
 
-def test_frontier_is_owned_by_known_observations_and_questions(header, budgets):
+def test_frontier_is_owned_by_known_observations_and_goals(header, budgets):
     entry = RelevantFrontierEntry(
         source_observation_id="missing",
         control_identity="control-1",
-        relevant_question_ids=("missing-question",),
+        relevant_goal_ids=("missing-goal",),
     )
 
     with pytest.raises(ValueError, match="source observation"):
@@ -87,7 +87,7 @@ def test_frontier_closes_once_and_verified_transition_requires_identity():
     entry = RelevantFrontierEntry(
         source_observation_id="observation-1",
         control_identity="control-1",
-        relevant_question_ids=("question-1",),
+        relevant_goal_ids=("goal-1",),
     )
 
     with pytest.raises(ValueError, match="transition identity"):
@@ -136,17 +136,17 @@ def test_interruption_has_terminal_precedence(header, budgets):
     )
 
     assert ended.terminal.terminal is DiscoveryTerminal.DISCOVERY_INTERRUPTED
-    assert ended.questions[0].state is CapabilityState.NOT_EVALUATED
+    assert ended.goals[0].state is CapabilityState.NOT_EVALUATED
 
 
 def test_budget_precedes_blocking_and_completion(header, budgets):
-    question = CapabilityQuestion(intent="reach editor").activate().close(
+    goal = JourneyGoal(statement="reach editor").activate().close(
         CapabilityState.ROUTE_VERIFIED, ("observation-1",)
     )
     run = _run(
         header,
         budgets,
-        question=question,
+        goal=goal,
         usage=DiscoveryBudgetUsage(model_proposals=budgets.model_proposals),
     )
 
@@ -162,30 +162,48 @@ def test_budget_precedes_blocking_and_completion(header, budgets):
     assert ended.terminal.exhausted_budget is DiscoveryBudgetDimension.MODEL_PROPOSALS
 
 
-def test_verified_required_questions_complete_discovery(header, budgets):
-    question = CapabilityQuestion(intent="reach editor").activate().close(
+def test_verified_required_goals_complete_discovery(header, budgets):
+    goal = JourneyGoal(statement="reach editor").activate().close(
         CapabilityState.ROUTE_VERIFIED, ("observation-1",)
     )
 
-    ended = finalize_discovery(_run(header, budgets, question=question), DiscoveryTerminationSignals())
+    ended = finalize_discovery(_run(header, budgets, goal=goal), DiscoveryTerminationSignals())
 
     assert ended.terminal.terminal is DiscoveryTerminal.DISCOVERY_COMPLETE
     with pytest.raises(ValueError, match="immutable"):
         finalize_discovery(ended, DiscoveryTerminationSignals())
 
 
-def test_exhausted_frontier_closes_unresolved_questions(header, budgets):
+def test_exhausted_frontier_closes_unresolved_goals(header, budgets):
     ended = finalize_discovery(
         _run(
             header,
             budgets,
-            question=CapabilityQuestion(intent="reach editor").activate(),
+            goal=JourneyGoal(statement="reach editor").activate(),
         ),
         DiscoveryTerminationSignals(relevant_frontier_remaining=False),
     )
 
     assert ended.terminal.terminal is DiscoveryTerminal.DISCOVERY_INCOMPLETE
-    assert ended.questions[0].state is CapabilityState.UNAVAILABLE
+    assert ended.goals[0].state is CapabilityState.UNREACHABLE
+
+
+def test_unreplayable_known_frontier_closes_as_ambiguous(header, budgets):
+    ended = finalize_discovery(
+        _run(
+            header,
+            budgets,
+            goal=JourneyGoal(statement="reach editor").activate(),
+        ),
+        DiscoveryTerminationSignals(
+            relevant_frontier_remaining=False,
+            navigation_unavailable=True,
+        ),
+    )
+
+    assert ended.terminal.terminal is DiscoveryTerminal.DISCOVERY_INCOMPLETE
+    assert ended.goals[0].state is CapabilityState.AMBIGUOUS
+    assert "could not revisit" in ended.terminal.reason
 
 
 def test_open_frontier_cannot_be_reported_as_a_terminal(header, budgets):
@@ -244,13 +262,13 @@ def test_terminal_metadata_must_match_its_kind(terminal, reason, fields):
         (DiscoveryBlocker.INFRASTRUCTURE, CapabilityState.NOT_EVALUATED),
     ],
 )
-def test_blockers_close_questions_with_owned_state(header, budgets, blocker, expected_state):
+def test_blockers_close_goals_with_owned_state(header, budgets, blocker, expected_state):
     ended = finalize_discovery(
         _run(header, budgets), DiscoveryTerminationSignals(blocker=blocker)
     )
 
     assert ended.terminal.terminal is DiscoveryTerminal.DISCOVERY_BLOCKED
-    assert ended.questions[0].state is expected_state
+    assert ended.goals[0].state is expected_state
 
 
 def _mutated_run(run, mutate):
@@ -266,7 +284,7 @@ def test_discovery_run_rejects_wrong_schema_owner(header, budgets):
         _mutated_run(run, lambda payload: payload["header"].update(schema_name="app-map"))
 
 
-@pytest.mark.parametrize("collection", ["questions", "observations"])
+@pytest.mark.parametrize("collection", ["goals", "observations"])
 def test_discovery_run_rejects_duplicate_primary_ids(header, budgets, collection):
     run = _run(header, budgets)
 
@@ -281,7 +299,7 @@ def test_discovery_run_rejects_unknown_candidate_evidence(header, budgets):
     run = _run(header, budgets)
     candidate = CapabilityCandidate(
         capability="editor",
-        question_ids=(run.questions[0].question_id,),
+        goal_ids=(run.goals[0].goal_id,),
         observation_ids=("missing",),
         confidence=0.8,
     )
@@ -293,13 +311,13 @@ def test_discovery_run_rejects_unknown_candidate_evidence(header, budgets):
         )
 
 
-def test_discovery_run_rejects_unknown_question_evidence(header, budgets):
-    question = CapabilityQuestion(intent="editor").activate().close(
-        CapabilityState.CAPABILITY_OBSERVED, ("missing",)
+def test_discovery_run_rejects_unknown_goal_evidence(header, budgets):
+    goal = JourneyGoal(statement="editor").activate().close(
+        CapabilityState.REACHED, ("missing",)
     )
 
     with pytest.raises(ValidationError, match="accepted observations"):
-        _run(header, budgets, question=question)
+        _run(header, budgets, goal=goal)
 
 
 def test_discovery_run_rejects_overspent_budgets(header, budgets):
@@ -330,19 +348,19 @@ def test_discovery_run_rejects_excess_transition_attempts(header, budgets):
 @pytest.mark.parametrize("kind", ["frontier", "candidate"])
 def test_discovery_run_rejects_duplicate_secondary_ids(header, budgets, kind):
     run = _run(header, budgets)
-    question_id = run.questions[0].question_id
+    goal_id = run.goals[0].goal_id
     if kind == "frontier":
         item = RelevantFrontierEntry(
             source_observation_id="observation-1",
             control_identity="control-1",
-            relevant_question_ids=(question_id,),
+            relevant_goal_ids=(goal_id,),
         )
         run = run.model_copy(update={"frontier": (item,)})
         field = "frontier"
     else:
         item = CapabilityCandidate(
             capability="editor",
-            question_ids=(question_id,),
+            goal_ids=(goal_id,),
             observation_ids=("observation-1",),
             confidence=0.8,
         )
@@ -353,67 +371,67 @@ def test_discovery_run_rejects_duplicate_secondary_ids(header, budgets, kind):
         _mutated_run(run, lambda payload: payload[field].append(payload[field][0]))
 
 
-def test_frontier_rejects_unknown_or_already_settled_question(header, budgets):
+def test_frontier_rejects_unknown_or_already_settled_goal(header, budgets):
     run = _run(header, budgets)
     unknown = RelevantFrontierEntry(
         source_observation_id="observation-1",
         control_identity="control-1",
-        relevant_question_ids=("missing",),
+        relevant_goal_ids=("missing",),
     )
-    settled = run.questions[0].activate().close(
-        CapabilityState.CAPABILITY_OBSERVED, ("observation-1",)
+    settled = run.goals[0].activate().close(
+        CapabilityState.REACHED, ("observation-1",)
     )
     available = RelevantFrontierEntry(
         source_observation_id="observation-1",
         control_identity="control-1",
-        relevant_question_ids=(settled.question_id,),
+        relevant_goal_ids=(settled.goal_id,),
     )
 
-    with pytest.raises(ValidationError, match="unknown capability question"):
+    with pytest.raises(ValidationError, match="unknown journey goal"):
         DiscoveryRun.model_validate(
             run.model_copy(update={"frontier": (unknown,)}).model_dump(mode="json")
         )
-    with pytest.raises(ValidationError, match="unresolved question"):
+    with pytest.raises(ValidationError, match="unresolved goal"):
         DiscoveryRun(
             header=run.header,
-            questions=(settled,),
+            goals=(settled,),
             observations=run.observations,
             frontier=(available,),
             budgets=budgets,
         )
 
 
-def test_capability_candidate_rejects_unknown_question(header, budgets):
+def test_capability_candidate_rejects_unknown_goal(header, budgets):
     run = _run(header, budgets)
     candidate = CapabilityCandidate(
         capability="editor",
-        question_ids=("missing",),
+        goal_ids=("missing",),
         observation_ids=("observation-1",),
         confidence=0.8,
     )
 
-    with pytest.raises(ValidationError, match="unknown question"):
+    with pytest.raises(ValidationError, match="unknown goal"):
         DiscoveryRun(
             header=run.header,
-            questions=run.questions,
+            goals=run.goals,
             observations=run.observations,
             capability_candidates=(candidate,),
             budgets=budgets,
         )
 
 
-def test_terminal_run_rejects_open_or_unsuccessful_required_question(header, budgets):
+def test_terminal_run_rejects_open_or_unsuccessful_required_goal(header, budgets):
     terminal = DiscoveryTerminalRecord(
         terminal=DiscoveryTerminal.DISCOVERY_COMPLETE,
         reason="Every required discovery capability was verified.",
     )
     open_run = _run(header, budgets)
-    unavailable = open_run.questions[0].activate().close(CapabilityState.UNAVAILABLE)
+    unavailable = open_run.goals[0].activate().close(CapabilityState.UNREACHABLE)
 
-    with pytest.raises(ValidationError, match="open question"):
+    with pytest.raises(ValidationError, match="open goal"):
         DiscoveryRun(
             header=open_run.header,
-            questions=open_run.questions,
+            goals=open_run.goals,
             observations=open_run.observations,
             budgets=budgets,
             terminal=terminal,
@@ -421,7 +439,7 @@ def test_terminal_run_rejects_open_or_unsuccessful_required_question(header, bud
     with pytest.raises(ValidationError, match="every required capability"):
         DiscoveryRun(
             header=open_run.header,
-            questions=(unavailable,),
+            goals=(unavailable,),
             observations=open_run.observations,
             budgets=budgets,
             terminal=terminal,

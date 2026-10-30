@@ -284,9 +284,7 @@ def _box_area(box) -> int:
 
 
 def _line_bounds(line: OCRLine) -> tuple[float, float, float, float]:
-    xs = [point.x for point in line.box]
-    ys = [point.y for point in line.box]
-    return min(xs), min(ys), max(xs), max(ys)
+    return line.bounds
 
 
 def _line_intersects(line: OCRLine, region: tuple[int, int, int, int]) -> bool:
