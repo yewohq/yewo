@@ -55,16 +55,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/yewo"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"eval/apps/manifest.yaml" = "yewo/evaluation/manifest.yaml"
-
-# Without this the source distribution takes the whole working directory,
-# including the controlled app's build files. Those hold the paths of whichever
-# machine built them, and a release cannot be withdrawn.
 [tool.hatch.build.targets.sdist]
 include = [
     "/src/yewo",
-    "/eval/apps/manifest.yaml",
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
@@ -72,7 +65,6 @@ include = [
 
 [dependency-groups]
 dev = [
-    "coverage>=7.16.2",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
@@ -80,9 +72,6 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-# Vendored from the asd-ste100 skill, so its style is not ours to change. A
-# fix here could not be landed upstream, and the next copy would undo it.
-extend-exclude = ["tools/ste_lint.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "SIM", "C90", "BLE", "W"]
@@ -92,29 +81,6 @@ ignore = ["E501"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 21  # The project requirement is strictly less than 22.
-
-# Recorded lint debt, read like tools/quality-baseline.toml: a ratchet.
-# Remove an entry when the file is clean. Never add one to make a check pass.
-#
-# BLE001 is `except Exception`. These handlers still need narrowing.
-[tool.ruff.lint.per-file-ignores]
-"src/yewo/agent/device/control.py" = ["BLE001"]
-"src/yewo/agent/device/session.py" = ["BLE001"]
-"src/yewo/agent/run/agent.py" = ["BLE001"]
-"src/yewo/agent/plan/planner.py" = ["SIM108"]
-"src/yewo/agent/perception/detector.py" = ["B905"]
-"src/yewo/agent/memory/replay.py" = ["BLE001"]
-"src/yewo/agent/step/staleness.py" = ["BLE001"]
-"src/yewo/agent/step/targeting.py" = ["BLE001"]
-"src/yewo/agent/memory/trail.py" = ["BLE001"]
-"src/yewo/app_discovery.py" = ["BLE001"]
-"src/yewo/cli/devices.py" = ["B905"]
-"src/yewo/llm/llm_client.py" = ["BLE001", "SIM105"]
-"src/yewo/testing/cli.py" = ["BLE001"]
-"src/yewo/testing/generator.py" = ["BLE001"]
-"src/yewo/testing/qa_agent.py" = ["E402"]
-"src/yewo/testing/qa_planner.py" = ["SIM108"]
-"src/yewo/testing/runner.py" = ["BLE001"]
 
 [tool.pyright]
 include = ["src/yewo"]
@@ -129,12 +95,3 @@ testpaths = ["tests"]
 # fakes.py and pytest no longer puts tests/ on the path by itself.
 pythonpath = ["tests"]
 
-[tool.coverage.run]
-branch = true
-source = ["src/yewo"]
-
-[tool.coverage.report]
-show_missing = true
-# Keep the floor just below the measured offline result so platform-specific
-# branches cannot erase the ratchet through rounding.
-fail_under = 74

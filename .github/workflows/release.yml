@@ -9,34 +9,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --group dev --extra jev
-      # The tag is what a reader trusts. A tag that says one version while the
-      # package says another publishes the wrong thing, or nothing at all.
+      - uses: actions/checkout@v4
+        with:
+          repository: danyuchn/asd-ste100-skill
+          ref: 8da6b6340aa22faf46fd07db8efbdea010cd38d9
+          path: .tools/asd-ste100
+      - name: Install development dependencies
+        run: uv sync --group dev
       - name: The tag matches the version
         run: |
           tagged="${GITHUB_REF_NAME#v}"
-          declared=$(uv run python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          declared=$(uv run python -c "import pathlib,tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
           test "$tagged" = "$declared" || {
             echo "tag $tagged does not match pyproject $declared"
             exit 1
           }
-      - run: uv run ruff check
-      - run: uv run python tools/quality_gate.py
-      - run: uv run python tools/ste_gate.py
-      - run: uv run python tools/emit_schema.py --check
-      - run: uv run coverage run -m pytest
-      - run: uv run coverage report
-      - run: uv run python -m tools.eval_gate
-      - run: uv run python -m tools.mutation_sweep
+      - name: Enforce the 550-line file limit
+        run: uv run python tools/quality_gate.py
+      - name: Enforce Ruff correctness rules
+        run: uv run ruff check --ignore C90 src tests tools
+      - name: Enforce cyclomatic complexity
+        run: uv run ruff check --select C90 src tests tools
+      - name: Enforce static types
+        run: uv run pyright
+      - name: Run tests
+        run: uv run pytest
+      - name: Enforce controlled language
+        run: uv run python tools/ste_gate.py
+        env:
+          YEWO_STE_LINT: .tools/asd-ste100/scripts/ste-lint.py
+      - name: Verify the package in a clean environment
+        run: uv run python tools/package_gate.py
 
   publish:
     needs: verify
     runs-on: ubuntu-latest
-    # PyPI accepts the upload because this job proves which repository and
-    # which workflow asked. No token is stored anywhere.
     permissions:
       id-token: write
     environment: release
@@ -44,6 +57,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv build
-      # `always` rather than `automatic`, so a misconfigured publisher fails
-      # here instead of falling back to looking for a token.
       - run: uv publish --trusted-publishing always

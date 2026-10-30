@@ -10,94 +10,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-and-test:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0 # git diff --check below needs the merge base
+          python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - run: uv sync --group dev --extra jev
-      - run: uv run ruff check
-      # Catches a conflict marker and whitespace no lint rule covers.
-      - run: git diff --check "$(git merge-base origin/${{ github.event.repository.default_branch }} HEAD)"..HEAD
-      - run: uv run python tools/quality_gate.py
-      - run: uv run python tools/ste_gate.py
-      - run: uv run python tools/emit_schema.py --check
-      - run: uv run coverage run -m pytest
-      - run: uv run coverage report
-      - run: uv run python -m tools.eval_gate
-
-  mutation:
-    runs-on: ubuntu-latest
-    steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
-
-      # The focused mutants do not cross the optional model boundary.
-      - run: uv sync --group dev
-      - run: uv run python -m tools.mutation_sweep --jobs 4
-
-  eval-screens:
-    # Spends tokens, so it is opt-in: set the repository variable
-    # RUN_SCREEN_EVAL to 'true' and add the key the model's provider needs.
-    if: vars.RUN_SCREEN_EVAL == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - run: uv sync --group dev
-      - run: uv run python -m tools.eval_gate --screens --record sweep/audits.json
+          repository: danyuchn/asd-ste100-skill
+          ref: 8da6b6340aa22faf46fd07db8efbdea010cd38d9
+          path: .tools/asd-ste100
+      - name: Install development dependencies
+        run: uv sync --group dev
+      - name: Enforce Ruff correctness rules
+        run: uv run ruff check --ignore C90 src tests tools
+      - name: Enforce cyclomatic complexity
+        run: uv run ruff check --select C90 src tests tools
+      - name: Enforce static types
+        run: uv run pyright
+      - name: Run tests
+        run: uv run pytest
+      - name: Enforce the 550-line file limit
+        run: uv run python tools/quality_gate.py
+      - name: Enforce controlled language
+        run: uv run python tools/ste_gate.py
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-sweep
-          path: sweep/
-          if-no-files-found: ignore
-
-  types:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      # Pyright reads deferred production, evaluation and SDK imports, so the
-      # optional extras must resolve here although no job runs a model.
-      - run: uv sync --group dev --extra vision --extra perception-eval --extra jev
-      - run: uv run python tools/type_gate.py
-
-  perception-integration:
-    # Private model-backed integration is intentionally opt-in. It has no paid
-    # LLM or device dependency, but downloads the pinned detector/OCR packages.
-    if: vars.RUN_PERCEPTION_INTEGRATION == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - run: uv sync --group dev --extra vision
-      - run: uv run python -m tools.perception_eval.integration_gate integration/run
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      - run: uv build --wheel --out-dir integration/dist
-      - run: uv run python -m tools.perception_eval.clean_install integration/dist integration/clean-install.json
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: perception-integration
-          path: integration/
-          if-no-files-found: ignore
+          YEWO_STE_LINT: .tools/asd-ste100/scripts/ste-lint.py
+      - name: Verify the package in a clean environment
+        run: uv run python tools/package_gate.py

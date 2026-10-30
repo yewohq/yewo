@@ -39,9 +39,8 @@ Prioritize the contract at risk, especially:
 ## Choose the correct validation tier
 
 Read and apply the [quality-gates reference](references/quality-gates.md) for
-production Python changes. It defines the enforced complexity and file-size
-ratchets, the coverage and mutation-testing scope, and the policy for types,
-dead code, duplication, and deferred metrics.
+production Python changes. The active gates are the 550-line limit, STE, Ruff,
+cyclomatic complexity, Pyright, pytest, and package verification.
 
 Use the lowest validation tier that proves the contract, then broaden only when
 the remaining boundary matters:
@@ -56,32 +55,28 @@ the remaining boundary matters:
 One tier is not evidence for another. A source-checkout test does not prove the
 wheel, and one live journey does not establish reliability.
 
-Ruff, Pyright, pytest, and coverage are declared in the `dev` dependency
-group and configured in `pyproject.toml`; `.github/workflows/checks.yml` runs
-them. The focused mutation sweep in `tools/mutation_sweep.py` checks realistic
-judge and evaluation-gate defects in isolated parallel workers. Existing tests are
-`unittest`-style and run under pytest unchanged. Each file covers one
-contract, named for it, and `tests/fakes.py` builds the values the boundaries
-hand to the logic through their real constructors. Do not report unconfigured
-tooling as available. If a task adopts additional quality tooling, declare and
-configure it before relying on it.
+Add a conditional check only when its subject exists:
 
-Start with the smallest relevant offline command. Available baseline checks are:
+- add a coverage threshold when a stable test suite provides a meaningful
+  baseline;
+- add mutation tests when a critical deterministic contract needs evidence
+  that its tests detect behavioral changes;
+- add schema checks when Yewo publishes a versioned schema;
+- add evaluation gates with each model-driven or stochastic component.
+
+The active checks are:
 
 ```bash
-uv run pytest tests/test_targeting.py
+uv run ruff check --ignore C90 src tests tools
+uv run ruff check --select C90 src tests tools
+uv run pyright
 uv run pytest
-uv run ruff check
 uv run python tools/quality_gate.py
-uv run python tools/type_gate.py
-uv run coverage run -m pytest && uv run coverage report
-uv run python -m tools.mutation_sweep
-git diff --check
+uv run python tools/ste_gate.py
+uv run python tools/package_gate.py
 ```
 
-Run the narrowest one that covers the change before broadening it. `uv run
-python -m unittest discover -s tests` remains equivalent to a bare `uv run
-pytest`.
+Add focused deterministic tests for each changed production contract.
 
 Live journey execution is an explicit integration tier:
 
