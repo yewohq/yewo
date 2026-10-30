@@ -26,6 +26,7 @@ from yewo.devices.errors import (
 )
 from yewo.devices.interaction import DeviceInteraction, ScrollDirection
 from yewo.devices.logs import DeviceLogCaptureError
+from yewo.devices.screen import ScreenCalibration
 from yewo.runs import (
     RunExecutionContext,
     RunRequest,
@@ -79,9 +80,11 @@ class _InteractionStub:
         *,
         reject_tap: bool = False,
         first_paint_error: Exception | None = None,
+        screenshot_size: tuple[int, int] = (1080, 2400),
     ) -> None:
         self.reject_tap = reject_tap
         self.first_paint_error = first_paint_error
+        self.screenshot_size = screenshot_size
         self.calls: list[tuple[object, ...]] = []
 
     def wait_for_first_paint(self) -> bytes:
@@ -102,6 +105,10 @@ class _InteractionStub:
     def dismiss_keyboard(self) -> bool:
         self.calls.append(("dismiss_keyboard",))
         return True
+
+    def screen_calibration(self) -> ScreenCalibration:
+        width, height = self.screenshot_size
+        return ScreenCalibration(width, height, width, height)
 
 
 @dataclass(frozen=True)
@@ -158,6 +165,9 @@ def _script() -> DeviceFoundationScript:
     return DeviceFoundationScript(
         script_id="script_1",
         platform=DevicePlatform.ANDROID,
+        application_id=APPLICATION.application_id,
+        screenshot_width_px=1080,
+        screenshot_height_px=2400,
         actions=(
             TapAction(action_id="tap_1", x=10, y=20),
             TypeTextAction(action_id="type_1", x=30, y=40, text="secret input"),
@@ -172,10 +182,11 @@ def _script() -> DeviceFoundationScript:
 def _workflow(
     tmp_path: Path,
     interaction: _InteractionStub,
+    script: DeviceFoundationScript | None = None,
 ) -> DeviceFoundationWorkflow:
     times = iter(CAPTURE_TIME + timedelta(seconds=index) for index in range(10))
     return DeviceFoundationWorkflow(
-        _script(),
+        script or _script(),
         interaction_factory=lambda context: cast(DeviceInteraction, interaction),
         observation_factory=lambda device, context: _ObservationsStub(tmp_path),
         time_factory=times.__next__,
@@ -227,6 +238,33 @@ def test_blank_first_paint_is_an_application_failure(tmp_path: Path) -> None:
 
     assert outcome.category is RunTerminalCategory.APPLICATION_FAILURE
     assert not (tmp_path / "assets/observations").exists()
+
+
+def test_script_for_another_application_is_blocked_before_interaction(
+    tmp_path: Path,
+) -> None:
+    interaction = _InteractionStub()
+    script = _script().model_copy(update={"application_id": "com.example.other"})
+
+    outcome = _workflow(tmp_path, interaction, script).execute(
+        _context(tmp_path, []),
+        _Signal(),
+    )
+
+    assert outcome.category is RunTerminalCategory.BLOCKED_BY_POLICY
+    assert interaction.calls == []
+
+
+def test_script_for_another_screenshot_geometry_is_blocked(tmp_path: Path) -> None:
+    interaction = _InteractionStub(screenshot_size=(720, 1600))
+
+    outcome = _workflow(tmp_path, interaction).execute(
+        _context(tmp_path, []),
+        _Signal(),
+    )
+
+    assert outcome.category is RunTerminalCategory.BLOCKED_BY_POLICY
+    assert interaction.calls == [("first_paint",)]
 
 
 def test_first_paint_driver_failure_is_not_an_application_failure(tmp_path: Path) -> None:

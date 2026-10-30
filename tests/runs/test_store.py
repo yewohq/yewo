@@ -1,8 +1,10 @@
 """Tests for isolated run-directory ownership."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -57,6 +59,33 @@ def test_factory_never_reuses_an_existing_run_directory(tmp_path: Path) -> None:
 
     with pytest.raises(RunCoordinationError, match="already exists"):
         factory.create(request)
+
+
+def test_concurrent_factories_cannot_share_one_run_directory(tmp_path: Path) -> None:
+    request = _request(tmp_path)
+    barrier = Barrier(2)
+
+    def identifier() -> str:
+        barrier.wait()
+        return "run_shared"
+
+    factory = RunWorkspaceFactory(
+        identifier_factory=identifier,
+        time_factory=lambda: STARTED_AT,
+    )
+
+    def create() -> str:
+        try:
+            return factory.create(request).root.name
+        except RunCoordinationError:
+            return "collision_rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(lambda _: create(), range(2)))
+
+    assert sorted(outcomes) == ["collision_rejected", "run_shared"]
+    start = json.loads((tmp_path / "runs/run_shared/run/start.json").read_text())
+    assert start["run_id"] == "run_shared"
 
 
 def test_store_persists_exactly_one_matching_terminal(tmp_path: Path) -> None:

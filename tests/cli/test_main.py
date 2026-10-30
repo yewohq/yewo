@@ -19,6 +19,9 @@ def _write_script(path: Path, *, platform: str = "android") -> None:
             {
                 "script_id": "script_1",
                 "platform": platform,
+                "application_id": "com.example.app",
+                "screenshot_width_px": 1080,
+                "screenshot_height_px": 2400,
                 "actions": [{"action_id": "wait_1", "kind": "wait", "duration_seconds": 0}],
             }
         )

@@ -184,6 +184,7 @@ class RunCoordinator:
         server: AppiumServerLease | None = None
         session: AutomationSession | None = None
         try:
+            self._require_continuation(signal)
             workflow = self._workflows.get(request.mode)
             if workflow is None:
                 raise _SetupBlock("No workflow is configured for the requested run mode.")

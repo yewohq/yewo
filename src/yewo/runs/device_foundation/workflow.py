@@ -110,6 +110,11 @@ class DeviceFoundationWorkflow:
         platform = session.device.descriptor.platform
         if platform is not self._script.platform:
             raise ValueError("The device-foundation script platform does not match the session.")
+        if session.application.application_id != self._script.application_id:
+            return RunWorkflowOutcome(
+                RunTerminalCategory.BLOCKED_BY_POLICY,
+                "The deterministic script does not target the active application.",
+            )
         interaction = self._interaction_factory(context)
         try:
             interaction.wait_for_first_paint()
@@ -117,6 +122,15 @@ class DeviceFoundationWorkflow:
             return RunWorkflowOutcome(
                 RunTerminalCategory.APPLICATION_FAILURE,
                 "The application did not produce a usable first frame.",
+            )
+        calibration = interaction.screen_calibration()
+        if (
+            calibration.screenshot_width_px != self._script.screenshot_width_px
+            or calibration.screenshot_height_px != self._script.screenshot_height_px
+        ):
+            return RunWorkflowOutcome(
+                RunTerminalCategory.BLOCKED_BY_POLICY,
+                "The deterministic script does not match the observed screenshot geometry.",
             )
         observations = self._observation_factory(interaction, context)
         store = self._store_factory(context.workspace.root)

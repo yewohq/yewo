@@ -23,6 +23,7 @@ class ElementStub:
         self.value = ""
         self.cleared = False
         self.focused = True
+        self.requested_attributes: list[str] = []
 
     def send_keys(self, value: str) -> None:
         self.value += value
@@ -32,6 +33,7 @@ class ElementStub:
         self.value = ""
 
     def get_attribute(self, name: str) -> str | None:
+        self.requested_attributes.append(name)
         if name == "focused":
             return str(self.focused).lower()
         return self.value if name in {"value", "text"} else None

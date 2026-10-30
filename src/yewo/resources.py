@@ -35,7 +35,7 @@ class ResourceLease:
         """Release a resource once when the current run owns it."""
         if self._closed:
             return
-        if self._release is not None:
+        if self.ownership is ResourceOwnership.RUN and self._release is not None:
             self._release()
         self._closed = True
 

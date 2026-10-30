@@ -28,6 +28,9 @@ def test_script_rejects_repeated_action_ids() -> None:
         DeviceFoundationScript(
             script_id="script_1",
             platform=DevicePlatform.ANDROID,
+            application_id="com.example.app",
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
             actions=(
                 TapAction(action_id="action_1", x=1, y=2),
                 TapAction(action_id="action_1", x=3, y=4),
@@ -68,6 +71,9 @@ def test_script_rejects_platform_incompatible_actions_before_device_start() -> N
         DeviceFoundationScript(
             script_id="script_1",
             platform=DevicePlatform.IOS,
+            application_id="com.example.app",
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
             actions=(
                 NoArgumentAction(
                     action_id="back_1",
@@ -79,6 +85,9 @@ def test_script_rejects_platform_incompatible_actions_before_device_start() -> N
         DeviceFoundationScript(
             script_id="script_1",
             platform=DevicePlatform.IOS,
+            application_id="com.example.app",
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
             actions=(
                 PointerMotionAction(
                     action_id="swipe_1",
@@ -95,5 +104,20 @@ def test_script_rejects_platform_incompatible_actions_before_device_start() -> N
         DeviceFoundationScript(
             script_id="script_1",
             platform=DevicePlatform.ANDROID,
+            application_id="com.example.app",
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
             actions=(PressKeyAction(action_id="key_1", key="volume_up"),),
+        )
+
+
+def test_script_rejects_actions_outside_its_geometry() -> None:
+    with pytest.raises(ValidationError, match="action is outside"):
+        DeviceFoundationScript(
+            script_id="script_1",
+            platform=DevicePlatform.ANDROID,
+            application_id="com.example.app",
+            screenshot_width_px=100,
+            screenshot_height_px=200,
+            actions=(TapAction(action_id="tap_1", x=100, y=20),),
         )

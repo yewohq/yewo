@@ -317,7 +317,9 @@ class DeviceInteraction:
     def type_text(self, x: int, y: int, text: str) -> str | None:
         field = self.focus(x, y)
         field.send_keys(text)
-        return field.get_attribute("value") or field.get_attribute("text")
+        if self.platform is DevicePlatform.IOS:
+            return field.get_attribute("value") or field.get_attribute("text")
+        return field.get_attribute("text")
 
     def clear_text(self, x: int, y: int) -> None:
         self.focus(x, y).clear()

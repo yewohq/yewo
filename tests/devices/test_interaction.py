@@ -119,6 +119,36 @@ def test_text_operations_use_the_focused_element() -> None:
     assert interaction.focused_field_state() is True
 
 
+def test_android_type_text_never_requests_the_ios_only_value_attribute() -> None:
+    """UiAutomator2 raises NoSuchAttributeException for 'value'; only XCUITest supports it."""
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    interaction.type_text(20, 30, "hello")
+
+    assert "value" not in driver.element.requested_attributes
+
+
+def test_ios_type_text_reads_the_value_attribute() -> None:
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.IOS,
+        _application(DevicePlatform.IOS),
+        IosInteractionBackend(),
+    )
+
+    value = interaction.type_text(20, 30, "hello")
+
+    assert value == "hello"
+    assert "value" in driver.element.requested_attributes
+
+
 def test_keyboard_dismissal_is_verified_without_back_navigation() -> None:
     driver = _DriverStub()
     driver.keyboard = True

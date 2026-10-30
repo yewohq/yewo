@@ -161,6 +161,9 @@ class DeviceFoundationScript(BaseModel):
 
     script_id: RecordIdentifier
     platform: DevicePlatform
+    application_id: str = Field(min_length=1)
+    screenshot_width_px: int = Field(gt=0)
+    screenshot_height_px: int = Field(gt=0)
     actions: tuple[DeviceFoundationAction, ...] = Field(min_length=1, max_length=100)
     redaction_regions: tuple[RedactionRegion, ...] = Field(default=(), max_length=100)
     device_log_sensitive_values: tuple[str, ...] = Field(
@@ -178,6 +181,13 @@ class DeviceFoundationScript(BaseModel):
             raise ValueError("A declared device-log sensitive value cannot be empty.")
         if len(self.device_log_sensitive_values) != len(set(self.device_log_sensitive_values)):
             raise ValueError("A device-foundation script cannot repeat a sensitive value.")
+        if any(
+            region.right > self.screenshot_width_px or region.bottom > self.screenshot_height_px
+            for region in self.redaction_regions
+        ):
+            raise ValueError("A redaction region is outside the script screenshot geometry.")
+        if any(not _action_fits_geometry(action, self) for action in self.actions):
+            raise ValueError("An action is outside the script screenshot geometry.")
         if self.platform is DevicePlatform.IOS and any(
             isinstance(action, NoArgumentAction) and action.kind is DeviceFoundationActionKind.BACK
             for action in self.actions
@@ -193,6 +203,31 @@ class DeviceFoundationScript(BaseModel):
                 if isinstance(action, PressKeyAction):
                     AndroidKey.parse_name(action.key)
         return self
+
+
+def _action_fits_geometry(
+    action: DeviceFoundationAction,
+    script: DeviceFoundationScript,
+) -> bool:
+    width = script.screenshot_width_px
+    height = script.screenshot_height_px
+    if isinstance(
+        action, TapAction | DoubleTapAction | LongPressAction | TypeTextAction | ClearTextAction
+    ):
+        return action.x < width and action.y < height
+    if isinstance(action, PointerMotionAction):
+        return all(
+            (0 <= x < width and 0 <= y < height)
+            for x, y in (
+                (action.start_x, action.start_y),
+                (action.end_x, action.end_y),
+            )
+        )
+    if isinstance(action, ScrollAction):
+        right = width - 1 if action.right is None else action.right
+        bottom = height - 1 if action.bottom is None else action.bottom
+        return action.left < right < width and action.top < bottom < height
+    return True
 
 
 class DeviceFoundationActionStatus(StrEnum):
