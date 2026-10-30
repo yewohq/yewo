@@ -81,7 +81,7 @@ def test_simulator_probe_returns_no_answer_when_simctl_fails() -> None:
         (lambda client: client.is_simulator("UDID"), ("list", "devices")),
         (
             lambda client: client.installed_applications("UDID"),
-            ("listapps", "UDID", "--json"),
+            ("listapps", "UDID"),
         ),
     ],
 )

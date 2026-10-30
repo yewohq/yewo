@@ -1,5 +1,7 @@
 """Tests for composed automation-session ownership and rollback."""
 
+from collections import deque
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ from yewo.applications import (
 )
 from yewo.automation import (
     AppiumServerLease,
+    AutomationSession,
     AutomationSessionError,
     AutomationSessionManager,
     DriverSessionManager,
@@ -23,7 +26,14 @@ from yewo.devices import (
     DevicePlatform,
     DeviceReadiness,
 )
-from yewo.devices.android import AndroidDriverOptionsBuilder
+from yewo.devices.android import ANDROID_LOG_SOURCES, AndroidDriverOptionsBuilder
+from yewo.devices.logs import (
+    DeviceLogCaptureError,
+    DeviceLogCheckpointKind,
+    DeviceLogRedactionResult,
+    DeviceLogRollbackError,
+    DeviceLogStore,
+)
 from yewo.resources import ResourceOwnership
 
 
@@ -37,11 +47,19 @@ class _PresenceStub:
 
 
 class _DriverStub:
-    def __init__(self, events: list[str], *, installed: bool = True) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        installed: bool = True,
+        log_responses: tuple[tuple[object, ...], ...] | None = None,
+    ) -> None:
         self.session_id = "session-123"
         self.events = events
         self.installed = installed
         self.remove_error: Exception | None = None
+        self.log_types = ["logcat"]
+        self._log_responses = deque(log_responses or (((),) * 10))
 
     def is_app_installed(self, application_id: str) -> bool:
         del application_id
@@ -55,6 +73,10 @@ class _DriverStub:
 
     def quit(self) -> None:
         self.events.append("driver")
+
+    def get_log(self, log_type: str) -> tuple[object, ...]:
+        self.events.append(f"log:{log_type}")
+        return self._log_responses.popleft()
 
 
 def _device(events: list[str]) -> DeviceLease:
@@ -112,126 +134,287 @@ def _manager(driver: _DriverStub, installed_before: bool | None) -> AutomationSe
         DriverSessionManager(lambda server_url, options: driver),
         {DevicePlatform.ANDROID: AndroidDriverOptionsBuilder()},
         {DevicePlatform.ANDROID: _PresenceStub(installed_before)},
+        {DevicePlatform.ANDROID: ANDROID_LOG_SOURCES},
     )
 
 
-def test_session_removes_only_an_application_absent_before_the_run() -> None:
+def _open(
+    manager: AutomationSessionManager,
+    device: DeviceLease,
+    server: AppiumServerLease,
+    request: ApplicationRequest,
+    application: ApplicationDescriptor,
+    artifact_root: Path,
+) -> AutomationSession:
+    return manager.open(
+        device,
+        server,
+        request,
+        application,
+        artifact_root=artifact_root,
+        scrub_device_log_text=lambda text: DeviceLogRedactionResult(
+            text,
+            "test-policy-v1",
+            0,
+        ),
+    )
+
+
+def test_session_removes_only_an_application_absent_before_the_run(tmp_path: Path) -> None:
     events: list[str] = []
     driver = _DriverStub(events)
 
-    session = _manager(driver, installed_before=False).open(
+    session = _open(
+        _manager(driver, installed_before=False),
         _device(events),
         _server(events),
         _request(),
         _application(),
+        tmp_path,
     )
     session.close()
     session.close()
 
     assert session.installation_ownership is ResourceOwnership.RUN
     assert session.installation_change is ApplicationInstallationChange.INSTALLED
-    assert events == ["remove:com.example.app", "driver", "server", "device"]
+    assert events == [
+        "log:logcat",
+        "log:logcat",
+        "remove:com.example.app",
+        "driver",
+        "server",
+        "device",
+    ]
 
 
-def test_session_preserves_an_application_that_was_already_installed() -> None:
+def test_session_preserves_an_application_that_was_already_installed(
+    tmp_path: Path,
+) -> None:
     events: list[str] = []
 
-    session = _manager(_DriverStub(events), installed_before=True).open(
+    session = _open(
+        _manager(_DriverStub(events), installed_before=True),
         _device(events),
         _server(events),
         _request(),
         _application(),
+        tmp_path,
     )
     session.close()
 
     assert session.installation_ownership is ResourceOwnership.EXTERNAL
     assert session.installation_change is ApplicationInstallationChange.REINSTALLED
-    assert events == ["driver", "server", "device"]
+    assert events == ["log:logcat", "log:logcat", "driver", "server", "device"]
 
 
-def test_session_honors_explicit_installation_retention() -> None:
+def test_session_honors_explicit_installation_retention(tmp_path: Path) -> None:
     events: list[str] = []
 
-    session = _manager(_DriverStub(events), installed_before=False).open(
+    session = _open(
+        _manager(_DriverStub(events), installed_before=False),
         _device(events),
         _server(events),
         _request(retain_installation=True),
         _application(),
+        tmp_path,
     )
     session.close()
 
-    assert events == ["driver", "server", "device"]
+    assert events == ["log:logcat", "log:logcat", "driver", "server", "device"]
 
 
-def test_install_if_needed_records_no_change_for_an_existing_application() -> None:
+def test_install_if_needed_records_no_change_for_an_existing_application(
+    tmp_path: Path,
+) -> None:
     events: list[str] = []
 
-    session = _manager(_DriverStub(events), installed_before=True).open(
+    session = _open(
+        _manager(_DriverStub(events), installed_before=True),
         _device(events),
         _server(events),
         _request(ApplicationInstallMode.INSTALL_IF_NEEDED),
         _application(),
+        tmp_path,
     )
 
     assert session.installation_change is ApplicationInstallationChange.NONE
     session.close()
 
 
-def test_install_records_unverified_change_when_prior_presence_is_unknown() -> None:
+def test_install_records_unverified_change_when_prior_presence_is_unknown(
+    tmp_path: Path,
+) -> None:
     events: list[str] = []
 
-    session = _manager(_DriverStub(events), installed_before=None).open(
+    session = _open(
+        _manager(_DriverStub(events), installed_before=None),
         _device(events),
         _server(events),
         _request(),
         _application(),
+        tmp_path,
     )
 
     assert session.installation_change is ApplicationInstallationChange.UNVERIFIED
     session.close()
 
 
-def test_strict_reuse_requires_positive_presence_evidence() -> None:
+def test_strict_reuse_requires_positive_presence_evidence(tmp_path: Path) -> None:
     events: list[str] = []
 
     with pytest.raises(AutomationSessionError, match="positive evidence"):
-        _manager(_DriverStub(events), installed_before=None).open(
+        _open(
+            _manager(_DriverStub(events), installed_before=None),
             _device(events),
             _server(events),
             _request(ApplicationInstallMode.REUSE),
             _application().model_copy(update={"artifact_path": None}),
+            tmp_path,
         )
 
     assert events == ["server", "device"]
 
 
-def test_missing_application_after_driver_open_rolls_back_every_lease() -> None:
+def test_missing_application_after_driver_open_rolls_back_every_lease(
+    tmp_path: Path,
+) -> None:
     events: list[str] = []
 
     with pytest.raises(AutomationSessionError, match="not installed after"):
-        _manager(_DriverStub(events, installed=False), installed_before=False).open(
+        _open(
+            _manager(_DriverStub(events, installed=False), installed_before=False),
             _device(events),
             _server(events),
             _request(),
             _application(),
+            tmp_path,
         )
 
     assert events == ["driver", "server", "device"]
 
 
-def test_cleanup_continues_after_application_removal_failure() -> None:
+def test_cleanup_continues_after_application_removal_failure(tmp_path: Path) -> None:
     events: list[str] = []
     driver = _DriverStub(events)
     driver.remove_error = RuntimeError("remove failed")
-    session = _manager(driver, installed_before=False).open(
+    session = _open(
+        _manager(driver, installed_before=False),
         _device(events),
         _server(events),
         _request(),
         _application(),
+        tmp_path,
     )
 
     with pytest.raises(AutomationSessionError, match="1 stage"):
         session.close()
 
     assert session.closed
-    assert events == ["remove:com.example.app", "driver", "server", "device"]
+    assert events == [
+        "log:logcat",
+        "log:logcat",
+        "remove:com.example.app",
+        "driver",
+        "server",
+        "device",
+    ]
+
+
+class _FailFinalLogRollbackStore(DeviceLogStore):
+    def __init__(self, root: Path) -> None:
+        super().__init__(root, identifier_factory=lambda: "artifact_1")
+        self._receipt_count = 0
+
+    def persist_receipt(self, receipt) -> Path:
+        self._receipt_count += 1
+        if self._receipt_count == 2:
+            raise DeviceLogCaptureError("receipt failed")
+        return super().persist_receipt(receipt)
+
+    def discard(self, reference) -> None:
+        del reference
+        raise DeviceLogCaptureError("rollback failed")
+
+
+def test_session_preserves_log_rollback_error_after_other_cleanup(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    driver = _DriverStub(
+        events,
+        log_responses=((), ({"message": "final"},)),
+    )
+    manager = AutomationSessionManager(
+        DriverSessionManager(lambda server_url, options: driver),
+        {DevicePlatform.ANDROID: AndroidDriverOptionsBuilder()},
+        {DevicePlatform.ANDROID: _PresenceStub(True)},
+        {DevicePlatform.ANDROID: ANDROID_LOG_SOURCES},
+        log_store_factory=_FailFinalLogRollbackStore,
+    )
+    session = _open(
+        manager,
+        _device(events),
+        _server(events),
+        _request(),
+        _application(),
+        tmp_path,
+    )
+
+    with pytest.raises(DeviceLogRollbackError, match="Could not roll back"):
+        session.close()
+
+    assert session.closed
+    assert events[-3:] == ["driver", "server", "device"]
+
+
+def test_session_persists_action_scenario_and_final_log_boundaries(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    driver = _DriverStub(
+        events,
+        log_responses=(
+            ({"message": "stale"},),
+            ({"message": "action"},),
+            ({"message": "scenario"},),
+            ({"message": "final"},),
+        ),
+    )
+    session = _open(
+        _manager(driver, installed_before=True),
+        _device(events),
+        _server(events),
+        _request(),
+        _application(),
+        tmp_path,
+    )
+
+    action_receipt = session.drain_action_logs("action_1")
+    scenario_receipt = session.drain_scenario_logs("scenario_1")
+    session.close()
+
+    assert action_receipt.checkpoint_kind is DeviceLogCheckpointKind.ACTION
+    assert action_receipt.checkpoint_id == "action_1"
+    assert scenario_receipt.checkpoint_kind is DeviceLogCheckpointKind.SCENARIO
+    assert scenario_receipt.checkpoint_id == "scenario_1"
+    assert session.device_logs.receipts[-1].checkpoint_kind is (
+        DeviceLogCheckpointKind.SESSION_END
+    )
+    boundary_directory = (
+        tmp_path / "assets/device-logs" / session.device_logs.boundary.boundary_id
+    )
+    assert (boundary_directory / "boundary.json").is_file()
+    assert len(tuple(boundary_directory.glob("*.json"))) == 5
+    assert len(tuple(boundary_directory.glob("*.log"))) == 4
+    action_record = json.loads(
+        next(boundary_directory.glob(f"*-{action_receipt.drain_id}.json")).read_text()
+    )
+    assert action_record["checkpoint_kind"] == "action"
+    assert action_record["checkpoint_id"] == "action_1"
+    persisted_log_text = "\n".join(
+        log_path.read_text() for log_path in boundary_directory.glob("*.log")
+    )
+    assert "stale" in persisted_log_text
+
+    with pytest.raises(DeviceLogCaptureError, match="closed"):
+        session.drain_action_logs("action_2")

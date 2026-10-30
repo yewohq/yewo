@@ -11,9 +11,9 @@ from typing import Protocol
 
 from PIL import Image, ImageDraw, UnidentifiedImageError
 
+from yewo.artifacts.records import ArtifactSensitivity
 from yewo.observations.errors import ObservationCaptureError
 from yewo.observations.records import (
-    ArtifactSensitivity,
     RedactionProvenance,
     RedactionRegion,
 )

@@ -5,9 +5,9 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
+from yewo.artifacts import ArtifactSensitivity
 from yewo.devices import SystemRegionKind
 from yewo.observations import (
-    ArtifactSensitivity,
     Observation,
     RedactionProvenance,
     ScreenFingerprint,

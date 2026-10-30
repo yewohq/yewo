@@ -11,6 +11,14 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from yewo.applications.records import ApplicationDescriptor
+from yewo.artifacts.records import (
+    ArtifactRetention,
+    ArtifactSensitivity,
+    EvidenceApplicationIdentity,
+    EvidenceDeviceIdentity,
+    new_record_identifier,
+    validate_record_identifier,
+)
 from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.inventory import DeviceDescriptor
 from yewo.devices.screen import (
@@ -22,17 +30,11 @@ from yewo.devices.screen import (
 from yewo.observations.errors import ObservationCaptureError
 from yewo.observations.fingerprint import build_screen_fingerprint
 from yewo.observations.records import (
-    ArtifactRetention,
-    ArtifactSensitivity,
     CoordinateScale,
     DeviceOrientation,
     Observation,
-    ObservedApplicationIdentity,
-    ObservedDeviceIdentity,
     ScreenRegion,
     ScreenshotReference,
-    new_record_identifier,
-    validate_record_identifier,
     validate_screen_regions,
 )
 from yewo.observations.redaction import ScreenshotRedactor
@@ -286,8 +288,8 @@ def _screenshot_regions(
     return tuple(converted)
 
 
-def _device_identity(device: DeviceDescriptor) -> ObservedDeviceIdentity:
-    return ObservedDeviceIdentity(
+def _device_identity(device: DeviceDescriptor) -> EvidenceDeviceIdentity:
+    return EvidenceDeviceIdentity(
         target_id=device.target_id,
         platform=device.platform,
         kind=device.kind,
@@ -299,8 +301,9 @@ def _device_identity(device: DeviceDescriptor) -> ObservedDeviceIdentity:
 
 def _application_identity(
     application: ApplicationDescriptor,
-) -> ObservedApplicationIdentity:
-    return ObservedApplicationIdentity(
+) -> EvidenceApplicationIdentity:
+    return EvidenceApplicationIdentity(
+        platform=application.platform,
         application_id=application.application_id,
         version=application.version,
         build=application.build,

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from yewo.observations.errors import ObservationCaptureError
+from yewo.artifacts.errors import ArtifactWriteError
 
 
 class AtomicArtifactWriter:
@@ -22,7 +22,7 @@ class AtomicArtifactWriter:
         try:
             self._prepare_directory(destination.parent)
             if destination.exists():
-                raise ObservationCaptureError(
+                raise ArtifactWriteError(
                     f"The artifact already exists: {relative_path.as_posix()}"
                 )
             descriptor, temporary_name = tempfile.mkstemp(
@@ -35,10 +35,10 @@ class AtomicArtifactWriter:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.link(temporary_path, destination)
-        except ObservationCaptureError:
+        except ArtifactWriteError:
             raise
         except OSError as error:
-            raise ObservationCaptureError(
+            raise ArtifactWriteError(
                 f"Could not persist artifact: {relative_path.as_posix()}"
             ) from error
         finally:
@@ -51,7 +51,7 @@ class AtomicArtifactWriter:
             self.root.mkdir(parents=True, exist_ok=True)
             relative_directory = directory.relative_to(self.root)
         except (OSError, ValueError) as error:
-            raise ObservationCaptureError(
+            raise ArtifactWriteError(
                 "The artifact directory is outside the artifact root."
             ) from error
         resolved_root = self.root.resolve()
@@ -59,13 +59,13 @@ class AtomicArtifactWriter:
         for part in relative_directory.parts:
             current_directory /= part
             if current_directory.is_symlink():
-                raise ObservationCaptureError(
+                raise ArtifactWriteError(
                     "The artifact directory resolves outside the artifact root."
                 )
             try:
                 current_directory.mkdir(exist_ok=True)
                 current_directory.resolve().relative_to(resolved_root)
             except (OSError, ValueError) as error:
-                raise ObservationCaptureError(
+                raise ArtifactWriteError(
                     "The artifact directory resolves outside the artifact root."
                 ) from error

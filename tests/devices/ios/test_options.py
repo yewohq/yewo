@@ -16,10 +16,14 @@ from yewo.devices import (
     DevicePlatform,
     DeviceReadiness,
 )
-from yewo.devices.ios import IosDriverOptionsBuilder
+from yewo.devices.ios import IosDriverOptionsBuilder, IosWebDriverAgentSigning
 
 
-def _device(*, kind: DeviceKind = DeviceKind.VIRTUAL) -> DeviceDescriptor:
+def _device(
+    *,
+    kind: DeviceKind = DeviceKind.VIRTUAL,
+    operating_system_version: str | None = None,
+) -> DeviceDescriptor:
     return DeviceDescriptor(
         platform=DevicePlatform.IOS,
         target_id="IOS-UDID",
@@ -28,6 +32,7 @@ def _device(*, kind: DeviceKind = DeviceKind.VIRTUAL) -> DeviceDescriptor:
         kind=kind,
         readiness=DeviceReadiness.READY,
         native_state="Booted" if kind is DeviceKind.VIRTUAL else "connected",
+        operating_system_version=operating_system_version,
     )
 
 
@@ -88,6 +93,77 @@ def test_ios_install_if_needed_does_not_force_reinstallation() -> None:
 
     assert capabilities["appium:enforceAppInstall"] is False
     assert capabilities["appium:useNewWDA"] is False
+
+
+def test_ios_physical_options_include_platform_version_and_injected_wda_signing() -> None:
+    capabilities = (
+        IosDriverOptionsBuilder(
+            wda_signing=IosWebDriverAgentSigning(
+                team_id="A1B2C3D4E5",
+                bundle_id="com.example.yewo.WebDriverAgentRunner",
+                allow_device_registration=True,
+            ),
+            show_xcode_log=True,
+        )
+        .build(
+            _device(
+                kind=DeviceKind.PHYSICAL,
+                operating_system_version="18.2",
+            ),
+            _request(ApplicationInstallMode.REUSE),
+            _application(artifact_path=None),
+        )
+        .to_capabilities()
+    )
+
+    assert capabilities["appium:platformVersion"] == "18.2"
+    assert capabilities["appium:xcodeOrgId"] == "A1B2C3D4E5"
+    assert capabilities["appium:xcodeSigningId"] == "Apple Development"
+    assert capabilities["appium:updatedWDABundleId"] == (
+        "com.example.yewo.WebDriverAgentRunner"
+    )
+    assert capabilities["appium:showXcodeLog"] is True
+    assert capabilities["appium:allowProvisioningDeviceRegistration"] is True
+
+
+def test_ios_simulator_options_do_not_apply_physical_wda_signing() -> None:
+    capabilities = (
+        IosDriverOptionsBuilder(
+            wda_signing=IosWebDriverAgentSigning(
+                team_id="A1B2C3D4E5",
+                bundle_id="com.example.yewo.WebDriverAgentRunner",
+            )
+        )
+        .build(
+            _device(),
+            _request(ApplicationInstallMode.REUSE),
+            _application(artifact_path=None),
+        )
+        .to_capabilities()
+    )
+
+    assert "appium:xcodeOrgId" not in capabilities
+    assert "appium:xcodeSigningId" not in capabilities
+    assert "appium:updatedWDABundleId" not in capabilities
+
+
+def test_ios_physical_options_do_not_enable_device_registration_by_default() -> None:
+    capabilities = (
+        IosDriverOptionsBuilder(
+            wda_signing=IosWebDriverAgentSigning(
+                team_id="A1B2C3D4E5",
+                bundle_id="com.example.yewo.WebDriverAgentRunner",
+            )
+        )
+        .build(
+            _device(kind=DeviceKind.PHYSICAL),
+            _request(ApplicationInstallMode.REUSE),
+            _application(artifact_path=None),
+        )
+        .to_capabilities()
+    )
+
+    assert "appium:allowProvisioningDeviceRegistration" not in capabilities
 
 
 def test_ios_reuse_targets_the_observed_bundle_identifier() -> None:

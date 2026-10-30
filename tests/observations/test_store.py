@@ -7,9 +7,8 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.observations import (
-    ArtifactRetention,
-    ArtifactSensitivity,
     Observation,
     ObservationCaptureError,
     ObservationStore,

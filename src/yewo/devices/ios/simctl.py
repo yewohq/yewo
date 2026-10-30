@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from yewo.devices._commands import (
     CommandRunner,
@@ -26,6 +27,10 @@ CONTENT_SIZES = (
     "accessibility-extra-large",
     "accessibility-extra-extra-large",
     "accessibility-extra-extra-extra-large",
+)
+_OPENSTEP_APPLICATION_ID = re.compile(
+    r'^ {4}"(?P<application_id>[^"\r\n]+)"\s*=\s*\{',
+    re.MULTILINE,
 )
 
 
@@ -159,13 +164,13 @@ class SimctlClient:
 
     def installed_applications(self, connection_id: str) -> set[str] | None:
         """Return installed simulator bundle IDs, or no answer."""
-        output = self.ask("listapps", connection_id, "--json")
+        output = self.ask("listapps", connection_id)
         if output is None:
             return None
         try:
             payload = json.loads(output)
         except json.JSONDecodeError:
-            return None
+            return _parse_openstep_application_ids(output)
         if not isinstance(payload, dict):
             return None
         identifiers = {key for key in payload if isinstance(key, str) and key}
@@ -175,3 +180,16 @@ class SimctlClient:
                 if isinstance(identifier, str) and identifier:
                     identifiers.add(identifier)
         return identifiers
+
+
+def _parse_openstep_application_ids(output: str) -> set[str] | None:
+    stripped_output = output.strip()
+    if stripped_output == "{}":
+        return set()
+    if not stripped_output.startswith("{") or not stripped_output.endswith("}"):
+        return None
+    identifiers = {
+        matched["application_id"]
+        for matched in _OPENSTEP_APPLICATION_ID.finditer(output)
+    }
+    return identifiers or None

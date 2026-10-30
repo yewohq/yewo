@@ -4,8 +4,8 @@ from io import BytesIO
 
 from PIL import Image
 
+from yewo.artifacts import ArtifactSensitivity
 from yewo.observations import (
-    ArtifactSensitivity,
     RedactionRegion,
     RegionScreenshotRedactor,
 )

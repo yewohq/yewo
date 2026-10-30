@@ -4,15 +4,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
+from yewo.artifacts import (
+    ArtifactRetention,
+    ArtifactSensitivity,
+    EvidenceApplicationIdentity,
+    EvidenceDeviceIdentity,
+)
 from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.observations import (
-    ArtifactRetention,
-    ArtifactSensitivity,
     CoordinateScale,
     Observation,
-    ObservedApplicationIdentity,
-    ObservedDeviceIdentity,
     RedactionProvenance,
     ScreenRegion,
     ScreenFingerprint,
@@ -52,7 +54,7 @@ def build_screenshot(
 def build_observation(**updates: object) -> Observation:
     values: dict[str, object] = {
         "observation_id": "obs_1",
-        "device": ObservedDeviceIdentity(
+        "device": EvidenceDeviceIdentity(
             target_id="pixel_8",
             platform=DevicePlatform.ANDROID,
             kind=DeviceKind.VIRTUAL,
@@ -60,7 +62,8 @@ def build_observation(**updates: object) -> Observation:
             model="Pixel 8",
             architecture="arm64-v8a",
         ),
-        "application": ObservedApplicationIdentity(
+        "application": EvidenceApplicationIdentity(
+            platform=DevicePlatform.ANDROID,
             application_id="com.example.app",
             version="2.1.0",
             build="42",

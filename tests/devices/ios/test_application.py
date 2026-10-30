@@ -110,7 +110,7 @@ def _ios_device(*, kind: DeviceKind = DeviceKind.VIRTUAL) -> DeviceDescriptor:
     )
 
 
-def test_ios_simulator_presence_reads_listapps_json() -> None:
+def test_ios_simulator_presence_reads_listapps_output() -> None:
     runner = CommandRunnerStub(
         stdout='{"com.example.app":{"CFBundleIdentifier":"com.example.app"}}'
     )
@@ -121,7 +121,40 @@ def test_ios_simulator_presence_reads_listapps_json() -> None:
     )
 
     assert installed is True
-    assert runner.calls == [(("xcrun", "simctl", "listapps", "IOS-UDID", "--json"), 20)]
+    assert runner.calls == [(("xcrun", "simctl", "listapps", "IOS-UDID"), 20)]
+
+
+def test_ios_simulator_presence_reads_current_openstep_output() -> None:
+    runner = CommandRunnerStub(
+        stdout='''{
+    "com.example.app" =     {
+        ApplicationType = User;
+        CFBundleIdentifier = "com.example.app";
+    };
+    "com.apple.Preferences" =     {
+        ApplicationType = System;
+        CFBundleIdentifier = "com.apple.Preferences";
+    };
+}'''
+    )
+
+    installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
+        _ios_device(),
+        "com.apple.Preferences",
+    )
+
+    assert installed is True
+
+
+def test_ios_simulator_presence_is_unknown_for_unrecognized_listapps_output() -> None:
+    runner = CommandRunnerStub(stdout="unexpected output")
+
+    installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
+        _ios_device(),
+        "com.example.app",
+    )
+
+    assert installed is None
 
 
 def test_ios_physical_presence_is_unknown_without_supported_host_evidence() -> None:

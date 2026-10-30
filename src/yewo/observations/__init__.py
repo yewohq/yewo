@@ -6,13 +6,9 @@ from yewo.observations.fingerprint import (
     fingerprint_distance,
 )
 from yewo.observations.records import (
-    ArtifactRetention,
-    ArtifactSensitivity,
     CoordinateScale,
     DeviceOrientation,
     Observation,
-    ObservedApplicationIdentity,
-    ObservedDeviceIdentity,
     PixelRegion,
     RedactionProvenance,
     RedactionRegion,
@@ -30,8 +26,6 @@ from yewo.observations.service import ObservationCapturePolicy, ObservationServi
 from yewo.observations.store import ObservationStore, ScreenshotStore
 
 __all__ = [
-    "ArtifactRetention",
-    "ArtifactSensitivity",
     "CoordinateScale",
     "DeviceOrientation",
     "Observation",
@@ -39,8 +33,6 @@ __all__ = [
     "ObservationCaptureError",
     "ObservationService",
     "ObservationStore",
-    "ObservedApplicationIdentity",
-    "ObservedDeviceIdentity",
     "PixelRegion",
     "RedactionProvenance",
     "RedactionRegion",

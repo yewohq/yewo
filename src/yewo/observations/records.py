@@ -5,38 +5,29 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal, Self
-from uuid import uuid4
+from typing import Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    TypeAdapter,
     field_validator,
     model_validator,
 )
 
+from yewo.artifacts.records import (
+    ArtifactRetention,
+    ArtifactSensitivity,
+    EvidenceApplicationIdentity,
+    EvidenceDeviceIdentity,
+    RecordIdentifier,
+)
 from yewo.devices.application_lifecycle import ApplicationState
-from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.screen import SystemRegionKind
 from yewo.observations._region_mask import system_region_mask_digest
 
 
-_IDENTIFIER_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
-RecordIdentifier = Annotated[str, Field(pattern=_IDENTIFIER_PATTERN)]
-_IDENTIFIER_ADAPTER = TypeAdapter(RecordIdentifier)
-
-
-def validate_record_identifier(value: str) -> str:
-    """Return one validated durable-record identifier."""
-    return _IDENTIFIER_ADAPTER.validate_python(value)
-
-
-def new_record_identifier() -> str:
-    """Return one random identifier that satisfies the record contract."""
-    return uuid4().hex
 
 
 class ScreenshotRedactionState(StrEnum):
@@ -44,21 +35,6 @@ class ScreenshotRedactionState(StrEnum):
 
     RAW = "raw"
     REDACTED = "redacted"
-
-
-class ArtifactSensitivity(StrEnum):
-    """The sensitivity declared for persisted screenshot content."""
-
-    DEVICE_CONTENT = "device_content"
-    DECLARED_SENSITIVE = "declared_sensitive"
-
-
-class ArtifactRetention(StrEnum):
-    """How long the owning run may retain an artifact."""
-
-    EPHEMERAL = "ephemeral"
-    RUN = "run"
-    PERSISTENT = "persistent"
 
 
 class DeviceOrientation(StrEnum):
@@ -166,30 +142,6 @@ class ScreenshotReference(BaseModel):
         return self
 
 
-class ObservedDeviceIdentity(BaseModel):
-    """Device identity needed to interpret and compare an observation."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
-
-    target_id: str = Field(min_length=1)
-    platform: DevicePlatform
-    kind: DeviceKind
-    operating_system_version: str | None = Field(default=None, min_length=1)
-    model: str | None = Field(default=None, min_length=1)
-    architecture: str | None = Field(default=None, min_length=1)
-
-
-class ObservedApplicationIdentity(BaseModel):
-    """Application build identity needed to interpret reusable evidence."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
-
-    application_id: str = Field(min_length=1)
-    version: str | None = Field(default=None, min_length=1)
-    build: str | None = Field(default=None, min_length=1)
-    artifact_sha256: str | None = Field(default=None, pattern=_SHA256_PATTERN)
-
-
 class ScreenFingerprint(BaseModel):
     """Versioned perceptual fingerprint of application-owned pixels."""
 
@@ -211,8 +163,8 @@ class Observation(BaseModel):
 
     schema_version: Literal[1] = 1
     observation_id: RecordIdentifier
-    device: ObservedDeviceIdentity
-    application: ObservedApplicationIdentity
+    device: EvidenceDeviceIdentity
+    application: EvidenceApplicationIdentity
     foreground_application_id: str | None = Field(default=None, min_length=1)
     application_state: ApplicationState
     platform_context: str | None = Field(default=None, min_length=1)

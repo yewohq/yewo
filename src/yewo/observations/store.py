@@ -8,17 +8,21 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from yewo.devices.screen import png_size
-from yewo.observations._files import AtomicArtifactWriter
-from yewo.observations.errors import ObservationCaptureError
-from yewo.observations.records import (
+from yewo.artifacts.errors import ArtifactWriteError
+from yewo.artifacts.paths import ARTIFACTS_DIRECTORY
+from yewo.artifacts.records import (
     ArtifactRetention,
     ArtifactSensitivity,
+    new_record_identifier,
+)
+from yewo.artifacts.store import AtomicArtifactWriter
+from yewo.devices.screen import png_size
+from yewo.observations.errors import ObservationCaptureError
+from yewo.observations.records import (
     Observation,
     RedactionProvenance,
     ScreenshotRedactionState,
     ScreenshotReference,
-    new_record_identifier,
 )
 
 
@@ -97,7 +101,7 @@ class ScreenshotStore:
         if dimensions is None:
             raise ObservationCaptureError("The screenshot store received invalid PNG data.")
         artifact_id = self._identifier_factory()
-        relative_path = Path("assets") / "screenshots" / f"{artifact_id}.png"
+        relative_path = ARTIFACTS_DIRECTORY / "screenshots" / f"{artifact_id}.png"
         width, height = dimensions
         try:
             reference = ScreenshotReference(
@@ -115,7 +119,10 @@ class ScreenshotStore:
             raise ObservationCaptureError(
                 "The screenshot identifier or metadata is invalid."
             ) from error
-        self._writer.write(relative_path, png)
+        try:
+            self._writer.write(relative_path, png)
+        except ArtifactWriteError as error:
+            raise ObservationCaptureError(str(error)) from error
         return reference
 
 
@@ -134,9 +141,14 @@ class ObservationStore:
         ):
             if screenshot is not None:
                 self._verify_screenshot(screenshot)
-        relative_path = Path("assets") / "observations" / f"{observation.observation_id}.json"
+        relative_path = (
+            ARTIFACTS_DIRECTORY / "observations" / f"{observation.observation_id}.json"
+        )
         content = f"{observation.model_dump_json(indent=2)}\n".encode("utf-8")
-        self._writer.write(relative_path, content)
+        try:
+            self._writer.write(relative_path, content)
+        except ArtifactWriteError as error:
+            raise ObservationCaptureError(str(error)) from error
         return relative_path
 
     def _verify_screenshot(self, reference: ScreenshotReference) -> None:
