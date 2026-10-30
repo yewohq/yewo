@@ -69,7 +69,6 @@ def execute_command(
             _NARRATION_SOURCE,
             f"{executable}: {len(command) - 1} arguments omitted",
         )
-        narrator.record(_NARRATION_SOURCE, f"{purpose[:1].upper()}{purpose[1:]}.")
     try:
         result = runner(command, timeout_seconds=timeout_seconds)
     except (OSError, subprocess.SubprocessError) as error:

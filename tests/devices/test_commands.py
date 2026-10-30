@@ -20,7 +20,7 @@ def test_a_call_outside_narration_scope_narrates_nothing(tmp_path: Path) -> None
     assert not (tmp_path / "runtime/trace.log").exists()
 
 
-def test_a_successful_call_omits_command_arguments_from_narration(tmp_path: Path) -> None:
+def test_a_successful_call_is_traced_without_session_narration(tmp_path: Path) -> None:
     runner = CommandRunnerStub(stdout="ok")
     narrator = RunNarrator(tmp_path)
 
@@ -32,14 +32,13 @@ def test_a_successful_call_omits_command_arguments_from_narration(tmp_path: Path
         )
 
     trace_log = (tmp_path / "runtime/trace.log").read_text()
-    session_log = (tmp_path / "runtime/yewo-session.log").read_text()
     assert "device-command: adb: 5 arguments omitted" in trace_log
-    assert "Open a deep link." in session_log
+    assert not (tmp_path / "runtime/yewo-session.log").exists()
     assert "secret-value" not in trace_log
     assert "example://" not in trace_log
 
 
-def test_a_failing_call_still_narrates_before_raising(tmp_path: Path) -> None:
+def test_a_failing_call_is_traced_without_session_narration(tmp_path: Path) -> None:
     runner = CommandRunnerStub(stdout="", stderr="no device", returncode=1)
     narrator = RunNarrator(tmp_path)
 
@@ -47,6 +46,5 @@ def test_a_failing_call_still_narrates_before_raising(tmp_path: Path) -> None:
         execute_command(runner, ["adb", "devices"], purpose="list Android devices")
 
     trace_log = (tmp_path / "runtime/trace.log").read_text()
-    session_log = (tmp_path / "runtime/yewo-session.log").read_text()
     assert "device-command: adb: 1 arguments omitted" in trace_log
-    assert "List Android devices." in session_log
+    assert not (tmp_path / "runtime/yewo-session.log").exists()

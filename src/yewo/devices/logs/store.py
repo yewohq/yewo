@@ -16,7 +16,7 @@ from yewo.artifacts.records import (
     ArtifactSensitivity,
     new_record_identifier,
 )
-from yewo.artifacts.store import AtomicArtifactWriter
+from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
 from yewo.devices.logs.errors import DeviceLogCaptureError
 from yewo.devices.logs.records import (
     DeviceLogArtifactKind,
@@ -40,6 +40,7 @@ class DeviceLogStore:
         self.root = root
         self._identifier_factory = identifier_factory
         self._writer = AtomicArtifactWriter(root)
+        self._ledger = AppendOnlyJsonlWriter(root)
 
     def persist_artifact(
         self,
@@ -153,12 +154,16 @@ class DeviceLogStore:
             for artifact in source_receipt.artifacts:
                 self._verify_artifact(artifact)
         relative_path = (
-            ARTIFACTS_DIRECTORY
-            / "device-logs"
-            / receipt.boundary_id
-            / f"{receipt.drain_index:06d}-{receipt.drain_id}.json"
+            ARTIFACTS_DIRECTORY / "device-logs" / receipt.boundary_id / "drains.jsonl"
         )
-        self._write_record(relative_path, receipt.model_dump_json(indent=2))
+        try:
+            self._ledger.append(
+                relative_path,
+                receipt.model_dump(mode="json"),
+                identity_field="drain_id",
+            )
+        except ArtifactWriteError as error:
+            raise DeviceLogCaptureError("Could not persist the device-log record.") from error
         return relative_path
 
     def _verify_artifact(self, reference: DeviceLogArtifactReference) -> None:

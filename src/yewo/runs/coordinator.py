@@ -203,29 +203,41 @@ class RunCoordinator:
                         "No device adapters are configured for the requested platform."
                     )
                 query = _platform_query(request.device, request.application.platform)
+                narrator.record(_NARRATION_SOURCE, "Selecting a device...")
                 selected_device = select_device(query, inventory.list_devices())
                 narrator.record(
                     _NARRATION_SOURCE,
-                    f"device selected: {selected_device.target_id} ({selected_device.kind.value})",
+                    f"Device selected: {selected_device.target_id} "
+                    f"({selected_device.kind.value}).",
                 )
                 stage = RunStage.DEVICE_PREPARATION
                 self._require_continuation(signal)
+                narrator.record(
+                    _NARRATION_SOURCE,
+                    f"Preparing device {selected_device.target_id}...",
+                )
                 device = lifecycle.prepare(selected_device)
-                narrator.record(_NARRATION_SOURCE, f"device ready: {device.descriptor.target_id}")
+                narrator.record(
+                    _NARRATION_SOURCE,
+                    f"Device {device.descriptor.target_id} is ready.",
+                )
                 stage = RunStage.APPLICATION_INSPECTION
                 self._require_continuation(signal)
+                narrator.record(_NARRATION_SOURCE, "Resolving the application...")
                 application = self._application_resolver.resolve(request.application)
                 version = f" v{application.version}" if application.version else ""
                 narrator.record(
                     _NARRATION_SOURCE,
-                    f"application resolved: {application.application_id}{version}",
+                    f"Application resolved: {application.application_id}{version}.",
                 )
                 stage = RunStage.APPIUM_STARTUP
                 self._require_continuation(signal)
+                narrator.record(_NARRATION_SOURCE, "Starting the Appium server...")
                 server = self._appium_servers.acquire(self._server_config_factory(workspace))
-                narrator.record(_NARRATION_SOURCE, "appium server acquired")
+                narrator.record(_NARRATION_SOURCE, "Appium server started.")
                 stage = RunStage.AUTOMATION_STARTUP
                 self._require_continuation(signal)
+                narrator.record(_NARRATION_SOURCE, "Opening the automation session...")
                 session = self._automation_sessions.open(
                     device,
                     server,
@@ -237,7 +249,7 @@ class RunCoordinator:
                         workflow.session_policy().recording_redaction_regions
                     ),
                 )
-                narrator.record(_NARRATION_SOURCE, "automation session opened")
+                narrator.record(_NARRATION_SOURCE, "Automation session opened.")
                 stage = RunStage.EXECUTION
                 self._require_continuation(signal)
                 outcome = workflow.execute(

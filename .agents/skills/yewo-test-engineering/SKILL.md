@@ -62,7 +62,8 @@ Add a conditional check only when its subject exists:
 - add mutation tests when a critical deterministic contract needs evidence
   that its tests detect behavioral changes;
 - add schema checks when Yewo publishes a versioned schema;
-- add evaluation gates with each model-driven or stochastic component.
+- add an evaluation gate when a model-driven component makes a measurable
+  quality claim against a representative corpus and explicit acceptance rule.
 
 The active checks are:
 

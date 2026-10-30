@@ -3,6 +3,7 @@
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from itertools import count
+import json
 from pathlib import Path
 
 import pytest
@@ -165,8 +166,9 @@ def test_remote_capture_records_cleanup_release_after_durable_receipt(
 
     assert receipt.remote_cleanup_state is ScreenRecordingRemoteCleanupState.RELEASED
     assert recorder.acknowledgement_count == 1
-    cleanup_records = tuple(tmp_path.glob("assets/recordings/*/*-remote-cleanup-*.json"))
-    assert len(cleanup_records) == 1
+    events_path = next(tmp_path.glob("assets/recordings/*/events.jsonl"))
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [event["event_type"] for event in events].count("remote_cleanup") == 1
 
 
 def test_remote_capture_records_pending_cleanup_when_release_fails(
@@ -181,7 +183,9 @@ def test_remote_capture_records_pending_cleanup_when_release_fails(
 
     assert receipt.remote_cleanup_state is ScreenRecordingRemoteCleanupState.PENDING
     assert recorder.acknowledgement_count == 1
-    assert tuple(tmp_path.glob("assets/recordings/*/*-remote-cleanup-*.json")) == ()
+    events_path = next(tmp_path.glob("assets/recordings/*/events.jsonl"))
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert all(event["event_type"] != "remote_cleanup" for event in events)
 
 
 def test_unavailable_first_segment_can_recover_at_scenario_boundary(

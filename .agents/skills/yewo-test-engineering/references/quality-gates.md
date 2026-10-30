@@ -41,8 +41,9 @@ Add a check only when its subject and acceptance rule exist:
 - Mutation testing requires a critical deterministic contract and a focused
   mutant set.
 - Schema validation requires a published, versioned schema.
-- An evaluation gate requires a model-driven or stochastic component, a
-  representative corpus, and explicit acceptance criteria.
+- An evaluation gate requires a measurable quality claim, a representative
+  corpus, and explicit acceptance criteria. Deterministic model-transport
+  behavior remains in the ordinary test suite.
 
 Write focused deterministic tests for each new contract.
 

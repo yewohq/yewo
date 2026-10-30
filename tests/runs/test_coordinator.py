@@ -50,11 +50,16 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
     session_log_lines = (tmp_path / "runs/run_1/runtime/yewo-session.log").read_text().splitlines()
     assert all(" run-coordinator: " in line for line in session_log_lines)
     assert [line.split(" ", 2)[2] for line in session_log_lines] == [
-        "device selected: emulator-5554 (virtual)",
-        "device ready: emulator-5554",
-        "application resolved: com.example.app",
-        "appium server acquired",
-        "automation session opened",
+        "Selecting a device...",
+        "Device selected: emulator-5554 (virtual).",
+        "Preparing device emulator-5554...",
+        "Device emulator-5554 is ready.",
+        "Resolving the application...",
+        "Application resolved: com.example.app.",
+        "Starting the Appium server...",
+        "Appium server started.",
+        "Opening the automation session...",
+        "Automation session opened.",
         "terminal: completed at finished — The workflow completed.",
     ]
 

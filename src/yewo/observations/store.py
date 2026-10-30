@@ -15,7 +15,7 @@ from yewo.artifacts.records import (
     ArtifactSensitivity,
     new_record_identifier,
 )
-from yewo.artifacts.store import AtomicArtifactWriter
+from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
 from yewo.devices.screen import png_size
 from yewo.observations.errors import ObservationCaptureError
 from yewo.observations.records import (
@@ -131,20 +131,23 @@ class ObservationStore:
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self._writer = AtomicArtifactWriter(root)
+        self._writer = AppendOnlyJsonlWriter(root)
 
     def persist(self, observation: Observation) -> Path:
-        """Persist one canonical JSON observation without overwriting evidence."""
+        """Append one canonical observation without overwriting evidence."""
         for screenshot in (
             observation.raw_screenshot,
             observation.redacted_screenshot,
         ):
             if screenshot is not None:
                 self._verify_screenshot(screenshot)
-        relative_path = ARTIFACTS_DIRECTORY / "observations" / f"{observation.observation_id}.json"
-        content = f"{observation.model_dump_json(indent=2)}\n".encode("utf-8")
+        relative_path = ARTIFACTS_DIRECTORY / "observations.jsonl"
         try:
-            self._writer.write(relative_path, content)
+            self._writer.append(
+                relative_path,
+                observation.model_dump(mode="json"),
+                identity_field="observation_id",
+            )
         except ArtifactWriteError as error:
             raise ObservationCaptureError(str(error)) from error
         return relative_path

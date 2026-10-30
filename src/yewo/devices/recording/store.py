@@ -15,7 +15,7 @@ from yewo.artifacts.records import (
     ArtifactSensitivity,
     new_record_identifier,
 )
-from yewo.artifacts.store import AtomicArtifactWriter
+from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
 from yewo.devices.recording.errors import ScreenRecordingError
 from yewo.devices.recording.records import (
     ScreenRecordingArtifactReference,
@@ -41,6 +41,7 @@ class ScreenRecordingStore:
         self.root = root
         self._identifier_factory = identifier_factory
         self._writer = AtomicArtifactWriter(root)
+        self._events = AppendOnlyJsonlWriter(root)
 
     def persist_boundary(self, boundary: ScreenRecordingBoundary) -> Path:
         """Persist the context that starts one recording interval."""
@@ -106,10 +107,13 @@ class ScreenRecordingStore:
         """Verify the referenced segment and persist its checkpoint receipt."""
         if receipt.artifact is not None:
             self._verify_artifact(receipt.artifact)
-        relative_path = self._recording_directory(receipt.recording_id) / (
-            f"{receipt.segment_index:06d}-{receipt.receipt_id}.json"
+        relative_path = self._recording_directory(receipt.recording_id) / "events.jsonl"
+        self._append_event(
+            relative_path,
+            event_id=receipt.receipt_id,
+            event_type="checkpoint",
+            record=receipt.model_dump(mode="json"),
         )
-        self._write_record(relative_path, receipt.model_dump_json(indent=2))
         return relative_path
 
     def persist_remote_cleanup(
@@ -117,10 +121,13 @@ class ScreenRecordingStore:
         receipt: ScreenRecordingRemoteCleanupReceipt,
     ) -> Path:
         """Persist append-only evidence that remote recovery is no longer required."""
-        relative_path = self._recording_directory(receipt.recording_id) / (
-            f"{receipt.segment_index:06d}-remote-cleanup-{receipt.cleanup_id}.json"
+        relative_path = self._recording_directory(receipt.recording_id) / "events.jsonl"
+        self._append_event(
+            relative_path,
+            event_id=receipt.cleanup_id,
+            event_type="remote_cleanup",
+            record=receipt.model_dump(mode="json"),
         )
-        self._write_record(relative_path, receipt.model_dump_json(indent=2))
         return relative_path
 
     def discard(self, reference: ScreenRecordingArtifactReference) -> None:
@@ -166,6 +173,23 @@ class ScreenRecordingStore:
     def _write_record(self, relative_path: Path, content: str) -> None:
         try:
             self._writer.write(relative_path, f"{content}\n".encode())
+        except ArtifactWriteError as error:
+            raise ScreenRecordingError("Could not persist the recording record.") from error
+
+    def _append_event(
+        self,
+        relative_path: Path,
+        *,
+        event_id: str,
+        event_type: str,
+        record: dict[str, object],
+    ) -> None:
+        try:
+            self._events.append(
+                relative_path,
+                {**record, "event_id": event_id, "event_type": event_type},
+                identity_field="event_id",
+            )
         except ArtifactWriteError as error:
             raise ScreenRecordingError("Could not persist the recording record.") from error
 

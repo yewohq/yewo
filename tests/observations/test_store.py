@@ -157,8 +157,8 @@ def test_observation_store_persists_round_trippable_json(tmp_path: Path) -> None
 
     relative_path = ObservationStore(tmp_path).persist(observation)
 
-    assert relative_path == Path("assets/observations/obs_1.json")
-    restored = observation.model_validate_json((tmp_path / relative_path).read_text())
+    assert relative_path == Path("assets/observations.jsonl")
+    restored = observation.model_validate_json((tmp_path / relative_path).read_text().splitlines()[0])
     assert restored == observation
 
 
@@ -180,7 +180,7 @@ def test_observation_store_rejects_missing_screenshot(tmp_path: Path) -> None:
     with pytest.raises(ObservationCaptureError, match="verify observation screenshot"):
         ObservationStore(tmp_path).persist(observation)
 
-    assert not (tmp_path / "assets/observations").exists()
+    assert not (tmp_path / "assets/observations.jsonl").exists()
 
 
 def test_observation_store_rejects_screenshot_digest_mismatch(tmp_path: Path) -> None:
@@ -191,4 +191,4 @@ def test_observation_store_rejects_screenshot_digest_mismatch(tmp_path: Path) ->
     with pytest.raises(ObservationCaptureError, match="digest mismatch"):
         ObservationStore(tmp_path).persist(observation)
 
-    assert not (tmp_path / "assets/observations").exists()
+    assert not (tmp_path / "assets/observations.jsonl").exists()

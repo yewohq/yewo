@@ -171,9 +171,12 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
     assert observation.raw_screenshot is not None
     assert (tmp_path / observation.raw_screenshot.path).is_file()
     assert (tmp_path / observation.redacted_screenshot.path).is_file()
-    observation_path = tmp_path / "assets/observations/obs_1.json"
+    observation_path = tmp_path / "assets/observations.jsonl"
     assert observation_path.is_file()
-    assert observation.model_validate_json(observation_path.read_text()) == observation
+    assert (
+        observation.model_validate_json(observation_path.read_text().splitlines()[0])
+        == observation
+    )
 
 
 def test_service_rejects_foreground_change_without_writing(tmp_path: Path) -> None:
@@ -274,16 +277,16 @@ def test_service_can_retain_only_the_redacted_screenshot(tmp_path: Path) -> None
 def test_failed_record_write_removes_screenshots_from_that_capture(
     tmp_path: Path,
 ) -> None:
-    observation_directory = tmp_path / "assets/observations"
-    observation_directory.mkdir(parents=True)
-    (observation_directory / "obs_1.json").write_text("existing")
+    observation_path = tmp_path / "assets/observations.jsonl"
+    observation_path.parent.mkdir(parents=True)
+    observation_path.write_text('{"observation_id":"obs_1"}\n')
 
     with pytest.raises(ObservationCaptureError, match="already exists"):
         _service(_SourceStub(), tmp_path).capture()
 
     screenshot_directory = tmp_path / "assets/screenshots"
     assert tuple(screenshot_directory.iterdir()) == ()
-    assert (observation_directory / "obs_1.json").read_text() == "existing"
+    assert observation_path.read_text() == '{"observation_id":"obs_1"}\n'
 
 
 def test_service_rejects_platform_mismatch_at_construction(tmp_path: Path) -> None:

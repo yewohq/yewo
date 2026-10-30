@@ -1,6 +1,7 @@
 """Tests for explicit device-log boundaries and durable drains."""
 
 from datetime import timedelta
+import json
 from pathlib import Path
 
 import pytest
@@ -85,12 +86,11 @@ def test_action_drain_records_sequence_and_completion_time(tmp_path: Path) -> No
     assert receipt.drain_index == 1
     assert receipt.started_at == CAPTURE_TIME + timedelta(seconds=2)
     assert receipt.completed_at == CAPTURE_TIME + timedelta(seconds=3)
-    assert (
-        tmp_path
-        / "assets/device-logs"
-        / started.boundary.boundary_id
-        / (f"000001-{receipt.drain_id}.json")
-    ).is_file()
+    ledger = (
+        tmp_path / "assets/device-logs" / started.boundary.boundary_id / "drains.jsonl"
+    )
+    persisted = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert persisted[-1]["drain_id"] == receipt.drain_id
 
 
 def test_duplicate_checkpoint_is_rejected_before_another_destructive_read(

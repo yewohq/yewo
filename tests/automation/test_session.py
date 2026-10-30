@@ -439,10 +439,15 @@ def test_session_persists_action_scenario_and_final_log_boundaries(
     assert session.device_logs.receipts[-1].checkpoint_kind is (DeviceLogCheckpointKind.SESSION_END)
     boundary_directory = tmp_path / "assets/device-logs" / session.device_logs.boundary.boundary_id
     assert (boundary_directory / "boundary.json").is_file()
-    assert len(tuple(boundary_directory.glob("*.json"))) == 5
+    assert len(tuple(boundary_directory.glob("*.json"))) == 1
     assert len(tuple(boundary_directory.glob("*.log"))) == 4
-    action_record = json.loads(
-        next(boundary_directory.glob(f"*-{action_receipt.drain_id}.json")).read_text()
+    drain_records = [
+        json.loads(line)
+        for line in (boundary_directory / "drains.jsonl").read_text().splitlines()
+    ]
+    assert len(drain_records) == 4
+    action_record = next(
+        record for record in drain_records if record["drain_id"] == action_receipt.drain_id
     )
     assert action_record["checkpoint_kind"] == "action"
     assert action_record["checkpoint_id"] == "action_1"

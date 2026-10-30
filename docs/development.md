@@ -41,6 +41,7 @@ The gates have no allowances inherited from the archived implementation.
 
 ## Evaluation workspace
 
-The new `eval/` workspace will be created with the evaluation components. The
-former evaluation material remains archived under `old_eval/` until it is
-reviewed and promoted deliberately.
+Maintained benchmark inputs live under `eval/`. Deterministic transport and
+provider-error contracts belong in `tests/`. Generated benchmark runs remain
+outside version control unless a review deliberately promotes them as a
+baseline.

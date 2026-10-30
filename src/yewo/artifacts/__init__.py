@@ -15,13 +15,14 @@ from yewo.artifacts.records import (
     new_record_identifier,
     validate_record_identifier,
 )
-from yewo.artifacts.store import AtomicArtifactWriter
+from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
 
 __all__ = [
     "ARTIFACTS_DIRECTORY",
     "ArtifactRetention",
     "ArtifactSensitivity",
     "ArtifactWriteError",
+    "AppendOnlyJsonlWriter",
     "AtomicArtifactWriter",
     "EvidenceApplicationIdentity",
     "EvidenceDeviceIdentity",
