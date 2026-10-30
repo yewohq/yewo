@@ -1,1 +1,0 @@
-"""Yewo device package."""

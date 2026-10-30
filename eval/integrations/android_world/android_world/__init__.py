@@ -1,2 +1,0 @@
-"""Yewo's AndroidWorld integration."""
-

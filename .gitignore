@@ -46,3 +46,7 @@ eval/integrations/android_world/vendor/
 **/.yewo/replay-key
 **/.yewo/paths/**/*.part
 **/.yewo/knowledge/
+old_src/
+old_tests/
+old_eval/
+old_tools/

@@ -1,5 +1,0 @@
-# Recorded exceptions to the 550-line file-size limit. There are none. Add an
-# entry only to record debt you are deliberately deferring, never to make a
-# check pass, and delete it when the file is split. Complexity is ruff's C901,
-# so it has no section here.
-[oversized_files]

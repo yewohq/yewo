@@ -1,1 +1,0 @@
-"""Yewo perception package."""

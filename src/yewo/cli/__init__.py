@@ -1,1 +1,0 @@
-"""Yewo command-line interface."""
