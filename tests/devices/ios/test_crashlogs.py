@@ -11,10 +11,11 @@ import pytest
 
 from yewo.devices.ios import DevicectlCrashLogReader
 from yewo.devices.logs import (
-    DeviceCrashReport,
+    ApplicationDiagnosticReport,
     DeviceLogCaptureError,
     DeviceLogCheckpointKind,
 )
+from yewo.devices.diagnostics import ApplicationFailureKind
 
 
 def _inventory(*names: str) -> object:
@@ -74,6 +75,7 @@ def test_reader_snapshots_existing_reports_without_copying_them() -> None:
     assert baseline is not None
     assert baseline.items == ()
     assert baseline.observed_item_count == 2
+    assert baseline.filtered_item_count == 2
     assert len(runner.calls) == 1
     assert runner.calls[0][0][0:5] == (
         "xcrun",
@@ -108,18 +110,44 @@ def test_reader_returns_only_new_reports_for_the_application() -> None:
     repeated_reports = reader.read("crashlog")
 
     assert reports.items == (
-        DeviceCrashReport("Example-2.ips", _report("com.example.app")),
+        ApplicationDiagnosticReport(
+            "Example-2.ips",
+            _report("com.example.app"),
+            ApplicationFailureKind.UNCLASSIFIED,
+        ),
     )
     assert reports.observed_item_count == 3
     assert reports.filtered_item_count == 2
     assert unacknowledged_retry is reports
     assert repeated_reports.items == ()
     copied_names = [
-        command[command.index("--source") + 1]
-        for command, _ in runner.calls
-        if "copy" in command
+        command[command.index("--source") + 1] for command, _ in runner.calls if "copy" in command
     ]
     assert copied_names == ["Example-2.ips", "Other-2.ips"]
+
+
+def test_reader_counts_a_malformed_report_without_losing_valid_siblings() -> None:
+    runner = _DevicectlRunnerStub(
+        (
+            _inventory(),
+            _inventory("Malformed.ips", "Example.ips"),
+        ),
+        {
+            "Malformed.ips": "not-json",
+            "Example.ips": _report("com.example.app"),
+        },
+    )
+    reader = DevicectlCrashLogReader("PHONE-ID", "com.example.app", runner)
+    baseline = reader.begin("crashlog")
+    assert baseline is not None
+    reader.acknowledge("crashlog", baseline)
+
+    batch = reader.read("crashlog")
+
+    assert len(batch.items) == 1
+    assert batch.observed_item_count == 2
+    assert batch.filtered_item_count == 0
+    assert batch.unparsed_item_count == 1
 
 
 def test_reader_scans_crashes_only_at_coarse_checkpoints() -> None:

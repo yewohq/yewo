@@ -22,8 +22,13 @@ from yewo.devices.logs import (
     DeviceLogCheckpointKind,
     DeviceLogDrainReceipt,
     DeviceLogDrainState,
+    DeviceLogOmission,
     DeviceLogSource,
     DeviceLogSourceReceipt,
+)
+from yewo.devices.diagnostics import (
+    ApplicationDiagnosticClassification,
+    ApplicationFailureKind,
 )
 
 
@@ -122,6 +127,50 @@ def test_source_accepts_vendor_spelling_but_keeps_a_safe_artifact_stem() -> None
     )
 
     assert source.log_type == "safariConsole"
+
+
+def test_diagnostic_classification_survives_omitted_artifact_bytes() -> None:
+    receipt = DeviceLogSourceReceipt(
+        source=DeviceLogSource(
+            log_type="exitinfo",
+            artifact_stem="exit-info",
+            is_diagnostic=True,
+        ),
+        state=DeviceLogDrainState.NO_RETAINED_ITEMS,
+        observed_item_count=1,
+        omission=DeviceLogOmission.LATER,
+        observed_failure_kinds=(ApplicationFailureKind.ANR,),
+        diagnostic_classification=ApplicationDiagnosticClassification.APPLICATION_ANR,
+    )
+
+    assert receipt.artifacts == ()
+
+
+def test_unparsed_diagnostics_cannot_be_reported_as_no_failure() -> None:
+    receipt = DeviceLogSourceReceipt(
+        source=DeviceLogSource(
+            log_type="crashlog",
+            artifact_stem="crashlog",
+            is_diagnostic=True,
+        ),
+        state=DeviceLogDrainState.NO_RETAINED_ITEMS,
+        observed_item_count=1,
+        unparsed_item_count=1,
+        diagnostic_classification=ApplicationDiagnosticClassification.DIAGNOSTICS_INCOMPLETE,
+    )
+
+    assert receipt.unparsed_item_count == 1
+
+
+def test_source_rejects_overlapping_filtered_and_unparsed_counts() -> None:
+    with pytest.raises(ValidationError, match="exclude more items"):
+        DeviceLogSourceReceipt(
+            source=SOURCE,
+            state=DeviceLogDrainState.NO_RETAINED_ITEMS,
+            observed_item_count=1,
+            filtered_item_count=1,
+            unparsed_item_count=1,
+        )
 
 
 def test_drain_rejects_an_artifact_from_another_boundary() -> None:

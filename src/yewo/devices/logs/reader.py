@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, TypeAlias
 
 from yewo.devices.logs.records import DeviceLogCheckpointKind
+from yewo.devices.diagnostics import ApplicationFailureKind
 
 
 @dataclass(frozen=True)
@@ -16,14 +18,18 @@ class DeviceLogTextEntry:
 
 
 @dataclass(frozen=True)
-class DeviceCrashReport:
-    """One named iOS crash report copied from the device."""
+class ApplicationDiagnosticReport:
+    """One platform report with a deterministic failure classification."""
 
     source_name: str
     text: str
+    failure_kind: ApplicationFailureKind
+    occurred_at: datetime | None = None
+    platform_reason: str | None = None
+    platform_code: str | None = None
 
 
-DeviceLogItem: TypeAlias = DeviceLogTextEntry | DeviceCrashReport
+DeviceLogItem: TypeAlias = DeviceLogTextEntry | ApplicationDiagnosticReport
 
 
 @dataclass(frozen=True)
@@ -33,13 +39,15 @@ class DeviceLogBatch:
     items: tuple[DeviceLogItem, ...]
     observed_item_count: int
     filtered_item_count: int = 0
+    unparsed_item_count: int = 0
     may_have_omitted_earlier_items: bool = False
 
     def __post_init__(self) -> None:
-        if self.observed_item_count < len(self.items) + self.filtered_item_count:
+        accounted_item_count = len(self.items) + self.filtered_item_count + self.unparsed_item_count
+        if self.observed_item_count < accounted_item_count:
             raise ValueError("A device-log batch cannot account for more items than it observed.")
-        if self.filtered_item_count < 0:
-            raise ValueError("A device-log filtered-item count cannot be negative.")
+        if self.filtered_item_count < 0 or self.unparsed_item_count < 0:
+            raise ValueError("A device-log excluded-item count cannot be negative.")
 
 
 class DeviceLogReader(Protocol):

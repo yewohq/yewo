@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from yewo.devices.logs.records import (
     DeviceLogDrainReceipt,
     DeviceLogSource,
 )
+from yewo.devices.diagnostics import ApplicationFailureKind
 
 
 class DeviceLogStore:
@@ -54,12 +56,16 @@ class DeviceLogStore:
         source_redaction_count: int,
         sensitivity: ArtifactSensitivity,
         retention: ArtifactRetention,
+        failure_kind: ApplicationFailureKind | None = None,
+        occurred_at: datetime | None = None,
+        platform_reason: str | None = None,
+        platform_code: str | None = None,
     ) -> DeviceLogArtifactReference:
         """Persist one nonempty, redacted device-log artifact."""
         if not content or entry_count < 1:
             raise DeviceLogCaptureError("A device-log artifact cannot be empty.")
         artifact_id = self._identifier_factory()
-        suffix = ".ips" if kind is DeviceLogArtifactKind.CRASH_REPORT else ".log"
+        suffix = _artifact_suffix(kind, source_name)
         relative_path = (
             ARTIFACTS_DIRECTORY
             / "device-logs"
@@ -74,6 +80,10 @@ class DeviceLogStore:
                 log_type=source.log_type,
                 kind=kind,
                 source_name=source_name,
+                failure_kind=failure_kind,
+                occurred_at=occurred_at,
+                platform_reason=platform_reason,
+                platform_code=platform_code,
                 sha256=sha256(content).hexdigest(),
                 path=relative_path,
                 byte_count=len(content),
@@ -187,3 +197,10 @@ class DeviceLogStore:
             boundary_path.rmdir()
         except OSError:
             return
+
+
+def _artifact_suffix(kind: DeviceLogArtifactKind, source_name: str | None) -> str:
+    if kind is DeviceLogArtifactKind.TEXT_STREAM:
+        return ".log"
+    suffix = Path(source_name or "").suffix.casefold()
+    return suffix if suffix in {".ips", ".json", ".log", ".txt"} else ".log"

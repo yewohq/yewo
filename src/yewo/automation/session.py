@@ -19,21 +19,20 @@ from yewo.automation.appium_server import AppiumServerLease
 from yewo.automation.driver_options import DriverOptionsBuilder
 from yewo.automation.driver_session import DriverSessionLease, DriverSessionManager
 from yewo.automation.errors import AutomationSessionError
-from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
+from yewo.devices.inventory import DeviceDescriptor, DevicePlatform
 from yewo.devices.lifecycle import DeviceLease
 from yewo.devices.logs import (
-    AppiumDeviceLogReader,
     DeviceLogCaptureLease,
     DeviceLogCapturePolicy,
     DeviceLogCaptureService,
     DeviceLogDrainReceipt,
+    DeviceLogReader,
     DeviceLogSource,
     DeviceLogStore,
     DeviceLogTextScrubber,
-    DeviceLogReader,
     DeviceLogRollbackError,
-    RoutedDeviceLogReader,
 )
+from yewo.devices.logs.platform_reader import build_platform_device_log_reader
 from yewo.devices.media import (
     AppiumMediaTransport,
     MediaTransferPolicy,
@@ -67,6 +66,10 @@ RemoteFileRemoverFactory = Callable[[object, DeviceDescriptor], RemoteFileRemove
 ScreenRecorderFactory = Callable[
     [object, DeviceDescriptor, RemoteTemporaryFileLease],
     ScreenRecorder,
+]
+DeviceLogReaderFactory = Callable[
+    [object, DeviceDescriptor, ApplicationDescriptor],
+    DeviceLogReader,
 ]
 
 
@@ -258,6 +261,11 @@ class AutomationSessionManager:
             ScreenRecorderFactory,
         ]
         | None = None,
+        device_log_readers: Mapping[
+            DevicePlatform,
+            DeviceLogReaderFactory,
+        ]
+        | None = None,
     ) -> None:
         self._driver_sessions = driver_sessions
         self._builders = builders
@@ -275,6 +283,10 @@ class AutomationSessionManager:
             platform: _appium_screen_recorder for platform in DevicePlatform
         }
         self._screen_recorders.update(screen_recorders or {})
+        self._device_log_readers: dict[DevicePlatform, DeviceLogReaderFactory] = {
+            platform: build_platform_device_log_reader for platform in DevicePlatform
+        }
+        self._device_log_readers.update(device_log_readers or {})
 
     @classmethod
     def default(cls) -> AutomationSessionManager:
@@ -364,12 +376,14 @@ class AutomationSessionManager:
             log_sources = self._log_sources.get(platform)
             remote_file_remover = self._remote_file_removers.get(platform)
             screen_recorder = self._screen_recorders.get(platform)
+            device_log_reader = self._device_log_readers.get(platform)
             if (
                 builder is None
                 or presence is None
                 or log_sources is None
                 or remote_file_remover is None
                 or screen_recorder is None
+                or device_log_reader is None
             ):
                 raise AutomationSessionError(
                     f"No automation adapters are configured for {platform}."
@@ -402,7 +416,7 @@ class AutomationSessionManager:
             )
             installation_change = _installation_change(request, installed_before)
             device_log_service = DeviceLogCaptureService(
-                _build_device_log_reader(
+                device_log_reader(
                     driver.driver,
                     device.descriptor,
                     application,
@@ -501,25 +515,3 @@ def _installation_change(
     if request.install_mode is ApplicationInstallMode.INSTALL:
         return ApplicationInstallationChange.REINSTALLED
     return ApplicationInstallationChange.NONE
-
-
-def _build_device_log_reader(
-    driver: object,
-    device: DeviceDescriptor,
-    application: ApplicationDescriptor,
-) -> DeviceLogReader:
-    appium_reader = AppiumDeviceLogReader(driver)
-    if device.platform is not DevicePlatform.IOS or device.kind is not DeviceKind.PHYSICAL:
-        return appium_reader
-    from yewo.devices.ios.crashlogs import DevicectlCrashLogReader
-
-    device_address = device.connection_id or device.target_id
-    return RoutedDeviceLogReader(
-        {
-            "syslog": appium_reader,
-            "crashlog": DevicectlCrashLogReader(
-                device_address,
-                application.application_id,
-            ),
-        }
-    )

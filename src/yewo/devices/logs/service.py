@@ -36,6 +36,7 @@ from yewo.devices.logs.records import (
 )
 from yewo.devices.logs.redaction import DeviceLogTextScrubber
 from yewo.devices.logs.store import DeviceLogStore
+from yewo.devices.diagnostics import ApplicationDiagnosticClassification
 
 
 def _utc_now() -> datetime:
@@ -116,6 +117,9 @@ class DeviceLogCaptureService:
                     else self._artifact_producer.unavailable_source(
                         source,
                         baseline.boundary_source.reason,
+                        infrastructure_failure=(
+                            baseline.boundary_source.state is DeviceLogBoundaryState.FAILED
+                        ),
                     )
                     for source, baseline in zip(self._sources, baselines, strict=True)
                 ),
@@ -237,6 +241,7 @@ class DeviceLogCaptureService:
             return self._artifact_producer.unavailable_source(
                 source,
                 boundary_source.reason,
+                infrastructure_failure=(boundary_source.state is DeviceLogBoundaryState.FAILED),
             )
         if not self._reader.captures_checkpoint(source.log_type, checkpoint_kind):
             return DeviceLogBatchPersistence(
@@ -254,6 +259,11 @@ class DeviceLogCaptureService:
                     source=source,
                     state=DeviceLogDrainState.FAILED,
                     reason="The incremental device-log read failed.",
+                    diagnostic_classification=(
+                        ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
+                        if source.is_diagnostic
+                        else None
+                    ),
                 ),
                 None,
             )

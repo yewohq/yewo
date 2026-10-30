@@ -17,6 +17,11 @@ from yewo.artifacts.records import (
     RecordIdentifier,
     validate_record_identifier,
 )
+from yewo.devices.diagnostics import (
+    ApplicationDiagnosticClassification,
+    ApplicationFailureKind,
+    classify_application_failures,
+)
 
 
 _LOG_TYPE_PATTERN = r"^[^\s\x00-\x1f\x7f/\\]{1,128}$"
@@ -65,7 +70,7 @@ class DeviceLogArtifactKind(StrEnum):
     """The interpretation and file form of one device-log artifact."""
 
     TEXT_STREAM = "text_stream"
-    CRASH_REPORT = "crash_report"
+    APPLICATION_DIAGNOSTIC = "application_diagnostic"
 
 
 def validate_device_log_checkpoint(
@@ -92,6 +97,7 @@ class DeviceLogSource(BaseModel):
 
     log_type: str = Field(pattern=_LOG_TYPE_PATTERN)
     artifact_stem: str = Field(pattern=_ARTIFACT_STEM_PATTERN)
+    is_diagnostic: bool = False
 
 
 class DeviceLogArtifactReference(BaseModel):
@@ -105,6 +111,10 @@ class DeviceLogArtifactReference(BaseModel):
     log_type: str = Field(pattern=_LOG_TYPE_PATTERN)
     kind: DeviceLogArtifactKind
     source_name: str | None = Field(default=None, min_length=1, max_length=1024)
+    failure_kind: ApplicationFailureKind | None = None
+    occurred_at: datetime | None = None
+    platform_reason: str | None = Field(default=None, min_length=1, max_length=256)
+    platform_code: str | None = Field(default=None, min_length=1, max_length=128)
     sha256: str = Field(pattern=_SHA256_PATTERN)
     path: Path
     byte_count: int = Field(gt=0)
@@ -136,14 +146,25 @@ class DeviceLogArtifactReference(BaseModel):
     def _validate_artifact(self) -> Self:
         if self.path.is_absolute() or ".." in self.path.parts:
             raise ValueError("A device-log artifact path must be relative and safe.")
-        required_suffix = ".ips" if self.kind is DeviceLogArtifactKind.CRASH_REPORT else ".log"
-        if self.path.suffix != required_suffix:
-            raise ValueError(f"A {self.kind} artifact path must end in {required_suffix}.")
-        if self.kind is DeviceLogArtifactKind.CRASH_REPORT:
-            if self.source_name is None or self.entry_count != 1:
-                raise ValueError("A crash-report artifact must identify one source report.")
-        elif self.source_name is not None:
-            raise ValueError("A text-stream artifact cannot have a source report name.")
+        if self.kind is DeviceLogArtifactKind.APPLICATION_DIAGNOSTIC:
+            if self.source_name is None or self.entry_count != 1 or self.failure_kind is None:
+                raise ValueError(
+                    "An application-diagnostic artifact must identify one classified report."
+                )
+            if self.occurred_at is not None and self.occurred_at.utcoffset() is None:
+                raise ValueError("A diagnostic occurrence time must include a timezone.")
+            if self.path.suffix not in {".ips", ".json", ".log", ".txt"}:
+                raise ValueError("An application-diagnostic artifact has an unsafe suffix.")
+        elif (
+            self.source_name is not None
+            or self.failure_kind is not None
+            or self.occurred_at is not None
+            or self.platform_reason is not None
+            or self.platform_code is not None
+        ):
+            raise ValueError("A text-stream artifact cannot contain diagnostic metadata.")
+        elif self.path.suffix != ".log":
+            raise ValueError("A text-stream artifact path must end in .log.")
         return self
 
 
@@ -203,16 +224,20 @@ class DeviceLogSourceReceipt(BaseModel):
     state: DeviceLogDrainState
     observed_item_count: int = Field(default=0, ge=0)
     filtered_item_count: int = Field(default=0, ge=0)
+    unparsed_item_count: int = Field(default=0, ge=0)
     retained_item_count: int = Field(default=0, ge=0)
     omission: DeviceLogOmission = DeviceLogOmission.NONE
     artifacts: tuple[DeviceLogArtifactReference, ...] = ()
+    observed_failure_kinds: tuple[ApplicationFailureKind, ...] = ()
+    diagnostic_classification: ApplicationDiagnosticClassification | None = None
     reason: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _validate_receipt(self) -> Self:
-        if self.filtered_item_count > self.observed_item_count:
-            raise ValueError("A source cannot filter more items than it observed.")
-        if self.retained_item_count > self.observed_item_count - self.filtered_item_count:
+        excluded_item_count = self.filtered_item_count + self.unparsed_item_count
+        if excluded_item_count > self.observed_item_count:
+            raise ValueError("A source cannot exclude more items than it observed.")
+        if self.retained_item_count > self.observed_item_count - excluded_item_count:
             raise ValueError("A source cannot retain more items than remained after filtering.")
         if self.state is DeviceLogDrainState.CAPTURED:
             if not self.artifacts or not self.retained_item_count or self.reason is not None:
@@ -229,10 +254,46 @@ class DeviceLogSourceReceipt(BaseModel):
         if self.state is DeviceLogDrainState.NOT_SCHEDULED and (
             self.observed_item_count
             or self.filtered_item_count
+            or self.unparsed_item_count
             or self.omission is not DeviceLogOmission.NONE
         ):
             raise ValueError("A source that was not scheduled cannot report observed items.")
+        if len(self.observed_failure_kinds) > (self.observed_item_count - excluded_item_count):
+            raise ValueError("A source cannot classify more failures than it observed.")
+        if not self.source.is_diagnostic and self.observed_failure_kinds:
+            raise ValueError("A non-diagnostic source cannot classify application failures.")
+        artifact_failure_kinds = tuple(
+            artifact.failure_kind
+            for artifact in self.artifacts
+            if artifact.failure_kind is not None
+        )
+        if self.source.is_diagnostic and any(
+            artifact.kind is not DeviceLogArtifactKind.APPLICATION_DIAGNOSTIC
+            for artifact in self.artifacts
+        ):
+            raise ValueError("A diagnostic source can retain only diagnostic artifacts.")
+        remaining_kinds = list(self.observed_failure_kinds)
+        for failure_kind in artifact_failure_kinds:
+            if failure_kind not in remaining_kinds:
+                raise ValueError("A diagnostic artifact must match an observed failure.")
+            remaining_kinds.remove(failure_kind)
+        expected_classification = self._expected_diagnostic_classification()
+        if self.diagnostic_classification is not expected_classification:
+            raise ValueError("A device-log source has an invalid diagnostic classification.")
         return self
+
+    def _expected_diagnostic_classification(
+        self,
+    ) -> ApplicationDiagnosticClassification | None:
+        if not self.source.is_diagnostic or self.state is DeviceLogDrainState.NOT_SCHEDULED:
+            return None
+        if self.state is DeviceLogDrainState.UNAVAILABLE:
+            return ApplicationDiagnosticClassification.DIAGNOSTICS_UNAVAILABLE
+        if self.state is DeviceLogDrainState.FAILED:
+            return ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
+        if self.unparsed_item_count and not self.observed_failure_kinds:
+            return ApplicationDiagnosticClassification.DIAGNOSTICS_INCOMPLETE
+        return classify_application_failures(self.observed_failure_kinds)
 
 
 class DeviceLogDrainReceipt(BaseModel):

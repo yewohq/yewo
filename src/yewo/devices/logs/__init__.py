@@ -19,7 +19,7 @@ from yewo.devices.logs.records import (
     validate_device_log_checkpoint,
 )
 from yewo.devices.logs.reader import (
-    DeviceCrashReport,
+    ApplicationDiagnosticReport,
     DeviceLogBatch,
     DeviceLogReader,
     DeviceLogTextEntry,
@@ -31,7 +31,7 @@ from yewo.devices.logs.store import DeviceLogStore
 
 __all__ = [
     "AppiumDeviceLogReader",
-    "DeviceCrashReport",
+    "ApplicationDiagnosticReport",
     "DeviceLogArtifactKind",
     "DeviceLogArtifactReference",
     "DeviceLogBatch",

@@ -1,29 +1,18 @@
 """Tests for explicit device-log boundaries and durable drains."""
 
-from collections import deque
-from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
-from itertools import count
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from yewo.applications import ApplicationDescriptor
 from yewo.artifacts import ArtifactSensitivity
-from yewo.devices import (
-    DeviceDescriptor,
-    DeviceKind,
-    DevicePlatform,
-    DeviceReadiness,
-)
-from yewo.devices.android import ANDROID_LOG_SOURCES
+from yewo.devices import DevicePlatform
 from yewo.devices.logs import (
-    DeviceCrashReport,
+    ApplicationDiagnosticReport,
     DeviceLogBatch,
     DeviceLogBoundaryState,
     DeviceLogCaptureError,
     DeviceLogCapturePolicy,
-    DeviceLogCaptureService,
     DeviceLogCheckpointKind,
     DeviceLogDrainState,
     DeviceLogOmission,
@@ -31,126 +20,24 @@ from yewo.devices.logs import (
     DeviceLogRollbackError,
     DeviceLogSource,
     DeviceLogStore,
-    DeviceLogTextScrubber,
-    DeviceLogTextEntry,
+)
+from yewo.devices.diagnostics import (
+    ApplicationDiagnosticClassification,
+    ApplicationFailureKind,
 )
 
 
-CAPTURE_TIME = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
-
-
-def _text_batch(
-    *entries: str,
-    observed_item_count: int | None = None,
-    filtered_item_count: int = 0,
-    may_have_omitted_earlier_items: bool = False,
-) -> DeviceLogBatch:
-    return DeviceLogBatch(
-        tuple(DeviceLogTextEntry(entry) for entry in entries),
-        len(entries) if observed_item_count is None else observed_item_count,
-        filtered_item_count,
-        may_have_omitted_earlier_items,
-    )
-
-
-class _ReaderStub:
-    def __init__(
-        self,
-        baselines: dict[str, DeviceLogBatch | None | Exception],
-        reads: dict[str, tuple[DeviceLogBatch | Exception, ...]],
-        *,
-        coarse_sources: frozenset[str] = frozenset(),
-    ) -> None:
-        self._baselines = baselines
-        self._reads = {name: deque(values) for name, values in reads.items()}
-        self._coarse_sources = coarse_sources
-        self.read_log_types: list[str] = []
-        self.acknowledged_batches: list[DeviceLogBatch] = []
-
-    def begin(self, log_type: str) -> DeviceLogBatch | None:
-        value = self._baselines[log_type]
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    def read(self, log_type: str) -> DeviceLogBatch:
-        self.read_log_types.append(log_type)
-        value = self._reads[log_type].popleft()
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    def captures_checkpoint(
-        self,
-        log_type: str,
-        checkpoint_kind: DeviceLogCheckpointKind,
-    ) -> bool:
-        return not (
-            log_type in self._coarse_sources
-            and checkpoint_kind is DeviceLogCheckpointKind.ACTION
-        )
-
-    def acknowledge(self, log_type: str, batch: DeviceLogBatch) -> None:
-        del log_type
-        self.acknowledged_batches.append(batch)
-
-
-def _redact(text: str) -> DeviceLogRedactionResult:
-    count_found = text.count("SECRET")
-    return DeviceLogRedactionResult(
-        text.replace("SECRET", "[redacted]"),
-        "test-policy-v1",
-        count_found,
-    )
+from .support import (
+    CAPTURE_TIME,
+    ReaderStub as _ReaderStub,
+    build_service as _service,
+    text_batch as _text_batch,
+)
 
 
 def _raise_redaction_error(text: str) -> DeviceLogRedactionResult:
     del text
     raise RuntimeError("secret")
-
-
-def _device(platform: DevicePlatform = DevicePlatform.ANDROID) -> DeviceDescriptor:
-    return DeviceDescriptor(
-        platform=platform,
-        target_id="test-target",
-        connection_id="test-connection",
-        display_name="test device",
-        kind=DeviceKind.VIRTUAL,
-        readiness=DeviceReadiness.READY,
-        native_state="ready",
-    )
-
-
-def _application(
-    platform: DevicePlatform = DevicePlatform.ANDROID,
-) -> ApplicationDescriptor:
-    return ApplicationDescriptor(platform=platform, application_id="com.example.app")
-
-
-def _service(
-    reader: _ReaderStub,
-    root: Path,
-    *,
-    sources: tuple[DeviceLogSource, ...] = ANDROID_LOG_SOURCES,
-    platform: DevicePlatform = DevicePlatform.ANDROID,
-    policy: DeviceLogCapturePolicy | None = None,
-    store: DeviceLogStore | None = None,
-    scrubber: DeviceLogTextScrubber = _redact,
-    time_factory: Callable[[], datetime] = lambda: CAPTURE_TIME,
-) -> DeviceLogCaptureService:
-    identifiers = (f"record_{number}" for number in count(1))
-    artifacts = (f"artifact_{number}" for number in count(1))
-    return DeviceLogCaptureService(
-        reader,
-        _device(platform),
-        _application(platform),
-        sources,
-        store or DeviceLogStore(root, identifier_factory=artifacts.__next__),
-        scrubber,
-        policy=policy,
-        identifier_factory=identifiers.__next__,
-        time_factory=time_factory,
-    )
 
 
 def test_startup_entries_are_retained_as_an_ordered_start_receipt(
@@ -198,9 +85,12 @@ def test_action_drain_records_sequence_and_completion_time(tmp_path: Path) -> No
     assert receipt.drain_index == 1
     assert receipt.started_at == CAPTURE_TIME + timedelta(seconds=2)
     assert receipt.completed_at == CAPTURE_TIME + timedelta(seconds=3)
-    assert (tmp_path / "assets/device-logs" / started.boundary.boundary_id / (
-        f"000001-{receipt.drain_id}.json"
-    )).is_file()
+    assert (
+        tmp_path
+        / "assets/device-logs"
+        / started.boundary.boundary_id
+        / (f"000001-{receipt.drain_id}.json")
+    ).is_file()
 
 
 def test_duplicate_checkpoint_is_rejected_before_another_destructive_read(
@@ -285,11 +175,7 @@ def test_truncated_artifact_counts_source_redactions_before_bounding(
 def test_reader_completeness_metadata_marks_earlier_omission(tmp_path: Path) -> None:
     reader = _ReaderStub(
         {"logcat": _text_batch()},
-        {
-            "logcat": (
-                _text_batch("entry", may_have_omitted_earlier_items=True),
-            )
-        },
+        {"logcat": (_text_batch("entry", may_have_omitted_earlier_items=True),)},
     )
     service = _service(reader, tmp_path)
     boundary = service.begin().boundary
@@ -409,9 +295,19 @@ def test_boundary_persistence_failure_is_fatal(tmp_path: Path) -> None:
 def test_coarse_crash_source_skips_actions_and_persists_scenario_reports(
     tmp_path: Path,
 ) -> None:
-    source = DeviceLogSource(log_type="crashlog", artifact_stem="crashlog")
+    source = DeviceLogSource(
+        log_type="crashlog",
+        artifact_stem="crashlog",
+        is_diagnostic=True,
+    )
     scenario_batch = DeviceLogBatch(
-        (DeviceCrashReport("Example-1.ips", '{"bundleID":"com.example.app"}'),),
+        (
+            ApplicationDiagnosticReport(
+                "Example-1.ips",
+                '{"bundleID":"com.example.app"}',
+                ApplicationFailureKind.CRASH,
+            ),
+        ),
         observed_item_count=2,
         filtered_item_count=1,
     )
@@ -440,7 +336,125 @@ def test_coarse_crash_source_skips_actions_and_persists_scenario_reports(
     artifact = scenario.sources[0].artifacts[0]
     assert artifact.source_name == "Example-1.ips"
     assert artifact.path.suffix == ".ips"
+    assert artifact.failure_kind is ApplicationFailureKind.CRASH
+    assert (
+        scenario.sources[0].diagnostic_classification
+        is ApplicationDiagnosticClassification.APPLICATION_CRASH
+    )
     assert reader.read_log_types == ["crashlog"]
+
+
+def test_valid_diagnostic_survives_an_unparsed_sibling(tmp_path: Path) -> None:
+    source = DeviceLogSource(
+        log_type="crashlog",
+        artifact_stem="crashlog",
+        is_diagnostic=True,
+    )
+    scenario_batch = DeviceLogBatch(
+        (
+            ApplicationDiagnosticReport(
+                "Example-1.ips",
+                '{"bundleID":"com.example.app"}',
+                ApplicationFailureKind.CRASH,
+            ),
+        ),
+        observed_item_count=2,
+        unparsed_item_count=1,
+    )
+    reader = _ReaderStub(
+        {"crashlog": DeviceLogBatch((), 0)},
+        {"crashlog": (scenario_batch,)},
+        coarse_sources=frozenset({"crashlog"}),
+    )
+    service = _service(
+        reader,
+        tmp_path,
+        sources=(source,),
+        platform=DevicePlatform.IOS,
+    )
+    boundary = service.begin().boundary
+
+    receipt = service.drain(
+        boundary,
+        DeviceLogCheckpointKind.SCENARIO,
+        "scenario_1",
+    )
+
+    source_receipt = receipt.sources[0]
+    assert source_receipt.unparsed_item_count == 1
+    assert (
+        source_receipt.diagnostic_classification
+        is ApplicationDiagnosticClassification.APPLICATION_CRASH
+    )
+
+
+def test_unsupported_diagnostic_source_is_not_reported_as_no_failure(
+    tmp_path: Path,
+) -> None:
+    source = DeviceLogSource(
+        log_type="exitinfo",
+        artifact_stem="exit-info",
+        is_diagnostic=True,
+    )
+    reader = _ReaderStub({"exitinfo": None}, {"exitinfo": ()})
+    service = _service(reader, tmp_path, sources=(source,))
+
+    receipt = service.begin().startup_receipt
+
+    assert (
+        receipt.sources[0].diagnostic_classification
+        is ApplicationDiagnosticClassification.DIAGNOSTICS_UNAVAILABLE
+    )
+
+
+def test_diagnostic_read_failure_is_yewo_infrastructure_failure(
+    tmp_path: Path,
+) -> None:
+    source = DeviceLogSource(
+        log_type="exitinfo",
+        artifact_stem="exit-info",
+        is_diagnostic=True,
+    )
+    reader = _ReaderStub(
+        {"exitinfo": DeviceLogBatch((), 0)},
+        {"exitinfo": (DeviceLogCaptureError("read failed"),)},
+        coarse_sources=frozenset({"exitinfo"}),
+    )
+    service = _service(reader, tmp_path, sources=(source,))
+    boundary = service.begin().boundary
+
+    receipt = service.drain(
+        boundary,
+        DeviceLogCheckpointKind.SCENARIO,
+        "scenario_1",
+    )
+
+    assert (
+        receipt.sources[0].diagnostic_classification
+        is ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
+    )
+
+
+def test_diagnostic_baseline_failure_is_yewo_infrastructure_failure(
+    tmp_path: Path,
+) -> None:
+    source = DeviceLogSource(
+        log_type="exitinfo",
+        artifact_stem="exit-info",
+        is_diagnostic=True,
+    )
+    reader = _ReaderStub(
+        {"exitinfo": DeviceLogCaptureError("baseline failed")},
+        {"exitinfo": ()},
+    )
+    service = _service(reader, tmp_path, sources=(source,))
+
+    receipt = service.begin().startup_receipt
+
+    assert (
+        receipt.sources[0].diagnostic_classification
+        is ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
+    )
 
 
 def test_policy_can_classify_log_artifacts_as_declared_sensitive(
@@ -453,14 +467,10 @@ def test_policy_can_classify_log_artifacts_as_declared_sensitive(
     service = _service(
         reader,
         tmp_path,
-        policy=DeviceLogCapturePolicy(
-            sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE
-        ),
+        policy=DeviceLogCapturePolicy(sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE),
     )
     boundary = service.begin().boundary
 
     receipt = service.drain(boundary, DeviceLogCheckpointKind.ACTION, "action_1")
 
-    assert receipt.sources[0].artifacts[0].sensitivity is (
-        ArtifactSensitivity.DECLARED_SENSITIVE
-    )
+    assert receipt.sources[0].artifacts[0].sensitivity is (ArtifactSensitivity.DECLARED_SENSITIVE)

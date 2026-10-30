@@ -13,7 +13,7 @@ from yewo.devices.logs.formatting import (
     utf8_prefix,
 )
 from yewo.devices.logs.reader import (
-    DeviceCrashReport,
+    ApplicationDiagnosticReport,
     DeviceLogBatch,
     DeviceLogTextEntry,
 )
@@ -28,6 +28,10 @@ from yewo.devices.logs.records import (
 )
 from yewo.devices.logs.redaction import DeviceLogRedactionResult, DeviceLogTextScrubber
 from yewo.devices.logs.store import DeviceLogStore
+from yewo.devices.diagnostics import (
+    ApplicationDiagnosticClassification,
+    classify_application_failures,
+)
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,13 @@ class DeviceLogArtifactProducer:
                     state=DeviceLogDrainState.FAILED,
                     observed_item_count=batch.observed_item_count,
                     filtered_item_count=batch.filtered_item_count,
+                    unparsed_item_count=batch.unparsed_item_count,
                     reason="The device-log items could not be redacted and persisted.",
+                    diagnostic_classification=(
+                        ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
+                        if source.is_diagnostic
+                        else None
+                    ),
                 ),
                 None,
             )
@@ -95,9 +105,24 @@ class DeviceLogArtifactProducer:
                 state=state,
                 observed_item_count=batch.observed_item_count,
                 filtered_item_count=batch.filtered_item_count,
+                unparsed_item_count=batch.unparsed_item_count,
                 retained_item_count=retained_count,
                 omission=omission,
                 artifacts=artifacts,
+                observed_failure_kinds=tuple(
+                    item.failure_kind
+                    for item in batch.items
+                    if isinstance(item, ApplicationDiagnosticReport)
+                ),
+                diagnostic_classification=(
+                    classify_application_failures(
+                        item.failure_kind
+                        for item in batch.items
+                        if isinstance(item, ApplicationDiagnosticReport)
+                    )
+                    if source.is_diagnostic
+                    else None
+                ),
             ),
             batch,
         )
@@ -106,13 +131,28 @@ class DeviceLogArtifactProducer:
         self,
         source: DeviceLogSource,
         reason: str | None,
+        *,
+        infrastructure_failure: bool = False,
     ) -> DeviceLogBatchPersistence:
-        """Return an unavailable-source receipt without an acknowledged batch."""
+        """Return a source failure receipt without an acknowledged batch."""
         return DeviceLogBatchPersistence(
             DeviceLogSourceReceipt(
                 source=source,
-                state=DeviceLogDrainState.UNAVAILABLE,
+                state=(
+                    DeviceLogDrainState.FAILED
+                    if infrastructure_failure
+                    else DeviceLogDrainState.UNAVAILABLE
+                ),
                 reason=reason or "The device-log source is unavailable.",
+                diagnostic_classification=(
+                    (
+                        ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
+                        if infrastructure_failure
+                        else ApplicationDiagnosticClassification.DIAGNOSTICS_UNAVAILABLE
+                    )
+                    if source.is_diagnostic
+                    else None
+                ),
             ),
             None,
         )
@@ -151,7 +191,17 @@ class DeviceLogArtifactProducer:
                 state=DeviceLogDrainState.NO_RETAINED_ITEMS,
                 observed_item_count=batch.observed_item_count,
                 filtered_item_count=batch.filtered_item_count,
+                unparsed_item_count=batch.unparsed_item_count,
                 omission=omission,
+                diagnostic_classification=(
+                    (
+                        ApplicationDiagnosticClassification.DIAGNOSTICS_INCOMPLETE
+                        if batch.unparsed_item_count
+                        else ApplicationDiagnosticClassification.NO_APPLICATION_FAILURE_OBSERVED
+                    )
+                    if source.is_diagnostic
+                    else None
+                ),
             ),
             batch,
         )
@@ -172,8 +222,8 @@ class DeviceLogArtifactProducer:
                 source,
                 batch,
             )
-        if all(isinstance(item, DeviceCrashReport) for item in batch.items):
-            return self._persist_crash_reports(
+        if all(isinstance(item, ApplicationDiagnosticReport) for item in batch.items):
+            return self._persist_diagnostic_reports(
                 boundary,
                 drain_id,
                 drain_index,
@@ -217,7 +267,7 @@ class DeviceLogArtifactProducer:
         )
         return (artifact,), retained_count, omission
 
-    def _persist_crash_reports(
+    def _persist_diagnostic_reports(
         self,
         boundary: DeviceLogBoundary,
         drain_id: str,
@@ -225,7 +275,9 @@ class DeviceLogArtifactProducer:
         source: DeviceLogSource,
         batch: DeviceLogBatch,
     ) -> tuple[tuple[DeviceLogArtifactReference, ...], int, DeviceLogOmission]:
-        reports = tuple(item for item in batch.items if isinstance(item, DeviceCrashReport))
+        reports = tuple(
+            item for item in batch.items if isinstance(item, ApplicationDiagnosticReport)
+        )
         artifacts: list[DeviceLogArtifactReference] = []
         retained_bytes = 0
         omission = DeviceLogOmission.NONE
@@ -253,8 +305,12 @@ class DeviceLogArtifactProducer:
                         drain_index=drain_index,
                         source=source,
                         entry_count=1,
-                        kind=DeviceLogArtifactKind.CRASH_REPORT,
+                        kind=DeviceLogArtifactKind.APPLICATION_DIAGNOSTIC,
                         source_name=report.source_name,
+                        failure_kind=report.failure_kind,
+                        occurred_at=report.occurred_at,
+                        platform_reason=report.platform_reason,
+                        platform_code=report.platform_code,
                         redaction_policy_id=redacted.policy_id,
                         source_redaction_count=redacted.redaction_count,
                         sensitivity=self._policy.sensitivity,

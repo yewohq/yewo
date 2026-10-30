@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Sequence
 import json
 from pathlib import Path, PurePosixPath
 import subprocess
@@ -10,20 +10,21 @@ import tempfile
 
 from yewo.devices._commands import CommandRunner, run_command
 from yewo.devices.logs.errors import DeviceLogCaptureError
-from yewo.devices.logs.reader import DeviceCrashReport, DeviceLogBatch
+from yewo.devices.logs.reader import ApplicationDiagnosticReport, DeviceLogBatch
 from yewo.devices.logs.records import DeviceLogCheckpointKind
+from yewo.devices.ios.diagnostics import (
+    ios_report_contains_application,
+    parse_ios_diagnostic_report,
+)
 
 
 _CRASH_LOG_TYPE = "crashlog"
 _CRASH_LOG_DOMAIN = "systemCrashLogs"
 _MAXIMUM_REPORT_BYTES = 16 * 1024 * 1024
-_APPLICATION_IDENTITY_KEYS = frozenset(
-    {
-        "bundleid",
-        "bundleidentifier",
-        "cfbundleidentifier",
-    }
-)
+
+
+class _UnparsedDiagnosticReport(DeviceLogCaptureError):
+    """One copied report cannot be parsed without failing its siblings."""
 
 
 def _crash_report_names(payload: object) -> frozenset[str]:
@@ -59,42 +60,8 @@ def _validate_remote_path(name: str) -> PurePosixPath:
     return path
 
 
-def _json_values(content: str) -> Iterator[object]:
-    decoder = json.JSONDecoder()
-    position = 0
-    while position < len(content):
-        while position < len(content) and content[position].isspace():
-            position += 1
-        if position == len(content):
-            return
-        try:
-            value, position = decoder.raw_decode(content, position)
-        except json.JSONDecodeError as error:
-            raise DeviceLogCaptureError("CoreDevice copied an invalid crash report.") from error
-        yield value
-
-
-def _contains_application_id(value: object, application_id: str) -> bool:
-    if isinstance(value, Mapping):
-        for key, nested_value in value.items():
-            if (
-                isinstance(key, str)
-                and key.casefold() in _APPLICATION_IDENTITY_KEYS
-                and nested_value == application_id
-            ):
-                return True
-            if _contains_application_id(nested_value, application_id):
-                return True
-    elif isinstance(value, list):
-        return any(_contains_application_id(item, application_id) for item in value)
-    return False
-
-
 def _is_application_report(content: str, application_id: str) -> bool:
-    values = tuple(_json_values(content))
-    if not values:
-        raise DeviceLogCaptureError("CoreDevice copied an empty crash report.")
-    return any(_contains_application_id(value, application_id) for value in values)
+    return ios_report_contains_application(content, application_id)
 
 
 class DevicectlCrashLogReader:
@@ -122,7 +89,11 @@ class DevicectlCrashLogReader:
             return None
         self._require_acknowledged()
         report_names = self._list_report_names()
-        batch = DeviceLogBatch(items=(), observed_item_count=len(report_names))
+        batch = DeviceLogBatch(
+            items=(),
+            observed_item_count=len(report_names),
+            filtered_item_count=len(report_names),
+        )
         self._pending_batch = (batch, report_names)
         return batch
 
@@ -139,16 +110,27 @@ class DevicectlCrashLogReader:
         new_report_names = tuple(
             sorted(name for name in newly_observed_names if name.casefold().endswith(".ips"))
         )
-        matching_reports = tuple(
-            report
-            for name in new_report_names
-            for report in (self._copy_application_report(name),)
-            if report is not None
-        )
+        matching_reports: list[ApplicationDiagnosticReport] = []
+        filtered_item_count = len(newly_observed_names) - len(new_report_names)
+        unparsed_item_count = 0
+        for name in new_report_names:
+            try:
+                content = self._copy_report_content(name)
+            except _UnparsedDiagnosticReport:
+                unparsed_item_count += 1
+                continue
+            try:
+                if not _is_application_report(content, self._application_id):
+                    filtered_item_count += 1
+                    continue
+                matching_reports.append(parse_ios_diagnostic_report(name, content))
+            except DeviceLogCaptureError:
+                unparsed_item_count += 1
         batch = DeviceLogBatch(
-            items=matching_reports,
+            items=tuple(matching_reports),
             observed_item_count=len(newly_observed_names),
-            filtered_item_count=len(newly_observed_names) - len(matching_reports),
+            filtered_item_count=filtered_item_count,
+            unparsed_item_count=unparsed_item_count,
         )
         self._pending_batch = (batch, report_names)
         return batch
@@ -203,7 +185,7 @@ class DevicectlCrashLogReader:
                 ) from error
         return _crash_report_names(payload)
 
-    def _copy_application_report(self, name: str) -> DeviceCrashReport | None:
+    def _copy_report_content(self, name: str) -> str:
         remote_path = _validate_remote_path(name)
         with tempfile.TemporaryDirectory(prefix="yewo-crashlog-copy-") as directory:
             local_path = Path(directory) / remote_path.name
@@ -229,20 +211,20 @@ class DevicectlCrashLogReader:
             self._run(command, timeout_seconds=60, operation="copy a crash report")
             try:
                 report_bytes = local_path.read_bytes()
-                if len(report_bytes) > _MAXIMUM_REPORT_BYTES:
-                    raise DeviceLogCaptureError(
-                        "CoreDevice copied a crash report that exceeds the size bound."
-                    )
-                content = report_bytes.decode("utf-8")
-            except DeviceLogCaptureError:
-                raise
-            except (OSError, UnicodeError) as error:
+            except OSError as error:
                 raise DeviceLogCaptureError(
                     "CoreDevice did not copy a readable crash report."
                 ) from error
-        if not _is_application_report(content, self._application_id):
-            return None
-        return DeviceCrashReport(source_name=name, text=content)
+        if len(report_bytes) > _MAXIMUM_REPORT_BYTES:
+            raise _UnparsedDiagnosticReport(
+                "CoreDevice copied a crash report that exceeds the size bound."
+            )
+        try:
+            return report_bytes.decode("utf-8")
+        except UnicodeError as error:
+            raise _UnparsedDiagnosticReport(
+                "CoreDevice copied a crash report with invalid text."
+            ) from error
 
     def _run(
         self,
