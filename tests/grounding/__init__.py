@@ -1,0 +1,1 @@
+"""Visual-grounding contract tests."""
