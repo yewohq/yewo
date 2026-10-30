@@ -209,7 +209,7 @@ class WorkflowStub:
         self.events = events
         self.outcome = outcome or RunWorkflowOutcome(
             RunTerminalCategory.COMPLETED,
-            "The device-foundation workflow completed.",
+            "The workflow completed.",
         )
         self.failure = failure
         self.write_evidence = write_evidence
@@ -252,7 +252,7 @@ class SignalStub:
 
 def run_request(tmp_path: Path, *, target_id: str = "emulator-5554") -> RunRequest:
     return RunRequest(
-        mode=RunMode.DEVICE_FOUNDATION,
+        mode=RunMode.NORMAL,
         output_root=tmp_path / "runs",
         device=DeviceQuery(platform=DevicePlatform.ANDROID, target_id=target_id),
         application=ApplicationRequest(
@@ -300,7 +300,7 @@ def build_coordinator(
             fail_close=fail_close,
             interrupt_close=interrupt_close,
         ),
-        {RunMode.DEVICE_FOUNDATION: workflow} if include_workflow else {},
+        {RunMode.NORMAL: workflow} if include_workflow else {},
         lambda workspace: AppiumServerConfig(log_path=workspace.root / "runtime/appium.log"),
         lambda text: DeviceLogRedactionResult(text, "test-policy", 0),
         store_factory=store_factory,

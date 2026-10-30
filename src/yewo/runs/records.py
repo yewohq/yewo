@@ -18,7 +18,9 @@ from yewo.devices import DeviceQuery
 class RunMode(StrEnum):
     """A product workflow that the coordinator can start."""
 
-    DEVICE_FOUNDATION = "device_foundation"
+    NORMAL = "normal"
+    DISCOVERY = "discovery"
+    SCENARIO = "scenario"
 
 
 class RunTerminalCategory(StrEnum):
@@ -88,10 +90,8 @@ class RunRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    mode: RunMode = RunMode.DEVICE_FOUNDATION
+    mode: RunMode
     output_root: Path
-    workflow_input_path: Path | None = None
-    workflow_input_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     device: DeviceQuery
     application: ApplicationRequest
     automation_server: AutomationServerRequest = AutomationServerRequest()
@@ -101,13 +101,6 @@ class RunRequest(BaseModel):
     def _validate_output_root(cls, value: Path) -> Path:
         if not value.parts or value.name in {"", ".", ".."}:
             raise ValueError("A run output root must name a directory.")
-        return value
-
-    @field_validator("workflow_input_path")
-    @classmethod
-    def _validate_workflow_input_path(cls, value: Path | None) -> Path | None:
-        if value is not None and (not value.parts or value.name in {"", ".", ".."}):
-            raise ValueError("A workflow input path must name a file.")
         return value
 
     @model_validator(mode="after")

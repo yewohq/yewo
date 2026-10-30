@@ -11,6 +11,7 @@ import pytest
 from yewo.applications import ApplicationInstallMode, ApplicationRequest
 from yewo.devices import DevicePlatform, DeviceQuery
 from yewo.runs import (
+    RunMode,
     RunRequest,
     RunStage,
     RunStore,
@@ -26,6 +27,7 @@ STARTED_AT = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
 
 def _request(tmp_path: Path) -> RunRequest:
     return RunRequest(
+        mode=RunMode.NORMAL,
         output_root=tmp_path / "runs",
         device=DeviceQuery(platform=DevicePlatform.ANDROID, target_id="emulator-5554"),
         application=ApplicationRequest(
@@ -97,7 +99,7 @@ def test_store_persists_exactly_one_matching_terminal(tmp_path: Path) -> None:
         run_id="run_1",
         category=RunTerminalCategory.COMPLETED,
         stage=RunStage.FINISHED,
-        reason="The device-foundation workflow completed.",
+        reason="The workflow completed.",
         completed_at=STARTED_AT + timedelta(seconds=2),
         partial_evidence_available=True,
     )

@@ -55,7 +55,7 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
         "application resolved: com.example.app",
         "appium server acquired",
         "automation session opened",
-        "terminal: completed at finished — The device-foundation workflow completed.",
+        "terminal: completed at finished — The workflow completed.",
     ]
 
 

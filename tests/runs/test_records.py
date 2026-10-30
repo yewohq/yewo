@@ -9,6 +9,7 @@ import pytest
 from yewo.applications import ApplicationInstallMode, ApplicationRequest
 from yewo.devices import DevicePlatform, DeviceQuery
 from yewo.runs import (
+    RunMode,
     RunRequest,
     RunStage,
     RunTerminal,
@@ -18,6 +19,7 @@ from yewo.runs import (
 
 def _request(tmp_path: Path) -> RunRequest:
     return RunRequest(
+        mode=RunMode.NORMAL,
         output_root=tmp_path / "runs",
         device=DeviceQuery(platform=DevicePlatform.ANDROID, target_id="emulator-5554"),
         application=ApplicationRequest(
@@ -31,6 +33,7 @@ def _request(tmp_path: Path) -> RunRequest:
 def test_request_rejects_mismatched_platforms(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="platforms must match"):
         RunRequest(
+            mode=RunMode.NORMAL,
             output_root=tmp_path / "runs",
             device=DeviceQuery(platform=DevicePlatform.IOS),
             application=_request(tmp_path).application,
@@ -43,7 +46,7 @@ def test_completed_terminal_requires_the_finished_stage(tmp_path: Path) -> None:
             run_id="run_1",
             category=RunTerminalCategory.COMPLETED,
             stage=RunStage.EXECUTION,
-            reason="The device-foundation workflow completed.",
+            reason="The workflow completed.",
             completed_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
             partial_evidence_available=True,
         )
