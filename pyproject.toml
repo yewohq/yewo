@@ -83,7 +83,7 @@ ignore = ["E501"]
 max-complexity = 21  # The project requirement is strictly less than 22.
 
 [tool.pyright]
-include = ["src/yewo"]
+include = ["src/yewo", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 venvPath = "."
