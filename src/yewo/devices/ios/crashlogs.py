@@ -137,11 +137,7 @@ class DevicectlCrashLogReader:
 
         newly_observed_names = report_names - self._known_report_names
         new_report_names = tuple(
-            sorted(
-                name
-                for name in newly_observed_names
-                if name.casefold().endswith(".ips")
-            )
+            sorted(name for name in newly_observed_names if name.casefold().endswith(".ips"))
         )
         matching_reports = tuple(
             report

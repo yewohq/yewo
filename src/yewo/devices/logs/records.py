@@ -136,9 +136,7 @@ class DeviceLogArtifactReference(BaseModel):
     def _validate_artifact(self) -> Self:
         if self.path.is_absolute() or ".." in self.path.parts:
             raise ValueError("A device-log artifact path must be relative and safe.")
-        required_suffix = (
-            ".ips" if self.kind is DeviceLogArtifactKind.CRASH_REPORT else ".log"
-        )
+        required_suffix = ".ips" if self.kind is DeviceLogArtifactKind.CRASH_REPORT else ".log"
         if self.path.suffix != required_suffix:
             raise ValueError(f"A {self.kind} artifact path must end in {required_suffix}.")
         if self.kind is DeviceLogArtifactKind.CRASH_REPORT:
@@ -258,10 +256,7 @@ class DeviceLogDrainReceipt(BaseModel):
         if self.completed_at < self.started_at:
             raise ValueError("A device-log drain cannot complete before it starts.")
         validate_device_log_checkpoint(self.checkpoint_kind, self.checkpoint_id)
-        if (
-            self.checkpoint_kind is DeviceLogCheckpointKind.SESSION_START
-            and self.drain_index != 0
-        ):
+        if self.checkpoint_kind is DeviceLogCheckpointKind.SESSION_START and self.drain_index != 0:
             raise ValueError("The session-start drain must have index zero.")
         log_types = [receipt.source.log_type for receipt in self.sources]
         if len(log_types) != len(set(log_types)):

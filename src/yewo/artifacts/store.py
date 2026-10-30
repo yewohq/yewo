@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import suppress
 import os
 from pathlib import Path
+import shutil
 import tempfile
 
 from yewo.artifacts.errors import ArtifactWriteError
@@ -17,21 +18,34 @@ class AtomicArtifactWriter:
         self.root = root
 
     def write(self, relative_path: Path, content: bytes) -> None:
+        """Write in-memory content as one immutable artifact."""
+        self._write(relative_path, lambda stream: stream.write(content))
+
+    def write_file(self, relative_path: Path, source: Path) -> None:
+        """Stream one local file into an immutable artifact."""
+        if not source.is_file() or source.is_symlink():
+            raise ArtifactWriteError("The artifact source must be one regular file.")
+
+        def copy(stream) -> None:
+            with source.open("rb") as source_stream:
+                shutil.copyfileobj(source_stream, stream, length=1024 * 1024)
+
+        self._write(relative_path, copy)
+
+    def _write(self, relative_path: Path, write_content) -> None:
         destination = self.root / relative_path
         temporary_path: Path | None = None
         try:
             self._prepare_directory(destination.parent)
             if destination.exists():
-                raise ArtifactWriteError(
-                    f"The artifact already exists: {relative_path.as_posix()}"
-                )
+                raise ArtifactWriteError(f"The artifact already exists: {relative_path.as_posix()}")
             descriptor, temporary_name = tempfile.mkstemp(
                 dir=destination.parent,
                 prefix=".artifact-",
             )
             temporary_path = Path(temporary_name)
             with os.fdopen(descriptor, "wb") as stream:
-                stream.write(content)
+                write_content(stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.link(temporary_path, destination)

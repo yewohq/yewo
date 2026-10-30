@@ -66,9 +66,7 @@ class DeviceLogCaptureLease:
         checkpoint_id: str,
     ) -> DeviceLogDrainReceipt:
         if self._closed:
-            raise DeviceLogCaptureError(
-                "A closed device-log capture lease cannot drain logs."
-            )
+            raise DeviceLogCaptureError("A closed device-log capture lease cannot drain logs.")
         receipt = self._service.drain(
             self.boundary,
             checkpoint_kind,

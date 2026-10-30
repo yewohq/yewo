@@ -1,5 +1,6 @@
 """Tests for composed automation-session ownership and rollback."""
 
+import base64
 from collections import deque
 import json
 from pathlib import Path
@@ -34,6 +35,8 @@ from yewo.devices.logs import (
     DeviceLogRollbackError,
     DeviceLogStore,
 )
+from yewo.devices.recording import ScreenRecordingVideoMetadata
+from yewo.devices.remote_files import RemoteTemporaryFileCleanupError
 from yewo.resources import ResourceOwnership
 
 
@@ -58,6 +61,8 @@ class _DriverStub:
         self.events = events
         self.installed = installed
         self.remove_error: Exception | None = None
+        self.script_error: Exception | None = None
+        self.remote_file_content: dict[str, bytes] = {}
         self.log_types = ["logcat"]
         self._log_responses = deque(log_responses or (((),) * 10))
 
@@ -77,6 +82,34 @@ class _DriverStub:
     def get_log(self, log_type: str) -> tuple[object, ...]:
         self.events.append(f"log:{log_type}")
         return self._log_responses.popleft()
+
+    def execute_script(self, script: str, arguments: dict[str, str]) -> object:
+        remote_path = arguments["remotePath"]
+        if self.script_error is not None:
+            raise self.script_error
+        if script == "mobile: pushFile":
+            self.events.append(f"push:{remote_path}")
+            self.remote_file_content[remote_path] = base64.b64decode(arguments["payload"])
+            return None
+        if script == "mobile: pullFile":
+            self.events.append(f"pull:{remote_path}")
+            return base64.b64encode(self.remote_file_content[remote_path]).decode("ascii")
+        if script == "mobile: deleteFile":
+            self.events.append(f"delete:{remote_path}")
+            self.remote_file_content.pop(remote_path, None)
+            return True
+        raise AssertionError(f"Unexpected script: {script}")
+
+
+class _RecordingDriverStub(_DriverStub):
+    def start_recording_screen(self, **options: object) -> None:
+        del options
+        self.events.append("recording:start")
+
+    def stop_recording_screen(self) -> str:
+        self.events.append("recording:stop")
+        video = b"\x00\x00\x00\x18ftypmp42video"
+        return base64.b64encode(video).decode()
 
 
 def _device(events: list[str]) -> DeviceLease:
@@ -135,6 +168,12 @@ def _manager(driver: _DriverStub, installed_before: bool | None) -> AutomationSe
         {DevicePlatform.ANDROID: AndroidDriverOptionsBuilder()},
         {DevicePlatform.ANDROID: _PresenceStub(installed_before)},
         {DevicePlatform.ANDROID: ANDROID_LOG_SOURCES},
+        recording_metadata_reader=lambda path: ScreenRecordingVideoMetadata(
+            16,
+            9,
+            30.0,
+            1.0,
+        ),
     )
 
 
@@ -397,12 +436,8 @@ def test_session_persists_action_scenario_and_final_log_boundaries(
     assert action_receipt.checkpoint_id == "action_1"
     assert scenario_receipt.checkpoint_kind is DeviceLogCheckpointKind.SCENARIO
     assert scenario_receipt.checkpoint_id == "scenario_1"
-    assert session.device_logs.receipts[-1].checkpoint_kind is (
-        DeviceLogCheckpointKind.SESSION_END
-    )
-    boundary_directory = (
-        tmp_path / "assets/device-logs" / session.device_logs.boundary.boundary_id
-    )
+    assert session.device_logs.receipts[-1].checkpoint_kind is (DeviceLogCheckpointKind.SESSION_END)
+    boundary_directory = tmp_path / "assets/device-logs" / session.device_logs.boundary.boundary_id
     assert (boundary_directory / "boundary.json").is_file()
     assert len(tuple(boundary_directory.glob("*.json"))) == 5
     assert len(tuple(boundary_directory.glob("*.log"))) == 4
@@ -418,3 +453,93 @@ def test_session_persists_action_scenario_and_final_log_boundaries(
 
     with pytest.raises(DeviceLogCaptureError, match="closed"):
         session.drain_action_logs("action_2")
+
+
+def test_session_checkpoints_and_closes_owned_screen_recording(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    driver = _RecordingDriverStub(events)
+    session = _open(
+        _manager(driver, installed_before=True),
+        _device(events),
+        _server(events),
+        _request(),
+        _application(),
+        tmp_path,
+    )
+
+    scenario = session.checkpoint_scenario_recording("scenario_1")
+    session.close()
+
+    assert scenario.artifact is not None
+    assert len(session.recording.receipts) == 2
+    assert len(tuple(tmp_path.glob("assets/recordings/*/*.mp4"))) == 2
+    assert events.count("recording:start") == 2
+    assert events.count("recording:stop") == 2
+
+
+def test_session_removes_owned_remote_files_before_closing_the_driver(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    driver = _DriverStub(events)
+    session = _open(
+        _manager(driver, installed_before=True),
+        _device(events),
+        _server(events),
+        _request(),
+        _application(),
+        tmp_path,
+    )
+    reference = session.reserve_remote_temporary_file("fixture.png")
+
+    session.close()
+
+    delete_event = f"delete:{reference.remote_path}"
+    assert delete_event in events
+    assert events.index(delete_event) < events.index("driver")
+    assert session.remote_files.closed is True
+
+
+def test_remote_file_cleanup_failure_does_not_skip_other_session_cleanup(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    driver = _DriverStub(events)
+    driver.script_error = RuntimeError("delete failed")
+    session = _open(
+        _manager(driver, installed_before=True),
+        _device(events),
+        _server(events),
+        _request(),
+        _application(),
+        tmp_path,
+    )
+    session.reserve_remote_temporary_file("fixture.png")
+
+    with pytest.raises(RemoteTemporaryFileCleanupError):
+        session.close()
+
+    assert events[-3:] == ["driver", "server", "device"]
+    assert session.closed is True
+
+
+def test_session_pushes_pulls_and_releases_owned_media(tmp_path: Path) -> None:
+    events: list[str] = []
+    driver = _DriverStub(events)
+    session = _open(
+        _manager(driver, installed_before=True),
+        _device(events),
+        _server(events),
+        _request(),
+        _application(),
+        tmp_path,
+    )
+
+    reference = session.push_media("fixture.png", b"media")
+
+    assert session.pull_media(reference) == b"media"
+    assert session.release_media(reference) is True
+    assert reference.remote_file.remote_path not in driver.remote_file_content
+    session.close()

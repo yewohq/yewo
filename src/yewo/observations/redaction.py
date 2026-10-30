@@ -11,6 +11,7 @@ from typing import Protocol
 
 from PIL import Image, ImageDraw, UnidentifiedImageError
 
+from yewo.artifacts import YEWO_REDACTION_POLICY_ID, draw_yewo_redaction_mask
 from yewo.artifacts.records import ArtifactSensitivity
 from yewo.observations.errors import ObservationCaptureError
 from yewo.observations.records import (
@@ -54,9 +55,9 @@ class RegionScreenshotRedactor:
             )
         drawing = ImageDraw.Draw(image)
         for region in self._regions:
-            drawing.rectangle(
+            draw_yewo_redaction_mask(
+                drawing,
                 (region.left, region.top, region.right - 1, region.bottom - 1),
-                fill="black",
             )
         stream = BytesIO()
         image.save(stream, format="PNG")
@@ -72,7 +73,7 @@ class RegionScreenshotRedactor:
         return RedactionResult(
             png=stream.getvalue(),
             provenance=RedactionProvenance(
-                policy_id="region-mask",
+                policy_id=YEWO_REDACTION_POLICY_ID,
                 region_count=len(self._regions),
                 region_set_sha256=sha256(mask).hexdigest(),
                 input_sensitivity=(

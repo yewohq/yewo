@@ -160,8 +160,9 @@ class ApplicationLifecycle:
             raise DeviceInteractionError("Cannot terminate an application that is not installed.")
         self._driver.terminate_app(self._application_id)
         evidence = self._wait_until(
-            lambda current: current.state
-            in {ApplicationState.NOT_RUNNING, ApplicationState.NOT_INSTALLED}
+            lambda current: (
+                current.state in {ApplicationState.NOT_RUNNING, ApplicationState.NOT_INSTALLED}
+            )
         )
         if evidence.state is ApplicationState.NOT_INSTALLED:
             raise DeviceInteractionError(

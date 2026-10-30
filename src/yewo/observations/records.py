@@ -187,10 +187,7 @@ class Observation(BaseModel):
             raise ValueError("The raw screenshot reference must contain raw pixels.")
         if self.redacted_screenshot.redaction_state is not ScreenshotRedactionState.REDACTED:
             raise ValueError("The redacted screenshot reference must contain redacted pixels.")
-        if (
-            self.screen_fingerprint.source_artifact_id
-            != self.redacted_screenshot.artifact_id
-        ):
+        if self.screen_fingerprint.source_artifact_id != self.redacted_screenshot.artifact_id:
             raise ValueError("The screen fingerprint must identify its source screenshot.")
         if self.predecessor_observation_id == self.observation_id:
             raise ValueError("An observation cannot name itself as its predecessor.")

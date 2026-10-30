@@ -95,9 +95,7 @@ class AndroidInteractionBackend:
             return None
         regions: list[ScreenRegionReading] = []
         for name, value in answer.items():
-            if not isinstance(value, Mapping) or not isinstance(
-                value.get("visible"), bool
-            ):
+            if not isinstance(value, Mapping) or not isinstance(value.get("visible"), bool):
                 return None
             if value["visible"] is False:
                 continue

@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from urllib.parse import urlsplit
 
+from yewo.devices.android._validation import validate_remote_value as _validate_remote_value
 from yewo.devices._commands import (
     CommandRunner,
     capture_optional,
@@ -47,6 +48,11 @@ class AdbClient:
         self._runner = runner
         self._adb_executable = adb_executable
         self._emulator_executable = emulator_executable
+
+    @property
+    def executable(self) -> str:
+        """Return the configured ADB executable."""
+        return self._adb_executable
 
     def run(
         self,
@@ -403,28 +409,6 @@ class AdbClient:
             purpose="clear application data",
         )
 
-    def push_file(self, connection_id: str, local_path: str, remote_path: str) -> None:
-        self.adb(
-            connection_id,
-            "push",
-            local_path,
-            remote_path,
-            purpose="push a file",
-        )
-
-    def scan_media_file(self, connection_id: str, remote_path: str) -> None:
-        _validate_remote_value(remote_path, "remote media path")
-        self.shell(
-            connection_id,
-            "am",
-            "broadcast",
-            "-a",
-            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-            "-d",
-            f"file://{remote_path}",
-            purpose="scan a media file",
-        )
-
     def start_app(
         self,
         connection_id: str,
@@ -491,15 +475,8 @@ class AdbClient:
 def _quote_remote_arguments(arguments: tuple[str, ...]) -> tuple[str, ...]:
     for argument in arguments:
         if any(character in argument for character in ("\x00", "\n", "\r")):
-            raise DeviceCommandError(
-                "An Android shell argument contains a control character."
-            )
+            raise DeviceCommandError("An Android shell argument contains a control character.")
     return tuple(shlex.quote(argument) for argument in arguments)
-
-
-def _validate_remote_value(value: str, name: str) -> None:
-    if not value or any(character in value for character in ("\x00", "\n", "\r")):
-        raise DeviceCommandError(f"The {name} is empty or contains a control character.")
 
 
 def _validate_pattern(value: str, pattern: re.Pattern[str], name: str) -> None:

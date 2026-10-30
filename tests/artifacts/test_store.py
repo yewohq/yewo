@@ -25,6 +25,18 @@ def test_writer_never_overwrites_existing_evidence(tmp_path: Path) -> None:
     assert (tmp_path / relative_path).read_bytes() == b"first"
 
 
+def test_writer_streams_a_regular_file_without_changing_the_source(tmp_path: Path) -> None:
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"streamed evidence")
+    artifact_root = tmp_path / "run"
+    relative_path = ARTIFACTS_DIRECTORY / "evidence.bin"
+
+    AtomicArtifactWriter(artifact_root).write_file(relative_path, source)
+
+    assert (artifact_root / relative_path).read_bytes() == b"streamed evidence"
+    assert source.read_bytes() == b"streamed evidence"
+
+
 def test_writer_rejects_a_symlinked_artifact_directory(tmp_path: Path) -> None:
     artifact_root = tmp_path / "artifacts"
     outside = tmp_path / "outside"

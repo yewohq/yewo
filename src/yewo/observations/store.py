@@ -141,9 +141,7 @@ class ObservationStore:
         ):
             if screenshot is not None:
                 self._verify_screenshot(screenshot)
-        relative_path = (
-            ARTIFACTS_DIRECTORY / "observations" / f"{observation.observation_id}.json"
-        )
+        relative_path = ARTIFACTS_DIRECTORY / "observations" / f"{observation.observation_id}.json"
         content = f"{observation.model_dump_json(indent=2)}\n".encode("utf-8")
         try:
             self._writer.write(relative_path, content)

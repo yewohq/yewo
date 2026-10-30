@@ -1,9 +1,13 @@
 """Tests for the ported ADB command client."""
 
+import re
+
 import pytest
 
 from devices._runner import CommandRunnerStub
 from yewo.devices.android import AdbClient, VisualFeedbackSettings
+from yewo.devices.android._file_commands import AdbFileCommands
+from yewo.devices.android._recording_commands import AdbRecordingCommands
 from yewo.devices.errors import DeviceCommandError
 
 
@@ -94,6 +98,76 @@ def test_deep_link_binds_the_target_package_with_package_flag() -> None:
             30,
         )
     ]
+
+
+def test_remote_file_and_recording_commands_bind_one_exact_path() -> None:
+    runner = CommandRunnerStub(responses=(("", "", 0), ("12\n", "", 0), ("", "", 0)))
+    client = AdbClient(runner)
+    files = AdbFileCommands(client)
+    recording = AdbRecordingCommands(client)
+    remote_path = "/sdcard/Download/yewo_recording.mp4"
+
+    files.pull_file("emulator-5554", remote_path, "/tmp/recording.mp4")
+    size = files.remote_file_size("emulator-5554", remote_path)
+    recording.stop("emulator-5554", remote_path)
+
+    assert size == 12
+    assert runner.calls[0] == (
+        (
+            "adb",
+            "-s",
+            "emulator-5554",
+            "pull",
+            remote_path,
+            "/tmp/recording.mp4",
+        ),
+        120,
+    )
+    assert runner.calls[1][0][-4:] == ("stat", "-c", "%s", remote_path)
+    assert runner.calls[2][0][-4:-1] == ("pkill", "-INT", "-f")
+    assert re.escape(remote_path) in runner.calls[2][0][-1]
+
+
+def test_screen_record_command_quotes_the_remote_path_without_a_host_shell() -> None:
+    command, effective_limit = AdbRecordingCommands(AdbClient()).command(
+        "emulator-5554",
+        "/sdcard/Download/yewo recording.mp4",
+        30,
+    )
+
+    assert command == (
+        "adb",
+        "-s",
+        "emulator-5554",
+        "shell",
+        "screenrecord",
+        "--time-limit",
+        "30",
+        "'/sdcard/Download/yewo recording.mp4'",
+    )
+    assert effective_limit == 30
+
+
+def test_screen_record_command_clamps_the_android_platform_limit() -> None:
+    command, effective_limit = AdbRecordingCommands(AdbClient()).command(
+        "emulator-5554",
+        "/sdcard/Download/yewo_recording.mp4",
+        1_800,
+    )
+
+    assert command[-3:-1] == ("--time-limit", "180")
+    assert effective_limit == 180
+
+
+def test_file_commands_compose_with_the_adb_boundary() -> None:
+    runner = CommandRunnerStub()
+    files = AdbFileCommands(AdbClient(runner))
+
+    files.push_file("emulator-5554", "photo.png", "/sdcard/photo.png")
+    files.scan_media_file("emulator-5554", "/sdcard/photo.png")
+
+    assert runner.calls[0][0][3:] == ("push", "photo.png", "/sdcard/photo.png")
+    assert runner.calls[1][0][-1] == "file:///sdcard/photo.png"
 
 
 @pytest.mark.parametrize(
@@ -200,24 +274,6 @@ def test_deep_link_binds_the_target_package_with_package_flag() -> None:
             [("shell", "pm", "clear", "com.example.app")],
         ),
         (
-            lambda client: client.push_file("emulator-5554", "photo.png", "/sdcard/photo.png"),
-            [("push", "photo.png", "/sdcard/photo.png")],
-        ),
-        (
-            lambda client: client.scan_media_file("emulator-5554", "/sdcard/photo.png"),
-            [
-                (
-                    "shell",
-                    "am",
-                    "broadcast",
-                    "-a",
-                    "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-                    "-d",
-                    "file:///sdcard/photo.png",
-                )
-            ],
-        ),
-        (
             lambda client: client.start_app(
                 "emulator-5554",
                 "com.example.app",
@@ -313,7 +369,7 @@ def test_shell_quotes_values_for_the_remote_android_shell() -> None:
         "example://item/1;echo injected",
         "com.example.app",
     )
-    client.scan_media_file("emulator-5554", "/sdcard/My Photo.png")
+    AdbFileCommands(client).scan_media_file("emulator-5554", "/sdcard/My Photo.png")
     client.set_accessibility_services("emulator-5554", "")
 
     assert runner.calls[0][0][-2:] == (
@@ -331,9 +387,7 @@ def test_shell_quotes_values_for_the_remote_android_shell() -> None:
         lambda client: client.set_battery("emulator-5554", -1, False),
         lambda client: client.set_battery("emulator-5554", 101, False),
         lambda client: client.set_timezone("emulator-5554", "Europe/London;reboot"),
-        lambda client: client.set_app_locale(
-            "emulator-5554", "com.example.app;reboot", "en-GB"
-        ),
+        lambda client: client.set_app_locale("emulator-5554", "com.example.app;reboot", "en-GB"),
         lambda client: client.set_app_permission(
             "emulator-5554",
             "com.example.app",

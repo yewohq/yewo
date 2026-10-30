@@ -88,11 +88,7 @@ class DeviceLogArtifactProducer:
                 ),
                 None,
             )
-        state = (
-            DeviceLogDrainState.CAPTURED
-            if artifacts
-            else DeviceLogDrainState.NO_RETAINED_ITEMS
-        )
+        state = DeviceLogDrainState.CAPTURED if artifacts else DeviceLogDrainState.NO_RETAINED_ITEMS
         return DeviceLogBatchPersistence(
             DeviceLogSourceReceipt(
                 source=source,
@@ -215,9 +211,7 @@ class DeviceLogArtifactProducer:
             kind=DeviceLogArtifactKind.TEXT_STREAM,
             source_name=None,
             redaction_policy_id=policy_id,
-            source_redaction_count=sum(
-                item.redaction_count for item in redacted[-retained_count:]
-            ),
+            source_redaction_count=sum(item.redaction_count for item in redacted[-retained_count:]),
             sensitivity=self._policy.sensitivity,
             retention=self._policy.retention,
         )

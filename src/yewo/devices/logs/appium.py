@@ -111,8 +111,6 @@ def _format_timestamp(value: object) -> str:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return ""
     try:
-        return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat(
-            timespec="milliseconds"
-        )
+        return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat(timespec="milliseconds")
     except (OverflowError, OSError, ValueError):
         return ""

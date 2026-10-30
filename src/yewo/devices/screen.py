@@ -60,10 +60,7 @@ def bounded_rectangle(
     """Normalize one rectangle and clamp it to its declared coordinate space."""
     if not isinstance(value, Mapping):
         return None
-    coordinates = tuple(
-        value.get(key)
-        for key in (horizontal_key, vertical_key, "width", "height")
-    )
+    coordinates = tuple(value.get(key) for key in (horizontal_key, vertical_key, "width", "height"))
     if not all(isinstance(item, int | float) for item in coordinates):
         return None
     numeric_coordinates = tuple(

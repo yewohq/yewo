@@ -2,6 +2,10 @@
 
 from yewo.artifacts.errors import ArtifactWriteError
 from yewo.artifacts.paths import ARTIFACTS_DIRECTORY
+from yewo.artifacts.redaction_mask import (
+    YEWO_REDACTION_POLICY_ID,
+    draw_yewo_redaction_mask,
+)
 from yewo.artifacts.records import (
     ArtifactRetention,
     ArtifactSensitivity,
@@ -22,6 +26,8 @@ __all__ = [
     "EvidenceApplicationIdentity",
     "EvidenceDeviceIdentity",
     "RecordIdentifier",
+    "YEWO_REDACTION_POLICY_ID",
+    "draw_yewo_redaction_mask",
     "new_record_identifier",
     "validate_record_identifier",
 ]

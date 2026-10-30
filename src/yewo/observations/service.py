@@ -177,9 +177,7 @@ class ObservationService:
             )
             self._observation_store.persist(observation)
         except ValidationError as error:
-            capture_error = ObservationCaptureError(
-                "Captured observation evidence is invalid."
-            )
+            capture_error = ObservationCaptureError("Captured observation evidence is invalid.")
             cleanup_errors = self._discard_incomplete_screenshots(references)
             if cleanup_errors:
                 capture_error.add_note(

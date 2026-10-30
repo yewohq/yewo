@@ -189,7 +189,6 @@ def _parse_openstep_application_ids(output: str) -> set[str] | None:
     if not stripped_output.startswith("{") or not stripped_output.endswith("}"):
         return None
     identifiers = {
-        matched["application_id"]
-        for matched in _OPENSTEP_APPLICATION_ID.finditer(output)
+        matched["application_id"] for matched in _OPENSTEP_APPLICATION_ID.finditer(output)
     }
     return identifiers or None

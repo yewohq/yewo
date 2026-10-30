@@ -64,10 +64,7 @@ class DeviceLogStore:
             ARTIFACTS_DIRECTORY
             / "device-logs"
             / boundary_id
-            / (
-                f"{drain_index:06d}-{drain_id}-{source.artifact_stem}-"
-                f"{artifact_id}{suffix}"
-            )
+            / (f"{drain_index:06d}-{drain_id}-{source.artifact_stem}-{artifact_id}{suffix}")
         )
         try:
             reference = DeviceLogArtifactReference(
@@ -116,23 +113,13 @@ class DeviceLogStore:
 
     def persist_boundary(self, boundary: DeviceLogBoundary) -> Path:
         """Persist the context and source state that start one log interval."""
-        relative_path = (
-            ARTIFACTS_DIRECTORY
-            / "device-logs"
-            / boundary.boundary_id
-            / "boundary.json"
-        )
+        relative_path = ARTIFACTS_DIRECTORY / "device-logs" / boundary.boundary_id / "boundary.json"
         self._write_record(relative_path, boundary.model_dump_json(indent=2))
         return relative_path
 
     def discard_boundary(self, boundary: DeviceLogBoundary) -> None:
         """Remove one unchanged boundary whose startup receipt did not persist."""
-        relative_path = (
-            ARTIFACTS_DIRECTORY
-            / "device-logs"
-            / boundary.boundary_id
-            / "boundary.json"
-        )
+        relative_path = ARTIFACTS_DIRECTORY / "device-logs" / boundary.boundary_id / "boundary.json"
         expected_content = f"{boundary.model_dump_json(indent=2)}\n".encode()
         boundary_path = self.root / relative_path
         try:

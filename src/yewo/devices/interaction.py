@@ -25,7 +25,6 @@ from yewo.devices.screen import (
 )
 
 
-
 class AndroidKey(IntEnum):
     """Supported Android hardware and navigation keys."""
 

@@ -29,11 +29,7 @@ def bound_text_entries(
             retained_bytes += len(line)
             continue
         if not retained_lines:
-            prefix = (
-                utf8_prefix(encoded_text, maximum_bytes - 1)
-                if maximum_bytes > 1
-                else b""
-            )
+            prefix = utf8_prefix(encoded_text, maximum_bytes - 1) if maximum_bytes > 1 else b""
             if prefix:
                 retained_lines.append(prefix + b"\n")
             omission = DeviceLogOmission.LATER
