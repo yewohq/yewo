@@ -1,6 +1,7 @@
 """Tests for bounded deterministic-script loading."""
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from yewo.runs.device_foundation import (
     DeviceFoundationActionKind,
     DeviceFoundationScriptError,
     load_device_foundation_script,
+    load_device_foundation_script_source,
 )
 
 
@@ -36,6 +38,17 @@ def test_loads_one_valid_json_script(tmp_path: Path) -> None:
 
     assert script.script_id == "script_1"
     assert script.platform is DevicePlatform.ANDROID
+
+
+def test_loaded_source_records_the_exact_script_digest(tmp_path: Path) -> None:
+    path = tmp_path / "script.json"
+    content = json.dumps(_script_payload()).encode()
+    path.write_bytes(content)
+
+    loaded = load_device_foundation_script_source(path)
+
+    assert loaded.script.script_id == "script_1"
+    assert loaded.source_sha256 == sha256(content).hexdigest()
 
 
 def test_rejects_content_larger_than_the_bounded_read(tmp_path: Path) -> None:
@@ -69,7 +82,7 @@ def test_invalid_content_is_not_repeated_in_the_error(tmp_path: Path) -> None:
 
 def test_controlled_android_script_covers_the_complete_action_vocabulary() -> None:
     script = load_device_foundation_script(
-        REPOSITORY_ROOT / "eval/device_foundation/android_1080x2400.json"
+        REPOSITORY_ROOT / "tests/integration/device_foundation/android_1080x2400.json"
     )
 
     assert {action.kind for action in script.actions} == set(DeviceFoundationActionKind)

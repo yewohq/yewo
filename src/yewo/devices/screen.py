@@ -150,7 +150,12 @@ class ScreenGeometry:
         if self._driver_size is None:
             raise DeviceInteractionError("Driver geometry is unavailable after capture.")
         driver_width, driver_height = self._driver_size
-        return round(x * driver_width / width), round(y * driver_height / height)
+        # Rounding can carry the largest accepted screenshot point one step past
+        # the driver edge when the spaces differ. Keep the result addressable.
+        return (
+            min(round(x * driver_width / width), driver_width - 1),
+            min(round(y * driver_height / height), driver_height - 1),
+        )
 
     def validate_region(self, left: int, top: int, right: int, bottom: int) -> None:
         width, height = self.screenshot_size()

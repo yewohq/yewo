@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import subprocess
+from pathlib import Path
 from typing import Protocol
 
 from yewo.devices.errors import DeviceCommandError, DeviceInventoryError
+from yewo.run_narration import current_narrator
+
+
+_NARRATION_SOURCE = "device-command"
 
 
 class CommandRunner(Protocol):
@@ -57,6 +62,14 @@ def execute_command(
     purpose: str = "run a device command",
 ) -> subprocess.CompletedProcess[str]:
     """Execute one required platform command."""
+    narrator = current_narrator()
+    if narrator is not None:
+        executable = Path(command[0]).name
+        narrator.trace(
+            _NARRATION_SOURCE,
+            f"{executable}: {len(command) - 1} arguments omitted",
+        )
+        narrator.record(_NARRATION_SOURCE, f"{purpose[:1].upper()}{purpose[1:]}.")
     try:
         result = runner(command, timeout_seconds=timeout_seconds)
     except (OSError, subprocess.SubprocessError) as error:

@@ -24,6 +24,7 @@ def test_adb_inventory_normalizes_connected_devices() -> None:
         responses=(
             (ADB_OUTPUT, "", 0),
             ("Pixel_9_API_35\n", "", 0),
+            ("15\n", "", 0),
             ("Pixel_9_API_35\nPixel_8\n", "", 0),
         )
     )
@@ -43,9 +44,11 @@ def test_adb_inventory_normalizes_connected_devices() -> None:
     assert running_emulator.connection_id == "emulator-5554"
     assert running_emulator.readiness is DeviceReadiness.READY
     assert running_emulator.native_state == "device"
+    assert running_emulator.operating_system_version == "15"
     assert runner.calls == [
         (("adb", "devices", "-l"), 30),
         (("adb", "-s", "emulator-5554", "shell", "getprop", "ro.boot.qemu.avd_name"), 10),
+        (("adb", "-s", "emulator-5554", "shell", "getprop", "ro.build.version.release"), 20),
         (("emulator", "-list-avds"), 30),
     ]
 

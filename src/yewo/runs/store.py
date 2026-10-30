@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from yewo.artifacts import AtomicArtifactWriter, ArtifactWriteError, new_record_identifier
+from yewo.run_narration import RunNarrator
 from yewo.runs.errors import RunCoordinationError
 from yewo.runs.records import RunRequest, RunStart, RunTerminal
 
@@ -21,10 +22,11 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class RunWorkspace:
-    """One isolated directory and its durable start record."""
+    """One isolated directory, its durable start record, and its narrator."""
 
     root: Path
     start: RunStart
+    narrator: RunNarrator
 
 
 class RunStore:
@@ -68,10 +70,12 @@ class RunWorkspaceFactory:
         identifier_factory: Callable[[], str] = new_record_identifier,
         time_factory: Callable[[], datetime] = _utc_now,
         store_factory: Callable[[Path], RunStore] = RunStore,
+        narrator_factory: Callable[[Path], RunNarrator] = RunNarrator,
     ) -> None:
         self._identifier_factory = identifier_factory
         self._time_factory = time_factory
         self._store_factory = store_factory
+        self._narrator_factory = narrator_factory
 
     def create(self, request: RunRequest) -> RunWorkspace:
         """Create and claim one directory without reusing existing state."""
@@ -101,7 +105,7 @@ class RunWorkspaceFactory:
         except BaseException:
             _discard_empty_workspace(run_root)
             raise
-        return RunWorkspace(root=run_root, start=start)
+        return RunWorkspace(root=run_root, start=start, narrator=self._narrator_factory(run_root))
 
 
 def _discard_empty_workspace(run_root: Path) -> None:

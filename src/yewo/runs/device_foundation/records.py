@@ -274,6 +274,7 @@ class DeviceFoundationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     script_id: RecordIdentifier
+    script_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     platform: DevicePlatform
     state: DeviceFoundationResultState
     initial_observation_id: RecordIdentifier

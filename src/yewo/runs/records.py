@@ -91,6 +91,7 @@ class RunRequest(BaseModel):
     mode: RunMode = RunMode.DEVICE_FOUNDATION
     output_root: Path
     workflow_input_path: Path | None = None
+    workflow_input_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     device: DeviceQuery
     application: ApplicationRequest
     automation_server: AutomationServerRequest = AutomationServerRequest()

@@ -1,9 +1,11 @@
-"""Deterministic workflow for the Slice A device-foundation demonstration."""
+"""Deterministic device-foundation workflow that runs without a model."""
 
 from yewo.runs.device_foundation.loader import (
     MAXIMUM_DEVICE_FOUNDATION_SCRIPT_BYTES,
     DeviceFoundationScriptError,
+    LoadedDeviceFoundationScript,
     load_device_foundation_script,
+    load_device_foundation_script_source,
 )
 from yewo.runs.device_foundation.records import (
     BackgroundAction,
@@ -44,6 +46,7 @@ __all__ = [
     "DeviceFoundationWorkflow",
     "DoubleTapAction",
     "LongPressAction",
+    "LoadedDeviceFoundationScript",
     "MAXIMUM_DEVICE_FOUNDATION_SCRIPT_BYTES",
     "NoArgumentAction",
     "PointerMotionAction",
@@ -54,4 +57,5 @@ __all__ = [
     "WaitAction",
     "DeviceFoundationScriptError",
     "load_device_foundation_script",
+    "load_device_foundation_script_source",
 ]

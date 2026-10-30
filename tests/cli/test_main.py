@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 import signal
 
@@ -50,17 +51,21 @@ def test_run_command_loads_the_script_and_reports_the_terminal(
 ) -> None:
     script_path = tmp_path / "script.json"
     _write_script(script_path)
-    captured: list[tuple[Path | None, DevicePlatform]] = []
+    captured: list[tuple[Path | None, str | None, DevicePlatform]] = []
 
     def execute(request, script, interruption) -> RunTerminal:
         assert not interruption.is_set()
-        captured.append((request.workflow_input_path, script.platform))
+        captured.append(
+            (request.workflow_input_path, request.workflow_input_sha256, script.platform)
+        )
         return _terminal()
 
     exit_code = main(_arguments(tmp_path, script_path), executor=execute)
 
     assert exit_code == 0
-    assert captured == [(script_path, DevicePlatform.ANDROID)]
+    assert captured == [
+        (script_path, sha256(script_path.read_bytes()).hexdigest(), DevicePlatform.ANDROID)
+    ]
     assert capsys.readouterr().out == "run_1 completed\n"
 
 

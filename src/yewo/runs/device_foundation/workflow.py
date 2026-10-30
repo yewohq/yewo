@@ -1,4 +1,4 @@
-"""Execute a deterministic Slice A script through existing device services."""
+"""Execute a deterministic device script through existing device services."""
 
 from __future__ import annotations
 
@@ -73,6 +73,9 @@ InteractionFactory = Callable[[RunExecutionContext], DeviceInteraction]
 ObservationFactory = Callable[[DeviceInteraction, RunExecutionContext], _ObservationCapture]
 
 
+_NARRATION_SOURCE = "device-foundation"
+
+
 class DeviceFoundationWorkflow:
     """Capture before-and-after evidence for a bounded deterministic script."""
 
@@ -80,6 +83,7 @@ class DeviceFoundationWorkflow:
         self,
         script: DeviceFoundationScript,
         *,
+        script_sha256: str,
         observation_policy: ObservationCapturePolicy | None = None,
         interaction_factory: InteractionFactory | None = None,
         observation_factory: ObservationFactory | None = None,
@@ -87,6 +91,7 @@ class DeviceFoundationWorkflow:
         time_factory: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._script = script
+        self._script_sha256 = script_sha256
         self._redactor = RegionScreenshotRedactor(script.redaction_regions)
         self._observation_policy = observation_policy
         self._interaction_factory = interaction_factory or _interaction
@@ -115,6 +120,8 @@ class DeviceFoundationWorkflow:
                 RunTerminalCategory.BLOCKED_BY_POLICY,
                 "The deterministic script does not target the active application.",
             )
+        if context.workspace.start.request.workflow_input_sha256 != self._script_sha256:
+            raise ValueError("The run request does not identify the loaded device script.")
         interaction = self._interaction_factory(context)
         try:
             interaction.wait_for_first_paint()
@@ -161,6 +168,10 @@ class DeviceFoundationWorkflow:
                 completed_at=self._time_factory(),
             )
             store.persist_action(receipt)
+            context.workspace.narrator.record(
+                _NARRATION_SOURCE,
+                f"action[{index:03d}] {action.action_id} ({action.kind.value}) -> {status.value}",
+            )
             session.drain_action_logs(action.action_id)
             current = after
             if status is DeviceFoundationActionStatus.REJECTED:
@@ -171,18 +182,27 @@ class DeviceFoundationWorkflow:
                     action.action_id,
                 )
                 store.persist_result(result)
+                context.workspace.narrator.record(
+                    _NARRATION_SOURCE,
+                    f"script result: {result.state.value} "
+                    f"({len(completed_action_ids)}/{len(self._script.actions)} actions)",
+                )
                 return RunWorkflowOutcome(
                     RunTerminalCategory.INCOMPLETE,
                     "The deterministic device-foundation script rejected an action.",
                 )
             completed_action_ids.append(action.action_id)
-        store.persist_result(
-            self._result(
-                initial_observation_id,
-                current.observation_id,
-                tuple(completed_action_ids),
-                None,
-            )
+        result = self._result(
+            initial_observation_id,
+            current.observation_id,
+            tuple(completed_action_ids),
+            None,
+        )
+        store.persist_result(result)
+        context.workspace.narrator.record(
+            _NARRATION_SOURCE,
+            f"script result: {result.state.value} "
+            f"({len(completed_action_ids)}/{len(self._script.actions)} actions)",
         )
         return RunWorkflowOutcome(
             RunTerminalCategory.COMPLETED,
@@ -215,6 +235,7 @@ class DeviceFoundationWorkflow:
     ) -> DeviceFoundationResult:
         return DeviceFoundationResult(
             script_id=self._script.script_id,
+            script_sha256=self._script_sha256,
             platform=self._script.platform,
             state=(
                 DeviceFoundationResultState.INCOMPLETE

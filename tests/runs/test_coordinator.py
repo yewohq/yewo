@@ -47,6 +47,16 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
         "device.close",
     ]
     assert (tmp_path / "runs/run_1/run/terminal.json").is_file()
+    session_log_lines = (tmp_path / "runs/run_1/runtime/yewo-session.log").read_text().splitlines()
+    assert all(" run-coordinator: " in line for line in session_log_lines)
+    assert [line.split(" ", 2)[2] for line in session_log_lines] == [
+        "device selected: emulator-5554 (virtual)",
+        "device ready: emulator-5554",
+        "application resolved: com.example.app",
+        "appium server acquired",
+        "automation session opened",
+        "terminal: completed at finished — The device-foundation workflow completed.",
+    ]
 
 
 def test_session_policy_is_applied_before_workflow_execution(tmp_path: Path) -> None:
@@ -70,6 +80,9 @@ def test_selection_failure_is_a_setup_block_without_opening_resources(tmp_path: 
     assert terminal.category is RunTerminalCategory.BLOCKED_BY_SETUP
     assert terminal.stage is RunStage.DEVICE_SELECTION
     assert events == ["inventory"]
+    trace_log = (tmp_path / "runs/run_1/runtime/trace.log").read_text()
+    assert "DeviceNotFoundError during device_selection" in trace_log
+    assert "target_id=missing" not in trace_log
 
 
 def test_component_exception_is_infrastructure_failure_and_preserves_evidence(
@@ -88,6 +101,9 @@ def test_component_exception_is_infrastructure_failure_and_preserves_evidence(
     assert terminal.stage is RunStage.EXECUTION
     assert terminal.partial_evidence_available
     assert events[-3:] == ["session.close", "appium.close", "device.close"]
+    trace_log = (tmp_path / "runs/run_1/runtime/trace.log").read_text()
+    assert "RuntimeError during execution" in trace_log
+    assert "provider failed" not in trace_log
 
 
 def test_interruption_before_selection_creates_a_terminal_without_resources(
@@ -132,6 +148,9 @@ def test_cleanup_failure_overrides_success_without_erasing_it(tmp_path: Path) ->
     assert terminal.category is RunTerminalCategory.INFRASTRUCTURE_FAILURE
     assert terminal.stage is RunStage.CLEANUP
     assert terminal.preceding_category is RunTerminalCategory.COMPLETED
+    trace_log = (tmp_path / "runs/run_1/runtime/trace.log").read_text()
+    assert "RuntimeError during cleanup" in trace_log
+    assert "cleanup failed" not in trace_log
 
 
 def test_cleanup_interruption_preserves_the_completed_outcome(tmp_path: Path) -> None:

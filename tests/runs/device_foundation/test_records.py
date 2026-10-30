@@ -57,6 +57,7 @@ def test_completed_result_accounts_for_every_declared_action() -> None:
     with pytest.raises(ValidationError, match="every declared action"):
         DeviceFoundationResult(
             script_id="script_1",
+            script_sha256="a" * 64,
             platform=DevicePlatform.ANDROID,
             state=DeviceFoundationResultState.COMPLETED,
             initial_observation_id="observation_1",

@@ -11,6 +11,8 @@ from yewo.devices.android.interaction import AndroidInteractionBackend
 from yewo.devices.errors import DeviceInteractionError
 from yewo.devices.interaction import AndroidKey, DeviceInteraction, ScrollDirection
 from yewo.devices.ios.interaction import IosInteractionBackend
+
+
 def test_android_tap_validates_and_scales_screenshot_coordinates() -> None:
     driver = _DriverStub()
     interaction = DeviceInteraction(
@@ -23,6 +25,20 @@ def test_android_tap_validates_and_scales_screenshot_coordinates() -> None:
     interaction.tap(100, 200)
 
     assert driver.scripts == [("mobile: clickGesture", {"x": 50, "y": 100})]
+
+
+def test_edge_screenshot_point_stays_inside_the_driver_space() -> None:
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    interaction.tap(199, 399)
+
+    assert driver.scripts == [("mobile: clickGesture", {"x": 99, "y": 199})]
 
 
 def test_interaction_exposes_calibrated_platform_context() -> None:

@@ -1,5 +1,7 @@
 """Bounded loading for caller-owned device-foundation scripts."""
 
+from dataclasses import dataclass
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -15,8 +17,16 @@ class DeviceFoundationScriptError(ValueError):
     """A script file cannot produce a trusted deterministic workflow."""
 
 
-def load_device_foundation_script(path: Path) -> DeviceFoundationScript:
-    """Load one bounded JSON script without retaining invalid input text."""
+@dataclass(frozen=True)
+class LoadedDeviceFoundationScript:
+    """A validated script bound to the digest of its exact source bytes."""
+
+    script: DeviceFoundationScript
+    source_sha256: str
+
+
+def load_device_foundation_script_source(path: Path) -> LoadedDeviceFoundationScript:
+    """Load one bounded JSON script and retain its source identity."""
     try:
         if path.is_symlink() or not path.is_file():
             raise DeviceFoundationScriptError(
@@ -41,6 +51,12 @@ def load_device_foundation_script(path: Path) -> DeviceFoundationScript:
         raise DeviceFoundationScriptError("The device-foundation script changed while it was read.")
     try:
         payload = json.loads(content)
-        return DeviceFoundationScript.model_validate(payload)
+        script = DeviceFoundationScript.model_validate(payload)
     except (UnicodeError, json.JSONDecodeError, ValidationError) as error:
         raise DeviceFoundationScriptError("The device-foundation script is invalid.") from error
+    return LoadedDeviceFoundationScript(script=script, source_sha256=sha256(content).hexdigest())
+
+
+def load_device_foundation_script(path: Path) -> DeviceFoundationScript:
+    """Load one validated script when its source identity is not required."""
+    return load_device_foundation_script_source(path).script

@@ -83,6 +83,14 @@ class AdbDeviceInventory:
             model_name = model.replace("_", " ") if model else None
             target_id = avd_name or connection_id
             display_name = avd_name or model_name or connection_id
+            operating_system_version = None
+            if native_state == "device":
+                version = self._adb.ask(
+                    connection_id,
+                    "getprop",
+                    "ro.build.version.release",
+                )
+                operating_system_version = version.strip() if version and version.strip() else None
             devices[target_id] = DeviceDescriptor(
                 platform=DevicePlatform.ANDROID,
                 target_id=target_id,
@@ -91,6 +99,7 @@ class AdbDeviceInventory:
                 kind=DeviceKind.VIRTUAL if is_emulator else DeviceKind.PHYSICAL,
                 readiness=_ADB_READINESS.get(native_state, DeviceReadiness.UNKNOWN),
                 native_state=native_state,
+                operating_system_version=operating_system_version,
                 device_model=model_name,
                 architecture=attributes.get("abi"),
             )

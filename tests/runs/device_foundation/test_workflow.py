@@ -29,6 +29,7 @@ from yewo.devices.logs import DeviceLogCaptureError
 from yewo.devices.screen import ScreenCalibration
 from yewo.runs import (
     RunExecutionContext,
+    RunNarrator,
     RunRequest,
     RunStart,
     RunTerminalCategory,
@@ -57,6 +58,7 @@ from yewo.runs.errors import RunWorkflowInterrupted
 
 
 CAPTURE_TIME = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+SCRIPT_SHA256 = "a" * 64
 DEVICE = DeviceDescriptor(
     platform=DevicePlatform.ANDROID,
     target_id="emulator-5554",
@@ -139,9 +141,16 @@ class _Signal:
         return self.interrupted
 
 
-def _context(tmp_path: Path, drained: list[str]) -> RunExecutionContext:
+def _context(
+    tmp_path: Path,
+    drained: list[str],
+    *,
+    script_sha256: str = SCRIPT_SHA256,
+) -> RunExecutionContext:
     request = RunRequest(
         output_root=tmp_path,
+        workflow_input_path=Path("script.json"),
+        workflow_input_sha256=script_sha256,
         device=DeviceQuery(platform=DevicePlatform.ANDROID, target_id="emulator-5554"),
         application=ApplicationRequest(
             platform=DevicePlatform.ANDROID,
@@ -156,7 +165,7 @@ def _context(tmp_path: Path, drained: list[str]) -> RunExecutionContext:
         drain_action_logs=drained.append,
     )
     return RunExecutionContext(
-        workspace=RunWorkspace(tmp_path, start),
+        workspace=RunWorkspace(tmp_path, start, RunNarrator(tmp_path)),
         session=cast(AutomationSession, session),
     )
 
@@ -187,6 +196,7 @@ def _workflow(
     times = iter(CAPTURE_TIME + timedelta(seconds=index) for index in range(10))
     return DeviceFoundationWorkflow(
         script or _script(),
+        script_sha256=SCRIPT_SHA256,
         interaction_factory=lambda context: cast(DeviceInteraction, interaction),
         observation_factory=lambda device, context: _ObservationsStub(tmp_path),
         time_factory=times.__next__,
@@ -209,6 +219,15 @@ def test_workflow_persists_ordered_receipts_without_text_payloads(tmp_path: Path
     assert "secret input" not in "".join(path.read_text() for path in receipts)
     result = json.loads((tmp_path / "assets/device-foundation/result.json").read_text())
     assert result["state"] == DeviceFoundationResultState.COMPLETED
+    assert result["script_sha256"] == SCRIPT_SHA256
+    session_log = (tmp_path / "runtime/yewo-session.log").read_text().splitlines()
+    assert all(" device-foundation: " in line for line in session_log)
+    assert [line.split(" ", 2)[2] for line in session_log] == [
+        "action[000] tap_1 (tap) -> completed",
+        "action[001] type_1 (type_text) -> completed",
+        "action[002] dismiss_1 (dismiss_keyboard) -> completed",
+        "script result: completed (3/3 actions)",
+    ]
 
 
 def test_rejected_action_stops_the_script_after_persisting_evidence(tmp_path: Path) -> None:
@@ -224,6 +243,12 @@ def test_rejected_action_stops_the_script_after_persisting_evidence(tmp_path: Pa
     result = json.loads((tmp_path / "assets/device-foundation/result.json").read_text())
     assert result["state"] == DeviceFoundationResultState.INCOMPLETE
     assert result["rejected_action_id"] == "tap_1"
+    session_log = (tmp_path / "runtime/yewo-session.log").read_text().splitlines()
+    assert all(" device-foundation: " in line for line in session_log)
+    assert [line.split(" ", 2)[2] for line in session_log] == [
+        "action[000] tap_1 (tap) -> rejected",
+        "script result: incomplete (0/3 actions)",
+    ]
 
 
 def test_blank_first_paint_is_an_application_failure(tmp_path: Path) -> None:
@@ -265,6 +290,18 @@ def test_script_for_another_screenshot_geometry_is_blocked(tmp_path: Path) -> No
 
     assert outcome.category is RunTerminalCategory.BLOCKED_BY_POLICY
     assert interaction.calls == [("first_paint",)]
+
+
+def test_script_source_must_match_the_run_record(tmp_path: Path) -> None:
+    interaction = _InteractionStub()
+
+    with pytest.raises(ValueError, match="does not identify"):
+        _workflow(tmp_path, interaction).execute(
+            _context(tmp_path, [], script_sha256="b" * 64),
+            _Signal(),
+        )
+
+    assert interaction.calls == []
 
 
 def test_first_paint_driver_failure_is_not_an_application_failure(tmp_path: Path) -> None:

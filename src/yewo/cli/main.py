@@ -25,7 +25,7 @@ from yewo.runs.device_foundation import (
     DeviceFoundationScript,
     DeviceFoundationScriptError,
     DeviceFoundationWorkflow,
-    load_device_foundation_script,
+    load_device_foundation_script_source,
 )
 from yewo.runs.errors import RunCoordinationError, RunTerminalPersistenceError
 
@@ -67,7 +67,9 @@ def main(
         request = run_request_from_namespace(values)
         if request.workflow_input_path is None:
             raise DeviceFoundationScriptError("A device-foundation script is required.")
-        script = load_device_foundation_script(request.workflow_input_path)
+        loaded_script = load_device_foundation_script_source(request.workflow_input_path)
+        script = loaded_script.script
+        request = request.model_copy(update={"workflow_input_sha256": loaded_script.source_sha256})
         if script.platform is not request.application.platform:
             raise DeviceFoundationScriptError(
                 "The device-foundation script and application platforms must match."
@@ -98,7 +100,12 @@ def _execute_run(
     interruption: InterruptionSignal,
 ) -> RunTerminal:
     scrubber = DeclaredValueDeviceLogScrubber(script.device_log_sensitive_values)
-    workflow = DeviceFoundationWorkflow(script)
+    if request.workflow_input_sha256 is None:
+        raise RunCoordinationError("The deterministic script has no source identity.")
+    workflow = DeviceFoundationWorkflow(
+        script,
+        script_sha256=request.workflow_input_sha256,
+    )
     coordinator = build_default_run_coordinator(
         {RunMode.DEVICE_FOUNDATION: workflow},
         scrubber,

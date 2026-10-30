@@ -1,5 +1,6 @@
 """Run ownership, durable records, and coordination."""
 
+from yewo.run_narration import RunNarrator, narration_scope
 from yewo.runs.coordinator import (
     InterruptionSignal,
     NeverInterrupted,
@@ -29,6 +30,7 @@ __all__ = [
     "RunCoordinator",
     "RunExecutionContext",
     "RunSessionPolicy",
+    "RunNarrator",
     "RunRequest",
     "RunStage",
     "RunStart",
@@ -40,4 +42,5 @@ __all__ = [
     "RunWorkflow",
     "RunWorkflowOutcome",
     "build_default_run_coordinator",
+    "narration_scope",
 ]

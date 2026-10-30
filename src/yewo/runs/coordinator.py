@@ -27,6 +27,7 @@ from yewo.devices import (
 )
 from yewo.devices.errors import DeviceLifecycleError, DeviceSelectionError
 from yewo.devices.logs import DeviceLogTextScrubber
+from yewo.run_narration import narration_scope
 from yewo.observations import RedactionRegion
 from yewo.runs.errors import (
     RunCoordinationError,
@@ -137,6 +138,9 @@ class _AutomationSessionManager(Protocol):
 ServerConfigFactory = Callable[[RunWorkspace], AppiumServerConfig]
 
 
+_NARRATION_SOURCE = "run-coordinator"
+
+
 class RunCoordinator:
     """Select components, own their leases, and persist one truthful terminal."""
 
@@ -177,105 +181,139 @@ class RunCoordinator:
         signal = interruption or NeverInterrupted()
         workspace = self._workspace_factory.create(request)
         store = self._store_factory(workspace.root)
+        narrator = workspace.narrator
         stage = RunStage.STARTUP
         category: RunTerminalCategory | None = None
         reason = ""
         device: DeviceLease | None = None
         server: AppiumServerLease | None = None
         session: AutomationSession | None = None
-        try:
-            self._require_continuation(signal)
-            workflow = self._workflows.get(request.mode)
-            if workflow is None:
-                raise _SetupBlock("No workflow is configured for the requested run mode.")
-            stage = RunStage.DEVICE_SELECTION
-            self._require_continuation(signal)
-            inventory = self._inventories.get(request.application.platform)
-            lifecycle = self._lifecycles.get(request.application.platform)
-            if inventory is None or lifecycle is None:
-                raise _SetupBlock("No device adapters are configured for the requested platform.")
-            query = _platform_query(request.device, request.application.platform)
-            selected_device = select_device(query, inventory.list_devices())
-            stage = RunStage.DEVICE_PREPARATION
-            self._require_continuation(signal)
-            device = lifecycle.prepare(selected_device)
-            stage = RunStage.APPLICATION_INSPECTION
-            self._require_continuation(signal)
-            application = self._application_resolver.resolve(request.application)
-            stage = RunStage.APPIUM_STARTUP
-            self._require_continuation(signal)
-            server = self._appium_servers.acquire(self._server_config_factory(workspace))
-            stage = RunStage.AUTOMATION_STARTUP
-            self._require_continuation(signal)
-            session = self._automation_sessions.open(
-                device,
-                server,
-                request.application,
-                application,
-                artifact_root=workspace.root,
-                scrub_device_log_text=self._scrub_device_log_text,
-                recording_redaction_regions=(workflow.session_policy().recording_redaction_regions),
-            )
-            stage = RunStage.EXECUTION
-            self._require_continuation(signal)
-            outcome = workflow.execute(
-                RunExecutionContext(workspace=workspace, session=session),
-                signal,
-            )
-            category = outcome.category
-            reason = outcome.reason
-        except (KeyboardInterrupt, _RunInterrupted, RunWorkflowInterrupted):
-            category = RunTerminalCategory.INTERRUPTED
-            reason = "The run was interrupted."
-        except (
-            _SetupBlock,
-            DeviceSelectionError,
-            DeviceLifecycleError,
-            ApplicationInspectionError,
-            AppiumServerError,
-        ):
-            category = RunTerminalCategory.BLOCKED_BY_SETUP
-            reason = "A required device, application, or runtime prerequisite was unavailable."
-        except Exception:  # noqa: BLE001 - coordinator must classify component failures
-            category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
-            reason = f"Yewo infrastructure failed during {stage.value}."
+        with narration_scope(narrator):
+            try:
+                self._require_continuation(signal)
+                workflow = self._workflows.get(request.mode)
+                if workflow is None:
+                    raise _SetupBlock("No workflow is configured for the requested run mode.")
+                stage = RunStage.DEVICE_SELECTION
+                self._require_continuation(signal)
+                inventory = self._inventories.get(request.application.platform)
+                lifecycle = self._lifecycles.get(request.application.platform)
+                if inventory is None or lifecycle is None:
+                    raise _SetupBlock(
+                        "No device adapters are configured for the requested platform."
+                    )
+                query = _platform_query(request.device, request.application.platform)
+                selected_device = select_device(query, inventory.list_devices())
+                narrator.record(
+                    _NARRATION_SOURCE,
+                    f"device selected: {selected_device.target_id} ({selected_device.kind.value})",
+                )
+                stage = RunStage.DEVICE_PREPARATION
+                self._require_continuation(signal)
+                device = lifecycle.prepare(selected_device)
+                narrator.record(_NARRATION_SOURCE, f"device ready: {device.descriptor.target_id}")
+                stage = RunStage.APPLICATION_INSPECTION
+                self._require_continuation(signal)
+                application = self._application_resolver.resolve(request.application)
+                version = f" v{application.version}" if application.version else ""
+                narrator.record(
+                    _NARRATION_SOURCE,
+                    f"application resolved: {application.application_id}{version}",
+                )
+                stage = RunStage.APPIUM_STARTUP
+                self._require_continuation(signal)
+                server = self._appium_servers.acquire(self._server_config_factory(workspace))
+                narrator.record(_NARRATION_SOURCE, "appium server acquired")
+                stage = RunStage.AUTOMATION_STARTUP
+                self._require_continuation(signal)
+                session = self._automation_sessions.open(
+                    device,
+                    server,
+                    request.application,
+                    application,
+                    artifact_root=workspace.root,
+                    scrub_device_log_text=self._scrub_device_log_text,
+                    recording_redaction_regions=(
+                        workflow.session_policy().recording_redaction_regions
+                    ),
+                )
+                narrator.record(_NARRATION_SOURCE, "automation session opened")
+                stage = RunStage.EXECUTION
+                self._require_continuation(signal)
+                outcome = workflow.execute(
+                    RunExecutionContext(workspace=workspace, session=session),
+                    signal,
+                )
+                category = outcome.category
+                reason = outcome.reason
+            except (KeyboardInterrupt, _RunInterrupted, RunWorkflowInterrupted):
+                category = RunTerminalCategory.INTERRUPTED
+                reason = "The run was interrupted."
+            except (
+                _SetupBlock,
+                DeviceSelectionError,
+                DeviceLifecycleError,
+                ApplicationInspectionError,
+                AppiumServerError,
+            ) as error:
+                category = RunTerminalCategory.BLOCKED_BY_SETUP
+                reason = "A required device, application, or runtime prerequisite was unavailable."
+                narrator.trace(
+                    _NARRATION_SOURCE,
+                    f"{type(error).__name__} during {stage.value}",
+                )
+            except Exception as error:  # noqa: BLE001 - coordinator must classify component failures
+                category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                reason = f"Yewo infrastructure failed during {stage.value}."
+                narrator.trace(
+                    _NARRATION_SOURCE,
+                    f"{type(error).__name__} during {stage.value}",
+                )
 
-        preceding_category = None
-        cleanup_error, cleanup_interrupted = _close_resources(session, server, device)
-        cleanup_interrupted = cleanup_interrupted or (
-            category is not RunTerminalCategory.INTERRUPTED and signal.is_set()
-        )
-        if cleanup_error is not None:
-            preceding_category = (
-                category if category is not RunTerminalCategory.INFRASTRUCTURE_FAILURE else None
+            preceding_category = None
+            cleanup_error, cleanup_interrupted = _close_resources(session, server, device)
+            cleanup_interrupted = cleanup_interrupted or (
+                category is not RunTerminalCategory.INTERRUPTED and signal.is_set()
             )
-            category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
-            stage = RunStage.CLEANUP
-            reason = "Yewo infrastructure failed during cleanup."
-        elif cleanup_interrupted:
-            preceding_category = (
-                category if category is not RunTerminalCategory.INTERRUPTED else None
+            if cleanup_error is not None:
+                preceding_category = (
+                    category if category is not RunTerminalCategory.INFRASTRUCTURE_FAILURE else None
+                )
+                category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                stage = RunStage.CLEANUP
+                reason = "Yewo infrastructure failed during cleanup."
+                narrator.trace(
+                    _NARRATION_SOURCE,
+                    f"{type(cleanup_error).__name__} during cleanup",
+                )
+            elif cleanup_interrupted:
+                preceding_category = (
+                    category if category is not RunTerminalCategory.INTERRUPTED else None
+                )
+                category = RunTerminalCategory.INTERRUPTED
+                stage = RunStage.CLEANUP
+                reason = "The run was interrupted during cleanup."
+            elif category is RunTerminalCategory.COMPLETED:
+                stage = RunStage.FINISHED
+            if category is None:
+                category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                reason = "Yewo did not produce a run conclusion."
+            terminal = self._build_terminal(
+                workspace,
+                category,
+                stage,
+                reason,
+                preceding_category,
             )
-            category = RunTerminalCategory.INTERRUPTED
-            stage = RunStage.CLEANUP
-            reason = "The run was interrupted during cleanup."
-        elif category is RunTerminalCategory.COMPLETED:
-            stage = RunStage.FINISHED
-        if category is None:
-            category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
-            reason = "Yewo did not produce a run conclusion."
-        terminal = self._build_terminal(
-            workspace,
-            category,
-            stage,
-            reason,
-            preceding_category,
-        )
-        try:
-            store.persist_terminal(workspace.start, terminal)
-        except RunCoordinationError as error:
-            raise RunTerminalPersistenceError(terminal) from error
-        return terminal
+            narrator.record(
+                _NARRATION_SOURCE,
+                f"terminal: {terminal.category.value} at {terminal.stage.value} — {terminal.reason}",
+            )
+            try:
+                store.persist_terminal(workspace.start, terminal)
+            except RunCoordinationError as error:
+                raise RunTerminalPersistenceError(terminal) from error
+            return terminal
 
     def _build_terminal(
         self,
