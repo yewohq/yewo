@@ -21,6 +21,14 @@ class DeviceInteractionError(DeviceError):
     """A device interaction was invalid or could not complete."""
 
 
+class DeviceActionRejectedError(DeviceInteractionError):
+    """A requested action was invalid or did not reach its verified outcome."""
+
+
+class ApplicationFirstPaintError(DeviceInteractionError):
+    """The application did not produce a usable first frame."""
+
+
 class DeviceStartupTimeoutError(DeviceLifecycleError):
     """A selected device did not become ready before its deadline."""
 

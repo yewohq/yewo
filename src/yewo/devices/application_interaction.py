@@ -13,7 +13,11 @@ from yewo.devices.application_lifecycle import (
     ForegroundApplicationReader,
     LifecycleClock,
 )
-from yewo.devices.errors import DeviceInteractionError
+from yewo.devices.errors import (
+    ApplicationFirstPaintError,
+    DeviceActionRejectedError,
+    DeviceInteractionError,
+)
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.screen import is_blank
 
@@ -89,12 +93,14 @@ class ApplicationInteraction:
 
     def background_and_resume(self, duration_seconds: int) -> None:
         if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, int):
-            raise DeviceInteractionError("Background duration must be a whole number of seconds.")
+            raise DeviceActionRejectedError(
+                "Background duration must be a whole number of seconds."
+            )
         self._lifecycle.background_and_resume(duration_seconds)
 
     def clear_data(self) -> None:
         if self._platform is DevicePlatform.IOS and self._device_kind is not DeviceKind.VIRTUAL:
-            raise DeviceInteractionError(
+            raise DeviceActionRejectedError(
                 "Clearing application data is supported only on an iOS simulator."
             )
         self._backend.clear_application_data(
@@ -104,7 +110,7 @@ class ApplicationInteraction:
 
     def open_deep_link(self, url: str) -> None:
         if not url.strip():
-            raise DeviceInteractionError("A deep link URL cannot be empty.")
+            raise DeviceActionRejectedError("A deep link URL cannot be empty.")
         self._backend.open_deep_link(
             self._driver,
             self._application.application_id,
@@ -135,7 +141,10 @@ class ApplicationInteraction:
             raise DeviceInteractionError(
                 "Paint time values must be positive. The blank threshold cannot be negative."
             )
-        self._lifecycle.require_active("capture first paint for")
+        if not self._lifecycle.wait_until_active():
+            raise ApplicationFirstPaintError(
+                "The application did not become active before first paint."
+            )
         deadline = self._clock.monotonic() + timeout_seconds
         while True:
             is_active = self.is_active()
@@ -148,12 +157,12 @@ class ApplicationInteraction:
                 if is_active is False:
                     state = self.state().name.lower()
                     active_application_id = self.active_application_id() or "unknown"
-                    raise DeviceInteractionError(
+                    raise ApplicationFirstPaintError(
                         "The application did not remain in the foreground before first paint. "
                         f"The application state is {state}. "
                         f"The foreground application is {active_application_id}."
                     )
-                raise DeviceInteractionError(
+                raise ApplicationFirstPaintError(
                     f"The application remained blank for {timeout_seconds:g} seconds."
                 )
             self._clock.sleep(min(poll_interval_seconds, remaining_seconds))

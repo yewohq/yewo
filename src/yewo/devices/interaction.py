@@ -16,7 +16,7 @@ from yewo.devices.application_lifecycle import (
     ApplicationState,
     DEFAULT_MAXIMUM_BACKGROUND_SECONDS,
 )
-from yewo.devices.errors import DeviceInteractionError
+from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.screen import (
     ScreenCalibration,
@@ -39,6 +39,14 @@ class AndroidKey(IntEnum):
     ENTER = 66
     DELETE = 67
     ESCAPE = 111
+
+    @classmethod
+    def parse_name(cls, value: str) -> Self:
+        """Resolve one case-insensitive key name through the canonical vocabulary."""
+        try:
+            return cls[value.upper()]
+        except KeyError as error:
+            raise ValueError("The Android key name is unsupported.") from error
 
 
 class ScrollDirection(StrEnum):
@@ -224,9 +232,9 @@ class DeviceInteraction:
         interval_seconds: float = 0.1,
     ) -> None:
         if count < 1 or count > 10:
-            raise DeviceInteractionError("Tap count must be between 1 and 10.")
+            raise DeviceActionRejectedError("Tap count must be between 1 and 10.")
         if interval_seconds < 0 or interval_seconds > 1:
-            raise DeviceInteractionError("Tap interval must be between 0 and 1 second.")
+            raise DeviceActionRejectedError("Tap interval must be between 0 and 1 second.")
         point = self._driver_point(x, y)
         for index in range(count):
             self._backend.tap(self._driver, *point)
@@ -238,7 +246,9 @@ class DeviceInteraction:
 
     def long_press(self, x: int, y: int, duration_seconds: float) -> None:
         if duration_seconds < 0.1 or duration_seconds > 10:
-            raise DeviceInteractionError("Long-press duration must be between 0.1 and 10 seconds.")
+            raise DeviceActionRejectedError(
+                "Long-press duration must be between 0.1 and 10 seconds."
+            )
         self._backend.long_press(
             self._driver,
             *self._driver_point(x, y),
@@ -318,7 +328,7 @@ class DeviceInteraction:
         field = self._driver.switch_to.active_element
         focused = _boolean_attribute(field.get_attribute("focused"))
         if focused is False:
-            raise DeviceInteractionError("The active element did not accept keyboard focus.")
+            raise DeviceActionRejectedError("The active element did not accept keyboard focus.")
         return field
 
     def focused_field_state(self) -> bool | None:
@@ -329,15 +339,15 @@ class DeviceInteraction:
     def press_key(self, key: AndroidKey | str) -> None:
         if self.platform is DevicePlatform.ANDROID:
             if not isinstance(key, AndroidKey):
-                raise DeviceInteractionError("Android keys must use a supported AndroidKey.")
+                raise DeviceActionRejectedError("Android keys must use a supported AndroidKey.")
             self._driver.press_keycode(key.value)
             return
         if not isinstance(key, str) or not key:
-            raise DeviceInteractionError("An iOS button name must be nonempty.")
+            raise DeviceActionRejectedError("An iOS button name must be nonempty.")
         supported = self._ios_buttons()
         if key not in supported:
             names = ", ".join(sorted(supported)) or "none"
-            raise DeviceInteractionError(f"The device supports these iOS buttons: {names}.")
+            raise DeviceActionRejectedError(f"The device supports these iOS buttons: {names}.")
         self._driver.execute_script("mobile: pressButton", {"name": key})
 
     def _ios_buttons(self) -> set[str]:
@@ -354,7 +364,7 @@ class DeviceInteraction:
 
     def back(self) -> None:
         if self.platform is not DevicePlatform.ANDROID:
-            raise DeviceInteractionError("Back navigation is available only on Android.")
+            raise DeviceActionRejectedError("Back navigation is available only on Android.")
         self._driver.back()
 
     def submit(self) -> None:
@@ -380,7 +390,7 @@ class DeviceInteraction:
 
     def wait(self, duration_seconds: float) -> None:
         if duration_seconds < 0 or duration_seconds > self._maximum_wait_seconds:
-            raise DeviceInteractionError(
+            raise DeviceActionRejectedError(
                 f"Wait duration must be between 0 and {self._maximum_wait_seconds:g} seconds."
             )
         self._clock.sleep(duration_seconds)
@@ -478,7 +488,7 @@ class DeviceInteraction:
     def _validate_gesture_duration(self, duration_seconds: float) -> None:
         minimum = 0.5 if self.platform is DevicePlatform.IOS else 0.1
         if duration_seconds < minimum or duration_seconds > 10:
-            raise DeviceInteractionError(
+            raise DeviceActionRejectedError(
                 f"Gesture duration must be between {minimum:g} and 10 seconds."
             )
 

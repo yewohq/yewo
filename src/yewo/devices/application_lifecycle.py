@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Any, Protocol
 
-from yewo.devices.errors import DeviceInteractionError
+from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
 
 
 class ApplicationState(IntEnum):
@@ -157,7 +157,9 @@ class ApplicationLifecycle:
 
     def terminate(self) -> None:
         if self.state() is ApplicationState.NOT_INSTALLED:
-            raise DeviceInteractionError("Cannot terminate an application that is not installed.")
+            raise DeviceActionRejectedError(
+                "Cannot terminate an application that is not installed."
+            )
         self._driver.terminate_app(self._application_id)
         evidence = self._wait_until(
             lambda current: (
@@ -165,7 +167,7 @@ class ApplicationLifecycle:
             )
         )
         if evidence.state is ApplicationState.NOT_INSTALLED:
-            raise DeviceInteractionError(
+            raise DeviceActionRejectedError(
                 "The application became unavailable while termination was verified."
             )
         if evidence.state is not ApplicationState.NOT_RUNNING:
@@ -179,7 +181,7 @@ class ApplicationLifecycle:
 
     def background_and_resume(self, duration_seconds: int) -> None:
         if duration_seconds < 1 or duration_seconds > self._maximum_background_seconds:
-            raise DeviceInteractionError("Background duration is outside the allowed range.")
+            raise DeviceActionRejectedError("Background duration is outside the allowed range.")
         self._driver.background_app(duration_seconds)
         evidence = self._wait_until(self._is_active_evidence)
         if not self._is_active_evidence(evidence):
@@ -231,9 +233,9 @@ class ApplicationLifecycle:
         self,
         operation: str,
         evidence: ApplicationActivityEvidence,
-    ) -> DeviceInteractionError:
+    ) -> DeviceActionRejectedError:
         active_application_id = evidence.foreground_application_id or "unknown"
-        return DeviceInteractionError(
+        return DeviceActionRejectedError(
             f"Could not {operation} the application within "
             f"{self._transition_timeout_seconds:g} seconds. "
             f"The application state is {evidence.state.name.lower()}. "

@@ -9,7 +9,7 @@ from devices._interaction_stubs import DriverStub
 from devices._interaction_stubs import application
 from yewo.devices import DevicePlatform
 from yewo.devices.android.interaction import AndroidInteractionBackend
-from yewo.devices.errors import DeviceInteractionError
+from yewo.devices.errors import ApplicationFirstPaintError, DeviceInteractionError
 from yewo.devices.interaction import DeviceInteraction
 
 
@@ -62,7 +62,7 @@ def test_first_paint_does_not_capture_another_application() -> None:
     driver = ScreenshotDriver()
     interaction = _timed_interaction(driver, clock)
 
-    with pytest.raises(DeviceInteractionError, match="capture first paint"):
+    with pytest.raises(ApplicationFirstPaintError, match="did not become active"):
         interaction.wait_for_first_paint()
 
     assert driver.screenshot_calls == 0
@@ -94,7 +94,7 @@ def test_first_paint_waits_without_capturing_another_application() -> None:
     driver = DepartingDriver()
     interaction = _timed_interaction(driver, clock)
 
-    with pytest.raises(DeviceInteractionError, match="did not remain in the foreground"):
+    with pytest.raises(ApplicationFirstPaintError, match="did not remain in the foreground"):
         interaction.wait_for_first_paint(timeout_seconds=1, poll_interval_seconds=0.1)
 
     assert driver.screenshot_calls == 1
@@ -116,7 +116,7 @@ def test_first_paint_reports_blank_when_foreground_identity_is_unknown() -> None
     clock = _ClockStub()
     interaction = _timed_interaction(IdentityUnavailableDriver(), clock)
 
-    with pytest.raises(DeviceInteractionError, match="remained blank"):
+    with pytest.raises(ApplicationFirstPaintError, match="remained blank"):
         interaction.wait_for_first_paint(
             timeout_seconds=0.3,
             poll_interval_seconds=0.1,

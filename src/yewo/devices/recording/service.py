@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import datetime, timezone
 import math
@@ -72,6 +72,7 @@ class ScreenRecordingService:
         metadata_reader: Callable[[Path], ScreenRecordingVideoMetadata] = (
             read_screen_recording_metadata
         ),
+        initial_masks: Sequence[ScreenRecordingMask] = (),
         identifier_factory: Callable[[], str] = new_record_identifier,
         time_factory: Callable[[], datetime] = _utc_now,
         monotonic_factory: Callable[[], float] = time.monotonic,
@@ -98,7 +99,12 @@ class ScreenRecordingService:
         self._active = False
         self._segment_monotonic_started: float | None = None
         self._segment_masks: list[ScreenRecordingMask] = []
-        self._persistent_masks: list[ScreenRecordingMask] = []
+        masks = tuple(initial_masks)
+        if any(mask.starts_at_seconds != 0 or mask.ends_at_seconds is not None for mask in masks):
+            raise ValueError("An initial recording mask must cover the segment from its start.")
+        if len({self._mask_key(mask) for mask in masks}) != len(masks):
+            raise ValueError("An initial recording mask cannot be repeated.")
+        self._persistent_masks: list[ScreenRecordingMask] = list(masks)
         self._next_segment_index = 1
         self._completed_checkpoints: set[tuple[ScreenRecordingCheckpointKind, str]] = set()
 

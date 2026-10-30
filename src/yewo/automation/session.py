@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Self
 
 from appium.options.common.base import AppiumOptions
-
 from yewo.applications.presence import ApplicationPresence
 from yewo.applications.records import (
     ApplicationDescriptor,
@@ -19,6 +18,7 @@ from yewo.automation.appium_server import AppiumServerLease
 from yewo.automation.driver_options import DriverOptionsBuilder
 from yewo.automation.driver_session import DriverSessionLease, DriverSessionManager
 from yewo.automation.errors import AutomationSessionError
+from yewo.automation.recording_masks import build_initial_recording_masks
 from yewo.devices.inventory import DeviceDescriptor, DevicePlatform
 from yewo.devices.lifecycle import DeviceLease
 from yewo.devices.logs import (
@@ -58,8 +58,8 @@ from yewo.devices.remote_files import (
     RemoteTemporaryFileLease,
     RemoteTemporaryFileReference,
 )
-from yewo.resources import ResourceOwnership
 from yewo.observations import RedactionRegion
+from yewo.resources import ResourceOwnership
 
 
 RemoteFileRemoverFactory = Callable[[object, DeviceDescriptor], RemoteFileRemover]
@@ -361,6 +361,7 @@ class AutomationSessionManager:
         device_log_policy: DeviceLogCapturePolicy | None = None,
         recording_policy: ScreenRecordingPolicy | None = None,
         media_policy: MediaTransferPolicy | None = None,
+        recording_redaction_regions: Sequence[RedactionRegion] = (),
     ) -> AutomationSession:
         """Open a driver and transfer the input leases into one session."""
         driver: DriverSessionLease | None = None
@@ -439,6 +440,10 @@ class AutomationSessionManager:
                 remote_files,
                 policy=media_policy,
             )
+            initial_recording_masks = build_initial_recording_masks(
+                driver.driver,
+                recording_redaction_regions,
+            )
             recording = ScreenRecordingLease.open(
                 ScreenRecordingService(
                     screen_recorder(
@@ -450,6 +455,7 @@ class AutomationSessionManager:
                     application,
                     self._recording_store_factory(artifact_root),
                     policy=recording_policy,
+                    initial_masks=initial_recording_masks,
                     metadata_reader=self._recording_metadata_reader,
                 )
             )

@@ -10,7 +10,7 @@ from typing import Protocol
 
 from PIL import Image, ImageStat, UnidentifiedImageError
 
-from yewo.devices.errors import DeviceInteractionError
+from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
 
 
 class ScreenDriver(Protocol):
@@ -144,7 +144,7 @@ class ScreenGeometry:
     def driver_point(self, x: int, y: int) -> tuple[int, int]:
         width, height = self.screenshot_size()
         if x < 0 or y < 0 or x >= width or y >= height:
-            raise DeviceInteractionError(
+            raise DeviceActionRejectedError(
                 f"Point ({x}, {y}) is outside the {width}x{height} screenshot."
             )
         if self._driver_size is None:
@@ -155,9 +155,11 @@ class ScreenGeometry:
     def validate_region(self, left: int, top: int, right: int, bottom: int) -> None:
         width, height = self.screenshot_size()
         if left < 0 or top < 0 or right >= width or bottom >= height:
-            raise DeviceInteractionError("The scroll region is outside the screenshot.")
+            raise DeviceActionRejectedError("The scroll region is outside the screenshot.")
         if left >= right or top >= bottom:
-            raise DeviceInteractionError("The scroll region must have positive width and height.")
+            raise DeviceActionRejectedError(
+                "The scroll region must have positive width and height."
+            )
 
 
 def png_size(png: bytes) -> tuple[int, int] | None:

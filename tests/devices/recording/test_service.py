@@ -102,6 +102,7 @@ def _service(
     policy: ScreenRecordingPolicy | None = None,
     identifier_factory: Callable[[], str] | None = None,
     redactor: ScreenRecordingRedactor | None = None,
+    initial_masks: Sequence[ScreenRecordingMask] = (),
     monotonic_factory: Callable[[], float] = lambda: 0.0,
 ) -> ScreenRecordingService:
     identifiers = (f"record_{value}" for value in count(1))
@@ -113,6 +114,7 @@ def _service(
         store or ScreenRecordingStore(root, identifier_factory=artifacts.__next__),
         policy=policy,
         redactor=redactor,
+        initial_masks=initial_masks,
         metadata_reader=lambda path: ScreenRecordingVideoMetadata(16, 9, 30.0, 1.0),
         identifier_factory=identifier_factory or identifiers.__next__,
         time_factory=lambda: CAPTURE_TIME,
@@ -259,6 +261,28 @@ def test_time_bound_redaction_publishes_only_processed_video(tmp_path: Path) -> 
     assert receipt.artifact.redaction.mask_count == 1
     assert receipt.artifact.sensitivity is ArtifactSensitivity.DECLARED_SENSITIVE
     assert (tmp_path / receipt.artifact.path).read_bytes() == REDACTED_VIDEO
+
+
+def test_initial_mask_covers_the_first_recording_segment(tmp_path: Path) -> None:
+    recorder = _RecorderStub((FINAL_VIDEO,))
+    redactor = _RedactorStub()
+    mask = ScreenRecordingMask(
+        region=RedactionRegion(left=1, top=2, right=8, bottom=9),
+        source_width_px=16,
+        source_height_px=10,
+        starts_at_seconds=0,
+    )
+    service = _service(
+        recorder,
+        tmp_path,
+        redactor=redactor,
+        initial_masks=(mask,),
+    )
+
+    receipt = service.finish(service.begin())
+
+    assert receipt.artifact is not None
+    assert redactor.masks == (mask,)
 
 
 def test_declared_sensitive_segment_without_masks_fails_closed(tmp_path: Path) -> None:

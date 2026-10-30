@@ -3,6 +3,7 @@
 from yewo.applications.errors import ApplicationError, ApplicationInspectionError
 from yewo.applications.inspection import ApplicationArtifactInspector
 from yewo.applications.presence import ApplicationPresence
+from yewo.applications.resolution import ApplicationResolver, RequestedApplicationResolver
 from yewo.applications.records import (
     ApplicationDescriptor,
     ApplicationInstallationChange,
@@ -19,4 +20,6 @@ __all__ = [
     "ApplicationInspectionError",
     "ApplicationPresence",
     "ApplicationRequest",
+    "ApplicationResolver",
+    "RequestedApplicationResolver",
 ]
