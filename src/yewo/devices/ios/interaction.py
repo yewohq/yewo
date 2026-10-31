@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from yewo.devices.application_lifecycle import ApplicationLifecycleDriver
+from yewo.devices.focus import TextElement
 from yewo.devices.interaction import InteractionDriver
 from yewo.devices.screen import (
     ScreenCalibration,
@@ -47,6 +48,11 @@ class IosInteractionBackend:
                 "duration": duration_seconds,
             },
         )
+
+    def clear_text(self, driver: InteractionDriver, element: TextElement) -> None:
+        """Clear the focused iOS field through WebDriver."""
+        del driver
+        element.clear()
 
     def active_application_id(
         self,

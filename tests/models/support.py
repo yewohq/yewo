@@ -3,6 +3,7 @@
 from yewo.models import (
     ModelGenerationSettings,
     ModelImageConstraints,
+    ModelMessageRole,
     ModelProfile,
     ModelRetryPolicy,
     ModelRole,
@@ -36,6 +37,7 @@ def build_model_profile(
             max_width_px=2048,
             max_height_px=2048,
         ),
+        cache_control_role=(ModelMessageRole.SYSTEM if provider == "openrouter" else None),
         router_cache_affinity=provider == "openrouter",
         router_response_healing=provider == "openrouter",
     )

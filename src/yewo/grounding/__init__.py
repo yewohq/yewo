@@ -7,6 +7,7 @@ from yewo.grounding.records import (
     GroundedRegion,
     GroundingCoordinateConvention,
     GroundingDisposition,
+    GroundingEvidence,
     GroundingOutputShape,
     GroundingProfile,
     GroundingRequest,
@@ -18,10 +19,10 @@ from yewo.grounding.records import (
     VisualGrounder,
 )
 from yewo.grounding.service import (
+    GROUNDING_PROMPT,
     GroundingEvidenceError,
     GroundingInputError,
     GroundingService,
-    validate_distinct_drag_points,
 )
 
 __all__ = [
@@ -30,8 +31,10 @@ __all__ = [
     "GroundedLocation",
     "GroundedPoint",
     "GroundedRegion",
+    "GROUNDING_PROMPT",
     "GroundingCoordinateConvention",
     "GroundingDisposition",
+    "GroundingEvidence",
     "GroundingEvidenceError",
     "GroundingInputError",
     "GroundingOutputShape",
@@ -44,5 +47,4 @@ __all__ = [
     "NormalizedRegion",
     "PixelPoint",
     "VisualGrounder",
-    "validate_distinct_drag_points",
 ]

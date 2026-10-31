@@ -148,12 +148,15 @@ class ModelArtifactStore:
         response: ModelResponseEvidence,
     ) -> ModelArtifactReference:
         """Persist one provider attempt with its scrubbed response content."""
-        body = {
+        unsanitized_body = {
             **call.model_dump(mode="json", exclude={"call_artifact"}),
             "response": response.body,
             "response_body_sha256": response.body_sha256,
             "response_content_sha256": response.content_sha256,
         }
+        body = self._scrub_payload(unsanitized_body)
+        if not isinstance(body, dict):
+            raise ModelArtifactError("The model call did not produce a record body.")
         return self._persist(
             ModelArtifactKind.CALL,
             body,
@@ -161,10 +164,6 @@ class ModelArtifactStore:
             content_sha256=_payload_digest(body),
             retain_body=True,
         )
-
-    def scrub_text(self, text: str) -> str:
-        """Return text scrubbed by the store's evidence policy."""
-        return self._scrub(text)
 
     def _scrub(self, text: str) -> str:
         try:

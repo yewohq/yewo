@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import IntEnum, StrEnum
+from enum import IntEnum
 import time
 from typing import Protocol, Self, cast
 
@@ -17,12 +17,21 @@ from yewo.devices.application_lifecycle import (
     DEFAULT_MAXIMUM_BACKGROUND_SECONDS,
 )
 from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
+from yewo.devices.focus import (
+    ANDROID_FOCUS_TIMEOUT_SECONDS,
+    DEFAULT_FOCUS_POLL_SECONDS,
+    DEFAULT_FOCUS_TIMEOUT_SECONDS,
+    FocusService,
+    FocusedFieldReading,
+    TextElement,
+)
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.screen import (
     ScreenCalibration,
     ScreenGeometry,
     ScreenRegionReading,
 )
+from yewo.devices.scroll import ScrollDirection, scroll_gesture
 
 
 class AndroidKey(IntEnum):
@@ -30,6 +39,7 @@ class AndroidKey(IntEnum):
 
     HOME = 3
     BACK = 4
+    A = 29
     DPAD_UP = 19
     DPAD_DOWN = 20
     DPAD_LEFT = 21
@@ -49,26 +59,19 @@ class AndroidKey(IntEnum):
             raise ValueError("The Android key name is unsupported.") from error
 
 
-class ScrollDirection(StrEnum):
-    """A semantic direction for moving visible content."""
-
-    UP = "up"
-    DOWN = "down"
-    LEFT = "left"
-    RIGHT = "right"
-
-
-class _Element(Protocol):
-    def send_keys(self, value: str) -> None: ...
-
-    def clear(self) -> None: ...
-
-    def get_attribute(self, name: str) -> str | None: ...
+MINIMUM_WAIT_SECONDS = 0.1
+DEFAULT_MAXIMUM_WAIT_SECONDS = 30.0
+MINIMUM_LONG_PRESS_SECONDS = 0.1
+MINIMUM_ANDROID_DRAG_SECONDS = 0.1
+MINIMUM_IOS_DRAG_SECONDS = 0.5
+MAXIMUM_GESTURE_SECONDS = 10.0
+# Android's aggregate Ctrl mask accepted by UiAutomator2 for Ctrl+A.
+ANDROID_SELECT_ALL_META_STATE = 0x7000
 
 
 class _SwitchTo(Protocol):
     @property
-    def active_element(self) -> _Element: ...
+    def active_element(self) -> TextElement: ...
 
     @property
     def alert(self) -> object: ...
@@ -126,6 +129,12 @@ class PlatformInteractionBackend(Protocol):
         duration_seconds: float,
     ) -> None: ...
 
+    def clear_text(
+        self,
+        driver: InteractionDriver,
+        element: TextElement,
+    ) -> None: ...
+
     def active_application_id(
         self,
         driver: ApplicationLifecycleDriver,
@@ -172,10 +181,12 @@ class DeviceInteraction:
         backend: PlatformInteractionBackend,
         *,
         device_kind: DeviceKind | None = None,
-        maximum_wait_seconds: float = 30,
+        maximum_wait_seconds: float = DEFAULT_MAXIMUM_WAIT_SECONDS,
         maximum_background_seconds: int = DEFAULT_MAXIMUM_BACKGROUND_SECONDS,
         application_transition_timeout_seconds: float = 10,
         application_poll_interval_seconds: float = 0.25,
+        focus_timeout_seconds: float | None = None,
+        focus_poll_seconds: float = DEFAULT_FOCUS_POLL_SECONDS,
         clock: _Clock | None = None,
     ) -> None:
         self._driver = driver
@@ -186,6 +197,22 @@ class DeviceInteraction:
         self._maximum_wait_seconds = maximum_wait_seconds
         self._clock = clock or _SystemClock()
         self._screen = ScreenGeometry(driver)
+        self._focus = FocusService(
+            driver,
+            self._screen,
+            self._clock,
+            self.tap,
+            timeout_seconds=(
+                focus_timeout_seconds
+                if focus_timeout_seconds is not None
+                else (
+                    ANDROID_FOCUS_TIMEOUT_SECONDS
+                    if platform is DevicePlatform.ANDROID
+                    else DEFAULT_FOCUS_TIMEOUT_SECONDS
+                )
+            ),
+            poll_seconds=focus_poll_seconds,
+        )
         self._application_interaction = ApplicationInteraction(
             driver,
             platform,
@@ -245,7 +272,10 @@ class DeviceInteraction:
         self._backend.double_tap(self._driver, *self._driver_point(x, y))
 
     def long_press(self, x: int, y: int, duration_seconds: float) -> None:
-        if duration_seconds < 0.1 or duration_seconds > 10:
+        if (
+            duration_seconds < MINIMUM_LONG_PRESS_SECONDS
+            or duration_seconds > MAXIMUM_GESTURE_SECONDS
+        ):
             raise DeviceActionRejectedError(
                 "Long-press duration must be between 0.1 and 10 seconds."
             )
@@ -297,46 +327,46 @@ class DeviceInteraction:
         top: int = 0,
         right: int | None = None,
         bottom: int | None = None,
+        distance_fraction: float = 0.6,
     ) -> None:
         width, height = self._screen_size()
         right = width - 1 if right is None else right
         bottom = height - 1 if bottom is None else bottom
         self._validate_region(left, top, right, bottom)
-        center_x = (left + right) // 2
-        center_y = (top + bottom) // 2
-        inset_x = max(1, (right - left) // 5)
-        inset_y = max(1, (bottom - top) // 5)
-        points = {
-            ScrollDirection.UP: (center_x, bottom - inset_y, center_x, top + inset_y),
-            ScrollDirection.DOWN: (center_x, top + inset_y, center_x, bottom - inset_y),
-            ScrollDirection.LEFT: (right - inset_x, center_y, left + inset_x, center_y),
-            ScrollDirection.RIGHT: (left + inset_x, center_y, right - inset_x, center_y),
-        }
-        self.swipe(*points[direction])
+        self.swipe(*scroll_gesture(direction, left, top, right, bottom, distance_fraction))
 
-    def type_text(self, x: int, y: int, text: str) -> str | None:
+    def type_text(self, x: int, y: int, text: str) -> bool | None:
         field = self.focus(x, y)
+        before = self._text_value(field)
         field.send_keys(text)
-        if self.platform is DevicePlatform.IOS:
-            return field.get_attribute("value") or field.get_attribute("text")
-        return field.get_attribute("text")
+        after = self._text_value(field)
+        if after is None:
+            return None
+        return after == text or (before is not None and after == before + text)
 
-    def clear_text(self, x: int, y: int) -> None:
-        self.focus(x, y).clear()
+    def clear_text(self, x: int, y: int) -> bool | None:
+        field = self.focus(x, y)
+        self._backend.clear_text(self._driver, field)
+        value = self._text_value(field)
+        return value == "" if value is not None else None
 
-    def focus(self, x: int, y: int) -> _Element:
+    def focus(self, x: int, y: int) -> TextElement:
         """Focus the field at one validated screenshot point."""
-        self.tap(x, y)
-        field = self._driver.switch_to.active_element
-        focused = _boolean_attribute(field.get_attribute("focused"))
-        if focused is False:
-            raise DeviceActionRejectedError("The active element did not accept keyboard focus.")
-        return field
+        return self._focus.focus(x, y)
 
     def focused_field_state(self) -> bool | None:
         """Return whether the active element reports keyboard focus."""
         value = self._driver.switch_to.active_element.get_attribute("focused")
         return _boolean_attribute(value)
+
+    def focused_field_reading(self) -> FocusedFieldReading:
+        """Return secret-free focus and keyboard evidence."""
+        return self._focus.reading()
+
+    def _text_value(self, field: TextElement) -> str | None:
+        names = ("value", "text") if self.platform is DevicePlatform.IOS else ("text",)
+        values = tuple(field.get_attribute(name) for name in names)
+        return next((value for value in values if value is not None), None)
 
     def press_key(self, key: AndroidKey | str) -> None:
         if self.platform is DevicePlatform.ANDROID:
@@ -391,9 +421,10 @@ class DeviceInteraction:
         return self.keyboard_visible() is False
 
     def wait(self, duration_seconds: float) -> None:
-        if duration_seconds < 0 or duration_seconds > self._maximum_wait_seconds:
+        if duration_seconds < MINIMUM_WAIT_SECONDS or duration_seconds > self._maximum_wait_seconds:
             raise DeviceActionRejectedError(
-                f"Wait duration must be between 0 and {self._maximum_wait_seconds:g} seconds."
+                "Wait duration must be between "
+                f"{MINIMUM_WAIT_SECONDS:g} and {self._maximum_wait_seconds:g} seconds."
             )
         self._clock.sleep(duration_seconds)
 
@@ -488,8 +519,12 @@ class DeviceInteraction:
         self._screen.validate_region(left, top, right, bottom)
 
     def _validate_gesture_duration(self, duration_seconds: float) -> None:
-        minimum = 0.5 if self.platform is DevicePlatform.IOS else 0.1
-        if duration_seconds < minimum or duration_seconds > 10:
+        minimum = (
+            MINIMUM_IOS_DRAG_SECONDS
+            if self.platform is DevicePlatform.IOS
+            else MINIMUM_ANDROID_DRAG_SECONDS
+        )
+        if duration_seconds < minimum or duration_seconds > MAXIMUM_GESTURE_SECONDS:
             raise DeviceActionRejectedError(
                 f"Gesture duration must be between {minimum:g} and 10 seconds."
             )

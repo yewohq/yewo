@@ -22,3 +22,12 @@ class RunTerminalPersistenceError(RunCoordinationError):
 
 class RunWorkflowInterrupted(RuntimeError):
     """A workflow observed cooperative interruption between owned operations."""
+
+
+class RunWorkflowEvidenceError(RuntimeError):
+    """A workflow could not preserve partial evidence while propagating a failure."""
+
+    def __init__(self, *, interrupted: bool, original_error: BaseException) -> None:
+        super().__init__("The workflow could not persist partial failure evidence.")
+        self.interrupted = interrupted
+        self.original_error = original_error

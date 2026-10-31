@@ -14,18 +14,23 @@ Inspect the implementation and its callers before editing. Use the current
 package boundaries:
 
 - `src/yewo/cli`: command parsing and dispatch
-- `src/yewo/agent`: the observe-plan-act loop, what it asks the model, and
-  the record it keeps
-- `src/yewo/agent/step`: what one step needs and nothing its callers do —
-  observation, targeting, staleness, narration, artifacts, outcomes
-- `src/yewo/agent/perception`: screenshots, OCR, detections, and annotations
-- `src/yewo/agent/actuation`: action contracts and dispatch
-- `src/yewo/agent/device`: Appium sessions, platform mechanics, app launch
-- `src/yewo/devices`: device discovery and provisioning
-- `src/yewo/llm`: model transport, messages, schemas, and usage callbacks
-- `src/yewo/testing`: journey generation, execution, progress, and reports
-- `src/yewo/setup` and `src/yewo/doctor`: setup and diagnostics
-- `src/yewo/utils`: shared platform, subprocess, redaction, and secret helpers
+- `src/yewo/applications`: application requests, inspection, and resolution
+- `src/yewo/artifacts`: artifact contracts, paths, policies, and persistence
+- `src/yewo/automation`: Appium server, driver, and session ownership
+- `src/yewo/devices`: device inventory, lifecycle, interaction, and
+  platform-specific evidence services
+- `src/yewo/observations`: screenshot capture, redaction, fingerprints, and
+  observation persistence
+- `src/yewo/models`: model profiles, LiteLLM transport, messages, usage, and
+  model-call artifacts
+- `src/yewo/grounding`: visual-target contracts, coordinate codecs, and the
+  model-backed grounding service
+- `src/yewo/agent`: planning, composition, settlement, and the shared
+  observe-plan-act loop
+- `src/yewo/agent/actuation`: one action's contracts, authorization, dispatch,
+  and immediate observable outcome
+- `src/yewo/runs`: run coordination, workflow contracts, workspaces, and
+  top-level terminal classification
 
 `main.py` is a deprecated compatibility shim. Add CLI behavior through
 `src/yewo/cli` and the `yewo` entry point.

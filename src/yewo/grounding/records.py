@@ -142,7 +142,6 @@ class GroundingRequest(BaseModel):
     operation: GroundingTargetOperation
     output_shape: GroundingOutputShape
     excluded_regions: tuple[ScreenRegion, ...] | None = None
-    retry_feedback: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _validate_request(self) -> Self:
@@ -168,10 +167,7 @@ class GroundingProfile(BaseModel):
 
     profile_id: RecordIdentifier
     model_profile_id: RecordIdentifier
-    prompt_protocol: Literal["point-v1"] = "point-v1"
-    response_codec: Literal["coordinate-text-v1"] = "coordinate-text-v1"
     coordinate_convention: GroundingCoordinateConvention
-    image_policy: Literal["source-image"] = "source-image"
     supported_operations: frozenset[GroundingTargetOperation] = Field(min_length=1)
     supported_shapes: frozenset[GroundingOutputShape] = Field(min_length=1)
 
@@ -213,6 +209,25 @@ class GroundingResult(BaseModel):
             raise ValueError("A rejected grounding must contain a reason and no location.")
         if self.confidence is not None and self.disposition is not GroundingDisposition.ACCEPTED:
             raise ValueError("Only an accepted grounding can contain confidence.")
+        return self
+
+
+class GroundingEvidence(BaseModel):
+    """Bind one grounding request to its validated result."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request: GroundingRequest
+    result: GroundingResult
+
+    @model_validator(mode="after")
+    def _validate_request_result_pair(self) -> Self:
+        if self.result.grounding_id != self.request.grounding_id:
+            raise ValueError("The grounding result does not match the request identifier.")
+        if self.result.source_screenshot_sha256 != self.request.screenshot.sha256:
+            raise ValueError("The grounding result does not match the request screenshot.")
+        if self.result.output_shape is not self.request.output_shape:
+            raise ValueError("The grounding result does not match the requested shape.")
         return self
 
 

@@ -32,6 +32,7 @@ from yewo.observations import RedactionRegion
 from yewo.runs.errors import (
     RunCoordinationError,
     RunTerminalPersistenceError,
+    RunWorkflowEvidenceError,
     RunWorkflowInterrupted,
 )
 from yewo.runs.records import (
@@ -188,6 +189,7 @@ class RunCoordinator:
         device: DeviceLease | None = None
         server: AppiumServerLease | None = None
         session: AutomationSession | None = None
+        workflow_preceding_category: RunTerminalCategory | None = None
         with narration_scope(narrator):
             try:
                 self._require_continuation(signal)
@@ -207,8 +209,7 @@ class RunCoordinator:
                 selected_device = select_device(query, inventory.list_devices())
                 narrator.record(
                     _NARRATION_SOURCE,
-                    f"Device selected: {selected_device.target_id} "
-                    f"({selected_device.kind.value}).",
+                    f"Device selected: {selected_device.target_id} ({selected_device.kind.value}).",
                 )
                 stage = RunStage.DEVICE_PREPARATION
                 self._require_continuation(signal)
@@ -261,6 +262,16 @@ class RunCoordinator:
             except (KeyboardInterrupt, _RunInterrupted, RunWorkflowInterrupted):
                 category = RunTerminalCategory.INTERRUPTED
                 reason = "The run was interrupted."
+            except RunWorkflowEvidenceError as error:
+                category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                reason = "Yewo could not persist partial workflow evidence."
+                if error.interrupted:
+                    workflow_preceding_category = RunTerminalCategory.INTERRUPTED
+                narrator.trace(
+                    _NARRATION_SOURCE,
+                    f"{type(error.original_error).__name__} with evidence persistence failure "
+                    f"during {stage.value}",
+                )
             except (
                 _SetupBlock,
                 DeviceSelectionError,
@@ -282,15 +293,14 @@ class RunCoordinator:
                     f"{type(error).__name__} during {stage.value}",
                 )
 
-            preceding_category = None
+            preceding_category = workflow_preceding_category
             cleanup_error, cleanup_interrupted = _close_resources(session, server, device)
             cleanup_interrupted = cleanup_interrupted or (
                 category is not RunTerminalCategory.INTERRUPTED and signal.is_set()
             )
             if cleanup_error is not None:
-                preceding_category = (
-                    category if category is not RunTerminalCategory.INFRASTRUCTURE_FAILURE else None
-                )
+                if category is not RunTerminalCategory.INFRASTRUCTURE_FAILURE:
+                    preceding_category = category
                 category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
                 stage = RunStage.CLEANUP
                 reason = "Yewo infrastructure failed during cleanup."

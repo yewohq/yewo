@@ -112,13 +112,26 @@ def test_usage_normalization_preserves_attribution_and_unknown_cost() -> None:
     assert normalized.provider_request_id == "provider-call-1"
     assert normalized.served_model == "served-model-1"
     assert normalized.upstream_provider == "provider-a"
-    assert normalized.usage.total_tokens == 13
+    assert normalized.usage.prompt_tokens == 10
+    assert normalized.usage.completion_tokens == 3
+    assert normalized.usage.total_tokens is None
     assert normalized.usage.cached_tokens == 4
     assert normalized.usage.cache_write_tokens == 2
     assert normalized.usage.prompt_image_tokens == 6
     assert normalized.usage.cost_usd is None
     assert normalized.usage.cost_details == {"provider": 0.01}
     assert normalized.finish_reason == "stop"
+
+
+@pytest.mark.parametrize("field", ["provider", "provider_name"])
+def test_openrouter_provider_fields_preserve_upstream_attribution(field: str) -> None:
+    response = _response()
+    response.pop("upstream_provider")
+    response[field] = "resolved-provider"
+
+    normalized = normalize_litellm_completion(response, None, lambda _: None)
+
+    assert normalized.upstream_provider == "resolved-provider"
 
 
 def test_reported_cost_precedes_calculated_cost() -> None:

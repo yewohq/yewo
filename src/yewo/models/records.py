@@ -172,12 +172,12 @@ class ModelCallUsage(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    prompt_tokens: int = Field(default=0, ge=0)
-    completion_tokens: int = Field(default=0, ge=0)
-    total_tokens: int = Field(default=0, ge=0)
-    cached_tokens: int = Field(default=0, ge=0)
-    cache_write_tokens: int = Field(default=0, ge=0)
-    reasoning_tokens: int = Field(default=0, ge=0)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    cached_tokens: int | None = Field(default=None, ge=0)
+    cache_write_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
     prompt_image_tokens: int | None = Field(default=None, ge=0)
     prompt_text_tokens: int | None = Field(default=None, ge=0)
     cost_usd: Decimal | None = Field(default=None, ge=0)

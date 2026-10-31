@@ -133,3 +133,24 @@ def test_region_codec_rejects_invalid_geometry(
 
     assert decoded.disposition is disposition
     assert decoded.location is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "(0.501,0.2,0.504,0.8)",
+        "(0.2,0.501,0.8,0.504)",
+        "(0.001,0.001,0.004,0.004)",
+    ],
+)
+def test_normalized_regions_that_collapse_in_pixels_are_malformed(text: str) -> None:
+    decoded = CoordinateTextCodec().decode(
+        text,
+        GroundingCoordinateConvention.NORMALIZED,
+        100,
+        100,
+        GroundingOutputShape.REGION,
+    )
+
+    assert decoded.disposition is GroundingDisposition.MALFORMED
+    assert decoded.location is None

@@ -22,11 +22,16 @@ class ElementStub:
     def __init__(self) -> None:
         self.value = ""
         self.cleared = False
+        self.clicked = False
         self.focused = True
+        self.rect: dict[str, object] = {"x": 0, "y": 0, "width": 50, "height": 100}
         self.requested_attributes: list[str] = []
 
     def send_keys(self, value: str) -> None:
         self.value += value
+
+    def click(self) -> None:
+        self.clicked = True
 
     def clear(self) -> None:
         self.cleared = True
@@ -41,8 +46,16 @@ class ElementStub:
 
 class SwitchToStub:
     def __init__(self, element: ElementStub) -> None:
-        self.active_element = element
+        self._active_element = element
+        self.active_element_failures = 0
         self.has_alert = False
+
+    @property
+    def active_element(self) -> ElementStub:
+        if self.active_element_failures:
+            self.active_element_failures -= 1
+            raise LookupError("No element is focused.")
+        return self._active_element
 
     @property
     def alert(self) -> object:
@@ -54,7 +67,9 @@ class SwitchToStub:
 class DriverStub:
     def __init__(self) -> None:
         self.element = ElementStub()
+        self.text_elements = [self.element]
         self.switch_to = SwitchToStub(self.element)
+        self.focused_xpath_available = True
         self.scripts: list[tuple[str, dict[str, Any]]] = []
         self.keycodes: list[int] = []
         self.back_calls = 0
@@ -90,6 +105,15 @@ class DriverStub:
         if script == "mobile: viewportRect":
             return self.viewport_rect
         return None
+
+    def find_elements(self, strategy: str, selector: str) -> list[ElementStub]:
+        if (strategy, selector) == ("xpath", "//*[@focused='true']"):
+            return [self.element] if self.element.focused and self.focused_xpath_available else []
+        if (strategy, selector) == ("class name", "android.widget.EditText"):
+            return self.text_elements
+        if strategy == "class name" and selector.startswith("XCUIElementType"):
+            return []
+        raise AssertionError(f"Unexpected selector: {selector}")
 
     def get_system_bars(self) -> dict[str, object]:
         return self.system_bars

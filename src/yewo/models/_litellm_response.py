@@ -42,6 +42,7 @@ class NormalizedModelCompletion:
     provider_payload: dict[str, object]
     finish_reason: str | None = None
     validation_errors: tuple[dict[str, object], ...] = ()
+    rejected_text: str | None = None
 
 
 def normalize_litellm_completion(
@@ -123,6 +124,7 @@ def normalize_litellm_completion(
             reason="The model response did not match the required schema.",
             finish_reason=finish_reason,
             validation_errors=validation_errors,
+            rejected_text=content,
             **identity,
         )
     return NormalizedModelCompletion(
@@ -182,12 +184,17 @@ def _upstream_provider(
 ) -> str | None:
     for source, field_name in (
         (payload, "upstream_provider"),
+        (payload, "provider"),
+        (payload, "provider_name"),
         (hidden, "upstream_provider"),
     ):
         provider = _optional_text(source.get(field_name))
         if provider is not None:
             return provider
-    return None
+    metadata = _mapping(payload.get("openrouter_metadata"))
+    return _optional_text(metadata.get("provider_name")) or _optional_text(
+        metadata.get("provider")
+    )
 
 
 def _is_refusal(message: dict[str, object], finish_reason: str | None) -> bool:
@@ -225,22 +232,17 @@ def _normalize_usage(
     usage = _mapping(value)
     prompt_details = _mapping(usage.get("prompt_tokens_details"))
     completion_details = _mapping(usage.get("completion_tokens_details"))
-    prompt_tokens = _count(usage, "prompt_tokens")
-    completion_tokens = _count(usage, "completion_tokens")
-    total_tokens = _optional_count(usage, "total_tokens")
     return ModelCallUsage(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=(
-            total_tokens if total_tokens is not None else prompt_tokens + completion_tokens
-        ),
-        cached_tokens=_count(prompt_details, "cached_tokens"),
-        cache_write_tokens=_first_count(
+        prompt_tokens=_optional_count(usage, "prompt_tokens"),
+        completion_tokens=_optional_count(usage, "completion_tokens"),
+        total_tokens=_optional_count(usage, "total_tokens"),
+        cached_tokens=_optional_count(prompt_details, "cached_tokens"),
+        cache_write_tokens=_first_optional_count(
             prompt_details,
             "cache_write_tokens",
             "cache_creation_tokens",
         ),
-        reasoning_tokens=_count(completion_details, "reasoning_tokens"),
+        reasoning_tokens=_optional_count(completion_details, "reasoning_tokens"),
         prompt_image_tokens=_optional_count(prompt_details, "image_tokens"),
         prompt_text_tokens=_optional_count(prompt_details, "text_tokens"),
         cost_usd=_resolve_cost(usage, response, calculate_cost),
@@ -248,22 +250,17 @@ def _normalize_usage(
     )
 
 
-def _count(source: dict[str, object], field_name: str) -> int:
-    value = source.get(field_name)
-    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
-
-
 def _optional_count(source: dict[str, object], field_name: str) -> int | None:
     value = source.get(field_name)
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
-def _first_count(source: dict[str, object], *field_names: str) -> int:
+def _first_optional_count(source: dict[str, object], *field_names: str) -> int | None:
     for field_name in field_names:
         count = _optional_count(source, field_name)
         if count is not None:
             return count
-    return 0
+    return None
 
 
 def _resolve_cost(

@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from yewo.devices.application_lifecycle import ApplicationLifecycleDriver
-from yewo.devices.interaction import InteractionDriver
+from yewo.devices.focus import TextElement
+from yewo.devices.interaction import (
+    ANDROID_SELECT_ALL_META_STATE,
+    AndroidKey,
+    InteractionDriver,
+)
 from yewo.devices.screen import (
     ScreenCalibration,
     ScreenCoordinateSpace,
@@ -50,6 +55,17 @@ class AndroidInteractionBackend:
                 "speed": speed,
             },
         )
+
+    def clear_text(self, driver: InteractionDriver, element: TextElement) -> None:
+        """Clear the focused Android field with a WebDriver fallback."""
+        try:
+            driver.press_keycode(AndroidKey.A, metastate=ANDROID_SELECT_ALL_META_STATE)
+            driver.press_keycode(AndroidKey.DELETE)
+            remaining = element.get_attribute("text")
+            if remaining:
+                element.clear()
+        except Exception:  # noqa: BLE001 - platform fallback owns driver failures
+            element.clear()
 
     def active_application_id(
         self,

@@ -153,9 +153,7 @@ class DeviceLogStore:
         for source_receipt in receipt.sources:
             for artifact in source_receipt.artifacts:
                 self._verify_artifact(artifact)
-        relative_path = (
-            ARTIFACTS_DIRECTORY / "device-logs" / receipt.boundary_id / "drains.jsonl"
-        )
+        relative_path = ARTIFACTS_DIRECTORY / "device-logs" / receipt.boundary_id / "drains.jsonl"
         try:
             self._ledger.append(
                 relative_path,

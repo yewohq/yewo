@@ -12,7 +12,6 @@ from yewo.grounding import (
     GroundingService,
     GroundingTargetOperation,
     VisualGrounder,
-    validate_distinct_drag_points,
 )
 from yewo.models import ImageModelContent, ModelCallDisposition, TextModelContent
 from yewo.observations import ScreenRegion
@@ -131,6 +130,8 @@ def test_second_model_profile_uses_the_same_service_with_its_coordinate_conventi
     prompt = client.requests[0].messages[0].content[0]
     assert isinstance(prompt, TextModelContent)
     assert "normalized numbers from 0 to 1" in prompt.text
+    assert "refused: target not found" in prompt.text.lower()
+    assert "ambiguous: target is not unique" in prompt.text.lower()
 
 
 def test_service_resolves_a_scroll_region_without_another_codec() -> None:
@@ -163,17 +164,3 @@ def test_deterministic_grounder_implements_the_public_contract_offline() -> None
     assert result.disposition is GroundingDisposition.ACCEPTED
     assert isinstance(result.location, GroundedPoint)
     assert result.location.pixel.model_dump() == {"x": 50, "y": 100}
-
-
-def test_drag_endpoints_must_be_distinct_and_share_the_source_screenshot() -> None:
-    service = GroundingService(StubModelClient("(10,20)"), build_grounding_profile())
-    source = service.ground(build_grounding_request(operation=GroundingTargetOperation.DRAG_SOURCE))
-    destination = service.ground(
-        build_grounding_request(
-            grounding_id="grounding-2",
-            operation=GroundingTargetOperation.DRAG_DESTINATION,
-        )
-    )
-
-    with pytest.raises(GroundingInputError, match="must be distinct"):
-        validate_distinct_drag_points(source, destination)

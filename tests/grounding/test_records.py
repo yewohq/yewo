@@ -8,12 +8,13 @@ from pydantic import ValidationError
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.grounding import (
     GroundingDisposition,
+    GroundingEvidence,
     GroundingOutputShape,
     GroundingTargetOperation,
 )
 from yewo.models import ModelArtifactKind, ModelArtifactReference, ModelCallDisposition
 from yewo.observations import ScreenshotRedactionState
-from grounding.support import build_grounding_request
+from grounding.support import DeterministicGrounder, build_grounding_request
 from observations.factories import build_screenshot
 
 
@@ -69,3 +70,19 @@ def test_region_output_is_available_only_for_scroll_region_requests() -> None:
     )
 
     assert request.output_shape is GroundingOutputShape.REGION
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"grounding_id": "grounding-other"},
+        {"source_screenshot_sha256": "f" * 64},
+        {"output_shape": GroundingOutputShape.REGION},
+    ],
+)
+def test_grounding_evidence_rejects_a_mismatched_result(updates: dict[str, object]) -> None:
+    request = build_grounding_request()
+    result = DeterministicGrounder(100, 200).ground(request).model_copy(update=updates)
+
+    with pytest.raises(ValidationError):
+        GroundingEvidence(request=request, result=result)

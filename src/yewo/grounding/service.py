@@ -33,6 +33,12 @@ from yewo.models import (
 from yewo.observations import PixelRegion
 
 
+GROUNDING_PROMPT = """Identify the {operation} target that matches: {expression}
+Return exactly {response_shape} in {coordinate_space}.
+If no visible target matches, return: refused: target not found
+If more than one visible target matches, return: ambiguous: target is not unique"""
+
+
 class GroundingInputError(ValueError):
     """Raised when a grounding request is incompatible with its profile."""
 
@@ -86,12 +92,12 @@ class GroundingService:
             if request.output_shape is GroundingOutputShape.POINT
             else "one region as (left,top,right,bottom)"
         )
-        prompt = (
-            f"Output only {response_instruction} in {coordinate_instruction}. "
-            f"Identify the {request.operation.value} target that matches: {request.expression}"
+        prompt = GROUNDING_PROMPT.format(
+            operation=request.operation.value,
+            expression=request.expression,
+            response_shape=response_instruction,
+            coordinate_space=coordinate_instruction,
         )
-        if request.retry_feedback is not None:
-            prompt = f"{prompt}\nPrevious coordinate rejected: {request.retry_feedback}"
         return ModelRequest(
             request_id=self._identifier_factory(),
             profile_id=self._profile.model_profile_id,
@@ -187,24 +193,6 @@ class GroundingService:
         )
 
 
-def validate_distinct_drag_points(source: GroundingResult, destination: GroundingResult) -> None:
-    """Reject drag endpoints that resolve to the same source pixel."""
-    source_point = _accepted_point(source, "source")
-    destination_point = _accepted_point(destination, "destination")
-    if source.source_screenshot_sha256 != destination.source_screenshot_sha256:
-        raise GroundingInputError("Drag endpoints must use the same source screenshot.")
-    if source_point.pixel == destination_point.pixel:
-        raise GroundingInputError("Drag source and destination must be distinct.")
-
-
-def _accepted_point(result: GroundingResult, endpoint: str) -> GroundedPoint:
-    if result.disposition is not GroundingDisposition.ACCEPTED or not isinstance(
-        result.location, GroundedPoint
-    ):
-        raise GroundingInputError(f"The drag {endpoint} must be an accepted point.")
-    return result.location
-
-
 def _regions_overlap(first: PixelRegion, second: PixelRegion) -> bool:
     return (
         first.left < second.right
@@ -230,12 +218,20 @@ def _total_latency(calls: tuple[ModelCallRecord, ...]) -> float | None:
 def _total_usage(calls: tuple[ModelCallRecord, ...]) -> ModelCallUsage:
     usage_records = tuple(call.usage for call in calls)
     return ModelCallUsage(
-        prompt_tokens=sum(usage.prompt_tokens for usage in usage_records),
-        completion_tokens=sum(usage.completion_tokens for usage in usage_records),
-        total_tokens=sum(usage.total_tokens for usage in usage_records),
-        cached_tokens=sum(usage.cached_tokens for usage in usage_records),
-        cache_write_tokens=sum(usage.cache_write_tokens for usage in usage_records),
-        reasoning_tokens=sum(usage.reasoning_tokens for usage in usage_records),
+        prompt_tokens=_sum_optional_values(
+            tuple(usage.prompt_tokens for usage in usage_records)
+        ),
+        completion_tokens=_sum_optional_values(
+            tuple(usage.completion_tokens for usage in usage_records)
+        ),
+        total_tokens=_sum_optional_values(tuple(usage.total_tokens for usage in usage_records)),
+        cached_tokens=_sum_optional_values(tuple(usage.cached_tokens for usage in usage_records)),
+        cache_write_tokens=_sum_optional_values(
+            tuple(usage.cache_write_tokens for usage in usage_records)
+        ),
+        reasoning_tokens=_sum_optional_values(
+            tuple(usage.reasoning_tokens for usage in usage_records)
+        ),
         prompt_image_tokens=_sum_optional_values(
             tuple(usage.prompt_image_tokens for usage in usage_records)
         ),

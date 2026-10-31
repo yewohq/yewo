@@ -47,6 +47,16 @@ class StructuredAnswer(BaseModel):
     confidence: float
 
 
+class CountingImageReader(ModelImageReader):
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.read_count = 0
+
+    def read(self, reference):
+        self.read_count += 1
+        return super().read(reference)
+
+
 def _png() -> bytes:
     image = Image.new("RGB", (3, 2), color=(10, 20, 30))
     stream = BytesIO()
@@ -118,6 +128,7 @@ def _client(
     waits: list[float] | None = None,
     scrub_text: Callable[[str], str] = lambda text: text,
     credential_check: Callable[..., tuple[str, ...]] = lambda _: (),
+    image_reader: ModelImageReader | None = None,
 ) -> LiteLLMModelClient:
     profile = build_model_profile().model_copy(
         update={"structured_output_mode": structured_output_mode}
@@ -135,7 +146,8 @@ def _client(
             scrub_text,
             identifier_factory=lambda: next(identifiers),
         ),
-        ModelImageReader(tmp_path),
+        image_reader or ModelImageReader(tmp_path),
+        scrub_text,
         completion=completion,
         calculate_cost=lambda _: None,
         credential_check=credential_check,
@@ -331,14 +343,33 @@ def test_image_message_uses_verified_png_only_in_provider_request(tmp_path: Path
         calls.append(arguments)
         return _response()
 
-    response = _client(tmp_path, complete).complete(_request(tmp_path, image=True))
+    request = _request(tmp_path, image=True)
+    image_content = request.messages[0].content[1]
+    assert isinstance(image_content, ImageModelContent)
+    response = _client(tmp_path, complete).complete(request)
 
     messages = calls[0]["messages"]
     assert isinstance(messages, list)
     assert "data:image/png;base64," in str(messages)
     prompt_reference = response.calls[0].prompt_artifact
     assert prompt_reference is not None
-    assert "iVBOR" not in (tmp_path / prompt_reference.path).read_text()
+    prompt_payload = _artifact_payload(tmp_path, prompt_reference)
+    assert "iVBOR" not in str(prompt_payload)
+    provider_parts = messages[0]["content"]
+    artifact_messages = prompt_payload["messages"]
+    assert isinstance(provider_parts, list)
+    assert isinstance(artifact_messages, list)
+    artifact_parts = artifact_messages[0]["content"]
+    assert isinstance(artifact_parts, list)
+    assert provider_parts[0] == artifact_parts[0]
+    assert provider_parts[1]["type"] == "image_url"
+    assert artifact_parts[1] == {
+        "type": "image_ref",
+        "artifact_id": "shot-1",
+        "sha256": image_content.screenshot.sha256,
+        "width_px": 3,
+        "height_px": 2,
+    }
 
 
 def test_contract_mismatch_fails_before_provider_or_artifact_work(tmp_path: Path) -> None:
@@ -421,12 +452,54 @@ def test_invalid_structured_response_gets_one_recorded_correction(
     assert [call.attempt_number for call in response.calls] == [1, 2]
     assert len(provider_calls) == 2
     assert "previous reply did not match" in str(provider_calls[1]["messages"])
+    correction_messages = provider_calls[1]["messages"]
+    assert isinstance(correction_messages, list)
+    assert correction_messages[1] == {
+        "role": "assistant",
+        "content": '{"target":"Save"}',
+    }
     assert all(call.call_artifact is not None for call in response.calls)
     first_prompt = response.calls[0].prompt_artifact
     second_prompt = response.calls[1].prompt_artifact
     assert first_prompt is not None
     assert second_prompt is not None
     assert first_prompt.content_sha256 != second_prompt.content_sha256
+
+
+def test_validation_retry_reuses_one_verified_image_payload(tmp_path: Path) -> None:
+    responses = [
+        _response('{"target":"Save"}'),
+        _response('{"target":"Save","confidence":0.9}'),
+    ]
+    reader = CountingImageReader(tmp_path)
+
+    response = _client(
+        tmp_path,
+        lambda **unused: responses.pop(0),
+        image_reader=reader,
+    ).complete(_request(tmp_path, structured=True, image=True), StructuredAnswer)
+
+    assert response.disposition is ModelCallDisposition.COMPLETED
+    assert reader.read_count == 1
+
+
+def test_call_artifact_scrubs_nested_cost_details(tmp_path: Path) -> None:
+    provider_response = _response()
+    provider_response["usage"] = {
+        "cost_details": {"provider_note": "hunter2"},
+    }
+
+    response = _client(
+        tmp_path,
+        lambda **unused: provider_response,
+        scrub_text=lambda text: text.replace("hunter2", "{{secret}}"),
+    ).complete(_request(tmp_path))
+
+    reference = response.calls[0].call_artifact
+    assert reference is not None
+    artifact = (tmp_path / reference.path).read_text()
+    assert "hunter2" not in artifact
+    assert "{{secret}}" in artifact
 
 
 def test_missing_credentials_fail_during_client_construction(tmp_path: Path) -> None:

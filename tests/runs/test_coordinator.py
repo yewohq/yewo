@@ -16,6 +16,7 @@ from yewo.runs import (
 from yewo.runs.errors import (
     RunCoordinationError,
     RunTerminalPersistenceError,
+    RunWorkflowEvidenceError,
     RunWorkflowInterrupted,
 )
 from .coordinator_support import (
@@ -182,6 +183,28 @@ def test_workflow_interruption_is_not_misclassified_as_infrastructure(
 
     assert terminal.category is RunTerminalCategory.INTERRUPTED
     assert terminal.stage is RunStage.EXECUTION
+
+
+def test_failed_partial_evidence_is_infrastructure_with_interruption_precedence(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    workflow = WorkflowStub(
+        events,
+        failure=RunWorkflowEvidenceError(
+            interrupted=True,
+            original_error=RunWorkflowInterrupted(),
+        ),
+    )
+
+    terminal = build_coordinator(events, workflow).run(run_request(tmp_path))
+
+    assert terminal.category is RunTerminalCategory.INFRASTRUCTURE_FAILURE
+    assert terminal.stage is RunStage.EXECUTION
+    assert terminal.preceding_category is RunTerminalCategory.INTERRUPTED
+    assert terminal.reason == "Yewo could not persist partial workflow evidence."
+    trace_log = (tmp_path / "runs/run_1/runtime/trace.log").read_text()
+    assert "RunWorkflowInterrupted with evidence persistence failure" in trace_log
 
 
 def test_terminal_write_failure_preserves_the_computed_terminal(tmp_path: Path) -> None:

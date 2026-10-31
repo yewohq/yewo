@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Callable
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -15,6 +14,8 @@ from litellm.cost_calculator import completion_cost
 from pydantic import BaseModel
 
 from yewo.models.artifacts import ModelArtifactStore, ModelImageReader, ModelResponseEvidence
+from yewo.models.errors import ModelInputError
+from yewo.models.message_encoding import ModelMessageEncoder
 from yewo.models._litellm_response import (
     CostCalculator,
     NormalizedModelCompletion,
@@ -27,6 +28,7 @@ from yewo.models.profiles import (
     ModelProfileRegistry,
     StructuredOutputMode,
     missing_model_credentials,
+    validate_model_credentials,
 )
 from yewo.models.records import (
     ImageModelContent,
@@ -43,10 +45,6 @@ from yewo.models.records import (
 
 CompletionCall = Callable[..., object]
 CredentialCheck = Callable[[ModelProfile], tuple[str, ...]]
-
-
-class ModelInputError(ValueError):
-    """Raised when model input cannot be prepared safely."""
 
 
 class ModelClient(Protocol):
@@ -72,6 +70,7 @@ class LiteLLMModelClient:
         profiles: ModelProfileRegistry,
         artifacts: ModelArtifactStore,
         images: ModelImageReader,
+        scrub_text: Callable[[str], str],
         *,
         completion: CompletionCall = litellm.completion,
         calculate_cost: CostCalculator = completion_cost,
@@ -81,10 +80,11 @@ class LiteLLMModelClient:
         monotonic: Callable[[], float] = time.monotonic,
         time_factory: Callable[[], datetime] = _utc_now,
     ) -> None:
-        self._validate_credentials(profiles, credential_check)
+        validate_model_credentials(profiles, credential_check)
         self._profiles = profiles
         self._artifacts = artifacts
         self._images = images
+        self._scrub_text = scrub_text
         self._completion = completion
         self._calculate_cost = calculate_cost
         self._wait = wait
@@ -93,22 +93,6 @@ class LiteLLMModelClient:
         self._cache_affinity = (
             f"yewo-{sha256(cache_affinity.encode('utf-8')).hexdigest()}" if cache_affinity else None
         )
-
-    @staticmethod
-    def _validate_credentials(
-        profiles: ModelProfileRegistry,
-        credential_check: CredentialCheck,
-    ) -> None:
-        for profile in profiles.profiles:
-            try:
-                missing = credential_check(profile)
-            except Exception as error:  # noqa: BLE001 - LiteLLM configuration boundary
-                raise ModelInputError("Could not validate model credentials.") from error
-            if missing:
-                names = ", ".join(missing)
-                raise ModelInputError(
-                    f"Missing credentials for profile {profile.profile_id}: {names}."
-                )
 
     def complete(
         self,
@@ -122,7 +106,8 @@ class LiteLLMModelClient:
         base_messages = self._prepare_messages(request.messages, profile)
         response_format = self._response_format(profile, request)
         calls: list[ModelCallRecord] = []
-        correction: ModelMessage | None = None
+        corrections: tuple[ModelMessage, ...] = ()
+        message_encoder = ModelMessageEncoder(self._images, profile)
         validation_attempts = (
             profile.retry.max_validation_attempts if response_model is not None else 1
         )
@@ -132,10 +117,10 @@ class LiteLLMModelClient:
                 base_messages,
                 request,
                 profile.structured_output_mode,
-                correction,
+                corrections,
             )
-            provider_messages = self._provider_messages(messages, profile)
-            artifact_messages = self._artifact_messages(messages)
+            provider_messages = message_encoder.provider_messages(messages)
+            artifact_messages = message_encoder.artifact_messages(messages)
             completion_arguments = self._completion_arguments(
                 profile,
                 provider_messages,
@@ -218,7 +203,7 @@ class LiteLLMModelClient:
                     and normalized.disposition is ModelCallDisposition.MALFORMED
                     and validation_attempt < validation_attempts
                 ):
-                    correction = self._correction_message(normalized)
+                    corrections = self._correction_messages(normalized)
                     break
                 return self._response(
                     request,
@@ -238,13 +223,13 @@ class LiteLLMModelClient:
         if request.response_contract is None and response_model is None:
             return
         if request.response_contract is None or response_model is None:
-            raise ValueError("A structured model request requires its local response model.")
+            raise ModelInputError("A structured model request requires its local response model.")
         expected = build_model_response_contract(
             request.response_contract.name,
             response_model.model_json_schema(),
         )
         if expected.schema_sha256 != request.response_contract.schema_sha256:
-            raise ValueError("The local response model does not match the request contract.")
+            raise ModelInputError("The local response model does not match the request contract.")
 
     def _prepare_messages(
         self,
@@ -257,7 +242,7 @@ class LiteLLMModelClient:
             for content in message.content
         )
         if image_count > profile.images.max_images:
-            raise ValueError("The model request exceeds the profile image-count limit.")
+            raise ModelInputError("The model request exceeds the profile image-count limit.")
         return tuple(
             message.model_copy(
                 update={
@@ -275,76 +260,9 @@ class LiteLLMModelClient:
             return content
         return TextModelContent(text=self._scrub_input_text(content.text))
 
-    def _provider_messages(
-        self,
-        messages: tuple[ModelMessage, ...],
-        profile: ModelProfile,
-    ) -> list[dict[str, object]]:
-        return [self._provider_message(message, profile) for message in messages]
-
-    @staticmethod
-    def _artifact_messages(
-        messages: tuple[ModelMessage, ...],
-    ) -> list[dict[str, object]]:
-        prepared: list[dict[str, object]] = []
-        for message in messages:
-            parts = [LiteLLMModelClient._artifact_content(part) for part in message.content]
-            content: object = (
-                parts[0]["text"] if len(parts) == 1 and parts[0].get("type") == "text" else parts
-            )
-            prepared.append({"role": message.role.value, "content": content})
-        return prepared
-
-    @staticmethod
-    def _artifact_content(
-        content: TextModelContent | ImageModelContent,
-    ) -> dict[str, object]:
-        if isinstance(content, TextModelContent):
-            return {"type": "text", "text": content.text}
-        screenshot = content.screenshot
-        return {
-            "type": "image_ref",
-            "artifact_id": screenshot.artifact_id,
-            "sha256": screenshot.sha256,
-            "width_px": screenshot.width_px,
-            "height_px": screenshot.height_px,
-        }
-
-    def _provider_message(
-        self,
-        message: ModelMessage,
-        profile: ModelProfile,
-    ) -> dict[str, object]:
-        parts = [self._provider_content(content, profile) for content in message.content]
-        if len(parts) == 1 and parts[0].get("type") == "text":
-            return {"role": message.role.value, "content": parts[0]["text"]}
-        return {"role": message.role.value, "content": parts}
-
-    def _provider_content(
-        self,
-        content: TextModelContent | ImageModelContent,
-        profile: ModelProfile,
-    ) -> dict[str, object]:
-        if isinstance(content, TextModelContent):
-            return {"type": "text", "text": content.text}
-        screenshot = content.screenshot
-        if (
-            screenshot.width_px > profile.images.max_width_px
-            or screenshot.height_px > profile.images.max_height_px
-        ):
-            raise ValueError("The model image exceeds the profile dimension limit.")
-        png = self._images.read(screenshot)
-        if len(png) > profile.images.max_image_bytes:
-            raise ValueError("The model image exceeds the profile byte limit.")
-        encoded = base64.b64encode(png).decode("ascii")
-        return {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{encoded}"},
-        }
-
     def _scrub_input_text(self, text: str) -> str:
         try:
-            scrubbed = self._artifacts.scrub_text(text)
+            scrubbed = self._scrub_text(text)
         except Exception as error:  # noqa: BLE001 - injected security boundary
             raise ModelInputError("Could not scrub model input text.") from error
         if not isinstance(scrubbed, str) or not scrubbed:
@@ -356,11 +274,10 @@ class LiteLLMModelClient:
         base_messages: tuple[ModelMessage, ...],
         request: ModelRequest,
         mode: StructuredOutputMode,
-        correction: ModelMessage | None,
+        corrections: tuple[ModelMessage, ...],
     ) -> tuple[ModelMessage, ...]:
         messages = list(base_messages)
-        if correction is not None:
-            messages.append(correction)
+        messages.extend(corrections)
         contract = request.response_contract
         if contract is None or mode is StructuredOutputMode.NATIVE_SCHEMA:
             return tuple(messages)
@@ -441,19 +358,28 @@ class LiteLLMModelClient:
             arguments["extra_body"] = router_options
         return arguments
 
-    def _correction_message(
+    def _correction_messages(
         self,
         normalized: NormalizedModelCompletion,
-    ) -> ModelMessage:
+    ) -> tuple[ModelMessage, ...]:
+        if normalized.rejected_text is None:
+            raise ModelInputError("A malformed structured response has no rejected text.")
+        rejected_text = self._scrub_input_text(normalized.rejected_text)
         errors = json.dumps(normalized.validation_errors, default=str, separators=(",", ":"))
         text = self._scrub_input_text(
             "Your previous reply did not match the required JSON schema:\n"
             f"{errors}\n"
             "Answer again as JSON matching the schema exactly."
         )
-        return ModelMessage(
-            role=ModelMessageRole.USER,
-            content=(TextModelContent(text=text),),
+        return (
+            ModelMessage(
+                role=ModelMessageRole.ASSISTANT,
+                content=(TextModelContent(text=rejected_text),),
+            ),
+            ModelMessage(
+                role=ModelMessageRole.USER,
+                content=(TextModelContent(text=text),),
+            ),
         )
 
     def _persist_call(

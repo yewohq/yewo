@@ -152,7 +152,7 @@ class RunTerminal(BaseModel):
         if self.category is not RunTerminalCategory.COMPLETED and self.stage is RunStage.FINISHED:
             raise ValueError("A failed or incomplete run must identify the affected stage.")
         if self.preceding_category is not None:
-            valid_override = (
+            cleanup_or_reporting_override = (
                 self.stage in {RunStage.CLEANUP, RunStage.REPORTING}
                 and self.category
                 in {
@@ -161,8 +161,13 @@ class RunTerminal(BaseModel):
                 }
                 and self.preceding_category is not self.category
             )
-            if not valid_override:
+            evidence_persistence_override = (
+                self.stage is RunStage.EXECUTION
+                and self.category is RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                and self.preceding_category is RunTerminalCategory.INTERRUPTED
+            )
+            if not (cleanup_or_reporting_override or evidence_persistence_override):
                 raise ValueError(
-                    "A preceding category is valid only when cleanup or reporting overrides it."
+                    "A preceding category requires a later infrastructure or cleanup override."
                 )
         return self

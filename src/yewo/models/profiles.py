@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from litellm.utils import validate_environment
 
 from yewo.artifacts import RecordIdentifier
+from yewo.models.errors import ModelInputError
 from yewo.models.records import ModelMessageRole, ModelRole
 
 
@@ -106,7 +107,7 @@ class ModelProfile(BaseModel):
     generation: ModelGenerationSettings
     retry: ModelRetryPolicy
     images: ModelImageConstraints
-    cache_control_role: ModelMessageRole | None = ModelMessageRole.SYSTEM
+    cache_control_role: ModelMessageRole | None = None
     router_cache_affinity: bool = False
     router_response_healing: bool = False
 
@@ -150,3 +151,18 @@ def missing_model_credentials(profile: ModelProfile) -> tuple[str, ...]:
         result = validate_environment(profile.model)
     missing = result.get("missing_keys") if isinstance(result, dict) else None
     return tuple(str(name) for name in missing or ())
+
+
+def validate_model_credentials(
+    profiles: ModelProfileRegistry,
+    credential_check=missing_model_credentials,
+) -> None:
+    """Fail before device work when any configured profile lacks credentials."""
+    for profile in profiles.profiles:
+        try:
+            missing = credential_check(profile)
+        except Exception as error:  # noqa: BLE001 - LiteLLM configuration boundary
+            raise ModelInputError("Could not validate model credentials.") from error
+        if missing:
+            names = ", ".join(missing)
+            raise ModelInputError(f"Missing credentials for profile {profile.profile_id}: {names}.")

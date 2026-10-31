@@ -156,11 +156,17 @@ class CoordinateTextCodec:
         if left >= right or top >= bottom:
             return _malformed_region()
         normalized = NormalizedRegion(left=left, top=top, right=right, bottom=bottom)
+        pixel_left = round(left * width_px)
+        pixel_top = round(top * height_px)
+        pixel_right = round(right * width_px)
+        pixel_bottom = round(bottom * height_px)
+        if pixel_left >= pixel_right or pixel_top >= pixel_bottom:
+            return _malformed_region()
         pixel = PixelRegion(
-            left=round(left * width_px),
-            top=round(top * height_px),
-            right=round(right * width_px),
-            bottom=round(bottom * height_px),
+            left=pixel_left,
+            top=pixel_top,
+            right=pixel_right,
+            bottom=pixel_bottom,
         )
         return DecodedGrounding(
             GroundingDisposition.ACCEPTED,
