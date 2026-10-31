@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from yewo.agent import NormalRunConfiguration
+from yewo.agent import YewoRunConfiguration
 from yewo.cli.main import main
 
 
@@ -21,20 +21,20 @@ def test_cli_requires_a_command(
     assert "{run}" in output.err
 
 
-def test_cli_dispatches_an_explicit_normal_run(
+def test_cli_dispatches_an_explicit_yewo_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     configuration = cast(
-        NormalRunConfiguration,
+        YewoRunConfiguration,
         SimpleNamespace(model_profiles=object()),
     )
     selected: list[Path] = []
     monkeypatch.setattr(
-        "yewo.cli.main.load_normal_run_configuration",
+        "yewo.cli.main.load_yewo_run_configuration",
         lambda path: selected.append(path) or configuration,
     )
     monkeypatch.setattr("yewo.cli.main.validate_model_credentials", lambda profiles: None)
-    monkeypatch.setattr("yewo.cli.main._run_normal", lambda value: 0)
+    monkeypatch.setattr("yewo.cli.main._run_yewo", lambda value: 0)
 
-    assert main(["run", "normal-run.json"]) == 0
-    assert selected == [Path("normal-run.json")]
+    assert main(["run", "yewo-run.json"]) == 0
+    assert selected == [Path("yewo-run.json")]

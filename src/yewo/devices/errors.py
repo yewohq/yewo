@@ -25,6 +25,10 @@ class DeviceActionRejectedError(DeviceInteractionError):
     """A requested action was invalid or did not reach its verified outcome."""
 
 
+class DeviceTargetRejectedError(DeviceActionRejectedError):
+    """A grounded target did not accept the requested interaction."""
+
+
 class ApplicationFirstPaintError(DeviceInteractionError):
     """The application did not produce a usable first frame."""
 

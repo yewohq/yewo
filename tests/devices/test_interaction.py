@@ -204,6 +204,26 @@ def test_text_operation_rejects_multiple_appium_fields_at_the_target() -> None:
     assert overlapping.value == ""
 
 
+def test_visible_keyboard_prevents_coordinate_fallback_without_an_editable_target() -> None:
+    driver = _DriverStub()
+    driver.text_elements = []
+    driver.switch_to.active_element_failures = 100
+    driver.focused_xpath_available = False
+    driver.keyboard = True
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    with pytest.raises(DeviceInteractionError, match="no editable target field"):
+        interaction.type_text(20, 30, "must not reach the keyboard")
+
+    assert driver.scripts == []
+    assert driver.keycodes == []
+
+
 def test_focus_rejects_an_unchanged_field_away_from_the_target() -> None:
     driver = _DriverStub()
     driver.element.rect = {"x": 0, "y": 0, "width": 20, "height": 20}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from io import BytesIO
 
 import imagehash
@@ -33,8 +34,12 @@ def build_screen_fingerprint(
                 (region.left, region.top, region.right - 1, region.bottom - 1),
                 fill="black",
             )
+    masked_pixels_digest = sha256()
+    masked_pixels_digest.update(f"RGB:{image.width}x{image.height}\0".encode())
+    masked_pixels_digest.update(image.tobytes())
     return ScreenFingerprint(
         value=str(imagehash.phash(image, hash_size=8)),
+        masked_pixels_sha256=masked_pixels_digest.hexdigest(),
         system_region_mask_sha256=system_region_mask_digest(
             system_regions,
             image.width,

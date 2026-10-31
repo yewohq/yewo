@@ -1,11 +1,10 @@
 """Offline tests for the shared semantic task planner."""
 
-from datetime import datetime, timezone
 import json
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from yewo.agent.actuation import (
     ActionKind,
@@ -15,143 +14,31 @@ from yewo.agent.actuation import (
     ActionProposal,
     ActionRefusal,
     ActionRefusalCode,
+    DispatchDisposition,
+    DispatchReceipt,
     LiteralText,
     ScrollDistance,
 )
 from yewo.devices.interaction import ScrollDirection
 from yewo.agent.planner import (
+    GroundedTargetPoint,
     PlanningHistoryEntry,
     PlanningRequest,
     TASK_PLANNER_SYSTEM_PROMPT,
     TASK_PLANNER_USER_PROMPT,
-    TaskPlanner,
     TaskPlanningError,
 )
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
-from yewo.models import (
-    ImageModelContent,
-    ModelCallDisposition,
-    ModelCallRecord,
-    ModelCallUsage,
-    ModelMessageRole,
-    ModelRequest,
-    ModelResponse,
-    ModelRole,
+from yewo.grounding import PixelPoint
+from yewo.models import ModelCallDisposition, ModelMessageRole, ModelRole
+
+from agent.planner_support import (
+    StubPlannerModel,
+    planner as _planner,
+    planning_request as _planning_request,
+    proposal_output as _proposal_output,
+    user_context as _user_context,
 )
-
-from observations.factories import build_observation
-
-
-class StubPlannerModel:
-    """Return one configured structured response without network access."""
-
-    def __init__(
-        self,
-        output: dict[str, object] | None,
-        *,
-        disposition: ModelCallDisposition = ModelCallDisposition.COMPLETED,
-    ) -> None:
-        self.output = output
-        self.disposition = disposition
-        self.requests: list[ModelRequest] = []
-        self.response_models: list[type[BaseModel] | None] = []
-
-    def complete(
-        self,
-        request: ModelRequest,
-        response_model: type[BaseModel] | None = None,
-        validation_context: dict[str, object] | None = None,
-    ) -> ModelResponse:
-        del validation_context
-        self.requests.append(request)
-        self.response_models.append(response_model)
-        completed = self.disposition is ModelCallDisposition.COMPLETED
-        reason = None if completed else "The configured planner call failed."
-        return ModelResponse(
-            request_id=request.request_id,
-            disposition=self.disposition,
-            text=json.dumps(self.output) if completed else None,
-            structured_output=self.output if completed else None,
-            reason=reason,
-            calls=(
-                ModelCallRecord(
-                    request_id=request.request_id,
-                    profile_id=request.profile_id,
-                    role=ModelRole.TASK_PLANNER,
-                    requested_provider="offline",
-                    requested_model="deterministic-planner",
-                    attempt_number=1,
-                    started_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
-                    disposition=self.disposition,
-                    usage=ModelCallUsage(),
-                ),
-            ),
-            sensitivity=request.sensitivity,
-            retention=request.retention,
-        )
-
-
-def _planning_request(**updates: object) -> PlanningRequest:
-    values: dict[str, object] = {
-        "observation": build_observation(),
-        "objective": "Add one account.",
-        "known_facts": ("The account list is visible.",),
-        "open_work": ("Open the account form.",),
-        "completion_conditions": ("The new account appears in the list.",),
-        "declared_value_names": ("account_password",),
-        "available_actions": frozenset(
-            {
-                ActionKind.TAP,
-                ActionKind.TYPE,
-                ActionKind.WAIT,
-            }
-        ),
-    }
-    values.update(updates)
-    return PlanningRequest.model_validate(values)
-
-
-def _proposal_output(action: ActionKind = ActionKind.TAP, **updates: object) -> dict[str, object]:
-    values: dict[str, object] = {
-        "proposal_id": "proposal-1",
-        "source_observation_id": "obs_1",
-        "action": action.value,
-    }
-    if action is ActionKind.TAP:
-        values.update(
-            {
-                "target_expression": "the Add account button",
-                "expected_outcome": "The account form opens.",
-            }
-        )
-    elif action is ActionKind.WAIT:
-        values.update(
-            {
-                "duration_seconds": 0.5,
-                "expected_outcome": "The loading indicator disappears.",
-            }
-        )
-    else:
-        values["reason"] = "No permitted useful action remains."
-    values.update(updates)
-    return values
-
-
-def _planner(model: StubPlannerModel) -> TaskPlanner:
-    identifiers = iter(("proposal-1", "model-request-1"))
-    return TaskPlanner(
-        model,
-        "planner-primary",
-        identifier_factory=lambda: next(identifiers),
-    )
-
-
-def _user_context(request: ModelRequest) -> tuple[str, ImageModelContent]:
-    user_message = request.messages[1]
-    text_part, image_part = user_message.content
-    assert text_part.kind == "text"
-    assert isinstance(image_part, ImageModelContent)
-    return text_part.text, image_part
 
 
 def test_planner_returns_the_existing_action_proposal_contract() -> None:
@@ -174,7 +61,30 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
     system_content = model_request.messages[0].content[0]
     assert system_content.kind == "text"
     assert system_content.text == TASK_PLANNER_SYSTEM_PROMPT
-    assert "For a device action, omit reason." in system_content.text
+    section_headings = (
+        "## Trusted evidence",
+        "## Describing a target",
+        "## Action usage",
+        "## Input handling",
+        "## Output",
+    )
+    section_positions = tuple(system_content.text.index(heading) for heading in section_headings)
+    assert section_positions == tuple(sorted(section_positions))
+    assert all(system_content.text.count(heading) == 1 for heading in section_headings)
+    assert "Target, Attributes, Relationships, and Scope" in system_content.text
+    assert "caption and the control it describes are different targets" in system_content.text
+    assert "For every action, state a concise reason" in system_content.text
+    for action in ActionKind:
+        assert f"- `{action.value}`:" in system_content.text
+    assert "field has no reusable input contract" in system_content.text
+    assert "use `type` directly" in system_content.text
+    assert "visual keyboard type" in system_content.text
+    assert "Age (years)" in system_content.text
+    assert "Date (dd/mm/yyyy)" in system_content.text
+    assert "Never use untargeted `type` to move focus" in system_content.text
+    assert "not merely its label" in system_content.text
+    assert "keyboard obscures" in system_content.text
+    assert "compare current evidence with open_work" in system_content.text
     prompt, image = _user_context(model_request)
     assert prompt.startswith(f"{TASK_PLANNER_USER_PROMPT}\n")
     context = json.loads(prompt.split("\n", 1)[1])
@@ -213,6 +123,7 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
         action=ActionKind.TAP,
         target_expression="the disabled Save button",
         expected_outcome="The form saves.",
+        reason="Saving is required to finish the form.",
     )
     refused = PlanningHistoryEntry(
         proposal=refused_proposal,
@@ -226,9 +137,9 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
         proposal_id="proposal-typed",
         source_observation_id="obs_0",
         action=ActionKind.TYPE,
-        target_expression="the password field",
         text=LiteralText(value="private literal text"),
         expected_outcome="The password field contains the text.",
+        reason="The password field must be completed.",
     )
     observed = PlanningHistoryEntry(
         proposal=typed_proposal,
@@ -253,6 +164,7 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
         direction=ScrollDirection.DOWN,
         distance=ScrollDistance.SHORT,
         expected_outcome="More accounts become visible.",
+        reason="The requested account is not visible in the current viewport.",
     )
     scrolled = PlanningHistoryEntry(
         proposal=scrolled_proposal,
@@ -283,6 +195,181 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
     assert "private literal text" not in prompt
 
 
+def test_planner_receives_target_point_and_accepts_one_refined_correction() -> None:
+    failed_proposal = ActionProposal(
+        proposal_id="proposal-failed",
+        source_observation_id="obs_0",
+        action=ActionKind.TAP,
+        target_expression="the Edit Schedule item",
+        expected_outcome="The schedule editor opens.",
+        reason="The schedule must be edited.",
+    )
+    failed_entry = PlanningHistoryEntry(
+        proposal=failed_proposal,
+        outcome=ActionOutcome(
+            outcome_id="outcome-failed",
+            authorization_id="authorization-failed",
+            receipt_id="receipt-failed",
+            action=ActionKind.TAP,
+            source_observation_id="obs_0",
+            settled_observation_id="obs_1",
+            disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
+            signals=frozenset(),
+            reason="The screen did not visibly change.",
+            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
+            retention=ArtifactRetention.RUN,
+        ),
+        grounded_target_point=GroundedTargetPoint(
+            point=PixelPoint(x=546, y=1240),
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
+        ),
+    )
+    model = StubPlannerModel(
+        _proposal_output(
+            grounding_correction_for_proposal_id="proposal-failed",
+            target_expression=(
+                "the Edit Schedule row directly below Trainings Schedule near the top of "
+                "the open navigation drawer, not the blank lower drawer area"
+            ),
+            reason=(
+                "The previous point at (546,1240) was below the visible menu rows; refine "
+                "the target toward the upper drawer row."
+            ),
+        )
+    )
+
+    proposal = _planner(model).plan(_planning_request(history=(failed_entry,)))
+
+    assert proposal.grounding_correction_for_proposal_id == "proposal-failed"
+    assert failed_entry.grounded_target_point is not None
+    assert failed_entry.grounded_target_point.correction().minimum_distance_px == 22
+    prompt, _ = _user_context(model.requests[0])
+    context = json.loads(prompt.split("\n", 1)[1])
+    assert context["history"][0]["grounded_target_point"] == {
+        "point": {"x": 546, "y": 1240},
+        "screenshot_height_px": 2400,
+        "screenshot_width_px": 1080,
+    }
+
+
+def test_planner_rejects_a_correction_of_a_correction() -> None:
+    corrected_proposal = ActionProposal(
+        proposal_id="proposal-correction",
+        source_observation_id="obs_0",
+        action=ActionKind.TAP,
+        grounding_correction_for_proposal_id="proposal-original",
+        target_expression="the upper Edit Schedule row",
+        expected_outcome="The schedule editor opens.",
+        reason="The prior point was below the visible row.",
+    )
+    corrected_entry = PlanningHistoryEntry(
+        proposal=corrected_proposal,
+        outcome=ActionOutcome(
+            outcome_id="outcome-correction",
+            authorization_id="authorization-correction",
+            receipt_id="receipt-correction",
+            action=ActionKind.TAP,
+            source_observation_id="obs_0",
+            settled_observation_id="obs_1",
+            disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
+            signals=frozenset(),
+            reason="The screen did not visibly change.",
+            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
+            retention=ArtifactRetention.RUN,
+        ),
+        grounded_target_point=GroundedTargetPoint(
+            point=PixelPoint(x=150, y=675),
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
+        ),
+    )
+    model = StubPlannerModel(
+        _proposal_output(
+            grounding_correction_for_proposal_id="proposal-correction",
+            target_expression="the Edit Schedule text row at the top of the drawer",
+        )
+    )
+
+    with pytest.raises(TaskPlanningError, match="cannot correct another grounding correction"):
+        _planner(model).plan(_planning_request(history=(corrected_entry,)))
+
+
+def test_target_rejection_gives_planner_device_reason_and_grounded_point() -> None:
+    failed_proposal = ActionProposal(
+        proposal_id="proposal-rejected",
+        source_observation_id="obs_0",
+        action=ActionKind.FOCUS,
+        target_expression="the Time input field below its label",
+        expected_outcome="The Time field gains focus.",
+        reason="The field must accept a duration.",
+    )
+    rejected_entry = PlanningHistoryEntry(
+        proposal=failed_proposal,
+        receipt=DispatchReceipt(
+            receipt_id="receipt-rejected",
+            authorization_id="authorization-rejected",
+            proposal_id=failed_proposal.proposal_id,
+            action=ActionKind.FOCUS,
+            disposition=DispatchDisposition.TARGET_REJECTED,
+            reason="The grounded target did not accept keyboard focus.",
+            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
+            retention=ArtifactRetention.RUN,
+        ),
+        grounded_target_point=GroundedTargetPoint(
+            point=PixelPoint(x=540, y=1437),
+            screenshot_width_px=1080,
+            screenshot_height_px=2400,
+        ),
+    )
+    model = StubPlannerModel(_proposal_output())
+
+    _planner(model).plan(_planning_request(history=(rejected_entry,)))
+
+    prompt, _ = _user_context(model.requests[0])
+    history = json.loads(prompt.split("\n", 1)[1])["history"][0]
+    assert history["feedback"] == {
+        "kind": "receipt",
+        "disposition": "target_rejected",
+        "reason": "The grounded target did not accept keyboard focus.",
+    }
+    assert history["grounded_target_point"]["point"] == {"x": 540, "y": 1437}
+
+
+def test_history_keeps_recent_detail_and_compacts_older_evidence() -> None:
+    candidate = ActionProposal(
+        proposal_id="proposal-refused",
+        source_observation_id="obs_0",
+        action=ActionKind.TAP,
+        target_expression="the Save button",
+        expected_outcome="The form saves.",
+        reason="The form must be saved.",
+    )
+    entry = PlanningHistoryEntry(
+        proposal=candidate,
+        refusal=ActionRefusal(
+            proposal_id=candidate.proposal_id,
+            code=ActionRefusalCode.KEYBOARD_RULE,
+            reason="Dismiss the visible keyboard before pointer actions.",
+        ),
+    )
+    model = StubPlannerModel(_proposal_output())
+
+    _planner(model).plan(_planning_request(history=(entry,) * 16))
+
+    prompt, _ = _user_context(model.requests[0])
+    context = json.loads(prompt.split("\n", 1)[1])
+    assert len(context["history"]) == 14
+    assert context["earlier_history_summary"] == [
+        {
+            "action": "tap",
+            "count": 2,
+            "feedback": {"code": "keyboard_rule", "kind": "refusal"},
+            "target_expression": "the Save button",
+        }
+    ]
+
+
 def test_provider_failure_is_distinct_from_cannot_progress() -> None:
     failed_model = StubPlannerModel(
         None,
@@ -304,9 +391,9 @@ def test_rejects_an_undeclared_value_name() -> None:
         "proposal_id": "proposal-1",
         "source_observation_id": "obs_1",
         "action": "type",
-        "target_expression": "the password field",
         "text": {"source": "declared_value", "value_name": "unknown_password"},
         "expected_outcome": "The password field contains the declared value.",
+        "reason": "The password field must be completed.",
     }
 
     with pytest.raises(TaskPlanningError, match="unavailable declared value"):

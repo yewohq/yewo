@@ -40,12 +40,16 @@ class RecordingDevice:
     def tap(self, x: int, y: int, *, count: int = 1, interval_seconds: float = 0.1) -> None:
         self._record("tap", x, y, count=count, interval_seconds=interval_seconds)
 
-    def type_text(self, x: int, y: int, text: str) -> bool | None:
-        self._record("type_text", x, y, text)
+    def focus(self, x: int, y: int) -> object:
+        self._record("focus", x, y)
+        return object()
+
+    def type_focused_text(self, text: str) -> bool | None:
+        self._record("type_focused_text", text)
         return True
 
-    def clear_text(self, x: int, y: int) -> bool | None:
-        self._record("clear_text", x, y)
+    def clear_focused_text(self) -> bool | None:
+        self._record("clear_focused_text")
         return True
 
     def double_tap(self, x: int, y: int) -> None:
@@ -121,19 +125,36 @@ def authorization(action: ActionKind, **updates: object) -> AuthorizedAction:
     return AuthorizedAction.model_validate(values)
 
 
+def test_targeted_type_focuses_then_enters_text_in_one_dispatch() -> None:
+    device = RecordingDevice()
+    executor = ActionExecutor(device)
+
+    executor.dispatch(
+        authorization(
+            ActionKind.TYPE,
+            target=PixelPoint(x=10, y=20),
+            text=LiteralText(value="42"),
+        )
+    )
+
+    assert [call[0] for call in device.calls] == ["focus", "type_focused_text"]
+    assert device.calls[0][1] == (10, 20)
+    assert device.calls[1][1] == ("42",)
+
+
 @pytest.mark.parametrize(
     ("authorized", "method"),
     [
         (authorization(ActionKind.TAP, target=PixelPoint(x=10, y=20)), "tap"),
+        (authorization(ActionKind.FOCUS, target=PixelPoint(x=10, y=20)), "focus"),
         (
             authorization(
                 ActionKind.TYPE,
-                target=PixelPoint(x=10, y=20),
                 text=LiteralText(value="hello"),
             ),
-            "type_text",
+            "type_focused_text",
         ),
-        (authorization(ActionKind.CLEAR, target=PixelPoint(x=10, y=20)), "clear_text"),
+        (authorization(ActionKind.CLEAR), "clear_focused_text"),
         (
             authorization(ActionKind.DOUBLE_TAP, target=PixelPoint(x=10, y=20)),
             "double_tap",
@@ -220,7 +241,6 @@ def test_declared_value_is_resolved_only_during_dispatch() -> None:
     device = RecordingDevice()
     action = authorization(
         ActionKind.TYPE,
-        target=PixelPoint(x=10, y=20),
         text=DeclaredValueReference(value_name="account_password"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
@@ -230,7 +250,7 @@ def test_declared_value_is_resolved_only_during_dispatch() -> None:
         declared_value_resolver=lambda name: secret if name == "account_password" else "",
     ).dispatch(action)
 
-    assert device.calls == [("type_text", (10, 20, secret), {})]
+    assert device.calls == [("type_focused_text", (secret,), {})]
     assert secret not in action.model_dump_json()
     assert secret not in receipt.model_dump_json()
 
@@ -240,7 +260,6 @@ def test_text_delivery_comparison_returns_only_secret_free_status() -> None:
     device = RecordingDevice()
     action = authorization(
         ActionKind.TYPE,
-        target=PixelPoint(x=10, y=20),
         text=DeclaredValueReference(value_name="account_password"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
@@ -258,7 +277,6 @@ def test_pending_text_can_be_discarded_without_device_comparison() -> None:
     device = RecordingDevice()
     action = authorization(
         ActionKind.TYPE,
-        target=PixelPoint(x=10, y=20),
         text=LiteralText(value="temporary text"),
     )
     executor = ActionExecutor(device)
@@ -267,13 +285,12 @@ def test_pending_text_can_be_discarded_without_device_comparison() -> None:
     executor.discard_text_delivery(action)
 
     assert executor.verify_text_delivery(action) is TextDeliveryStatus.UNAVAILABLE
-    assert [call[0] for call in device.calls] == ["type_text"]
+    assert [call[0] for call in device.calls] == ["type_focused_text"]
 
 
 def test_missing_declared_value_resolver_returns_safe_refusal() -> None:
     action = authorization(
         ActionKind.TYPE,
-        target=PixelPoint(x=10, y=20),
         text=DeclaredValueReference(value_name="account_password"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
@@ -306,6 +323,7 @@ def test_executor_rejects_proposal_without_authorization() -> None:
         source_observation_id="obs_1",
         action=ActionKind.BACK,
         expected_outcome="The previous screen appears.",
+        reason="The previous screen is the required destination.",
     )
 
     with pytest.raises(TypeError, match="AuthorizedAction"):

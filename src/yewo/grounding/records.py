@@ -8,7 +8,7 @@ from typing import Annotated, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from yewo.artifacts import RecordIdentifier
+from yewo.artifacts import RecordIdentifier, Sha256Digest
 from yewo.models import (
     ModelArtifactKind,
     ModelArtifactReference,
@@ -22,9 +22,6 @@ from yewo.observations import (
     ScreenshotReference,
 )
 from yewo.observations.records import validate_screen_regions
-
-
-_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class GroundingTargetOperation(StrEnum):
@@ -51,6 +48,7 @@ class GroundingDisposition(StrEnum):
     REFUSED = "refused"
     MALFORMED = "malformed"
     OUT_OF_BOUNDS = "out_of_bounds"
+    REPEATED_POINT = "repeated_point"
     AMBIGUOUS = "ambiguous"
 
 
@@ -115,6 +113,15 @@ class GroundedPoint(BaseModel):
     pixel: PixelPoint
 
 
+class GroundingCorrection(BaseModel):
+    """A previous ineffective point that one correction must not repeat."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    previous_point: PixelPoint
+    minimum_distance_px: int = Field(gt=0)
+
+
 class GroundedRegion(BaseModel):
     """One accepted region in canonical and source-pixel coordinates."""
 
@@ -142,6 +149,7 @@ class GroundingRequest(BaseModel):
     operation: GroundingTargetOperation
     output_shape: GroundingOutputShape
     excluded_regions: tuple[ScreenRegion, ...] | None = None
+    correction: GroundingCorrection | None = None
 
     @model_validator(mode="after")
     def _validate_request(self) -> Self:
@@ -157,6 +165,12 @@ class GroundingRequest(BaseModel):
             and self.output_shape is GroundingOutputShape.REGION
         ):
             raise ValueError("Only a scroll-region request can require a region.")
+        if self.correction is not None:
+            point = self.correction.previous_point
+            if self.output_shape is not GroundingOutputShape.POINT:
+                raise ValueError("A grounding correction requires point output.")
+            if point.x >= self.screenshot.width_px or point.y >= self.screenshot.height_px:
+                raise ValueError("The previous grounding point must be within the screenshot.")
         return self
 
 
@@ -180,7 +194,7 @@ class GroundingResult(BaseModel):
     grounding_id: RecordIdentifier
     profile_id: RecordIdentifier
     model_profile_id: RecordIdentifier
-    source_screenshot_sha256: str = Field(pattern=_SHA256_PATTERN)
+    source_screenshot_sha256: Sha256Digest
     output_shape: GroundingOutputShape
     disposition: GroundingDisposition
     location: GroundedLocation | None = None

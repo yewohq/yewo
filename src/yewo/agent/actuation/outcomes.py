@@ -16,7 +16,7 @@ from yewo.artifacts import (
 )
 from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.focus import FocusedFieldReading
-from yewo.observations import Observation, fingerprint_distance
+from yewo.observations import Observation
 
 from yewo.agent.actuation.records import (
     ActionKind,
@@ -339,7 +339,12 @@ def _text_signal(
 
 
 def _fingerprint_changed(before: Observation, after: Observation) -> bool | None:
-    try:
-        return fingerprint_distance(before.screen_fingerprint, after.screen_fingerprint) > 0
-    except ValueError:
+    before_fingerprint = before.screen_fingerprint
+    after_fingerprint = after.screen_fingerprint
+    if (
+        before_fingerprint.algorithm != after_fingerprint.algorithm
+        or before_fingerprint.system_region_mask_sha256
+        != after_fingerprint.system_region_mask_sha256
+    ):
         return None
+    return before_fingerprint.masked_pixels_sha256 != after_fingerprint.masked_pixels_sha256

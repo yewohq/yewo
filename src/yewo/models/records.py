@@ -16,11 +16,9 @@ from yewo.artifacts import (
     ArtifactRetention,
     ArtifactSensitivity,
     RecordIdentifier,
+    Sha256Digest,
 )
 from yewo.observations import ScreenshotRedactionState, ScreenshotReference
-
-
-_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class ModelRole(StrEnum):
@@ -64,9 +62,9 @@ class ModelArtifactReference(BaseModel):
 
     artifact_id: RecordIdentifier
     kind: ModelArtifactKind
-    sha256: str = Field(pattern=_SHA256_PATTERN)
-    body_sha256: str = Field(pattern=_SHA256_PATTERN)
-    content_sha256: str = Field(pattern=_SHA256_PATTERN)
+    sha256: Sha256Digest
+    body_sha256: Sha256Digest
+    content_sha256: Sha256Digest
     path: Path
     body_retained: bool
     sensitivity: ArtifactSensitivity
@@ -132,7 +130,7 @@ class ModelResponseContract(BaseModel):
 
     name: RecordIdentifier
     json_schema: dict[str, object]
-    schema_sha256: str = Field(pattern=_SHA256_PATTERN)
+    schema_sha256: Sha256Digest
 
     @model_validator(mode="after")
     def _validate_schema_digest(self) -> Self:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from hashlib import sha256
+import json
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -151,6 +152,96 @@ class ObservationStore:
         except ArtifactWriteError as error:
             raise ObservationCaptureError(str(error)) from error
         return relative_path
+
+    def load_all(self) -> tuple[Observation, ...]:
+        """Load and verify every persisted observation in ledger order."""
+        relative_path = ARTIFACTS_DIRECTORY / "observations.jsonl"
+        path = self.root / relative_path
+        if not path.exists():
+            return ()
+        observations: list[Observation] = []
+        observation_ids: set[str] = set()
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ObservationCaptureError("The observation ledger must be a regular file.")
+            content = path.read_bytes()
+            if content and not content.endswith(b"\n"):
+                raise ObservationCaptureError(
+                    "The observation ledger has an incomplete final line."
+                )
+            for line_number, line in enumerate(content.splitlines(), start=1):
+                if not line:
+                    raise ObservationCaptureError(
+                        f"The observation ledger has an empty line: {line_number}."
+                    )
+                observation = Observation.model_validate_json(line)
+                if observation.observation_id in observation_ids:
+                    raise ObservationCaptureError(
+                        "The observation ledger repeats an observation identifier."
+                    )
+                for screenshot in (
+                    observation.raw_screenshot,
+                    observation.redacted_screenshot,
+                ):
+                    if screenshot is not None:
+                        self._verify_screenshot(screenshot)
+                observations.append(observation)
+                observation_ids.add(observation.observation_id)
+        except ObservationCaptureError:
+            raise
+        except (OSError, ValidationError) as error:
+            raise ObservationCaptureError("The observation ledger is invalid.") from error
+        return tuple(observations)
+
+    def load_selected(self, observation_ids: set[str]) -> tuple[Observation, ...]:
+        """Load and verify only named observations from the append-only ledger."""
+        if not observation_ids:
+            return ()
+        relative_path = ARTIFACTS_DIRECTORY / "observations.jsonl"
+        path = self.root / relative_path
+        selected: list[Observation] = []
+        found: set[str] = set()
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ObservationCaptureError("The observation ledger must be a regular file.")
+            content = path.read_bytes()
+            if content and not content.endswith(b"\n"):
+                raise ObservationCaptureError(
+                    "The observation ledger has an incomplete final line."
+                )
+            for line_number, line in enumerate(content.splitlines(), start=1):
+                if not line:
+                    raise ObservationCaptureError(
+                        f"The observation ledger has an empty line: {line_number}."
+                    )
+                payload = json.loads(line)
+                observation_id = payload.get("observation_id")
+                if observation_id not in observation_ids:
+                    continue
+                if observation_id in found:
+                    raise ObservationCaptureError(
+                        "The observation ledger repeats a requested observation identifier."
+                    )
+                observation = Observation.model_validate(payload)
+                for screenshot in (
+                    observation.raw_screenshot,
+                    observation.redacted_screenshot,
+                ):
+                    if screenshot is not None:
+                        self._verify_screenshot(screenshot)
+                selected.append(observation)
+                found.add(observation.observation_id)
+        except ObservationCaptureError:
+            raise
+        except (OSError, TypeError, json.JSONDecodeError, ValidationError) as error:
+            raise ObservationCaptureError("The observation ledger is invalid.") from error
+        missing = observation_ids - found
+        if missing:
+            raise ObservationCaptureError(
+                "The observation ledger is missing requested observations: "
+                + ", ".join(sorted(missing))
+            )
+        return tuple(selected)
 
     def _verify_screenshot(self, reference: ScreenshotReference) -> None:
         screenshot_path = self.root / reference.path

@@ -51,8 +51,9 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
     session_log_lines = (tmp_path / "runs/run_1/runtime/yewo-session.log").read_text().splitlines()
     assert all(" run-coordinator: " in line for line in session_log_lines)
     assert [line.split(" ", 2)[2] for line in session_log_lines] == [
+        f"Run run_1 started. Evidence: {tmp_path / 'runs/run_1'}",
         "Selecting a device...",
-        "Device selected: emulator-5554 (virtual).",
+        "Device selected: Pixel (android, virtual).",
         "Preparing device emulator-5554...",
         "Device emulator-5554 is ready.",
         "Resolving the application...",
@@ -61,8 +62,21 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
         "Appium server started.",
         "Opening the automation session...",
         "Automation session opened.",
+        "Application installation change: none.",
+        "Starting task execution...",
+        "Task execution concluded: completed — The workflow completed.",
+        "Closing automation resources...",
+        "Automation resources closed.",
         "terminal: completed at finished — The workflow completed.",
     ]
+    trace = (tmp_path / "runs/run_1/runtime/trace.log").read_text()
+    assert "run=run_1 mode=normal stage=startup" in trace
+    assert "device=emulator-5554 connection=emulator-5554 readiness=ready" in trace
+    assert "appium_log=" in trace
+    assert "cleanup=automation-session state=completed" in trace
+    assert "cleanup=appium-server state=completed" in trace
+    assert "cleanup=device state=completed" in trace
+    assert "terminal_artifact=run/terminal.json" in trace
 
 
 def test_session_policy_is_applied_before_workflow_execution(tmp_path: Path) -> None:

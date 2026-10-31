@@ -11,6 +11,7 @@ from yewo.devices.logs.records import (
     DeviceLogDrainReceipt,
 )
 from yewo.devices.logs.service import DeviceLogCaptureService
+from yewo.run_narration import current_narrator
 
 
 class DeviceLogCaptureLease:
@@ -31,7 +32,9 @@ class DeviceLogCaptureLease:
     def open(cls, service: DeviceLogCaptureService) -> Self:
         """Start a boundary and return its owning lease."""
         started = service.begin()
-        return cls(service, started.boundary, started.startup_receipt)
+        lease = cls(service, started.boundary, started.startup_receipt)
+        _narrate_boundary(started.boundary, started.startup_receipt)
+        return lease
 
     @property
     def closed(self) -> bool:
@@ -56,7 +59,9 @@ class DeviceLogCaptureLease:
         if self._closed:
             return
         try:
-            self._receipts.append(self._service.finish(self.boundary))
+            receipt = self._service.finish(self.boundary)
+            self._receipts.append(receipt)
+            _narrate_drain(receipt, finished=True)
         finally:
             self._closed = True
 
@@ -73,4 +78,54 @@ class DeviceLogCaptureLease:
             checkpoint_id,
         )
         self._receipts.append(receipt)
+        _narrate_drain(receipt, finished=False)
         return receipt
+
+
+def _narrate_boundary(
+    boundary: DeviceLogBoundary,
+    startup_receipt: DeviceLogDrainReceipt,
+) -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    ready = sum(source.state.value == "ready" for source in boundary.sources)
+    narrator.record(
+        "device-logs",
+        f"Device-log capture started with {ready} of {len(boundary.sources)} source(s) ready.",
+    )
+    narrator.trace(
+        "device-logs",
+        f"boundary={boundary.boundary_id} sources={len(boundary.sources)} ready={ready}",
+    )
+    _trace_drain(startup_receipt)
+
+
+def _narrate_drain(receipt: DeviceLogDrainReceipt, *, finished: bool) -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    retained = sum(source.retained_item_count for source in receipt.sources)
+    if finished:
+        narrator.record(
+            "device-logs",
+            f"Device-log capture finished with {retained} retained item(s) in the final drain.",
+        )
+    _trace_drain(receipt)
+
+
+def _trace_drain(receipt: DeviceLogDrainReceipt) -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    states = ",".join(f"{item.source.log_type}:{item.state.value}" for item in receipt.sources)
+    retained = sum(source.retained_item_count for source in receipt.sources)
+    artifacts = ",".join(
+        str(artifact.path) for source in receipt.sources for artifact in source.artifacts
+    )
+    narrator.trace(
+        "device-logs",
+        f"boundary={receipt.boundary_id} drain={receipt.drain_id} "
+        f"index={receipt.drain_index} checkpoint={receipt.checkpoint_kind.value} "
+        f"retained={retained} states={states} artifacts={artifacts or 'none'}",
+    )

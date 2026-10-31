@@ -19,7 +19,6 @@ class RunMode(StrEnum):
     """A product workflow that the coordinator can start."""
 
     NORMAL = "normal"
-    DISCOVERY = "discovery"
     SCENARIO = "scenario"
 
 

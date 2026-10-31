@@ -21,13 +21,11 @@ from yewo.artifacts.records import (
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
+    Sha256Digest,
 )
 from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.screen import SystemRegionKind
 from yewo.observations._region_mask import system_region_mask_digest
-
-
-_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class ScreenshotRedactionState(StrEnum):
@@ -52,7 +50,7 @@ class RedactionProvenance(BaseModel):
 
     policy_id: RecordIdentifier
     region_count: int = Field(ge=0)
-    region_set_sha256: str = Field(pattern=_SHA256_PATTERN)
+    region_set_sha256: Sha256Digest
     input_sensitivity: ArtifactSensitivity
 
 
@@ -110,7 +108,7 @@ class ScreenshotReference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     artifact_id: RecordIdentifier
-    sha256: str = Field(pattern=_SHA256_PATTERN)
+    sha256: Sha256Digest
     width_px: int = Field(gt=0)
     height_px: int = Field(gt=0)
     path: Path
@@ -143,16 +141,14 @@ class ScreenshotReference(BaseModel):
 
 
 class ScreenFingerprint(BaseModel):
-    """Versioned perceptual fingerprint of application-owned pixels."""
+    """Exact and perceptual fingerprints of application-owned pixels."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     algorithm: Literal["application-phash-v1"] = "application-phash-v1"
     value: str = Field(pattern=r"^[0-9a-f]{16}$")
-    system_region_mask_sha256: str | None = Field(
-        default=None,
-        pattern=_SHA256_PATTERN,
-    )
+    masked_pixels_sha256: Sha256Digest
+    system_region_mask_sha256: Sha256Digest | None = None
     source_artifact_id: RecordIdentifier
 
 

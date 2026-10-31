@@ -240,6 +240,34 @@ def test_prompt_schema_mode_validates_locally_without_provider_grammar(tmp_path:
     assert response.structured_output == {"target": "Save", "confidence": 0.9}
 
 
+def test_prompt_schema_joins_the_cacheable_system_prefix(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def complete(**arguments: object) -> object:
+        calls.append(arguments)
+        return _response('{"target":"Save","confidence":0.9}')
+
+    request = _request(tmp_path, structured=True).model_copy(
+        update={
+            "messages": (
+                ModelMessage(role=ModelMessageRole.SYSTEM, content=(
+                    TextModelContent(text="Stable planner instructions."),
+                )),
+                ModelMessage(role=ModelMessageRole.USER, content=(
+                    TextModelContent(text="Changing task context."),
+                )),
+            )
+        }
+    )
+    _client(tmp_path, complete).complete(request, StructuredAnswer)
+    messages = calls[0]["messages"]
+    assert isinstance(messages, list)
+    assert [message["role"] for message in messages] == ["system", "user"]
+    assert "confidence" in str(messages[0]["content"])
+    assert "Changing task context." not in str(messages[0]["content"])
+    assert messages[1]["content"] == "Changing task context."
+
+
 def test_native_schema_mode_uses_shared_litellm_argument(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 

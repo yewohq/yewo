@@ -8,9 +8,11 @@ from pydantic import ValidationError
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.grounding import (
     GroundingDisposition,
+    GroundingCorrection,
     GroundingEvidence,
     GroundingOutputShape,
     GroundingTargetOperation,
+    PixelPoint,
 )
 from yewo.models import ModelArtifactKind, ModelArtifactReference, ModelCallDisposition
 from yewo.observations import ScreenshotRedactionState
@@ -26,6 +28,16 @@ def test_grounding_request_rejects_raw_pixels_and_incompatible_region_output() -
 
     with pytest.raises(ValidationError, match="scroll-region"):
         build_grounding_request(output_shape=GroundingOutputShape.REGION)
+
+    with pytest.raises(ValidationError, match="point output"):
+        build_grounding_request(
+            operation=GroundingTargetOperation.SCROLL_REGION,
+            output_shape=GroundingOutputShape.REGION,
+            correction=GroundingCorrection(
+                previous_point=PixelPoint(x=100, y=200),
+                minimum_distance_px=8,
+            ),
+        )
 
 
 def test_rejected_result_cannot_contain_a_location() -> None:

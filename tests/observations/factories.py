@@ -1,6 +1,7 @@
 """Shared observation-record factories for deterministic tests."""
 
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
@@ -87,6 +88,7 @@ def build_observation(**updates: object) -> Observation:
         assert isinstance(screenshot, ScreenshotReference)
         values["screen_fingerprint"] = ScreenFingerprint(
             value="0123456789abcdef",
+            masked_pixels_sha256=sha256(b"0123456789abcdef").hexdigest(),
             system_region_mask_sha256=system_region_mask_digest(
                 cast(tuple[ScreenRegion, ...] | None, values["system_regions"]),
                 screenshot.width_px,

@@ -12,13 +12,20 @@ from yewo.observations import (
 )
 
 
-def _screen(*, clock_offset: int, alternate_state: bool = False) -> bytes:
+def _screen(
+    *,
+    clock_offset: int,
+    alternate_state: bool = False,
+    application_dot: bool = False,
+) -> bytes:
     image = Image.new("RGB", (200, 400), color="white")
     drawing = ImageDraw.Draw(image)
     drawing.rectangle((0, 0, 199, 39), fill="gray")
     drawing.rectangle((clock_offset, 10, clock_offset + 20, 20), fill="black")
     if alternate_state:
         drawing.rectangle((40, 120, 160, 300), fill="black")
+    if application_dot:
+        drawing.point((100, 200), fill="black")
     stream = BytesIO()
     image.save(stream, format="PNG")
     return stream.getvalue()
@@ -45,6 +52,7 @@ def test_fingerprint_ignores_changes_inside_known_system_regions() -> None:
     )
 
     assert first.value == second.value
+    assert first.masked_pixels_sha256 == second.masked_pixels_sha256
     assert fingerprint_distance(first, second) == 0
     assert first.system_region_mask_sha256 is not None
 
@@ -60,6 +68,20 @@ def test_fingerprint_distinguishes_different_application_states() -> None:
     )
 
     assert fingerprint_distance(baseline, alternate) > 0
+
+
+def test_exact_masked_digest_detects_one_changed_application_pixel() -> None:
+    baseline = build_screen_fingerprint(
+        _screen(clock_offset=10), (), source_artifact_id="shot_1"
+    )
+    one_dot = build_screen_fingerprint(
+        _screen(clock_offset=10, application_dot=True),
+        (),
+        source_artifact_id="shot_2",
+    )
+
+    assert baseline.value == one_dot.value
+    assert baseline.masked_pixels_sha256 != one_dot.masked_pixels_sha256
 
 
 def test_fingerprint_rejects_unknown_region_comparison() -> None:

@@ -75,6 +75,7 @@ def test_observation_distinguishes_unknown_and_empty_system_regions() -> None:
 def test_observation_rejects_a_fingerprint_with_different_mask_evidence() -> None:
     fingerprint = ScreenFingerprint(
         value="0123456789abcdef",
+        masked_pixels_sha256="b" * 64,
         system_region_mask_sha256="d" * 64,
         source_artifact_id="shot_1",
     )

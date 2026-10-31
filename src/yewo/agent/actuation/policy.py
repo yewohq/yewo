@@ -147,6 +147,26 @@ class ActionPolicy:
             retention=retention,
         )
 
+    def refusal_before_grounding(
+        self,
+        proposal: ActionProposal,
+        observation: Observation,
+        budget: ActionBudget,
+        *,
+        source: ActionSource = ActionSource.PLANNER,
+        tap_repetition: TapRepetition | None = None,
+        expected_back_destination_observation_id: str | None = None,
+    ) -> ActionRefusal | None:
+        """Reject state-invalid proposals before visual grounding."""
+        return self._check_common(
+            proposal,
+            observation,
+            budget,
+            source,
+            tap_repetition,
+            expected_back_destination_observation_id,
+        )
+
     def _check_common(
         self,
         proposal: ActionProposal,
@@ -257,6 +277,15 @@ class ActionPolicy:
                 proposal,
                 ActionRefusalCode.KEYBOARD_RULE,
                 "Dismiss the visible keyboard before pointer or navigation actions.",
+            )
+        requires_existing_focus = definition.requires_keyboard_visible and not (
+            proposal.action is ActionKind.TYPE and proposal.target_expression is not None
+        )
+        if requires_existing_focus and observation.keyboard_visible is not True:
+            return self._refuse(
+                proposal,
+                ActionRefusalCode.KEYBOARD_RULE,
+                "Focus an editable field before using this action.",
             )
         if proposal.action is ActionKind.BACK:
             if observation.device.platform is not DevicePlatform.ANDROID:

@@ -7,11 +7,13 @@ from yewo.grounding import (
     GroundedPoint,
     GroundedRegion,
     GroundingDisposition,
+    GroundingCorrection,
     GroundingInputError,
     GroundingOutputShape,
     GroundingService,
     GroundingTargetOperation,
     VisualGrounder,
+    PixelPoint,
 )
 from yewo.models import ImageModelContent, ModelCallDisposition, TextModelContent
 from yewo.observations import ScreenRegion
@@ -50,6 +52,9 @@ def test_service_sends_only_target_context_and_preserves_call_evidence() -> None
     text_content, image_content = request.messages[0].content
     assert isinstance(text_content, TextModelContent)
     assert "pink add button" in text_content.text
+    assert "Screenshot size: 200 by 400 pixels" in text_content.text
+    assert "Locate the named target itself" in text_content.text
+    assert "Do not explain the answer" in text_content.text
     assert "goal" not in text_content.text.lower()
     assert isinstance(image_content, ImageModelContent)
     assert image_content.screenshot.sha256 == "a" * 64
@@ -76,6 +81,27 @@ def test_service_rejects_platform_region_without_changing_transport_disposition(
     assert result.transport_disposition is ModelCallDisposition.COMPLETED
     assert result.location is None
     assert result.reason == "The model target is inside an excluded platform region."
+
+
+def test_service_tells_grounder_about_failed_point_and_rejects_an_equivalent_retry() -> None:
+    client = StubModelClient("(100,199)")
+    service = GroundingService(client, build_grounding_profile())
+    request = build_grounding_request(
+        correction=GroundingCorrection(
+            previous_point=PixelPoint(x=100, y=200),
+            minimum_distance_px=8,
+        )
+    )
+
+    result = service.ground(request)
+
+    assert result.disposition is GroundingDisposition.REPEATED_POINT
+    assert result.location is None
+    assert result.reason == "The correction repeated the previous ineffective target point."
+    prompt = client.requests[0].messages[0].content[0]
+    assert isinstance(prompt, TextModelContent)
+    assert "previous dispatched point (100,200)" in prompt.text
+    assert "at least 8 source screenshot pixels away" in prompt.text
 
 
 @pytest.mark.parametrize(

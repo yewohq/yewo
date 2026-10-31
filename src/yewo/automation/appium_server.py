@@ -16,6 +16,7 @@ from urllib.request import urlopen
 
 from yewo.automation.appium_runtime import AppiumRuntime, resolve_appium_runtime
 from yewo.automation.errors import AppiumServerError, AppiumStartupTimeoutError
+from yewo.run_narration import current_narrator
 from yewo.resources import ResourceLease, ResourceOwnership
 
 
@@ -165,6 +166,12 @@ def _is_local_http(parsed: SplitResult) -> bool:
     return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
 
 
+def _trace_appium(message: str) -> None:
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.trace("appium-server", message)
+
+
 class AppiumServerManager:
     """Attach to an Appium endpoint or start and own a local process."""
 
@@ -185,6 +192,7 @@ class AppiumServerManager:
         """Return a healthy server without taking ownership of an existing one."""
         status_url = _status_url(config.server_url)
         if self._is_ready(status_url, config):
+            _trace_appium(f"server={config.server_url} ownership=external state=ready")
             return AppiumServerLease(config.server_url, ResourceOwnership.EXTERNAL)
         if not config.start_if_unavailable:
             raise AppiumServerError(f"No ready Appium server exists at {config.server_url}.")
@@ -198,6 +206,10 @@ class AppiumServerManager:
         if log_path is None:
             raise AppiumServerError("A log path is required to start an Appium server.")
         runtime = self._runtime_resolver()
+        _trace_appium(
+            f"server={config.server_url} node={runtime.node_executable} "
+            f"appium_script={runtime.appium_script} state=starting"
+        )
         self._prepare_log(log_path)
         command = self._command(config, parsed, runtime, log_path)
         try:
@@ -211,7 +223,9 @@ class AppiumServerManager:
                 _stop_process(process)
             raise
         if ownership is ResourceOwnership.EXTERNAL:
+            _trace_appium(f"server={config.server_url} ownership=external state=ready")
             return AppiumServerLease(config.server_url, ownership)
+        _trace_appium(f"server={config.server_url} ownership=run state=ready")
         return AppiumServerLease(
             config.server_url,
             ResourceOwnership.RUN,

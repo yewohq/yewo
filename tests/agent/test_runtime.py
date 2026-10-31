@@ -1,6 +1,7 @@
 """Deterministic integration tests for the shared Device Agent loop."""
 
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +25,7 @@ from yewo.agent.actuation import (
     DeclaredValueReference,
     SideEffectClass,
 )
-from yewo.agent.planner import PlanningRequest, TaskPlanner
+from yewo.agent.planner import ActionProposalSource, PlanningRequest
 from yewo.devices.focus import FocusedFieldReading
 from yewo.devices.interaction import ScrollDirection
 from yewo.grounding import GroundingRequest, GroundingResult, VisualGrounder
@@ -99,17 +100,17 @@ class RuntimeDevice:
 
     def tap(self, x: int, y: int, *, count: int = 1, interval_seconds: float = 0.1) -> None:
         self._record("tap", x, y, count, interval_seconds)
-
-    def type_text(self, x: int, y: int, text: str) -> bool | None:
-        self._record("type_text", x, y, text)
+    def focus(self, x: int, y: int) -> object:
+        self._record("focus", x, y)
+        return object()
+    def type_focused_text(self, text: str) -> bool | None:
+        self._record("type_focused_text", text)
         self.active_text = text
         return True
-
-    def clear_text(self, x: int, y: int) -> bool | None:
-        self._record("clear_text", x, y)
+    def clear_focused_text(self) -> bool | None:
+        self._record("clear_focused_text")
         self.active_text = ""
         return True
-
     def double_tap(self, x: int, y: int) -> None:
         self._record("double_tap", x, y)
 
@@ -149,7 +150,6 @@ class RuntimeDevice:
 
     def back(self) -> None:
         self._record("back")
-
     def dismiss_keyboard(self) -> bool:
         self._record("dismiss_keyboard")
         return True
@@ -180,6 +180,7 @@ def _observation(
     fingerprint: str,
     *,
     application_state: int = 4,
+    keyboard_visible: bool | None = False,
     offset_seconds: int = 0,
 ) -> Observation:
     screenshot = build_screenshot(artifact_id=f"shot-{observation_id}")
@@ -187,12 +188,17 @@ def _observation(
         observation_id=observation_id,
         redacted_screenshot=screenshot,
         application_state=application_state,
+        keyboard_visible=keyboard_visible,
         captured_at=datetime(2026, 10, 30, tzinfo=timezone.utc) + timedelta(seconds=offset_seconds),
     )
     return base.model_copy(
         update={
             "screen_fingerprint": base.screen_fingerprint.model_copy(
-                update={"value": fingerprint, "source_artifact_id": screenshot.artifact_id}
+                update={
+                    "value": fingerprint,
+                    "masked_pixels_sha256": sha256(fingerprint.encode()).hexdigest(),
+                    "source_artifact_id": screenshot.artifact_id,
+                }
             )
         }
     )
@@ -220,21 +226,27 @@ def _mode_policy(**updates: object) -> AgentModePolicy:
 
 def _runtime(
     tmp_path: Path,
-    planner: SequencePlanner,
+    planner: ActionProposalSource,
     observations: ObservationSequence,
     device: RuntimeDevice,
     *,
     declared_value_resolver=None,
     grounder: VisualGrounder | None = None,
+    application_recovery=None,
+    screen_comparison=None,
+    monotonic=None,
 ) -> DeviceAgent:
     return DeviceAgent(
-        cast(TaskPlanner, planner),
+        planner,
         grounder or DeterministicGrounder(100, 200),
         cast(ObservationService, observations),
         ActionExecutor(device, declared_value_resolver=declared_value_resolver),
         ActionOutcomeVerifier(),
         AgentStepStore(tmp_path),
         sleep=lambda unused: None,
+        application_recovery=application_recovery,
+        screen_comparison=screen_comparison,
+        **({"monotonic": monotonic} if monotonic is not None else {}),
     )
 
 
@@ -271,11 +283,9 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
         ]
     )
     device = RuntimeDevice()
-
     result = _runtime(tmp_path, planner, observations, device).run(
         task, _mode_policy(), NeverInterrupted()
     )
-
     assert result.terminal_reason is AgentTerminalReason.DONE_REQUESTED
     assert result.usage.planning_requests == 2
     assert result.usage.grounding_requests == 1
@@ -285,7 +295,9 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
     assert result.steps[0].outcome.disposition is ActionOutcomeDisposition.OBSERVED
     assert ActionOutcomeSignal.SCREEN_CHANGED in result.steps[0].outcome.signals
     assert planner.requests[1].history[0].outcome == result.steps[0].outcome
-    assert ActionKind.BACK not in planner.requests[0].available_actions
+    assert {ActionKind.BACK, ActionKind.DISMISS_KEYBOARD}.isdisjoint(
+        planner.requests[0].available_actions
+    )
     assert [step["terminal_reason"] for step in _stored_steps(tmp_path)] == [
         None,
         "done_requested",
@@ -304,6 +316,7 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
             "receipt",
             "settlement_observation_ids",
             "settled_observation_id",
+            "recovery_observation_id",
             "outcome",
             "terminal_reason",
         },
@@ -326,7 +339,6 @@ def test_policy_refusal_returns_to_the_same_planner_history(tmp_path: Path) -> N
             _observation("obs_3", "0000000000000000", offset_seconds=2),
         ]
     )
-
     result = _runtime(
         tmp_path,
         planner,
@@ -337,7 +349,6 @@ def test_policy_refusal_returns_to_the_same_planner_history(tmp_path: Path) -> N
         _mode_policy(action_limits=restricted_limits),
         NeverInterrupted(),
     )
-
     assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS
     assert result.steps[0].refusal is not None
     assert planner.requests[1].history[0].refusal == result.steps[0].refusal
@@ -345,7 +356,7 @@ def test_policy_refusal_returns_to_the_same_planner_history(tmp_path: Path) -> N
     assert second_outcome is not None
     assert second_outcome.disposition is ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE
     assert result.usage.dispatched_actions == 1
-    assert result.usage.grounding_requests == 1
+    assert result.usage.grounding_requests == 0
 
 
 def test_unsettled_application_returns_unavailable_feedback_to_the_planner(
@@ -354,7 +365,7 @@ def test_unsettled_application_returns_unavailable_feedback_to_the_planner(
     planner = SequencePlanner([proposal(ActionKind.TYPE), proposal(ActionKind.CANNOT_PROGRESS)])
     observations = ObservationSequence(
         [
-            _observation("obs_1", "0000000000000000"),
+            _observation("obs_1", "0000000000000000", keyboard_visible=True),
             _observation("obs_2", "1111111111111111", offset_seconds=1),
             _observation("obs_3", "2222222222222222", offset_seconds=2),
             _observation("obs_4", "3333333333333333", offset_seconds=3),
@@ -406,7 +417,7 @@ def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Pat
     planner = SequencePlanner([typed, proposal(ActionKind.DONE)])
     observations = ObservationSequence(
         [
-            _observation("obs_1", "0000000000000000"),
+            _observation("obs_1", "0000000000000000", keyboard_visible=True),
             _observation("obs_2", "1111111111111111", offset_seconds=1),
             _observation("obs_3", "1111111111111111", offset_seconds=2),
         ]
@@ -470,7 +481,6 @@ def test_grounding_failure_preserves_the_proposal_as_a_partial_step(tmp_path: Pa
             RuntimeDevice(),
             grounder=FailingGrounder(),
         ).run(_task(), _mode_policy(), NeverInterrupted())
-
     stored = _stored_steps(tmp_path)
     stored_proposal = stored[0]["proposal"]
     assert isinstance(stored_proposal, dict)
@@ -489,7 +499,6 @@ def test_drag_grounds_and_dispatches_two_distinct_endpoints(tmp_path: Path) -> N
         ]
     )
     device = RuntimeDevice()
-
     result = _runtime(
         tmp_path,
         planner,
@@ -497,7 +506,6 @@ def test_drag_grounds_and_dispatches_two_distinct_endpoints(tmp_path: Path) -> N
         device,
         grounder=ExpressionGrounder(),
     ).run(_task(), _mode_policy(), NeverInterrupted())
-
     assert result.usage.grounding_requests == 2
     assert device.calls == [("drag", (20, 200, 150, 200, 1.0))]
 

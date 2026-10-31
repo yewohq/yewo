@@ -67,18 +67,25 @@ def execute_command(
         executable = Path(command[0]).name
         narrator.trace(
             _NARRATION_SOURCE,
-            f"{executable}: {len(command) - 1} arguments omitted",
+            f"{executable}: {len(command) - 1} arguments omitted state=starting",
         )
     try:
         result = runner(command, timeout_seconds=timeout_seconds)
     except (OSError, subprocess.SubprocessError) as error:
         raise DeviceCommandError(f"Could not {purpose} with {command[0]}.") from error
     if result.returncode:
+        if narrator is not None:
+            narrator.trace(
+                _NARRATION_SOURCE,
+                f"{Path(command[0]).name}: state=failed exit_code={result.returncode}",
+            )
         detail = (result.stderr or result.stdout).strip() or "No command output."
         raise DeviceCommandError(
             f"Could not {purpose} with {command[0]}. The exit code was "
             f"{result.returncode}: {detail}"
         )
+    if narrator is not None:
+        narrator.trace(_NARRATION_SOURCE, f"{Path(command[0]).name}: state=completed exit_code=0")
     return result
 
 
@@ -89,11 +96,27 @@ def capture_optional(
     timeout_seconds: float = 20,
 ) -> str | None:
     """Return trimmed stdout when an optional platform read succeeds."""
+    narrator = current_narrator()
+    executable = Path(command[0]).name
+    if narrator is not None:
+        narrator.trace(
+            _NARRATION_SOURCE,
+            f"{executable}: {len(command) - 1} arguments omitted state=starting optional=true",
+        )
     try:
         result = runner(command, timeout_seconds=timeout_seconds)
     except (OSError, subprocess.SubprocessError):
+        if narrator is not None:
+            narrator.trace(_NARRATION_SOURCE, f"{executable}: state=unavailable optional=true")
         return None
     if result.returncode:
+        if narrator is not None:
+            narrator.trace(
+                _NARRATION_SOURCE,
+                f"{executable}: state=failed exit_code={result.returncode} optional=true",
+            )
         return None
     output = (result.stdout or "").strip()
+    if narrator is not None:
+        narrator.trace(_NARRATION_SOURCE, f"{executable}: state=completed optional=true")
     return output or None

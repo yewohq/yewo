@@ -1,11 +1,11 @@
-"""Strict normal-run configuration tests."""
+"""Strict Yewo-run configuration tests."""
 
 import json
 from pathlib import Path
 
 import pytest
 
-from yewo.agent import NormalRunConfigurationError, load_normal_run_configuration
+from yewo.agent import YewoRunConfigurationError, load_yewo_run_configuration
 
 
 def _configuration() -> dict[str, object]:
@@ -66,6 +66,12 @@ def _configuration() -> dict[str, object]:
                     "role": "grounder",
                     "model": "openrouter/configured/grounder",
                 },
+                {
+                    **profile,
+                    "profile_id": "auditor-primary",
+                    "role": "auditor",
+                    "model": "openrouter/configured/auditor",
+                },
             ]
         },
         "grounding_profile": {
@@ -76,6 +82,7 @@ def _configuration() -> dict[str, object]:
             "supported_shapes": ["point"],
         },
         "planner_profile_id": "planner-primary",
+        "auditor_profile_id": "auditor-primary",
     }
 
 
@@ -86,13 +93,23 @@ def _write_configuration(tmp_path: Path, payload: dict[str, object]) -> Path:
 
 
 def test_loads_explicit_profiles_without_a_default_model(tmp_path: Path) -> None:
-    configuration = load_normal_run_configuration(_write_configuration(tmp_path, _configuration()))
+    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, _configuration()))
 
     assert configuration.planner_profile_id == "planner-primary"
     assert [profile.model for profile in configuration.model_profiles.profiles] == [
         "openrouter/configured/planner",
         "openrouter/configured/grounder",
+        "openrouter/configured/auditor",
     ]
+
+
+def test_loads_an_optional_reusable_memory_root(tmp_path: Path) -> None:
+    payload = _configuration()
+    payload["memory_root"] = "shared-app-memory"
+
+    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+
+    assert configuration.memory_root == Path("shared-app-memory")
 
 
 def test_rejects_declared_values_until_the_cli_has_a_secret_boundary(tmp_path: Path) -> None:
@@ -101,8 +118,8 @@ def test_rejects_declared_values_until_the_cli_has_a_secret_boundary(tmp_path: P
     assert isinstance(task, dict)
     task["declared_value_names"] = ["password"]
 
-    with pytest.raises(NormalRunConfigurationError, match="invalid"):
-        load_normal_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(YewoRunConfigurationError, match="invalid"):
+        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
 
 
 def test_rejects_a_profile_with_the_wrong_role(tmp_path: Path) -> None:
@@ -115,5 +132,5 @@ def test_rejects_a_profile_with_the_wrong_role(tmp_path: Path) -> None:
     assert isinstance(planner_profile, dict)
     planner_profile["role"] = "grounder"
 
-    with pytest.raises(NormalRunConfigurationError, match="invalid"):
-        load_normal_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(YewoRunConfigurationError, match="invalid"):
+        load_yewo_run_configuration(_write_configuration(tmp_path, payload))

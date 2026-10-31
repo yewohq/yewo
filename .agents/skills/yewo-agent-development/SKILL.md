@@ -25,10 +25,12 @@ package boundaries:
   model-call artifacts
 - `src/yewo/grounding`: visual-target contracts, coordinate codecs, and the
   model-backed grounding service
-- `src/yewo/agent`: planning, composition, settlement, and the shared
-  observe-plan-act loop
+- `src/yewo/agent`: `YewoAgent`, reusable app memory and route replay,
+  planning, composition, settlement, and the shared observe-plan-act loop
 - `src/yewo/agent/actuation`: one action's contracts, authorization, dispatch,
   and immediate observable outcome
+- `src/yewo/agent/discovery`: journey-directed evidence acquisition,
+  promotion, and bounded repair for YewoAgent memory
 - `src/yewo/runs`: run coordination, workflow contracts, workspaces, and
   top-level terminal classification
 

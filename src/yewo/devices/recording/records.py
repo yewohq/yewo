@@ -15,12 +15,10 @@ from yewo.artifacts.records import (
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
+    Sha256Digest,
     validate_record_identifier,
 )
 from yewo.observations.records import RedactionRegion
-
-
-_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class ScreenRecordingBoundaryState(StrEnum):
@@ -95,7 +93,7 @@ class ScreenRecordingRedactionProvenance(BaseModel):
 
     policy_id: RecordIdentifier
     mask_count: int = Field(gt=0)
-    mask_set_sha256: str = Field(pattern=_SHA256_PATTERN)
+    mask_set_sha256: Sha256Digest
     input_sensitivity: ArtifactSensitivity
 
 
@@ -160,7 +158,7 @@ class ScreenRecordingArtifactReference(BaseModel):
     segment_index: int = Field(ge=1)
     checkpoint_kind: ScreenRecordingCheckpointKind
     checkpoint_id: RecordIdentifier | None = None
-    sha256: str = Field(pattern=_SHA256_PATTERN)
+    sha256: Sha256Digest
     path: Path
     byte_count: int = Field(gt=0)
     duration_seconds: float = Field(gt=0)

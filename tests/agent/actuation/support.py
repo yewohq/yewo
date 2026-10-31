@@ -63,13 +63,15 @@ def proposal(action: ActionKind = ActionKind.TAP, **updates: object) -> ActionPr
             "target_expression": "the add button",
             "expected_outcome": "The editor opens.",
         },
-        ActionKind.TYPE: {
+        ActionKind.FOCUS: {
             "target_expression": "the name field",
+            "expected_outcome": "The name field receives focus.",
+        },
+        ActionKind.TYPE: {
             "text": LiteralText(value="hello"),
             "expected_outcome": "The name field contains the text.",
         },
         ActionKind.CLEAR: {
-            "target_expression": "the name field",
             "expected_outcome": "The name field is empty.",
         },
         ActionKind.DOUBLE_TAP: {
@@ -103,6 +105,12 @@ def proposal(action: ActionKind = ActionKind.TAP, **updates: object) -> ActionPr
         ActionKind.CANNOT_PROGRESS: {"reason": "No permitted action can progress."},
     }
     values.update(defaults[action])
+    if action not in {
+        ActionKind.SET_DEVICE_CAPABILITY,
+        ActionKind.DONE,
+        ActionKind.CANNOT_PROGRESS,
+    }:
+        values["reason"] = "This is the next useful action supported by current evidence."
     values.update(updates)
     return ActionProposal.model_validate(values)
 

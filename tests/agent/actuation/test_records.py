@@ -17,8 +17,6 @@ from yewo.agent.actuation import (
     TextInput,
 )
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
-from yewo.grounding import PixelPoint
-
 from agent.actuation.support import proposal
 
 
@@ -56,7 +54,6 @@ def test_authorization_round_trip_contains_only_a_declared_value_reference() -> 
         source=ActionSource.PLANNER,
         side_effect=ACTION_DEFINITIONS[ActionKind.TYPE].side_effect,
         expected_outcome="The password field contains the declared value.",
-        target=PixelPoint(x=10, y=20),
         text=DeclaredValueReference(value_name="account_password"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
         retention=ArtifactRetention.RUN,

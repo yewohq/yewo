@@ -79,6 +79,20 @@ uv run python tools/package_gate.py
 
 Add focused deterministic tests for each changed production contract.
 
+Use a proportional validation cadence. During implementation, run only the
+focused tests and static checks that cover the changed contract. Run the full
+offline pytest suite after the change is coherent and once before handoff or
+commit. Do not rerun the complete suite after every small edit when a focused
+test provides the needed evidence.
+
+Treat package verification as a packaging-boundary check, not as a routine
+logic-edit check. Run it when modules are added, moved, or removed; when
+`pyproject.toml`, packaged resources, imports, CLI entry points, or installation
+behavior change; and as a final CI, merge, or release check. For an internal
+logic-only edit, run it once at final verification only when the requested
+handoff requires every active gate. Do not repeat it unless package inputs
+changed or the earlier result was unavailable.
+
 Live journey execution is an explicit integration tier:
 
 ```bash

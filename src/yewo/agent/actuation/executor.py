@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from yewo.artifacts import new_record_identifier
-from yewo.devices.errors import DeviceActionRejectedError
+from yewo.devices.errors import DeviceActionRejectedError, DeviceTargetRejectedError
 from yewo.devices.focus import FocusedFieldReading
 from yewo.devices.interaction import ScrollDirection
 
@@ -27,9 +27,11 @@ class ActionDevice(Protocol):
 
     def tap(self, x: int, y: int, *, count: int = 1, interval_seconds: float = 0.1) -> None: ...
 
-    def type_text(self, x: int, y: int, text: str) -> bool | None: ...
+    def focus(self, x: int, y: int) -> object: ...
 
-    def clear_text(self, x: int, y: int) -> bool | None: ...
+    def type_focused_text(self, text: str) -> bool | None: ...
+
+    def clear_focused_text(self) -> bool | None: ...
 
     def double_tap(self, x: int, y: int) -> None: ...
 
@@ -99,6 +101,17 @@ class ActionExecutor:
         self._consumed_authorizations.add(action.authorization_id)
         try:
             text_delivery = self._dispatch(action)
+        except DeviceTargetRejectedError as error:
+            return DispatchReceipt(
+                receipt_id=self._identifier_factory(),
+                authorization_id=action.authorization_id,
+                proposal_id=action.proposal_id,
+                action=action.action,
+                disposition=DispatchDisposition.TARGET_REJECTED,
+                reason=str(error),
+                sensitivity=action.sensitivity,
+                retention=action.retention,
+            )
         except DeviceActionRejectedError:
             return DispatchReceipt(
                 receipt_id=self._identifier_factory(),
@@ -148,11 +161,15 @@ class ActionExecutor:
                 count=action.tap_count,
                 interval_seconds=action.tap_interval_seconds,
             )
-        elif action.action is ActionKind.TYPE and target is not None and action.text is not None:
+        elif action.action is ActionKind.FOCUS and target is not None:
+            self._device.focus(target.x, target.y)
+        elif action.action is ActionKind.TYPE and action.text is not None:
+            if target is not None:
+                self._device.focus(target.x, target.y)
             expected_text = self._resolve_text(action.text)
-            return _delivery_status(self._device.type_text(target.x, target.y, expected_text))
-        elif action.action is ActionKind.CLEAR and target is not None:
-            return _delivery_status(self._device.clear_text(target.x, target.y))
+            return _delivery_status(self._device.type_focused_text(expected_text))
+        elif action.action is ActionKind.CLEAR:
+            return _delivery_status(self._device.clear_focused_text())
         elif action.action is ActionKind.DOUBLE_TAP and target is not None:
             self._device.double_tap(target.x, target.y)
         elif (

@@ -22,6 +22,7 @@ class ActionKind(StrEnum):
     """Actions understood by the planner-facing runtime contract."""
 
     TAP = "tap"
+    FOCUS = "focus"
     TYPE = "type"
     CLEAR = "clear"
     DOUBLE_TAP = "double_tap"
@@ -63,6 +64,7 @@ class ActionDefinition:
     target_operation: GroundingTargetOperation | None = None
     destination_operation: GroundingTargetOperation | None = None
     blocked_when_keyboard_visible: bool = False
+    requires_keyboard_visible: bool = False
 
 
 ACTION_DEFINITIONS = {
@@ -72,15 +74,21 @@ ACTION_DEFINITIONS = {
         target_operation=GroundingTargetOperation.TAP,
         blocked_when_keyboard_visible=True,
     ),
+    ActionKind.FOCUS: ActionDefinition(
+        handling=ActionHandling.EXECUTE,
+        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
+        target_operation=GroundingTargetOperation.TEXT_FIELD,
+    ),
     ActionKind.TYPE: ActionDefinition(
-        ActionHandling.EXECUTE,
-        SideEffectClass.APPLICATION_MUTATION,
-        GroundingTargetOperation.TEXT_FIELD,
+        handling=ActionHandling.EXECUTE,
+        side_effect=SideEffectClass.APPLICATION_MUTATION,
+        target_operation=GroundingTargetOperation.TEXT_FIELD,
+        requires_keyboard_visible=True,
     ),
     ActionKind.CLEAR: ActionDefinition(
-        ActionHandling.EXECUTE,
-        SideEffectClass.APPLICATION_MUTATION,
-        GroundingTargetOperation.TEXT_FIELD,
+        handling=ActionHandling.EXECUTE,
+        side_effect=SideEffectClass.APPLICATION_MUTATION,
+        requires_keyboard_visible=True,
     ),
     ActionKind.DOUBLE_TAP: ActionDefinition(
         handling=ActionHandling.EXECUTE,
@@ -183,6 +191,7 @@ class ActionProposal(BaseModel):
     proposal_id: RecordIdentifier
     source_observation_id: RecordIdentifier
     action: ActionKind
+    grounding_correction_for_proposal_id: RecordIdentifier | None = None
     target_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
     destination_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
     text: TextInput | None = None
@@ -196,13 +205,26 @@ class ActionProposal(BaseModel):
 
     @model_validator(mode="after")
     def _validate_action_fields(self) -> Self:
+        definition = ACTION_DEFINITIONS[self.action]
+        if (
+            self.grounding_correction_for_proposal_id is not None
+            and (
+                definition.target_operation is None
+                or definition.target_operation is GroundingTargetOperation.SCROLL_REGION
+                or definition.destination_operation is not None
+            )
+        ):
+            raise ValueError("A grounding correction requires one visual point target.")
+        if self.grounding_correction_for_proposal_id == self.proposal_id:
+            raise ValueError("A grounding correction cannot reference its own proposal.")
         required: dict[ActionKind, frozenset[str]] = {
-            ActionKind.TAP: frozenset({"target_expression", "expected_outcome"}),
-            ActionKind.TYPE: frozenset({"target_expression", "text", "expected_outcome"}),
-            ActionKind.CLEAR: frozenset({"target_expression", "expected_outcome"}),
-            ActionKind.DOUBLE_TAP: frozenset({"target_expression", "expected_outcome"}),
+            ActionKind.TAP: frozenset({"target_expression", "expected_outcome", "reason"}),
+            ActionKind.FOCUS: frozenset({"target_expression", "expected_outcome", "reason"}),
+            ActionKind.TYPE: frozenset({"text", "expected_outcome", "reason"}),
+            ActionKind.CLEAR: frozenset({"expected_outcome", "reason"}),
+            ActionKind.DOUBLE_TAP: frozenset({"target_expression", "expected_outcome", "reason"}),
             ActionKind.LONG_PRESS: frozenset(
-                {"target_expression", "duration_seconds", "expected_outcome"}
+                {"target_expression", "duration_seconds", "expected_outcome", "reason"}
             ),
             ActionKind.DRAG: frozenset(
                 {
@@ -210,18 +232,20 @@ class ActionProposal(BaseModel):
                     "destination_expression",
                     "duration_seconds",
                     "expected_outcome",
+                    "reason",
                 }
             ),
-            ActionKind.SCROLL: frozenset({"direction", "distance", "expected_outcome"}),
-            ActionKind.BACK: frozenset({"expected_outcome"}),
-            ActionKind.DISMISS_KEYBOARD: frozenset({"expected_outcome"}),
-            ActionKind.WAIT: frozenset({"duration_seconds", "expected_outcome"}),
+            ActionKind.SCROLL: frozenset({"direction", "distance", "expected_outcome", "reason"}),
+            ActionKind.BACK: frozenset({"expected_outcome", "reason"}),
+            ActionKind.DISMISS_KEYBOARD: frozenset({"expected_outcome", "reason"}),
+            ActionKind.WAIT: frozenset({"duration_seconds", "expected_outcome", "reason"}),
             ActionKind.SET_DEVICE_CAPABILITY: frozenset({"reason"}),
             ActionKind.DONE: frozenset({"reason"}),
             ActionKind.CANNOT_PROGRESS: frozenset({"reason"}),
         }
         optional: dict[ActionKind, frozenset[str]] = {
             ActionKind.SCROLL: frozenset({"target_expression"}),
+            ActionKind.TYPE: frozenset({"target_expression"}),
         }
         action_fields = {
             "target_expression": self.target_expression,
@@ -308,6 +332,7 @@ class ActionRefusalCode(StrEnum):
     APPLICATION_SCOPE = "application_scope"
     ACTION_BUDGET_EXHAUSTED = "action_budget_exhausted"
     NON_DISPATCH_ACTION = "non_dispatch_action"
+    REPEATED_NO_PROGRESS = "repeated_no_progress"
 
 
 class ActionRefusal(BaseModel):
@@ -359,8 +384,9 @@ class AuthorizedAction(BaseModel):
             raise ValueError("The authorization sensitivity does not match its text input.")
         required: dict[ActionKind, frozenset[str]] = {
             ActionKind.TAP: frozenset({"target"}),
-            ActionKind.TYPE: frozenset({"target", "text"}),
-            ActionKind.CLEAR: frozenset({"target"}),
+            ActionKind.FOCUS: frozenset({"target"}),
+            ActionKind.TYPE: frozenset({"text"}),
+            ActionKind.CLEAR: frozenset(),
             ActionKind.DOUBLE_TAP: frozenset({"target"}),
             ActionKind.LONG_PRESS: frozenset({"target", "duration_seconds"}),
             ActionKind.DRAG: frozenset({"target", "destination", "duration_seconds"}),
@@ -371,6 +397,7 @@ class AuthorizedAction(BaseModel):
         }
         optional: dict[ActionKind, frozenset[str]] = {
             ActionKind.SCROLL: frozenset({"region"}),
+            ActionKind.TYPE: frozenset({"target"}),
         }
         action_fields = {
             "target": self.target,
@@ -407,6 +434,7 @@ class DispatchDisposition(StrEnum):
     """Whether the device boundary accepted the dispatch."""
 
     DISPATCHED = "dispatched"
+    TARGET_REJECTED = "target_rejected"
     DEVICE_REFUSED = "device_refused"
 
 
@@ -427,8 +455,8 @@ class DispatchReceipt(BaseModel):
 
     @model_validator(mode="after")
     def _validate_disposition(self) -> Self:
-        if self.disposition is DispatchDisposition.DEVICE_REFUSED and self.reason is None:
-            raise ValueError("A refused dispatch must contain a reason.")
+        if self.disposition is not DispatchDisposition.DISPATCHED and self.reason is None:
+            raise ValueError("A rejected dispatch must contain a reason.")
         if self.disposition is DispatchDisposition.DISPATCHED and self.reason is not None:
             raise ValueError("A dispatched receipt cannot contain a refusal reason.")
         return self

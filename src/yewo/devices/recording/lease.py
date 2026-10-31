@@ -12,6 +12,7 @@ from yewo.devices.recording.records import (
 )
 from yewo.devices.recording.service import ScreenRecordingService
 from yewo.observations.records import RedactionRegion
+from yewo.run_narration import current_narrator
 
 
 class ScreenRecordingLease:
@@ -30,7 +31,9 @@ class ScreenRecordingLease:
     @classmethod
     def open(cls, service: ScreenRecordingService) -> Self:
         """Start a recording boundary and return its owning lease."""
-        return cls(service, service.begin())
+        lease = cls(service, service.begin())
+        _narrate_boundary(lease.boundary)
+        return lease
 
     @property
     def closed(self) -> bool:
@@ -52,6 +55,7 @@ class ScreenRecordingLease:
             scenario_id,
         )
         self._receipts.append(receipt)
+        _narrate_receipt(receipt)
         return receipt
 
     def add_redaction_region(
@@ -80,6 +84,46 @@ class ScreenRecordingLease:
         if self._closed:
             return
         try:
-            self._receipts.append(self._service.finish(self.boundary))
+            receipt = self._service.finish(self.boundary)
+            self._receipts.append(receipt)
+            _narrate_receipt(receipt)
         finally:
             self._closed = True
+
+
+def _narrate_boundary(boundary: ScreenRecordingBoundary) -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    narrator.record(
+        "screen-recording",
+        f"Screen recording {boundary.state.value}.",
+    )
+    narrator.trace(
+        "screen-recording",
+        f"recording={boundary.recording_id} state={boundary.state.value} "
+        f"effective_maximum_seconds={boundary.effective_maximum_seconds or 'none'}",
+    )
+
+
+def _narrate_receipt(receipt: ScreenRecordingCheckpointReceipt) -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    phase = (
+        "finished"
+        if receipt.checkpoint_kind is ScreenRecordingCheckpointKind.SESSION_END
+        else "checkpointed"
+    )
+    narrator.record(
+        "screen-recording",
+        f"Screen recording {phase} with segment state {receipt.state.value}.",
+    )
+    artifact = receipt.artifact
+    narrator.trace(
+        "screen-recording",
+        f"recording={receipt.recording_id} receipt={receipt.receipt_id} "
+        f"segment={receipt.segment_index} state={receipt.state.value} "
+        f"artifact={artifact.path if artifact is not None else 'none'} "
+        f"remote_cleanup={receipt.remote_cleanup_state.value}",
+    )

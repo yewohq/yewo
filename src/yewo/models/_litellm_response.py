@@ -192,9 +192,7 @@ def _upstream_provider(
         if provider is not None:
             return provider
     metadata = _mapping(payload.get("openrouter_metadata"))
-    return _optional_text(metadata.get("provider_name")) or _optional_text(
-        metadata.get("provider")
-    )
+    return _optional_text(metadata.get("provider_name")) or _optional_text(metadata.get("provider"))
 
 
 def _is_refusal(message: dict[str, object], finish_reason: str | None) -> bool:

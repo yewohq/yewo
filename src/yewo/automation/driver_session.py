@@ -10,6 +10,7 @@ from appium.options.common.base import AppiumOptions
 
 from yewo.automation.appium_server import AppiumServerLease
 from yewo.automation.errors import DriverSessionError
+from yewo.run_narration import current_narrator
 from yewo.resources import ResourceLease, ResourceOwnership
 
 
@@ -93,8 +94,15 @@ class DriverSessionManager:
             with suppress(Exception):
                 driver.quit()
             raise DriverSessionError("Appium returned a driver without a session ID.")
-        return DriverSessionLease(
+        lease = DriverSessionLease(
             driver,
             session_id.strip(),
             server.server_url,
         )
+        narrator = current_narrator()
+        if narrator is not None:
+            narrator.trace(
+                "appium-driver",
+                f"session={lease.session_id} server={lease.server_url} state=opened",
+            )
+        return lease

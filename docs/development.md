@@ -39,6 +39,21 @@ revision and passes its path through this variable.
 
 The gates have no allowances inherited from the archived implementation.
 
+## Run logs
+
+Each run has two readable logs under `runtime/`:
+
+- `yewo-session.log` gives the operator a continuous high-level timeline. It includes setup,
+  model roles, agent decisions, actions, outcomes, verification, discovery, evidence services,
+  cleanup, and the terminal result.
+- `trace.log` indexes low-level diagnostics. It includes safe identifiers, model attribution and
+  usage, observation fingerprints, grounding geometry, policy and dispatch records, artifact
+  paths, subprocess states, and cleanup states.
+
+The JSON and JSONL artifacts remain authoritative. Appium and device logs keep full external-tool
+output in their dedicated files. The readable logs do not copy prompts, model response bodies,
+typed values, credentials, or raw device content.
+
 ## Evaluation workspace
 
 Maintained benchmark inputs live under `eval/`. Deterministic transport and

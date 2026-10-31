@@ -9,6 +9,7 @@ from typing import cast
 
 from yewo.applications import (
     ApplicationDescriptor,
+    ApplicationInstallationChange,
     ApplicationInstallMode,
     ApplicationRequest,
 )
@@ -137,6 +138,9 @@ class SessionStub:
         self.events = events
         self.device = device
         self.server = server
+        self.installation_change = ApplicationInstallationChange.NONE
+        self.installation_ownership = ResourceOwnership.EXTERNAL
+        self.retain_installation = False
         self.fail_close = fail_close
         self.interrupt_close = interrupt_close
 

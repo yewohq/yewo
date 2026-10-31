@@ -146,6 +146,61 @@ def test_visible_keyboard_blocks_pointer_and_navigation_actions(action: ActionKi
     assert result.code is ActionRefusalCode.KEYBOARD_RULE
 
 
+def test_keyboard_rule_can_refuse_before_grounding() -> None:
+    result = ActionPolicy(limits()).refusal_before_grounding(
+        proposal(),
+        build_observation(keyboard_visible=True),
+        budget(),
+    )
+
+    assert result is not None
+    assert result.code is ActionRefusalCode.KEYBOARD_RULE
+
+
+@pytest.mark.parametrize("action", [ActionKind.TYPE, ActionKind.CLEAR])
+def test_text_editing_requires_a_focused_field(action: ActionKind) -> None:
+    result = ActionPolicy(limits()).refusal_before_grounding(
+        proposal(action),
+        build_observation(keyboard_visible=False),
+        budget(),
+    )
+
+    assert result is not None
+    assert result.code is ActionRefusalCode.KEYBOARD_RULE
+
+
+def test_targeted_type_can_focus_a_known_field_before_typing() -> None:
+    candidate = proposal(ActionKind.TYPE, target_expression="the temperature field")
+    result = ActionPolicy(limits()).authorize(
+        candidate,
+        build_observation(keyboard_visible=False),
+        budget(),
+        target_grounding=point_grounding(
+            expression="the temperature field",
+            operation=GroundingTargetOperation.TEXT_FIELD,
+        ),
+    )
+
+    assert isinstance(result, AuthorizedAction)
+    assert result.target is not None
+
+
+def test_focus_remains_available_while_the_keyboard_is_visible() -> None:
+    candidate = proposal(ActionKind.FOCUS)
+
+    result = ActionPolicy(limits()).authorize(
+        candidate,
+        build_observation(keyboard_visible=True),
+        budget(),
+        target_grounding=point_grounding(
+            expression=candidate.target_expression or "the name field",
+            operation=GroundingTargetOperation.TEXT_FIELD,
+        ),
+    )
+
+    assert isinstance(result, AuthorizedAction)
+
+
 def test_enforces_application_scope() -> None:
     app_result = ActionPolicy(limits()).authorize(
         proposal(),

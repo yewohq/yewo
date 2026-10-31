@@ -1,6 +1,7 @@
 """Deterministic action-outcome classification tests."""
 
 from datetime import timedelta
+from hashlib import sha256
 
 import pytest
 
@@ -47,7 +48,7 @@ def _authorization(
         "sensitivity": ArtifactSensitivity.DEVICE_CONTENT,
         "retention": ArtifactRetention.RUN,
     }
-    if action in {ActionKind.TAP, ActionKind.TYPE, ActionKind.CLEAR}:
+    if action in {ActionKind.TAP, ActionKind.FOCUS}:
         values["target"] = PixelPoint(x=50, y=100)
     if action is ActionKind.TYPE:
         values["text"] = (
@@ -85,6 +86,12 @@ def _settled_observation(
     fingerprint = updates.pop("fingerprint", "0123456789abcdef")
     if not isinstance(fingerprint, str):
         raise TypeError("The test fingerprint must be a string.")
+    masked_pixels_sha256 = updates.pop(
+        "masked_pixels_sha256",
+        sha256(fingerprint.encode()).hexdigest(),
+    )
+    if not isinstance(masked_pixels_sha256, str):
+        raise TypeError("The test masked-pixel digest must be a string.")
     source = build_observation()
     screenshot = build_screenshot(artifact_id="shot_2")
     values: dict[str, object] = {
@@ -94,6 +101,7 @@ def _settled_observation(
         "redacted_screenshot": screenshot,
         "screen_fingerprint": ScreenFingerprint(
             value=fingerprint,
+            masked_pixels_sha256=masked_pixels_sha256,
             system_region_mask_sha256=None,
             source_artifact_id=screenshot.artifact_id,
         ),
@@ -133,6 +141,19 @@ def test_records_multiple_observed_signals_for_one_text_action() -> None:
         ActionOutcomeSignal.TEXT_LANDED,
     }
     assert outcome.outcome_id == "outcome-1"
+
+
+def test_exact_pixel_digest_detects_change_when_phash_is_unchanged() -> None:
+    action = _authorization(ActionKind.TAP)
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(masked_pixels_sha256="f" * 64),
+    )
+
+    assert outcome.disposition is ActionOutcomeDisposition.OBSERVED
+    assert outcome.signals == {ActionOutcomeSignal.SCREEN_CHANGED}
 
 
 @pytest.mark.parametrize(

@@ -12,7 +12,9 @@ from yewo.devices.inventory import DeviceKind, DevicePlatform
 
 
 _IDENTIFIER_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 RecordIdentifier = Annotated[str, Field(pattern=_IDENTIFIER_PATTERN)]
+Sha256Digest = Annotated[str, Field(pattern=_SHA256_PATTERN)]
 _IDENTIFIER_ADAPTER = TypeAdapter(RecordIdentifier)
 
 
@@ -63,4 +65,4 @@ class EvidenceApplicationIdentity(BaseModel):
     application_id: str = Field(min_length=1)
     version: str | None = Field(default=None, min_length=1)
     build: str | None = Field(default=None, min_length=1)
-    artifact_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    artifact_sha256: Sha256Digest | None = None

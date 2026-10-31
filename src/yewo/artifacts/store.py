@@ -63,6 +63,7 @@ class AtomicArtifactWriter:
                 with suppress(OSError):
                     temporary_path.unlink(missing_ok=True)
 
+
 class AppendOnlyJsonlWriter:
     """Append canonical records to one durable JSONL ledger."""
 
@@ -84,8 +85,7 @@ class AppendOnlyJsonlWriter:
             )
         try:
             content = (
-                json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-                + "\n"
+                json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
             ).encode("utf-8")
         except (TypeError, ValueError) as error:
             raise ArtifactWriteError("The JSONL record is not serializable.") from error
@@ -134,7 +134,6 @@ class AppendOnlyJsonlWriter:
             if descriptor is not None:
                 os.close(descriptor)
         return content
-
 
 
 def _prepare_directory(root: Path, directory: Path) -> None:

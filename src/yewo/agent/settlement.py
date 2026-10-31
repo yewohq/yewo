@@ -69,7 +69,8 @@ def observations_are_compatible(first: Observation, second: Observation) -> bool
         and first.keyboard_visible == second.keyboard_visible
         and first.orientation is second.orientation
         and first.screen_fingerprint.algorithm == second.screen_fingerprint.algorithm
-        and first.screen_fingerprint.value == second.screen_fingerprint.value
+        and first.screen_fingerprint.masked_pixels_sha256
+        == second.screen_fingerprint.masked_pixels_sha256
         and first.screen_fingerprint.system_region_mask_sha256
         == second.screen_fingerprint.system_region_mask_sha256
     )

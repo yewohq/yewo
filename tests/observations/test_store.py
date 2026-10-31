@@ -155,11 +155,46 @@ def test_store_rejects_screenshot_directory_outside_artifact_root(
 def test_observation_store_persists_round_trippable_json(tmp_path: Path) -> None:
     observation = _persistable_observation(tmp_path)
 
-    relative_path = ObservationStore(tmp_path).persist(observation)
+    store = ObservationStore(tmp_path)
+    relative_path = store.persist(observation)
 
     assert relative_path == Path("assets/observations.jsonl")
     restored = observation.model_validate_json((tmp_path / relative_path).read_text().splitlines()[0])
     assert restored == observation
+    assert store.load_all() == (observation,)
+
+
+def test_observation_store_loads_only_requested_evidence(tmp_path: Path) -> None:
+    observation = _persistable_observation(tmp_path)
+    second = observation.model_copy(update={"observation_id": "observation_2"})
+    store = ObservationStore(tmp_path)
+    store.persist(observation)
+    store.persist(second)
+
+    assert store.load_selected({second.observation_id}) == (second,)
+
+    with pytest.raises(ObservationCaptureError, match="missing requested"):
+        store.load_selected({"missing_observation"})
+
+
+def test_observation_store_rejects_an_invalid_ledger(tmp_path: Path) -> None:
+    path = tmp_path / "assets/observations.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("not-json\n")
+
+    with pytest.raises(ObservationCaptureError, match="ledger is invalid"):
+        ObservationStore(tmp_path).load_all()
+
+
+def test_observation_store_rejects_an_incomplete_final_line(tmp_path: Path) -> None:
+    observation = _persistable_observation(tmp_path)
+    store = ObservationStore(tmp_path)
+    relative_path = store.persist(observation)
+    path = tmp_path / relative_path
+    path.write_bytes(path.read_bytes().rstrip(b"\n"))
+
+    with pytest.raises(ObservationCaptureError, match="incomplete final line"):
+        store.load_all()
 
 
 def test_observation_store_does_not_overwrite_existing_record(tmp_path: Path) -> None:

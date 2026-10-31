@@ -16,6 +16,11 @@ from pydantic import BaseModel
 from yewo.models.artifacts import ModelArtifactStore, ModelImageReader, ModelResponseEvidence
 from yewo.models.errors import ModelInputError
 from yewo.models.message_encoding import ModelMessageEncoder
+from yewo.models.narration import (
+    narrate_model_request,
+    narrate_model_response,
+    trace_model_call,
+)
 from yewo.models._litellm_response import (
     CostCalculator,
     NormalizedModelCompletion,
@@ -102,6 +107,7 @@ class LiteLLMModelClient:
     ) -> ModelResponse:
         """Complete one request with bounded provider and validation attempts."""
         profile = self._profiles.resolve(request.profile_id, request.role)
+        narrate_model_request(request, profile)
         self._validate_response_contract(request, response_model)
         base_messages = self._prepare_messages(request.messages, profile)
         response_format = self._response_format(profile, request)
@@ -276,25 +282,39 @@ class LiteLLMModelClient:
         mode: StructuredOutputMode,
         corrections: tuple[ModelMessage, ...],
     ) -> tuple[ModelMessage, ...]:
-        messages = list(base_messages)
-        messages.extend(corrections)
         contract = request.response_contract
         if contract is None or mode is StructuredOutputMode.NATIVE_SCHEMA:
-            return tuple(messages)
+            return (*base_messages, *corrections)
         schema = json.dumps(contract.json_schema, sort_keys=True, separators=(",", ":"))
-        messages.append(
-            ModelMessage(
-                role=ModelMessageRole.USER,
-                content=(
-                    TextModelContent(
-                        text=(
-                            "Return one JSON object that matches this schema. "
-                            f"Do not include other text.\n{schema}"
-                        )
-                    ),
-                ),
+        instruction = TextModelContent(
+            text=(
+                "Return one JSON object that matches this schema. "
+                f"Do not include other text.\n{schema}"
             )
         )
+        messages = list(base_messages)
+        system_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].role is ModelMessageRole.SYSTEM
+            ),
+            None,
+        )
+        if system_index is None:
+            messages.extend(corrections)
+            messages.append(
+                ModelMessage(
+                    role=ModelMessageRole.USER,
+                    content=(instruction,),
+                )
+            )
+        else:
+            system_message = messages[system_index]
+            messages[system_index] = system_message.model_copy(
+                update={"content": (*system_message.content, instruction)}
+            )
+            messages.extend(corrections)
         return tuple(messages)
 
     @staticmethod
@@ -388,10 +408,12 @@ class LiteLLMModelClient:
         response_evidence: ModelResponseEvidence,
     ) -> ModelCallRecord:
         reference = self._artifacts.persist_call(call, response_evidence)
-        return call.model_copy(update={"call_artifact": reference})
+        persisted = call.model_copy(update={"call_artifact": reference})
+        trace_model_call(persisted)
+        return persisted
 
-    @staticmethod
     def _response(
+        self,
         request: ModelRequest,
         disposition: ModelCallDisposition,
         calls: tuple[ModelCallRecord, ...],
@@ -400,7 +422,7 @@ class LiteLLMModelClient:
         structured_output: dict[str, object] | None = None,
         reason: str | None = None,
     ) -> ModelResponse:
-        return ModelResponse(
+        response = ModelResponse(
             request_id=request.request_id,
             disposition=disposition,
             text=text,
@@ -410,6 +432,8 @@ class LiteLLMModelClient:
             sensitivity=request.sensitivity,
             retention=request.retention,
         )
+        narrate_model_response(request, response)
+        return response
 
     @staticmethod
     def _provider_error_call(

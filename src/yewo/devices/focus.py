@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from yewo.devices.errors import DeviceActionRejectedError
+from yewo.devices.errors import DeviceTargetRejectedError
 from yewo.devices.screen import ScreenCalibration, ScreenGeometry
 
 
@@ -103,6 +103,10 @@ class FocusService:
                 target_element = None
             else:
                 return target_element
+        if self._keyboard_visible() is True:
+            raise DeviceTargetRejectedError(
+                "The keyboard is visible, but no editable target field contains the grounded point."
+            )
         self._tap(x, y)
         deadline = self._clock.monotonic() + self._timeout_seconds
         while True:
@@ -130,15 +134,18 @@ class FocusService:
                     return field
             remaining_seconds = deadline - self._clock.monotonic()
             if remaining_seconds <= 0:
-                raise DeviceActionRejectedError("The target field did not accept keyboard focus.")
+                raise DeviceTargetRejectedError(
+                    "The grounded target field did not accept keyboard focus. It may be a label or "
+                    "an editable field obscured by the keyboard."
+                )
             self._clock.sleep(min(self._poll_seconds, remaining_seconds))
 
     def reading(self) -> FocusedFieldReading:
         """Return focus and keyboard state without the field value."""
-        element = _active_element(self._driver)
-        if element is None:
-            focused = _focused_elements(self._driver)
-            element = focused[0] if focused else None
+        try:
+            element = self.focused_field()
+        except DeviceTargetRejectedError:
+            element = None
         if element is None:
             return FocusedFieldReading(
                 is_focused=None,
@@ -149,6 +156,24 @@ class FocusService:
             is_focused=_boolean_attribute(element.get_attribute("focused")),
             driver_bounds=_element_bounds(element),
             keyboard_visible=self._keyboard_visible(),
+        )
+
+    def focused_field(self) -> TextElement:
+        """Return the active editable field without changing focus."""
+        active = _active_element(self._driver)
+        if active is not None and _boolean_attribute(active.get_attribute("focused")) is True:
+            return active
+        focused = _focused_elements(self._driver)
+        if focused:
+            return focused[0]
+        if (
+            active is not None
+            and _boolean_attribute(active.get_attribute("focused")) is not False
+            and self._keyboard_visible() is True
+        ):
+            return active
+        raise DeviceTargetRejectedError(
+            "No editable field has verified focus. Focus a field before editing its text."
         )
 
     def _keyboard_visible(self) -> bool | None:

@@ -33,8 +33,20 @@ from yewo.models import (
 from yewo.observations import PixelRegion
 
 
-GROUNDING_PROMPT = """Identify the {operation} target that matches: {expression}
-Return exactly {response_shape} in {coordinate_space}.
+GROUNDING_PROMPT = """You are a GUI visual grounder. Locate one visible target in the screenshot.
+
+Target operation: {operation}
+Referring expression: {expression}
+Screenshot size: {width_px} by {height_px} pixels.
+
+Localization rules:
+- Locate the named target itself, not a nearby item, blank space, or parent container.
+- Use all stated visual attributes, relationships, and scope to reject similar targets.
+- A text label and the control or row that contains it are different targets.
+- {location_instruction}
+{correction_instruction}
+
+Output only {response_shape} in {coordinate_space}. Do not explain the answer.
 If no visible target matches, return: refused: target not found
 If more than one visible target matches, return: ambiguous: target is not unique"""
 
@@ -68,7 +80,8 @@ class GroundingService:
         model_request = self._build_model_request(request)
         response = self._model_client.complete(model_request)
         decoded = self._decode_response(response, request)
-        validated = self._validate_excluded_regions(decoded, request)
+        validated = self._validate_correction_distance(decoded, request)
+        validated = self._validate_excluded_regions(validated, request)
         return self._build_result(request, response, validated)
 
     def _validate_supported_request(self, request: GroundingRequest) -> None:
@@ -92,9 +105,18 @@ class GroundingService:
             if request.output_shape is GroundingOutputShape.POINT
             else "one region as (left,top,right,bottom)"
         )
+        location_instruction = (
+            "Choose a stable point inside the named target, near the center of that target."
+            if request.output_shape is GroundingOutputShape.POINT
+            else "Bound the named visible region without including surrounding controls."
+        )
         prompt = GROUNDING_PROMPT.format(
             operation=request.operation.value,
             expression=request.expression,
+            width_px=request.screenshot.width_px,
+            height_px=request.screenshot.height_px,
+            location_instruction=location_instruction,
+            correction_instruction=_correction_instruction(request),
             response_shape=response_instruction,
             coordinate_space=coordinate_instruction,
         )
@@ -137,6 +159,23 @@ class GroundingService:
         return DecodedGrounding(
             disposition,
             reason=response.reason or "The model did not return a usable grounding response.",
+        )
+
+    @staticmethod
+    def _validate_correction_distance(
+        decoded: DecodedGrounding,
+        request: GroundingRequest,
+    ) -> DecodedGrounding:
+        if not isinstance(decoded.location, GroundedPoint) or request.correction is None:
+            return decoded
+        point = decoded.location.pixel
+        previous = request.correction.previous_point
+        distance_squared = (point.x - previous.x) ** 2 + (point.y - previous.y) ** 2
+        if distance_squared >= request.correction.minimum_distance_px**2:
+            return decoded
+        return DecodedGrounding(
+            GroundingDisposition.REPEATED_POINT,
+            reason="The correction repeated the previous ineffective target point.",
         )
 
     @staticmethod
@@ -193,6 +232,18 @@ class GroundingService:
         )
 
 
+def _correction_instruction(request: GroundingRequest) -> str:
+    if request.correction is None:
+        return ""
+    point = request.correction.previous_point
+    return (
+        f"The previous dispatched point ({point.x},{point.y}) produced no observable change. "
+        "Use the refined target description. "
+        f"Choose a point at least {request.correction.minimum_distance_px} source screenshot "
+        "pixels away from the previous point."
+    )
+
+
 def _regions_overlap(first: PixelRegion, second: PixelRegion) -> bool:
     return (
         first.left < second.right
@@ -218,9 +269,7 @@ def _total_latency(calls: tuple[ModelCallRecord, ...]) -> float | None:
 def _total_usage(calls: tuple[ModelCallRecord, ...]) -> ModelCallUsage:
     usage_records = tuple(call.usage for call in calls)
     return ModelCallUsage(
-        prompt_tokens=_sum_optional_values(
-            tuple(usage.prompt_tokens for usage in usage_records)
-        ),
+        prompt_tokens=_sum_optional_values(tuple(usage.prompt_tokens for usage in usage_records)),
         completion_tokens=_sum_optional_values(
             tuple(usage.completion_tokens for usage in usage_records)
         ),

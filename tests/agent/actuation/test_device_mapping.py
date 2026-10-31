@@ -119,18 +119,19 @@ def test_text_and_keyboard_dispatch_use_platform_interaction(platform: DevicePla
     executor = ActionExecutor(interaction)
     point = PixelPoint(x=40, y=80)
 
+    focused = executor.dispatch(authorized(ActionKind.FOCUS, "auth-focus", target=point))
     typed = executor.dispatch(
         authorized(
             ActionKind.TYPE,
             "auth-type",
-            target=point,
             text=LiteralText(value="hello"),
         )
     )
-    executor.dispatch(authorized(ActionKind.CLEAR, "auth-clear", target=point))
+    executor.dispatch(authorized(ActionKind.CLEAR, "auth-clear"))
     driver.keyboard = True
     dismissed = executor.dispatch(authorized(ActionKind.DISMISS_KEYBOARD, "auth-keyboard"))
 
+    assert focused.disposition.value == "dispatched"
     assert typed.disposition.value == "dispatched"
     assert driver.element.cleared
     assert dismissed.disposition.value == "dispatched"

@@ -336,7 +336,12 @@ class DeviceInteraction:
         self.swipe(*scroll_gesture(direction, left, top, right, bottom, distance_fraction))
 
     def type_text(self, x: int, y: int, text: str) -> bool | None:
-        field = self.focus(x, y)
+        return self._type_in_field(self.focus(x, y), text)
+
+    def type_focused_text(self, text: str) -> bool | None:
+        return self._type_in_field(self._focus.focused_field(), text)
+
+    def _type_in_field(self, field: TextElement, text: str) -> bool | None:
         before = self._text_value(field)
         field.send_keys(text)
         after = self._text_value(field)
@@ -345,7 +350,11 @@ class DeviceInteraction:
         return after == text or (before is not None and after == before + text)
 
     def clear_text(self, x: int, y: int) -> bool | None:
-        field = self.focus(x, y)
+        return self._clear_field(self.focus(x, y))
+
+    def clear_focused_text(self) -> bool | None:
+        return self._clear_field(self._focus.focused_field())
+    def _clear_field(self, field: TextElement) -> bool | None:
         self._backend.clear_text(self._driver, field)
         value = self._text_value(field)
         return value == "" if value is not None else None

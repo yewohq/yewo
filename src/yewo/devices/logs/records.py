@@ -15,6 +15,7 @@ from yewo.artifacts.records import (
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
+    Sha256Digest,
     validate_record_identifier,
 )
 from yewo.devices.diagnostics import (
@@ -27,7 +28,6 @@ from yewo.devices.diagnostics import (
 _LOG_TYPE_PATTERN = r"^[^\s\x00-\x1f\x7f/\\]{1,128}$"
 _ARTIFACT_STEM_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 _POLICY_ID_PATTERN = r"^[a-z0-9][a-z0-9_.-]{0,127}$"
-_SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
 
 class DeviceLogBoundaryState(StrEnum):
@@ -115,7 +115,7 @@ class DeviceLogArtifactReference(BaseModel):
     occurred_at: datetime | None = None
     platform_reason: str | None = Field(default=None, min_length=1, max_length=256)
     platform_code: str | None = Field(default=None, min_length=1, max_length=128)
-    sha256: str = Field(pattern=_SHA256_PATTERN)
+    sha256: Sha256Digest
     path: Path
     byte_count: int = Field(gt=0)
     entry_count: int = Field(gt=0)
