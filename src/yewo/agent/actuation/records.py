@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity, RecordIdentifier
 from yewo.devices.interaction import (
@@ -192,13 +192,22 @@ class ActionProposal(BaseModel):
     source_observation_id: RecordIdentifier
     action: ActionKind
     grounding_correction_for_proposal_id: RecordIdentifier | None = None
+    interaction_refinement_for_proposal_id: RecordIdentifier | None = None
     target_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
     destination_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
     text: TextInput | None = None
     duration_seconds: float | None = Field(default=None, ge=0)
     direction: ScrollDirection | None = None
     distance: ScrollDistance | None = None
-    expected_outcome: str | None = Field(default=None, min_length=1, max_length=2_000)
+    expected_outcome: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2_000,
+        description=(
+            "The planner's unverified prediction for this action. This value is not "
+            "observed outcome evidence."
+        ),
+    )
     reason: str | None = Field(default=None, min_length=1, max_length=2_000)
     sensitivity: Literal[ArtifactSensitivity.DEVICE_CONTENT] = ArtifactSensitivity.DEVICE_CONTENT
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
@@ -217,6 +226,22 @@ class ActionProposal(BaseModel):
             raise ValueError("A grounding correction requires one visual point target.")
         if self.grounding_correction_for_proposal_id == self.proposal_id:
             raise ValueError("A grounding correction cannot reference its own proposal.")
+        if self.interaction_refinement_for_proposal_id is not None and (
+            self.target_expression is None
+            or definition.target_operation is None
+            or definition.target_operation is GroundingTargetOperation.SCROLL_REGION
+            or definition.destination_operation is not None
+        ):
+            raise ValueError("An interaction refinement requires one visual point target.")
+        if self.interaction_refinement_for_proposal_id == self.proposal_id:
+            raise ValueError("An interaction refinement cannot reference its own proposal.")
+        if (
+            self.grounding_correction_for_proposal_id is not None
+            and self.interaction_refinement_for_proposal_id is not None
+        ):
+            raise ValueError(
+                "A proposal cannot be both a grounding correction and an interaction refinement."
+            )
         required: dict[ActionKind, frozenset[str]] = {
             ActionKind.TAP: frozenset({"target_expression", "expected_outcome", "reason"}),
             ActionKind.FOCUS: frozenset({"target_expression", "expected_outcome", "reason"}),
@@ -266,6 +291,39 @@ class ActionProposal(BaseModel):
         if unexpected:
             names = ", ".join(sorted(unexpected))
             raise ValueError(f"{self.action.value} does not accept: {names}.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_planning_request_context(self, info: ValidationInfo) -> Self:
+        """Reject a structurally valid proposal that cannot serve this planning request."""
+        context = info.context
+        if not isinstance(context, dict):
+            return self
+        expected_proposal_id = context.get("expected_proposal_id")
+        if isinstance(expected_proposal_id, str) and self.proposal_id != expected_proposal_id:
+            raise ValueError("Copy the proposal_id from the planning context exactly.")
+        expected_observation_id = context.get("expected_observation_id")
+        if (
+            isinstance(expected_observation_id, str)
+            and self.source_observation_id != expected_observation_id
+        ):
+            raise ValueError("Copy the source_observation_id from the planning context exactly.")
+        available_actions = context.get("available_actions")
+        if isinstance(available_actions, (tuple, list, frozenset, set)) and (
+            self.action.value not in available_actions
+        ):
+            choices = ", ".join(sorted(str(action) for action in available_actions))
+            raise ValueError(
+                f"Action '{self.action.value}' is not currently available. "
+                f"Choose one of: {choices}."
+            )
+        declared_value_names = context.get("declared_value_names")
+        if (
+            isinstance(self.text, DeclaredValueReference)
+            and isinstance(declared_value_names, (tuple, list, frozenset, set))
+            and self.text.value_name not in declared_value_names
+        ):
+            raise ValueError("Use only a declared value name listed in the planning context.")
         return self
 
 
@@ -324,6 +382,7 @@ class ActionRefusalCode(StrEnum):
     STALE_OBSERVATION = "stale_observation"
     STALE_GROUNDING = "stale_grounding"
     INVALID_GROUNDING = "invalid_grounding"
+    INVALID_INPUT = "invalid_input"
     ACTION_NOT_ALLOWED = "action_not_allowed"
     SIDE_EFFECT_NOT_ALLOWED = "side_effect_not_allowed"
     UNSUPPORTED_ACTION = "unsupported_action"
@@ -333,6 +392,8 @@ class ActionRefusalCode(StrEnum):
     ACTION_BUDGET_EXHAUSTED = "action_budget_exhausted"
     NON_DISPATCH_ACTION = "non_dispatch_action"
     REPEATED_NO_PROGRESS = "repeated_no_progress"
+    DISCOVERY_INCOMPLETE = "discovery_incomplete"
+    VERIFICATION_UNAVAILABLE = "verification_unavailable"
 
 
 class ActionRefusal(BaseModel):
@@ -434,7 +495,9 @@ class DispatchDisposition(StrEnum):
     """Whether the device boundary accepted the dispatch."""
 
     DISPATCHED = "dispatched"
+    DISPATCH_UNVERIFIED = "dispatch_unverified"
     TARGET_REJECTED = "target_rejected"
+    INPUT_REJECTED = "input_rejected"
     DEVICE_REFUSED = "device_refused"
 
 
@@ -456,7 +519,7 @@ class DispatchReceipt(BaseModel):
     @model_validator(mode="after")
     def _validate_disposition(self) -> Self:
         if self.disposition is not DispatchDisposition.DISPATCHED and self.reason is None:
-            raise ValueError("A rejected dispatch must contain a reason.")
+            raise ValueError("A non-accepted dispatch must contain a reason.")
         if self.disposition is DispatchDisposition.DISPATCHED and self.reason is not None:
             raise ValueError("A dispatched receipt cannot contain a refusal reason.")
         return self

@@ -153,6 +153,17 @@ class ActionOutcomeVerifier:
                 frozenset(signals),
                 "The settled observation did not prove text delivery to the target field.",
             )
+        if receipt.disposition is DispatchDisposition.DISPATCH_UNVERIFIED:
+            return self._outcome(
+                action,
+                receipt,
+                before,
+                after,
+                ActionOutcomeDisposition.AMBIGUOUS,
+                frozenset(signals),
+                "The device attempted the interaction, but target verification did not "
+                "establish its intended effect. Use the fresh observation as current state.",
+            )
         if signals:
             return self._outcome(
                 action,
@@ -189,8 +200,11 @@ class ActionOutcomeVerifier:
         receipt: DispatchReceipt,
         before: Observation,
     ) -> None:
-        if receipt.disposition is not DispatchDisposition.DISPATCHED:
-            raise ValueError("Action outcome verification requires a dispatched action.")
+        if receipt.disposition not in {
+            DispatchDisposition.DISPATCHED,
+            DispatchDisposition.DISPATCH_UNVERIFIED,
+        }:
+            raise ValueError("Action outcome verification requires an attempted device dispatch.")
         if (
             receipt.authorization_id != action.authorization_id
             or receipt.proposal_id != action.proposal_id

@@ -93,6 +93,29 @@ def test_action_drain_records_sequence_and_completion_time(tmp_path: Path) -> No
     assert persisted[-1]["drain_id"] == receipt.drain_id
 
 
+def test_action_drain_extracts_only_safe_app_owned_crash_hints(tmp_path: Path) -> None:
+    crash = _text_batch(
+        "java.lang.NumberFormatException: user supplied text",
+        "at com.example.app.Editor.save(Editor.java:50)",
+        "java.lang.IllegalStateException: unrelated",
+        "at android.app.Activity.performCreate(Activity.java:9000)",
+    )
+    reader = _ReaderStub(
+        {"logcat": _text_batch()},
+        {"logcat": (crash,)},
+    )
+    service = _service(reader, tmp_path)
+    boundary = service.begin().boundary
+
+    receipt = service.drain(boundary, DeviceLogCheckpointKind.ACTION, "action_1")
+
+    assert receipt.sources[0].diagnostic_hints == (
+        "Exception class: NumberFormatException",
+        "App frame: com.example.app.Editor.save(Editor.java:50)",
+    )
+    assert "user supplied text" not in " ".join(receipt.sources[0].diagnostic_hints)
+
+
 def test_duplicate_checkpoint_is_rejected_before_another_destructive_read(
     tmp_path: Path,
 ) -> None:

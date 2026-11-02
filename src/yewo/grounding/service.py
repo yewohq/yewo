@@ -15,6 +15,7 @@ from yewo.grounding.records import (
     GroundingProfile,
     GroundingRequest,
     GroundingResult,
+    validate_grounding_request,
 )
 from yewo.models import (
     ImageModelContent,
@@ -51,10 +52,6 @@ If no visible target matches, return: refused: target not found
 If more than one visible target matches, return: ambiguous: target is not unique"""
 
 
-class GroundingInputError(ValueError):
-    """Raised when a grounding request is incompatible with its profile."""
-
-
 class GroundingEvidenceError(RuntimeError):
     """Raised when a model response lacks its required call evidence."""
 
@@ -74,25 +71,20 @@ class GroundingService:
         self._codec = CoordinateTextCodec()
         self._identifier_factory = identifier_factory
 
+    def required_model_requests(self, request: GroundingRequest) -> int:
+        """Return the provider calls required to resolve one request."""
+        validate_grounding_request(self._profile, request)
+        return 1
+
     def ground(self, request: GroundingRequest) -> GroundingResult:
         """Resolve and validate one referring expression."""
-        self._validate_supported_request(request)
+        validate_grounding_request(self._profile, request)
         model_request = self._build_model_request(request)
         response = self._model_client.complete(model_request)
         decoded = self._decode_response(response, request)
         validated = self._validate_correction_distance(decoded, request)
         validated = self._validate_excluded_regions(validated, request)
         return self._build_result(request, response, validated)
-
-    def _validate_supported_request(self, request: GroundingRequest) -> None:
-        if request.operation not in self._profile.supported_operations:
-            raise GroundingInputError(
-                f"The grounding profile does not support {request.operation.value}."
-            )
-        if request.output_shape not in self._profile.supported_shapes:
-            raise GroundingInputError(
-                f"The grounding profile does not support {request.output_shape.value} output."
-            )
 
     def _build_model_request(self, request: GroundingRequest) -> ModelRequest:
         coordinate_instruction = (

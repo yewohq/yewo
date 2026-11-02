@@ -6,52 +6,45 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 import time
 
-from yewo.artifacts import (
-    ARTIFACTS_DIRECTORY,
-    AtomicArtifactWriter,
-    ArtifactWriteError,
-)
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelProfileRegistry
 from yewo.observations import ObservationStore, RedactionRegion
-from yewo.runs import (
-    InterruptionSignal,
-    RunExecutionContext,
-    RunSessionPolicy,
-    RunTerminalCategory,
-    RunWorkflowOutcome,
-)
+from yewo.runs import InterruptionSignal, RunExecutionContext, RunSessionPolicy, RunWorkflowOutcome
 
 from yewo.agent.app_memory import (
-    AppMemory,
-    SemanticRouteAction,
-    VerifiedRoute,
-    build_memory_compatibility,
-    derived_memory_identifier,
-    select_verified_route,
+    AppMemory, VerifiedRoute, build_memory_compatibility, derived_memory_identifier,
 )
 from yewo.agent.composition import build_device_agent, build_model_client
+from yewo.agent.discovery_checkpoint import select_discovery_checkpoint, select_verified_route
 from yewo.agent.memory_store import AppMemoryStore
+from yewo.agent.replay_evidence import load_replay_failure_snapshot
+from yewo.agent.replay_rejoin import (
+    build_replay_rejoin_plans,
+    combine_repaired_route,
+    combine_replayed_checkpoint_prefix,
+)
 from yewo.agent.screen_memory import merge_replay_variants
 from yewo.agent.route_replay import (
-    RouteReplayResult,
-    RouteReplayTerminal,
-    combine_repaired_route,
+    ReplayPathKind, RouteReplayResult, RouteReplayTerminal,
+    replay_discovery_checkpoint,
     replay_route,
 )
 from yewo.agent.runtime_records import (
-    AgentModePolicy,
-    AgentResult,
-    AgentTask,
-    AgentTerminalReason,
-    agent_terminal_category,
+    AgentModePolicy, AgentResult, AgentTask, AgentTerminalReason,
     goal_verification_budget_reason,
     remaining_mode_policy,
 )
+from yewo.agent.planning_evidence import PlannerDecisionSource
 from yewo.agent.discovery.promotion import AppMemoryBuilder
+from yewo.agent.discovery.coverage import DISCOVERY_CONTROL_COVERAGE
+from yewo.agent.discovery.conclusion import (
+    persist_discovery_outcome,
+    persist_discovery_replay_attempt,
+    save_discovery_memory,
+)
 from yewo.agent.discovery.narration import (
-    narrate_discovery_result,
     narrate_discovery_start,
+    narrate_replay_handoff,
     narrate_route_selection,
 )
 from yewo.agent.discovery.records import (
@@ -64,20 +57,6 @@ from yewo.agent.discovery.records import (
 from yewo.agent.goal_verifier import GoalVerification, GoalVerifier, ModelGoalVerifier
 
 
-DISCOVERY_CONTROL_COVERAGE = (
-    "During discovery, inspect every visible interactive control and setting on an application "
-    "state that implements the requested work. Treat each one as relevant unless visible "
-    "evidence shows that it belongs to different work. Exercise each relevant control when "
-    "policy permits, and observe its result before advancing to another application state or "
-    "declaring completion. Do not skip a control only because another action can advance the "
-    "workflow."
-)
-
-
-class DiscoveryEvidenceError(RuntimeError):
-    """The discovery workflow could not persist its canonical conclusion."""
-
-
 class DiscoveryWorkflow:
     """Run shared agent mechanics and promote only accepted discovery evidence."""
 
@@ -87,8 +66,8 @@ class DiscoveryWorkflow:
         mode_policy: AgentModePolicy,
         model_profiles: ModelProfileRegistry,
         grounding_profile: GroundingProfile,
-        planner_profile_id: str,
-        auditor_profile_id: str,
+        planner_profile_id: str, auditor_profile_id: str, recovery_profile_id: str,
+        action_verifier_profile_id: str,
         memory_root: Path | None,
         scrub_text: Callable[[str], str],
         *,
@@ -106,6 +85,8 @@ class DiscoveryWorkflow:
         self._grounding_profile = grounding_profile
         self._planner_profile_id = planner_profile_id
         self._auditor_profile_id = auditor_profile_id
+        self._recovery_profile_id = recovery_profile_id
+        self._action_verifier_profile_id = action_verifier_profile_id
         if memory_store is not None:
             self._memory_store = memory_store
         elif memory_root is not None:
@@ -156,8 +137,14 @@ class DiscoveryWorkflow:
             if existing is not None
             else None
         )
-        narrate_route_selection(route)
+        checkpoint = (
+            select_discovery_checkpoint(existing, objective.objective_id, objective.statement)
+            if existing is not None and route is None
+            else None
+        )
+        narrate_route_selection(route, checkpoint)
         replay: RouteReplayResult | None = None
+        replay_evidence_snapshot = None
         if route is not None and existing is not None:
             replay = replay_route(
                 context,
@@ -166,20 +153,20 @@ class DiscoveryWorkflow:
                 self._mode_policy,
                 model_client,
                 self._grounding_profile,
-                interruption,
+                interruption, recovery_profile_id=self._recovery_profile_id,
+                action_verifier_profile_id=self._action_verifier_profile_id,
                 redaction_regions=self._redaction_regions,
                 recover_application=True,
                 declared_value_resolver=self._declared_value_resolver,
             )
+            persist_discovery_replay_attempt(context.workspace, replay)
             if replay.terminal is RouteReplayTerminal.COMPLETED:
-                known_observation_ids = {
+                known_ids = {
                     variant.observation_id
                     for screen in existing.screens
                     for variant in screen.variants
                 }
-                fresh_observation_ids = (
-                    _result_observation_ids(replay.agent_result) - known_observation_ids
-                )
+                fresh_observation_ids = _result_observation_ids(replay.agent_result) - known_ids
                 replay_observations = ObservationStore(context.workspace.root).load_selected(
                     fresh_observation_ids
                 )
@@ -193,7 +180,12 @@ class DiscoveryWorkflow:
                     updated_at=context.workspace.start.started_at,
                 )
                 if learned != existing:
-                    existing = self._memory_store.save(learned, context.workspace.root)
+                    existing = save_discovery_memory(
+                        self._memory_store, learned, context.workspace.root, context.workspace,
+                        self._request, replay.agent_result,
+                        _existing_coverage(self._request, existing, route), replay, None,
+                        existing.memory_id,
+                    )
                 result = DiscoveryResult(
                     request=self._request,
                     terminal_reason=replay.agent_result.terminal_reason,
@@ -202,10 +194,8 @@ class DiscoveryWorkflow:
                     replay=replay,
                     memory_id=existing.memory_id,
                 )
-                _persist_result(context.workspace.root, result)
-                return RunWorkflowOutcome(
-                    _classify(result, self._require_reusable_evidence),
-                    _reason(result),
+                return persist_discovery_outcome(
+                    context.workspace, result, self._require_reusable_evidence
                 )
             if replay.terminal is not RouteReplayTerminal.DIVERGED:
                 result = DiscoveryResult(
@@ -216,11 +206,50 @@ class DiscoveryWorkflow:
                     replay=replay,
                     memory_id=existing.memory_id,
                 )
-                _persist_result(context.workspace.root, result)
-                return RunWorkflowOutcome(
-                    _classify(result, self._require_reusable_evidence),
-                    _reason(result),
+                return persist_discovery_outcome(
+                    context.workspace, result, self._require_reusable_evidence
                 )
+        elif checkpoint is not None and existing is not None:
+            replay_evidence_snapshot, known_divergent_transition_id = (
+                load_replay_failure_snapshot(
+                    context.workspace.root.parent, checkpoint.checkpoint_id
+                )
+            )
+            replay = replay_discovery_checkpoint(
+                context,
+                existing,
+                checkpoint,
+                self._mode_policy,
+                model_client,
+                self._grounding_profile,
+                interruption,
+                planner_profile_id=self._planner_profile_id, objective_id=objective.objective_id,
+                recovery_profile_id=self._recovery_profile_id, task=_agent_task(self._request, existing, None),
+                action_verifier_profile_id=self._action_verifier_profile_id,
+                redaction_regions=self._redaction_regions,
+                recover_application=True,
+                declared_value_resolver=self._declared_value_resolver,
+                known_divergent_transition_id=known_divergent_transition_id,
+            )
+            persist_discovery_replay_attempt(context.workspace, replay)
+            if replay.terminal not in {
+                RouteReplayTerminal.COMPLETED,
+                RouteReplayTerminal.DIVERGED,
+            }:
+                result = DiscoveryResult(
+                    request=self._request,
+                    terminal_reason=replay.agent_result.terminal_reason,
+                    coverage=_replay_failure_coverage(self._request, replay),
+                    agent_result=replay.agent_result,
+                    replay=replay,
+                    memory_id=existing.memory_id,
+                )
+                return persist_discovery_outcome(
+                    context.workspace, result, self._require_reusable_evidence,
+                    replay_evidence_snapshot,
+                )
+        if replay is not None:
+            narrate_replay_handoff(replay)
         repair_policy = self._mode_policy
         if replay is not None:
             repair_policy = remaining_mode_policy(
@@ -243,21 +272,23 @@ class DiscoveryWorkflow:
                     replay=replay,
                     memory_id=existing.memory_id if existing is not None else None,
                 )
-                _persist_result(context.workspace.root, result)
-                return RunWorkflowOutcome(
-                    _classify(result, self._require_reusable_evidence),
-                    _reason(result),
+                return persist_discovery_outcome(
+                    context.workspace, result, self._require_reusable_evidence,
+                    replay_evidence_snapshot,
                 )
         agent_result = build_device_agent(
             context,
             model_client,
             self._grounding_profile,
             self._planner_profile_id,
-            redaction_regions=self._redaction_regions,
+            recovery_profile_id=self._recovery_profile_id, redaction_regions=self._redaction_regions,
+            action_verifier_profile_id=self._action_verifier_profile_id,
             recover_application=True,
             declared_value_resolver=self._declared_value_resolver,
             screen_comparison=compatibility.screen_comparison,
-            planning_memory=existing,
+            planning_memory=existing, planning_memory_objective_id=objective.objective_id,
+            replay_rejoin_plans=_replay_rejoin_plans(replay), grounding_memory=existing,
+            progress_context=(replay.progress_context if replay is not None else None),
         ).run(
             _agent_task(self._request, existing, replay),
             repair_policy,
@@ -324,6 +355,15 @@ class DiscoveryWorkflow:
         )
         memory = promotion.memory
         coverage = promotion.coverage
+        if memory is not None and replay is not None:
+            memory = combine_replayed_checkpoint_prefix(
+                memory,
+                objective.objective_id,
+                objective.statement,
+                replay.replay_transition_ids[: replay.completed_segment_count],
+                context.workspace.start.run_id,
+                context.workspace.start.started_at,
+            )
         if (
             memory is not None
             and existing is not None
@@ -334,7 +374,7 @@ class DiscoveryWorkflow:
             repaired = combine_repaired_route(
                 memory,
                 route,
-                replay,
+                replay.completed_segment_count,
                 coverage.entries[0].route_id,
             )
             if repaired is not None:
@@ -352,7 +392,11 @@ class DiscoveryWorkflow:
                     )
                 )
         if memory is not None and memory != existing:
-            memory = self._memory_store.save(memory, context.workspace.root)
+            memory = save_discovery_memory(
+                self._memory_store, memory, context.workspace.root, context.workspace,
+                self._request, agent_result, coverage, replay, verification,
+                existing.memory_id if existing is not None else None, replay_evidence_snapshot,
+            )
         result = DiscoveryResult(
             request=self._request,
             terminal_reason=agent_result.terminal_reason,
@@ -362,9 +406,10 @@ class DiscoveryWorkflow:
             verification=verification,
             memory_id=memory.memory_id if memory is not None else None,
         )
-        _persist_result(context.workspace.root, result)
-        category = _classify(result, self._require_reusable_evidence)
-        return RunWorkflowOutcome(category, _reason(result))
+        return persist_discovery_outcome(
+            context.workspace, result, self._require_reusable_evidence,
+            replay_evidence_snapshot,
+        )
 
 
 def _result_observation_ids(result: AgentResult) -> set[str]:
@@ -399,14 +444,17 @@ def _agent_task(
 ) -> AgentTask:
     objective_statements = tuple(objective.statement for objective in request.objectives)
     memory_facts = _memory_facts(existing)
-    replay_facts = (
-        (
-            "The stored route diverged at segment "
-            f"{replay.failed_segment_index}. Discover a verified route from the current state.",
+    if replay is None:
+        replay_facts = ()
+    elif replay.terminal is RouteReplayTerminal.DIVERGED:
+        replay_facts = (
+            "The stored path diverged at segment "
+            f"{replay.failed_segment_index}. Continue discovery from the current state.",
         )
-        if replay is not None
-        else ()
-    )
+    else:
+        replay_facts = (
+            "Yewo resumed the accepted incomplete path. Continue discovery from its endpoint.",
+        )
     requested_work = request.priorities or objective_statements
     return AgentTask(
         objective="Discover evidence for: " + objective_statements[0],
@@ -419,11 +467,28 @@ def _agent_task(
         completion_conditions=(request.objectives[0].completion_conditions or objective_statements),
         declared_value_names=request.declared_value_names,
         targeted_type_available=any(
-            transition.action.input_contract is not None
-            for transition in existing.transitions
+            transition.action.input_contract is not None for transition in existing.transitions
         )
         if existing is not None
         else False,
+        discovery_mode=True,
+    )
+
+
+def _replay_rejoin_plans(replay: RouteReplayResult | None):
+    if replay is None:
+        return ()
+    return build_replay_rejoin_plans(
+        replay.path_id,
+        (
+            PlannerDecisionSource.VERIFIED_ROUTE
+            if replay.path_kind is ReplayPathKind.VERIFIED_ROUTE
+            else PlannerDecisionSource.DISCOVERY_CHECKPOINT
+        ),
+        replay.replay_transition_ids,
+        replay.downstream_rejoin_transition_ids,
+        replay.rejoin_segment_index,
+        replay_diverged=replay.terminal is RouteReplayTerminal.DIVERGED,
     )
 
 
@@ -431,28 +496,7 @@ def _memory_facts(memory: AppMemory | None) -> tuple[str, ...]:
     if memory is None:
         return ()
     capability_facts = tuple(capability.statement for capability in memory.capabilities)
-    input_facts = tuple(
-        _input_contract_fact(transition.action)
-        for transition in memory.transitions
-        if transition.action.input_contract is not None
-    )
-    return tuple(dict.fromkeys((*capability_facts, *input_facts)))
-
-
-def _input_contract_fact(action: SemanticRouteAction) -> str:
-    contract = action.input_contract
-    if contract is None or action.target_description is None:
-        raise ValueError("A reusable input fact requires a targeted input contract.")
-    format_detail = (
-        f" with format {contract.format_pattern}"
-        if contract.format_pattern is not None
-        else ""
-    )
-    return (
-        f'Reusable input contract: "{action.target_description}" accepts '
-        f"{contract.value_shape.value}{format_detail} input. Use targeted type directly. "
-        "Do not focus this field first."
-    )
+    return tuple(dict.fromkeys(capability_facts))
 
 
 def _existing_coverage(
@@ -498,53 +542,7 @@ def _replay_failure_coverage(
             DiscoveryCoverageEntry(
                 objective_id=request.objectives[0].objective_id,
                 state=state,
-                reason=f"Stored route replay stopped: {replay.reason}",
+                reason=f"Stored path replay stopped: {replay.reason}",
             ),
         )
-    )
-
-
-def _persist_result(root: Path, result: DiscoveryResult) -> None:
-    relative_path = ARTIFACTS_DIRECTORY / "agent" / "discovery" / "result.json"
-    content = result.model_dump_json(indent=2).encode("utf-8") + b"\n"
-    try:
-        AtomicArtifactWriter(root).write(relative_path, content)
-        narrate_discovery_result(result)
-    except ArtifactWriteError as error:
-        raise DiscoveryEvidenceError("Could not persist the discovery result.") from error
-
-
-def _classify(
-    result: DiscoveryResult,
-    require_reusable_evidence: bool,
-) -> RunTerminalCategory:
-    entries = result.coverage.entries
-    required = {
-        objective.objective_id for objective in result.request.objectives if objective.required
-    }
-    supported = {
-        entry.objective_id for entry in entries if entry.state is DiscoveryObjectiveState.SUPPORTED
-    }
-    if required.issubset(supported):
-        return RunTerminalCategory.COMPLETED
-    if (
-        not require_reusable_evidence
-        and result.terminal_reason is AgentTerminalReason.DONE_REQUESTED
-        and result.verification is not None
-        and result.verification.satisfied
-    ):
-        return RunTerminalCategory.COMPLETED
-    return agent_terminal_category(
-        result.terminal_reason,
-        done_category=RunTerminalCategory.INCOMPLETE,
-    )
-
-
-def _reason(result: DiscoveryResult) -> str:
-    supported_count = sum(
-        entry.state is DiscoveryObjectiveState.SUPPORTED for entry in result.coverage.entries
-    )
-    return (
-        f"Discovery supported {supported_count} of {len(result.coverage.entries)} "
-        f"requested objectives. {result.agent_result.reason}"
     )

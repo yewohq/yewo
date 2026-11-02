@@ -6,7 +6,11 @@ from collections.abc import Callable
 from typing import Protocol
 
 from yewo.artifacts import new_record_identifier
-from yewo.devices.errors import DeviceActionRejectedError, DeviceTargetRejectedError
+from yewo.devices.errors import (
+    DeviceActionRejectedError,
+    DeviceInputRejectedError,
+    DeviceTargetRejectedError,
+)
 from yewo.devices.focus import FocusedFieldReading
 from yewo.devices.interaction import ScrollDirection
 
@@ -107,7 +111,18 @@ class ActionExecutor:
                 authorization_id=action.authorization_id,
                 proposal_id=action.proposal_id,
                 action=action.action,
-                disposition=DispatchDisposition.TARGET_REJECTED,
+                disposition=DispatchDisposition.DISPATCH_UNVERIFIED,
+                reason=str(error),
+                sensitivity=action.sensitivity,
+                retention=action.retention,
+            )
+        except DeviceInputRejectedError as error:
+            return DispatchReceipt(
+                receipt_id=self._identifier_factory(),
+                authorization_id=action.authorization_id,
+                proposal_id=action.proposal_id,
+                action=action.action,
+                disposition=DispatchDisposition.INPUT_REJECTED,
                 reason=str(error),
                 sensitivity=action.sensitivity,
                 retention=action.retention,

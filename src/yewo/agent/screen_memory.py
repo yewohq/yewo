@@ -8,21 +8,42 @@ from datetime import datetime
 from yewo.artifacts import RecordIdentifier
 from yewo.grounding import GroundingProfile
 from yewo.observations import Observation, fingerprint_distance
+from yewo.run_narration import current_narrator
 
 from yewo.agent.app_memory import (
+    AcceptedTransition,
     AppMemory,
+    CapabilityEvidence,
     LogicalScreen,
     MemoryCompatibility,
     ObservationVariant,
     ScreenComparisonPolicy,
     UnsuccessfulAttempt,
+    VerifiedRoute,
     derived_memory_identifier,
 )
 from yewo.agent.actuation import ActionKind, ActionProposal
-from yewo.agent.planner import ActionProposalSource, PlanningRequest
+from yewo.agent.narration import narrate_memory_eviction
+from yewo.agent.memory_references import referenced_memory_observation_ids
+from yewo.agent.planner import ActionProposalSource, PlanningRequest, TaskProgressContext
+from yewo.agent.planning_evidence import (
+    PlannerDecisionMetadata,
+    resolve_planner_decision_metadata,
+)
 
 
 MEMORY_FACT_LIMIT = 20
+ExactObservationStateKey = tuple[
+    str | None,
+    str | None,
+    bool | None,
+    str | None,
+    int,
+    int,
+    str,
+    str,
+    str | None,
+]
 
 
 class AppMemoryActionSource:
@@ -39,14 +60,61 @@ class AppMemoryActionSource:
         self._grounding_profile = grounding_profile
 
     def plan(self, request: PlanningRequest) -> ActionProposal:
-        """Delegate with bounded facts from matching compatible screen evidence."""
+        """Delegate with bounded historical hints for the matching screen."""
         memory_facts = memory_planning_facts(
             self._memory,
             request.observation,
             self._grounding_profile,
         )
-        known_facts = tuple(dict.fromkeys((*request.known_facts, *memory_facts)))[:100]
-        return self._source.plan(request.model_copy(update={"known_facts": known_facts}))
+        _narrate_planner_memory(request.observation, len(memory_facts))
+        progress = request.progress_context or TaskProgressContext(
+            remaining_work=request.open_work
+        )
+        historical_facts = tuple(
+            dict.fromkeys((*progress.historical_memory_facts, *memory_facts))
+        )[:20]
+        return self._source.plan(
+            request.model_copy(
+                update={
+                    "progress_context": progress.model_copy(
+                        update={"historical_memory_facts": historical_facts}
+                    )
+                }
+            )
+        )
+
+    def required_model_requests(self, request: PlanningRequest) -> int:
+        """Delegate model-request accounting without adding a call."""
+        return self._source.required_model_requests(request)
+
+    def decision_metadata(self) -> PlannerDecisionMetadata:
+        """Preserve the evidence provenance selected by the delegated source."""
+        return resolve_planner_decision_metadata(self._source)
+
+
+def _narrate_planner_memory(observation: Observation, fact_count: int) -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    if fact_count:
+        narrator.record(
+            "planner-memory",
+            f"Reusing {fact_count} app-memory fact(s) for the planner.",
+        )
+        disposition = "hit"
+        reason = "compatible_screen_evidence"
+    else:
+        narrator.record(
+            "planner-memory",
+            "No compatible app-memory facts were found for the planner.",
+        )
+        disposition = "miss"
+        reason = "no_compatible_screen_evidence"
+    narrator.trace(
+        "planner-memory",
+        f"observation={observation.observation_id} lookup={disposition} "
+        f"reason={reason} facts={fact_count}",
+    )
 
 
 def memory_planning_facts(
@@ -55,10 +123,25 @@ def memory_planning_facts(
     grounding_profile: GroundingProfile,
 ) -> tuple[str, ...]:
     """Describe prior attempts and proven expressions for the current screen."""
+    retained_transition_ids = {
+        *(segment.transition_id for route in memory.routes for segment in route.segments),
+        *(
+            transition_id
+            for checkpoint in memory.checkpoints
+            for transition_id in checkpoint.transition_ids
+        ),
+    }
     screen_ids = {
         screen.screen_id
         for screen in memory.screens
-        if observation_matches_screen(observation, screen, memory.compatibility.screen_comparison)
+        if any(
+            observation_matches_replay_variant(
+                observation,
+                variant,
+                memory.compatibility.screen_comparison,
+            )
+            for variant in screen.variants
+        )
     }
     unsuccessful_facts = tuple(
         _unsuccessful_attempt_fact(attempt)
@@ -75,7 +158,8 @@ def memory_planning_facts(
     proven_expression_facts = tuple(
         _proven_expression_fact(transition.action.action, transition.action.target_description)
         for transition in memory.transitions
-        if transition.source_screen_id in screen_ids
+        if transition.transition_id in retained_transition_ids
+        and transition.source_screen_id in screen_ids
         and transition.action.target_description is not None
         and any(
             profile_id == grounding_profile.profile_id
@@ -87,8 +171,17 @@ def memory_planning_facts(
             )
         )
     )
+    input_facts = tuple(
+        _input_contract_fact(transition)
+        for transition in memory.transitions
+        if transition.transition_id in retained_transition_ids
+        and transition.source_screen_id in screen_ids
+        and transition.action.input_contract is not None
+    )
     return tuple(
-        dict.fromkeys((*unsuccessful_facts[-MEMORY_FACT_LIMIT:], *proven_expression_facts))
+        dict.fromkeys(
+            (*unsuccessful_facts[-MEMORY_FACT_LIMIT:], *proven_expression_facts, *input_facts)
+        )
     )[:MEMORY_FACT_LIMIT]
 
 
@@ -110,8 +203,24 @@ def _unsuccessful_attempt_fact(attempt: UnsuccessfulAttempt) -> str:
 
 def _proven_expression_fact(action: ActionKind, target_description: str) -> str:
     return (
-        f'Grounder-proven expression on this screen: {action.value} target "{target_description}" '
-        "produced an accepted outcome. Reuse it only when that target is visible."
+        f'Previously grounded target on this screen: {action.value} target "{target_description}". '
+        "This proves only that the grounder located the visible target. It does not prove that "
+        "the action is useful, reaches the expected destination, or advances the current goal."
+    )
+
+
+def _input_contract_fact(transition: AcceptedTransition) -> str:
+    action = transition.action
+    contract = action.input_contract
+    if contract is None or action.target_description is None:
+        raise ValueError("A reusable input fact requires a targeted input contract.")
+    format_detail = (
+        f" with format {contract.format_pattern}" if contract.format_pattern is not None else ""
+    )
+    return (
+        f'Reusable input contract on this screen: "{action.target_description}" accepts '
+        f"{contract.value_shape.value}{format_detail} input. Use targeted type directly. "
+        "Do not focus this field first."
     )
 
 
@@ -128,6 +237,70 @@ def observation_matches_screen(
             policy.maximum_phash_distance,
         )
         for variant in screen.variants
+    )
+
+
+def observation_matches_exact_variant(
+    observation: Observation,
+    variant: ObservationVariant,
+) -> bool:
+    """Require identical application pixels and observation geometry."""
+    return exact_observation_state_key(observation) == exact_variant_state_key(variant)
+
+
+def observation_matches_replay_variant(
+    observation: Observation,
+    variant: ObservationVariant,
+    policy: ScreenComparisonPolicy,
+) -> bool:
+    """Match stable replay state while tolerating small transient pixels."""
+    screenshot = observation.redacted_screenshot
+    if (
+        observation.foreground_application_id != variant.foreground_application_id
+        or observation.platform_context != variant.platform_context
+        or observation.keyboard_visible is not variant.keyboard_visible
+        or observation.orientation is not variant.orientation
+        or (screenshot.width_px, screenshot.height_px) != (variant.width_px, variant.height_px)
+    ):
+        return False
+    try:
+        return (
+            fingerprint_distance(observation.screen_fingerprint, variant.fingerprint)
+            <= policy.maximum_replay_phash_distance
+        )
+    except ValueError:
+        return False
+
+
+def exact_observation_state_key(observation: Observation) -> ExactObservationStateKey:
+    """Build the cross-run identity of one exact current application state."""
+    screenshot = observation.redacted_screenshot
+    fingerprint = observation.screen_fingerprint
+    return (
+        observation.foreground_application_id,
+        observation.platform_context,
+        observation.keyboard_visible,
+        observation.orientation,
+        screenshot.width_px,
+        screenshot.height_px,
+        fingerprint.algorithm,
+        fingerprint.masked_pixels_sha256,
+        fingerprint.system_region_mask_sha256,
+    )
+
+
+def exact_variant_state_key(variant: ObservationVariant) -> ExactObservationStateKey:
+    """Build the cross-run identity of one exact retained application state."""
+    return (
+        variant.foreground_application_id,
+        variant.platform_context,
+        variant.keyboard_visible,
+        variant.orientation,
+        variant.width_px,
+        variant.height_px,
+        variant.fingerprint.algorithm,
+        variant.fingerprint.masked_pixels_sha256,
+        variant.fingerprint.system_region_mask_sha256,
     )
 
 
@@ -192,9 +365,8 @@ def add_observation_screen(
         if observation.observation_id not in {
             variant.observation_id for variant in screen.variants
         }:
-            maximum = compatibility.retention.maximum_variants_per_screen
             variants = (*screen.variants, _observation_variant(observation, source_run_id))
-            screen = screen.model_copy(update={"variants": variants[-maximum:]})
+            screen = screen.model_copy(update={"variants": variants})
             screens[index] = screen
         return screen
     screen = LogicalScreen(
@@ -244,13 +416,72 @@ def merge_replay_variants(
         changed = changed or before != tuple(screens)
     if not changed:
         return memory
-    return memory.model_copy(
-        update={
-            "screens": tuple(screens),
+    retained_screens = retain_observation_variants(
+        screens,
+        memory.transitions,
+        memory.unsuccessful_attempts,
+        memory.routes,
+        memory.capabilities,
+        memory.compatibility.retention.maximum_variants_per_screen,
+    )
+    return AppMemory.model_validate(
+        {
+            **memory.model_dump(mode="python"),
+            "screens": retained_screens,
             "source_run_ids": tuple(dict.fromkeys((*memory.source_run_ids, source_run_id))),
             "updated_at": updated_at,
         }
     )
+
+
+def retain_observation_variants(
+    screens: list[LogicalScreen],
+    transitions: tuple[AcceptedTransition, ...],
+    unsuccessful_attempts: tuple[UnsuccessfulAttempt, ...],
+    routes: tuple[VerifiedRoute, ...],
+    capabilities: tuple[CapabilityEvidence, ...],
+    maximum_per_screen: int,
+) -> tuple[LogicalScreen, ...]:
+    """Retain referenced variants and the newest optional variants."""
+    referenced_observation_ids = referenced_memory_observation_ids(
+        transitions,
+        unsuccessful_attempts,
+        routes,
+        capabilities,
+    )
+    retained_screens: list[LogicalScreen] = []
+    evicted_observation_ids: list[RecordIdentifier] = []
+    for screen in screens:
+        required = [
+            variant
+            for variant in screen.variants
+            if variant.observation_id in referenced_observation_ids
+        ]
+        optional = [
+            variant
+            for variant in screen.variants
+            if variant.observation_id not in referenced_observation_ids
+        ]
+        retained_optional = optional[-maximum_per_screen:]
+        selected_ids = {variant.observation_id for variant in (*required, *retained_optional)}
+        evicted_observation_ids.extend(
+            variant.observation_id
+            for variant in optional
+            if variant.observation_id not in selected_ids
+        )
+        retained_screens.append(
+            screen.model_copy(
+                update={
+                    "variants": tuple(
+                        variant
+                        for variant in screen.variants
+                        if variant.observation_id in selected_ids
+                    )
+                }
+            )
+        )
+    narrate_memory_eviction("optional_variant", tuple(evicted_observation_ids))
+    return tuple(retained_screens)
 
 
 def _observation_matches_variant(

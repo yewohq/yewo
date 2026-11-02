@@ -51,6 +51,8 @@ class YewoAgent:
         grounding_profile: GroundingProfile,
         planner_profile_id: str,
         auditor_profile_id: str,
+        recovery_profile_id: str,
+        action_verifier_profile_id: str,
         scrub_text: Callable[[str], str],
         *,
         memory_root: Path | None = None,
@@ -67,6 +69,8 @@ class YewoAgent:
         self._grounding_profile = grounding_profile
         self._planner_profile_id = planner_profile_id
         self._auditor_profile_id = auditor_profile_id
+        self._recovery_profile_id = recovery_profile_id
+        self._action_verifier_profile_id = action_verifier_profile_id
         self._scrub_text = scrub_text
         if memory_root is not None and memory_store is not None:
             raise ValueError("Configure a Yewo memory root or memory store, not both.")
@@ -106,6 +110,8 @@ class YewoAgent:
             model_client,
             self._grounding_profile,
             self._planner_profile_id,
+            recovery_profile_id=self._recovery_profile_id,
+            action_verifier_profile_id=self._action_verifier_profile_id,
             redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
         ).run(self._task, self._mode_policy, interruption)
@@ -167,6 +173,8 @@ class YewoAgent:
             self._grounding_profile,
             self._planner_profile_id,
             self._auditor_profile_id,
+            self._recovery_profile_id,
+            self._action_verifier_profile_id,
             None,
             self._scrub_text,
             redaction_regions=self._redaction_regions,

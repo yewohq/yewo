@@ -143,6 +143,10 @@ class DeterministicGrounder:
         self._x_px = x_px
         self._y_px = y_px
 
+    def required_model_requests(self, request: GroundingRequest) -> int:
+        del request
+        return 1
+
     def ground(self, request: GroundingRequest) -> GroundingResult:
         width_px = request.screenshot.width_px
         height_px = request.screenshot.height_px
@@ -167,3 +171,25 @@ class DeterministicGrounder:
             latency_ms=0,
             usage=ModelCallUsage(),
         )
+
+
+class ExpressionGrounder:
+    """Choose distinct deterministic points from the referring expression."""
+
+    def required_model_requests(self, request: GroundingRequest) -> int:
+        del request
+        return 1
+
+    def ground(self, request: GroundingRequest) -> GroundingResult:
+        x_px = 20 if "first" in request.expression else 150
+        return DeterministicGrounder(x_px, 200).ground(request)
+
+
+class FailingGrounder:
+    def required_model_requests(self, request: GroundingRequest) -> int:
+        del request
+        return 1
+
+    def ground(self, request: GroundingRequest) -> GroundingResult:
+        del request
+        raise RuntimeError("grounding failed")

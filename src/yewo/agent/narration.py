@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from yewo.agent.action_diagnostics import ActionApplicationFailure
 from yewo.agent.actuation import (
     ActionOutcome,
     ActionProposal,
@@ -12,9 +15,33 @@ from yewo.agent.actuation import (
 from yewo.grounding import GroundedPoint, GroundedRegion, GroundingEvidence
 from yewo.observations import Observation
 from yewo.run_narration import current_narrator
+from yewo.agent.planner import ActionProposalSource
+from yewo.agent.planning_evidence import (
+    guard_planner_decision,
+    PlannerDecisionMetadata,
+    PlannerDecisionMetadataSource,
+    PlannerDecisionSource,
+)
+from yewo.agent.recovery_advisor import RecoveryAssessment
+from yewo.agent.recovery_records import RecoveryBudgetCredit
 
 
 _SOURCE = "device-agent"
+
+
+def narrate_memory_eviction(kind: str, record_ids: tuple[str, ...]) -> None:
+    """Record one bounded-memory eviction without exposing application content."""
+    narrator = current_narrator()
+    if narrator is None or not record_ids:
+        return
+    narrator.record(
+        "agent-memory",
+        f"Memory retention removed {len(record_ids)} older {kind} record(s).",
+    )
+    narrator.trace(
+        "agent-memory",
+        f"retention=evicted kind={kind} count={len(record_ids)} ids={','.join(record_ids)}",
+    )
 
 
 def narrate(message: str) -> None:
@@ -31,12 +58,25 @@ def trace(message: str) -> None:
         narrator.trace(_SOURCE, message)
 
 
-def narrate_proposal(step_index: int, proposal: ActionProposal) -> None:
+def narrate_proposal(
+    step_index: int,
+    proposal: ActionProposal,
+    decision_source: PlannerDecisionSource,
+    reused_flow_id: str | None,
+) -> None:
     """Describe one planner decision without exposing typed values."""
+    if decision_source is PlannerDecisionSource.MODEL:
+        narrate(f"Step {step_index} requested a new planner decision.")
+    elif decision_source is PlannerDecisionSource.SYSTEM:
+        narrate(f"Step {step_index} stopped before dispatch under a runtime guard.")
+    else:
+        narrate(f"Step {step_index} reused a {decision_source.value.replace('_', ' ')} decision.")
     narrate(f"Step {step_index} decision: {proposal.reason}")
     trace(
         f"step={step_index} proposal={proposal.proposal_id} "
-        f"observation={proposal.source_observation_id} action={proposal.action.value}"
+        f"observation={proposal.source_observation_id} action={proposal.action.value} "
+        f"planner_source={decision_source.value} "
+        f"reused_flow={reused_flow_id or 'none'}"
     )
     action = proposal.action.value
     target = _target_summary(proposal)
@@ -44,6 +84,36 @@ def narrate_proposal(step_index: int, proposal: ActionProposal) -> None:
         narrate(f"Step {step_index} requested {action}.")
         return
     narrate(f"Step {step_index} planned {action}{target}. Expected: {proposal.expected_outcome}")
+
+
+def narrate_selected_proposal(
+    planner: ActionProposalSource,
+    step_index: int,
+    proposal: ActionProposal,
+    default_source: PlannerDecisionSource,
+    default_reused_flow_id: str | None,
+    identifier_factory: Callable[[], str],
+    *,
+    system_generated: bool = False,
+) -> tuple[ActionProposal, PlannerDecisionMetadata]:
+    """Describe a proposal with dynamic replay provenance when available."""
+    if system_generated:
+        metadata = PlannerDecisionMetadata(source=PlannerDecisionSource.SYSTEM)
+    elif isinstance(planner, PlannerDecisionMetadataSource):
+        metadata = planner.decision_metadata()
+    else:
+        metadata = PlannerDecisionMetadata(
+            source=default_source,
+            reused_flow_id=default_reused_flow_id,
+        )
+    proposal, metadata = guard_planner_decision(proposal, metadata, identifier_factory)
+    narrate_proposal(
+        step_index,
+        proposal,
+        metadata.source,
+        metadata.reused_flow_id,
+    )
+    return proposal, metadata
 
 
 def narrate_refusal(step_index: int, refusal: ActionRefusal) -> None:
@@ -59,7 +129,11 @@ def narrate_grounding(
 ) -> None:
     """Describe the disposition of one optional grounding request."""
     if evidence is not None:
-        narrate(f"Step {step_index} grounded the {label}: {evidence.result.disposition.value}.")
+        source = evidence.result.resolution_source.value
+        narrate(
+            f"Step {step_index} grounded the {label}: "
+            f"{evidence.result.disposition.value} via {source}."
+        )
         location = evidence.result.location
         if isinstance(location, GroundedPoint):
             geometry = f"point=({location.pixel.x},{location.pixel.y})"
@@ -72,7 +146,9 @@ def narrate_grounding(
             f"step={step_index} grounding={evidence.request.grounding_id} label={label} "
             f"operation={evidence.request.operation.value} "
             f"disposition={evidence.result.disposition.value} {geometry} "
-            f"profile={evidence.result.profile_id} model_profile={evidence.result.model_profile_id}"
+            f"source={source} profile={evidence.result.profile_id} "
+            f"model_profile={evidence.result.model_profile_id} "
+            f"cached_transition={evidence.result.cached_transition_id or 'none'}"
         )
 
 
@@ -81,6 +157,35 @@ def narrate_recovery(step_index: int, recovery_observation_id: str | None) -> No
     if recovery_observation_id is not None:
         narrate(f"Step {step_index} recovered the application to the foreground.")
         trace(f"step={step_index} recovery_observation={recovery_observation_id}")
+
+
+def narrate_recovery_assessment(assessment: RecoveryAssessment) -> None:
+    """Record one bounded model recovery decision and its evidence identity."""
+    narrate(f"Recovery advisor chose {assessment.disposition.value}: {assessment.reason}")
+    trace(
+        f"recovery_assessment={assessment.assessment_id} "
+        f"disposition={assessment.disposition.value} "
+        f"failed_proposal={assessment.failed_proposal_id} "
+        f"frontier_observation={assessment.pre_failure_observation_id} "
+        f"recovery_observation={assessment.recovery_observation_id}"
+    )
+
+
+def narrate_recovery_unavailable() -> None:
+    """Record that recovery advice failed and the run continues without it."""
+    narrate("Recovery advice was unavailable. The agent continues without it.")
+    trace("recovery_assessment=none disposition=unavailable")
+
+
+def narrate_recovery_credit(credit: RecoveryBudgetCredit) -> None:
+    """Trace gross-to-effective allowance without changing provider usage."""
+    if credit.assessment_id is None:
+        return
+    trace(
+        f"recovery_credit assessment={credit.assessment_id} steps={credit.steps} "
+        f"planning={credit.planning_requests} grounding={credit.grounding_requests} "
+        f"actions={credit.dispatched_actions} duration_seconds={credit.duration_seconds:.3f}"
+    )
 
 
 def narrate_observation(observation: Observation, *, label: str) -> None:
@@ -148,6 +253,20 @@ def narrate_no_progress(message: str) -> None:
     """Record a deterministic no-progress advisory."""
     narrate(f"No-progress advisory: {message}")
     trace(f"no_progress={message}")
+
+
+def narrate_application_failure(
+    step_index: int,
+    failure: ActionApplicationFailure | None,
+) -> None:
+    """Describe one action-scoped application failure and recovery result."""
+    if failure is None:
+        return
+    recovery = "succeeded" if failure.recovery_succeeded else "did not succeed"
+    narrate(
+        f"Step {step_index} application diagnostic: "
+        f"{failure.summary} Recovery {recovery}."
+    )
 
 
 def narrate_verification(

@@ -25,6 +25,10 @@ class DeviceActionRejectedError(DeviceInteractionError):
     """A requested action was invalid or did not reach its verified outcome."""
 
 
+class DeviceInputRejectedError(DeviceActionRejectedError):
+    """Entered text conflicts with a secret-free platform input constraint."""
+
+
 class DeviceTargetRejectedError(DeviceActionRejectedError):
     """A grounded target did not accept the requested interaction."""
 

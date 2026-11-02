@@ -9,20 +9,23 @@ from yewo.grounding.records import (
     GroundingCorrection,
     GroundingDisposition,
     GroundingEvidence,
+    GroundingInputError,
     GroundingOutputShape,
     GroundingProfile,
     GroundingRequest,
+    GroundingResolutionSource,
     GroundingResult,
     GroundingTargetOperation,
     NormalizedPoint,
     NormalizedRegion,
     PixelPoint,
     VisualGrounder,
+    resolve_grounding_request,
+    validate_grounding_request,
 )
 from yewo.grounding.service import (
     GROUNDING_PROMPT,
     GroundingEvidenceError,
-    GroundingInputError,
     GroundingService,
 )
 
@@ -42,6 +45,7 @@ __all__ = [
     "GroundingOutputShape",
     "GroundingProfile",
     "GroundingRequest",
+    "GroundingResolutionSource",
     "GroundingResult",
     "GroundingService",
     "GroundingTargetOperation",
@@ -49,4 +53,6 @@ __all__ = [
     "NormalizedRegion",
     "PixelPoint",
     "VisualGrounder",
+    "resolve_grounding_request",
+    "validate_grounding_request",
 ]

@@ -133,7 +133,8 @@ def test_reader_baselines_and_replays_until_acknowledged() -> None:
     assert replay is batch
     assert empty.items == ()
     assert baseline.filtered_item_count == 1
-    assert not reader.captures_checkpoint("exitinfo", DeviceLogCheckpointKind.ACTION)
+    assert reader.captures_checkpoint("exitinfo", DeviceLogCheckpointKind.ACTION)
+    assert reader.captures_checkpoint("exitinfo", DeviceLogCheckpointKind.RECOVERY)
     assert reader.captures_checkpoint("exitinfo", DeviceLogCheckpointKind.SCENARIO)
 
 

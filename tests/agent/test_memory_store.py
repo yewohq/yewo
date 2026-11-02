@@ -132,6 +132,30 @@ def test_store_rejects_a_changed_snapshot_digest(tmp_path: Path) -> None:
         store.load(compatibility)
 
 
+def test_store_loads_a_digest_created_before_optional_memory_fields(tmp_path: Path) -> None:
+    source_root = tmp_path / "run"
+    compatibility, memory = _memory(source_root)
+    store = AppMemoryStore(tmp_path / "shared")
+    store.save(memory, source_root)
+    path = _stored_application_root(store) / "memory.json"
+    envelope = json.loads(path.read_text())
+    legacy_memory = envelope["memory"]
+    legacy_memory.pop("checkpoints")
+    content = json.dumps(
+        legacy_memory,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    envelope["memory_sha256"] = sha256(content).hexdigest()
+    path.write_text(json.dumps(envelope))
+
+    loaded = store.load(compatibility)
+
+    assert loaded is not None
+    assert loaded.checkpoints == ()
+
+
 def test_store_sorts_outcome_signals_before_hashing_memory(tmp_path: Path) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
@@ -158,7 +182,7 @@ def test_store_sorts_outcome_signals_before_hashing_memory(tmp_path: Path) -> No
     assert store.load(compatibility) is not None
 
 
-def test_store_round_trips_unsuccessful_attempt_evidence(tmp_path: Path) -> None:
+def test_store_invalidates_legacy_target_rejection_evidence_on_load(tmp_path: Path) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     transition = memory.transitions[0]
@@ -183,17 +207,15 @@ def test_store_round_trips_unsuccessful_attempt_evidence(tmp_path: Path) -> None
         source_step_id="step_1",
         source_run_id="run_1",
     )
-    memory = AppMemory.model_validate(
-        {**memory.model_dump(), "unsuccessful_attempts": (attempt,)}
-    )
+    memory = AppMemory.model_validate({**memory.model_dump(), "unsuccessful_attempts": (attempt,)})
     store = AppMemoryStore(tmp_path / "shared")
 
     persisted = store.save(memory, source_root)
     loaded = store.load(compatibility)
 
-    assert loaded == persisted
+    assert persisted.unsuccessful_attempts == (attempt,)
     assert loaded is not None
-    assert loaded.unsuccessful_attempts == (attempt,)
+    assert loaded.unsuccessful_attempts == ()
 
 
 def test_store_rejects_a_changed_persistent_screenshot(tmp_path: Path) -> None:

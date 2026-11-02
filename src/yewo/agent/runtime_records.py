@@ -14,12 +14,19 @@ from yewo.agent.actuation import (
     ActionHandling,
     ActionKind,
     ActionOutcome,
+    ActionOutcomeSignal,
     ActionPolicyLimits,
     ActionProposal,
     ActionRefusal,
     AuthorizedAction,
     DispatchReceipt,
 )
+from yewo.agent.action_diagnostics import ActionApplicationFailure
+from yewo.agent.planning_evidence import (
+    PlannerDecisionMetadata,
+    PlannerDecisionSource,
+)
+from yewo.agent.recovery_records import RecoveryBudgetCredit
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
     AppendOnlyJsonlWriter,
@@ -28,7 +35,13 @@ from yewo.artifacts import (
     new_record_identifier,
 )
 from yewo.devices.inventory import DevicePlatform
-from yewo.grounding import GroundingEvidence
+from yewo.grounding import (
+    GroundingCorrection,
+    GroundingEvidence,
+    GroundingOutputShape,
+    GroundingRequest,
+    GroundingTargetOperation,
+)
 from yewo.observations import Observation
 from yewo.runs import RunTerminalCategory
 from yewo.runs.errors import RunWorkflowEvidenceError, RunWorkflowInterrupted
@@ -61,6 +74,7 @@ class AgentTask(BaseModel):
     completion_conditions: tuple[TaskText, ...] = Field(min_length=1, max_length=100)
     declared_value_names: tuple[RecordIdentifier, ...] = Field(default=(), max_length=100)
     targeted_type_available: bool = False
+    discovery_mode: bool = False
 
     @model_validator(mode="after")
     def _validate_unique_declared_values(self) -> Self:
@@ -75,19 +89,20 @@ class AgentModePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     action_limits: ActionPolicyLimits
-    maximum_steps: int = Field(gt=0, le=50)
+    maximum_steps: int = Field(gt=0, le=100)
     maximum_grounding_requests: int = Field(ge=0, le=100)
-    maximum_model_requests: int | None = Field(default=None, gt=0, le=150)
+    maximum_model_requests: int | None = Field(default=None, gt=0, le=201)
     maximum_duration_seconds: float = Field(default=300, gt=0, le=3_600)
     maximum_settlement_observations: int = Field(default=6, ge=2, le=20)
     settlement_interval_seconds: float = Field(default=0.35, ge=0, le=5)
 
 
 class AgentUsage(BaseModel):
-    """Logical runtime requests and accepted device dispatches."""
+    """Runtime steps, provider requests, and accepted device dispatches."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    steps: int = Field(default=0, ge=0)
     planning_requests: int = Field(ge=0)
     grounding_requests: int = Field(ge=0)
     dispatched_actions: int = Field(ge=0)
@@ -98,11 +113,12 @@ class AgentStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     step_id: RecordIdentifier
     step_index: int = Field(gt=0)
     source_observation_id: RecordIdentifier
     proposal: ActionProposal
+    decision: PlannerDecisionMetadata = PlannerDecisionMetadata(source=PlannerDecisionSource.MODEL)
     target_grounding: GroundingEvidence | None = None
     destination_grounding: GroundingEvidence | None = None
     authorization: AuthorizedAction | None = None
@@ -115,14 +131,22 @@ class AgentStep(BaseModel):
     settled_observation_id: RecordIdentifier | None = None
     recovery_observation_id: RecordIdentifier | None = None
     outcome: ActionOutcome | None = None
+    application_failure: ActionApplicationFailure | None = None
     terminal_reason: AgentTerminalReason | None = None
 
     @model_validator(mode="after")
     def _validate_step_evidence(self) -> Self:
         if self.source_observation_id != self.proposal.source_observation_id:
             raise ValueError("The step source does not match the proposal observation.")
+        if (
+            self.decision.source is not PlannerDecisionSource.MODEL
+            and self.proposal.action not in {ActionKind.DONE, ActionKind.CANNOT_PROGRESS}
+            and not self.decision.reused_transition_ids
+        ):
+            raise ValueError("A reused device action must identify retained transitions.")
         if self.refusal is not None and any(
-            item is not None for item in (self.authorization, self.receipt, self.outcome)
+            item is not None
+            for item in (self.authorization, self.receipt, self.outcome, self.application_failure)
         ):
             raise ValueError("A refused step cannot contain dispatch evidence.")
         if self.refusal is not None and self.refusal.proposal_id != self.proposal.proposal_id:
@@ -145,6 +169,8 @@ class AgentStep(BaseModel):
             raise ValueError("The step receipt does not match its authorization.")
         if self.outcome is not None and self.receipt is None:
             raise ValueError("An action outcome requires a dispatch receipt.")
+        if self.application_failure is not None and (self.outcome is None or ActionOutcomeSignal.APP_EXITED not in self.outcome.signals):
+            raise ValueError("An application failure requires an exited outcome signal.")
         if (
             self.outcome is not None
             and self.settled_observation_id != self.outcome.settled_observation_id
@@ -180,6 +206,7 @@ class AgentStep(BaseModel):
                 self.refusal,
                 self.receipt,
                 self.outcome,
+                self.application_failure,
             )
         ):
             raise ValueError("A planner terminal cannot contain device-action evidence.")
@@ -201,7 +228,18 @@ class AgentResult(BaseModel):
     reason: str = Field(min_length=1)
     final_observation_id: RecordIdentifier
     usage: AgentUsage
+    recovery_budget_credit: RecoveryBudgetCredit = RecoveryBudgetCredit()
     steps: tuple[AgentStep, ...]
+
+    @model_validator(mode="after")
+    def _validate_recovery_credit(self) -> Self:
+        credit = self.recovery_budget_credit
+        usage = self.usage
+        credited = (credit.steps, credit.planning_requests, credit.grounding_requests, credit.dispatched_actions)
+        gross = (usage.steps, usage.planning_requests, usage.grounding_requests, usage.dispatched_actions)
+        if any(value > used for value, used in zip(credited, gross, strict=True)):
+            raise ValueError("Recovery budget credit cannot exceed gross usage.")
+        return self
 
     @model_validator(mode="after")
     def _validate_returnable_terminal(self) -> Self:
@@ -213,29 +251,6 @@ class AgentResult(BaseModel):
                 "Interruptions and runtime failures must propagate to the coordinator."
             )
         return self
-
-
-def build_agent_result(
-    terminal: AgentTerminalReason,
-    reason: str,
-    observation: Observation,
-    planning_requests: int,
-    grounding_requests: int,
-    dispatched_actions: int,
-    steps: list[AgentStep],
-) -> AgentResult:
-    """Build one Device Agent conclusion from its bounded counters."""
-    return AgentResult(
-        terminal_reason=terminal,
-        reason=reason,
-        final_observation_id=observation.observation_id,
-        usage=AgentUsage(
-            planning_requests=planning_requests,
-            grounding_requests=grounding_requests,
-            dispatched_actions=dispatched_actions,
-        ),
-        steps=tuple(steps),
-    )
 
 
 class AgentStepPersistenceError(RuntimeError):
@@ -275,6 +290,7 @@ class AgentStepStore:
         step_index: int,
         observation: Observation,
         proposal: ActionProposal,
+        decision: PlannerDecisionMetadata,
         terminal_reason: AgentTerminalReason | None = None,
         *,
         target_grounding: GroundingEvidence | None = None,
@@ -286,6 +302,7 @@ class AgentStepStore:
         settled_observation_id: RecordIdentifier | None = None,
         recovery_observation_id: RecordIdentifier | None = None,
         outcome: ActionOutcome | None = None,
+        application_failure: ActionApplicationFailure | None = None,
     ) -> AgentStep:
         """Build and persist one canonical Device Agent step."""
         step = AgentStep(
@@ -293,6 +310,7 @@ class AgentStepStore:
             step_index=step_index,
             source_observation_id=observation.observation_id,
             proposal=proposal,
+            decision=decision,
             target_grounding=target_grounding,
             destination_grounding=destination_grounding,
             authorization=authorization,
@@ -302,6 +320,7 @@ class AgentStepStore:
             settled_observation_id=settled_observation_id,
             recovery_observation_id=recovery_observation_id,
             outcome=outcome,
+            application_failure=application_failure,
             terminal_reason=terminal_reason,
         )
         self.persist(step)
@@ -312,6 +331,7 @@ class AgentStepStore:
         step_index: int,
         observation: Observation,
         proposal: ActionProposal,
+        decision: PlannerDecisionMetadata,
         target_grounding: GroundingEvidence | None,
         destination_grounding: GroundingEvidence | None,
         authorization: AuthorizedAction | None,
@@ -328,6 +348,7 @@ class AgentStepStore:
                 step_index,
                 observation,
                 proposal,
+                decision,
                 terminal,
                 target_grounding=target_grounding,
                 destination_grounding=destination_grounding,
@@ -364,13 +385,14 @@ def invocation_budget_reason(
     policy: AgentModePolicy,
     elapsed_seconds: float,
     model_requests: int,
+    requested_model_requests: int,
 ) -> str | None:
-    """Return the first exhausted invocation-level limit."""
+    """Return the first invocation limit blocking the next planning operation."""
     if elapsed_seconds >= policy.maximum_duration_seconds:
         return "The Device Agent duration budget is exhausted."
     if (
         policy.maximum_model_requests is not None
-        and model_requests >= policy.maximum_model_requests
+        and model_requests + requested_model_requests > policy.maximum_model_requests
     ):
         return "The Device Agent model-request budget is exhausted."
     return None
@@ -437,13 +459,42 @@ def required_grounding_requests(proposal: ActionProposal) -> int:
     )
 
 
+def build_runtime_grounding_request(
+    grounding_id: RecordIdentifier,
+    expression: str | None,
+    operation: GroundingTargetOperation | None,
+    observation: Observation,
+    correction: GroundingCorrection | None,
+) -> GroundingRequest | None:
+    """Build one visual-grounding request from the current observation."""
+    if expression is None or operation is None:
+        return None
+    output_shape = (
+        GroundingOutputShape.REGION
+        if operation is GroundingTargetOperation.SCROLL_REGION
+        else GroundingOutputShape.POINT
+    )
+    return GroundingRequest(
+        grounding_id=grounding_id,
+        screenshot=observation.redacted_screenshot,
+        source_fingerprint=observation.screen_fingerprint,
+        source_orientation=observation.orientation,
+        source_keyboard_visible=observation.keyboard_visible,
+        expression=expression,
+        operation=operation,
+        output_shape=output_shape,
+        excluded_regions=observation.system_regions,
+        correction=correction,
+    )
+
+
 def remaining_mode_policy(
     policy: AgentModePolicy,
     usage: AgentUsage,
     elapsed_seconds: float,
 ) -> AgentModePolicy | None:
     """Subtract one invocation from a shared mode policy."""
-    remaining_steps = policy.maximum_steps - usage.planning_requests
+    remaining_steps = policy.maximum_steps - usage.steps
     remaining_grounding = policy.maximum_grounding_requests - usage.grounding_requests
     remaining_actions = policy.action_limits.maximum_actions - usage.dispatched_actions
     remaining_duration = policy.maximum_duration_seconds - elapsed_seconds

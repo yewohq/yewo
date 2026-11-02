@@ -8,7 +8,7 @@ from devices._interaction_stubs import DriverStub as _DriverStub
 from devices._interaction_stubs import application as _application
 from yewo.devices import DeviceKind, DevicePlatform
 from yewo.devices.android.interaction import AndroidInteractionBackend
-from yewo.devices.errors import DeviceInteractionError
+from yewo.devices.errors import DeviceInputRejectedError, DeviceInteractionError
 from yewo.devices.interaction import AndroidKey, DeviceInteraction, ScrollDirection
 from yewo.devices.ios.interaction import IosInteractionBackend
 
@@ -163,6 +163,27 @@ def test_text_operations_use_the_focused_element() -> None:
     assert interaction.focused_field_state() is True
 
 
+class _NumericInputReader:
+    def ask(self, connection_id: str, *args: str, timeout_seconds: float = 20) -> str:
+        del connection_id, args, timeout_seconds
+        return "mCurAttribute=EditorInfo{packageName=com.example, inputType=0x2, imeOptions=5}"
+
+
+def test_numeric_focused_field_rejects_text_before_delivery() -> None:
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(_NumericInputReader(), "emulator-5554"),
+    )
+
+    with pytest.raises(DeviceInputRejectedError, match="numeric input"):
+        interaction.type_focused_text("medium")
+
+    assert driver.element.value == ""
+
+
 def test_text_operation_uses_the_in_bounds_appium_element_without_active_focus() -> None:
     driver = _DriverStub()
     driver.switch_to.active_element_failures = 100
@@ -178,6 +199,29 @@ def test_text_operation_uses_the_in_bounds_appium_element_without_active_focus()
     assert interaction.type_text(20, 30, "hello") is True
     assert driver.scripts == []
     assert driver.element.clicked
+
+
+def test_text_operation_rejects_an_appium_element_that_did_not_gain_focus() -> None:
+    driver = _DriverStub()
+    driver.element.focused = False
+    driver.switch_to.active_element_failures = 100
+    driver.focused_xpath_available = False
+    driver.keyboard = True
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+        focus_timeout_seconds=0.1,
+        focus_poll_seconds=0.05,
+        clock=_Clock(),
+    )
+
+    with pytest.raises(DeviceInteractionError, match="did not accept keyboard focus"):
+        interaction.type_text(20, 30, "must not land")
+
+    assert driver.element.clicked
+    assert driver.element.value == ""
 
 
 def test_text_operation_rejects_multiple_appium_fields_at_the_target() -> None:

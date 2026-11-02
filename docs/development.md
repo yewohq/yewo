@@ -19,7 +19,6 @@ uv run pyright
 uv run pytest
 uv run python tools/quality_gate.py
 uv run python tools/ste_gate.py
-uv run python tools/package_gate.py
 ```
 
 ## What the gates protect
@@ -31,7 +30,9 @@ uv run python tools/package_gate.py
 | Ruff | Rejects static defects and functions with cyclomatic complexity above 21. |
 | Pyright | Checks types in the active production package. |
 | pytest | Runs focused deterministic tests. |
-| `package_gate.py` | Builds and installs the wheel in a clean environment, then checks its import and CLI. |
+
+CI builds and installs the wheel separately. Package verification is not a
+local development gate.
 
 Yewo does not contain a copy of the STE linter. Set `YEWO_STE_LINT` when the
 linter is installed at another location. CI checks out a pinned upstream
@@ -53,6 +54,14 @@ Each run has two readable logs under `runtime/`:
 The JSON and JSONL artifacts remain authoritative. Appium and device logs keep full external-tool
 output in their dedicated files. The readable logs do not copy prompts, model response bodies,
 typed values, credentials, or raw device content.
+
+Replay evidence is structured under `assets/agent/replay/`. `attempt.json` preserves the initial
+replay before repair. `evidence.json` links the concluded run to the stored flow, transitions, and
+canonical agent steps it used. `report.json` is a rebuildable summary
+of attempts, completed replays, divergences, and downstream rejoins across unique run identifiers
+under the configured output root. It is a per-run snapshot and identifies every evidence run that
+it covers. Initial replay evidence is written before model repair, so an interrupted repair still
+retains the replay attempt.
 
 ## Evaluation workspace
 

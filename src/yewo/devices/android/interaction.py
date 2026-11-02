@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
+from typing import Protocol
 
 from yewo.devices.application_lifecycle import ApplicationLifecycleDriver
 from yewo.devices.focus import TextElement
@@ -10,6 +12,7 @@ from yewo.devices.interaction import (
     ANDROID_SELECT_ALL_META_STATE,
     AndroidKey,
     InteractionDriver,
+    TextInputConstraint,
 )
 from yewo.devices.screen import (
     ScreenCalibration,
@@ -20,8 +23,34 @@ from yewo.devices.screen import (
 )
 
 
+_CURRENT_INPUT_TYPE_PATTERN = re.compile(
+    r"\bmCurAttribute=EditorInfo\{[^\n]*?\binputType=(?:0x)?([0-9A-Fa-f]+)"
+)
+_START_INPUT_HISTORY_PATTERN = re.compile(
+    r"^\s*mStartInputHistory:\s*$\n(?P<history>.*?)(?=^\s*mSoftInputShowHideHistory:)",
+    re.MULTILINE | re.DOTALL,
+)
+_HISTORY_INPUT_TYPE_PATTERN = re.compile(r"^\s*inputType=0x([0-9A-Fa-f]+)\b", re.MULTILINE)
+_INPUT_TYPE_CLASS_MASK = 0xF
+_INPUT_TYPE_CLASS_NUMBER = 0x2
+_INPUT_TYPE_NUMBER_SIGNED = 0x1000
+_INPUT_TYPE_NUMBER_DECIMAL = 0x2000
+
+
+class _AndroidInputReader(Protocol):
+    def ask(self, connection_id: str, *args: str, timeout_seconds: float = 20) -> str | None: ...
+
+
 class AndroidInteractionBackend:
     """Dispatch Android interactions and read platform context."""
+
+    def __init__(
+        self,
+        input_reader: _AndroidInputReader | None = None,
+        connection_id: str | None = None,
+    ) -> None:
+        self._input_reader = input_reader
+        self._connection_id = connection_id
 
     def tap(self, driver: InteractionDriver, x: int, y: int) -> None:
         driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
@@ -66,6 +95,31 @@ class AndroidInteractionBackend:
                 element.clear()
         except Exception:  # noqa: BLE001 - platform fallback owns driver failures
             element.clear()
+
+    def focused_text_constraint(
+        self,
+        driver: InteractionDriver,
+    ) -> TextInputConstraint | None:
+        """Read Android's current editor type without reading the field value."""
+        del driver
+        if self._input_reader is None or self._connection_id is None:
+            return None
+        output = self._input_reader.ask(
+            self._connection_id,
+            "dumpsys",
+            "input_method",
+            timeout_seconds=3,
+        )
+        input_type = _current_input_type(output or "")
+        if input_type is None:
+            return None
+        if input_type & _INPUT_TYPE_CLASS_MASK != _INPUT_TYPE_CLASS_NUMBER:
+            return TextInputConstraint(is_numeric=False)
+        return TextInputConstraint(
+            is_numeric=True,
+            allows_sign=bool(input_type & _INPUT_TYPE_NUMBER_SIGNED),
+            allows_decimal=bool(input_type & _INPUT_TYPE_NUMBER_DECIMAL),
+        )
 
     def active_application_id(
         self,
@@ -144,6 +198,17 @@ class AndroidInteractionBackend:
         )
 
 
+def _current_input_type(output: str) -> int | None:
+    current = _CURRENT_INPUT_TYPE_PATTERN.search(output)
+    if current is not None:
+        return int(current.group(1), 16)
+    history = _START_INPUT_HISTORY_PATTERN.search(output)
+    if history is None:
+        return None
+    entries = _HISTORY_INPUT_TYPE_PATTERN.findall(history.group("history"))
+    return int(entries[-1], 16) if entries else None
+
+
 def _distance(start: tuple[int, int], end: tuple[int, int]) -> float:
     return ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
 
@@ -161,6 +226,10 @@ def _region_from_mapping(
         kind = SystemRegionKind.STATUS_BAR
     elif "navigation" in normalized_name:
         kind = SystemRegionKind.NAVIGATION_BAR
+    elif normalized_name == "ime" or any(
+        token in normalized_name for token in ("keyboard", "inputmethod")
+    ):
+        kind = SystemRegionKind.KEYBOARD
     else:
         kind = SystemRegionKind.OTHER
     return ScreenRegionReading(kind, ScreenCoordinateSpace.DRIVER, *bounds)

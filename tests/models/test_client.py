@@ -165,19 +165,18 @@ def test_client_sends_explicit_settings_and_records_attribution(tmp_path: Path) 
         calls.append(arguments)
         return _response()
 
-    response = _client(tmp_path, complete).complete(_request(tmp_path))
-
+    request = _request(tmp_path).model_copy(update={"max_completion_tokens": 8_192})
+    response = _client(tmp_path, complete).complete(request)
     assert response.disposition is ModelCallDisposition.COMPLETED
     assert calls[0]["model"] == "openrouter/example/grounder"
-    assert calls[0]["timeout"] == 20
-    assert calls[0]["max_completion_tokens"] == 128
+    assert calls[0]["timeout"] == 20 and calls[0]["max_tokens"] == 8_192
     assert calls[0]["temperature"] == 0
     assert calls[0]["cache_control_injection_points"] == [{"location": "message", "role": "system"}]
     extra_body = calls[0]["extra_body"]
     assert isinstance(extra_body, dict)
     assert extra_body["plugins"] == [{"id": "response-healing"}]
     assert extra_body["session_id"] == extra_body["prompt_cache_key"]
-    assert str(extra_body["session_id"]).startswith("yewo-")
+    assert str(extra_body["prompt_cache_key"]).startswith("yewo-")
     assert "run-1" not in str(extra_body)
     assert response.calls[0].role is ModelRole.GROUNDER
     assert response.calls[0].served_model == "example/grounder-revision-1"

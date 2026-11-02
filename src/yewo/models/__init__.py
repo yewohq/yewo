@@ -8,10 +8,12 @@ from yewo.models.artifacts import (
 )
 from yewo.models.client import LiteLLMModelClient, ModelClient, ModelInputError
 from yewo.models.profiles import (
+    MINIMUM_COMPLETION_TOKENS,
     ModelEndpoint,
     ModelGenerationSettings,
     ModelImageConstraints,
     ModelProfile,
+    ModelReasoningMode,
     ModelProfileRegistry,
     ModelRetryPolicy,
     StructuredOutputMode,
@@ -35,6 +37,7 @@ from yewo.models.records import (
 )
 
 __all__ = [
+    "MINIMUM_COMPLETION_TOKENS",
     "ImageModelContent",
     "ModelArtifactError",
     "ModelArtifactKind",
@@ -54,6 +57,7 @@ __all__ = [
     "ModelMessage",
     "ModelMessageRole",
     "ModelProfile",
+    "ModelReasoningMode",
     "ModelProfileRegistry",
     "ModelRequest",
     "ModelResponse",

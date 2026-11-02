@@ -104,3 +104,29 @@ def test_planner_proposal_cannot_request_repeated_taps() -> None:
                 "tap_count": 4,
             }
         )
+
+
+def test_interaction_refinement_requires_one_point_target() -> None:
+    with pytest.raises(ValidationError, match="requires one visual point target"):
+        proposal(
+            ActionKind.BACK,
+            interaction_refinement_for_proposal_id="proposal-original",
+        )
+
+
+def test_proposal_cannot_mix_grounding_correction_and_interaction_refinement() -> None:
+    with pytest.raises(ValidationError, match="cannot be both"):
+        proposal(
+            grounding_correction_for_proposal_id="proposal-grounding",
+            interaction_refinement_for_proposal_id="proposal-interaction",
+        )
+
+
+def test_planner_validation_context_rejects_an_unavailable_action() -> None:
+    candidate = proposal(ActionKind.TAP)
+
+    with pytest.raises(ValidationError, match="not currently available"):
+        ActionProposal.model_validate(
+            candidate.model_dump(),
+            context={"available_actions": (ActionKind.DISMISS_KEYBOARD.value,)},
+        )

@@ -14,7 +14,6 @@ from yewo.models import (
     ModelCallUsage,
     ModelRequest,
     ModelResponse,
-    ModelRole,
 )
 
 from observations.factories import build_observation
@@ -33,6 +32,7 @@ class StubPlannerModel:
         self.disposition = disposition
         self.requests: list[ModelRequest] = []
         self.response_models: list[type[BaseModel] | None] = []
+        self.validation_contexts: list[dict[str, object] | None] = []
 
     def complete(
         self,
@@ -40,9 +40,9 @@ class StubPlannerModel:
         response_model: type[BaseModel] | None = None,
         validation_context: dict[str, object] | None = None,
     ) -> ModelResponse:
-        del validation_context
         self.requests.append(request)
         self.response_models.append(response_model)
+        self.validation_contexts.append(validation_context)
         completed = self.disposition is ModelCallDisposition.COMPLETED
         return ModelResponse(
             request_id=request.request_id,
@@ -54,7 +54,7 @@ class StubPlannerModel:
                 ModelCallRecord(
                     request_id=request.request_id,
                     profile_id=request.profile_id,
-                    role=ModelRole.TASK_PLANNER,
+                    role=request.role,
                     requested_provider="offline",
                     requested_model="deterministic-planner",
                     attempt_number=1,

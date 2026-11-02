@@ -171,6 +171,7 @@ def agent_result(
         reason="Deterministic agent terminal.",
         final_observation_id=after.observation_id,
         usage=AgentUsage(
+            steps=len(steps),
             planning_requests=len(steps),
             grounding_requests=1 if grounding is not None else 0,
             dispatched_actions=1,

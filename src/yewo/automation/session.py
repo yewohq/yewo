@@ -185,6 +185,10 @@ class AutomationSession:
         """Persist logs produced through one completed action."""
         return self.device_logs.drain_action(action_id)
 
+    def drain_recovery_logs(self, recovery_id: str) -> DeviceLogDrainReceipt:
+        """Persist and consume logs produced by one Yewo-owned recovery."""
+        return self.device_logs.drain_recovery(recovery_id)
+
     def drain_scenario_logs(self, scenario_id: str) -> DeviceLogDrainReceipt:
         """Persist logs produced through one completed scenario."""
         return self.device_logs.drain_scenario(scenario_id)

@@ -18,9 +18,10 @@ from yewo.agent.app_memory import (
     VerifiedRoute,
     build_memory_compatibility,
     derived_memory_identifier,
-    select_verified_route,
 )
 from yewo.agent.screen_memory import observation_matches_screen
+from yewo.agent.discovery_checkpoint import DiscoveryCheckpoint, select_verified_route
+from yewo.agent.grounding_memory import AcceptedGrounding
 from yewo.agent.runtime import DeviceAgent
 from yewo.agent.goal_verifier import (
     GoalVerification,
@@ -46,13 +47,22 @@ from yewo.agent.runtime_records import (
     AgentTerminalReason,
     AgentUsage,
 )
+from yewo.agent.recovery_records import RecoveryBudgetCredit
+from yewo.agent.recovery_advisor import (
+    ModelRecoveryAdvisor,
+    RecoveryAssessment,
+    RecoveryDisposition,
+)
+from yewo.agent.planning_evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.workflow import YewoAgent
 from yewo.agent.memory_store import AppMemoryStore, AppMemoryStoreError
 from yewo.agent.route_replay import (
     RouteActionSource,
+    ReplayPathKind,
     RouteReplayResult,
     RouteReplayTerminal,
     replay_route,
+    replay_discovery_checkpoint,
 )
 
 __all__ = [
@@ -64,13 +74,21 @@ __all__ = [
     "AgentTask",
     "AgentTerminalReason",
     "AgentUsage",
+    "RecoveryBudgetCredit",
+    "RecoveryAssessment",
+    "RecoveryDisposition",
+    "ModelRecoveryAdvisor",
+    "PlannerDecisionSource",
+    "PlannerDecisionMetadata",
     "ActionProposalSource",
     "AcceptedTransition",
+    "AcceptedGrounding",
     "AppMemory",
     "AppMemoryStore",
     "AppMemoryStoreError",
     "CapabilityEvidence",
     "DeviceAgent",
+    "DiscoveryCheckpoint",
     "GoalVerification",
     "GoalVerificationEvidenceError",
     "GoalVerifier",
@@ -82,6 +100,7 @@ __all__ = [
     "ModelGoalVerifier",
     "ObservationVariant",
     "RouteActionSource",
+    "ReplayPathKind",
     "RouteReplayResult",
     "RouteReplayTerminal",
     "RouteSegment",
@@ -100,6 +119,7 @@ __all__ = [
     "load_yewo_run_configuration",
     "observation_matches_screen",
     "replay_route",
+    "replay_discovery_checkpoint",
     "select_verified_route",
     "validate_agent_configuration",
 ]

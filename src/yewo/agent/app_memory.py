@@ -16,6 +16,17 @@ from yewo.agent.actuation import (
     ScrollDistance,
     SideEffectClass,
 )
+from yewo.agent.grounding_memory import AcceptedGrounding, validate_transition_groundings
+from yewo.agent.memory_references import (
+    referenced_memory_observation_ids,
+    validate_retained_observations,
+    validate_route_evidence,
+)
+from yewo.agent.discovery_checkpoint import (
+    MAXIMUM_DISCOVERY_CHECKPOINTS,
+    DiscoveryCheckpoint,
+    validate_discovery_checkpoints,
+)
 from yewo.applications import ApplicationDescriptor, ApplicationRequest
 from yewo.artifacts import EvidenceApplicationIdentity, RecordIdentifier, Sha256Digest
 from yewo.devices.interaction import ScrollDirection
@@ -37,6 +48,7 @@ class ScreenComparisonPolicy(BaseModel):
 
     algorithm: Literal["effective-mask-phash-distance-v1"] = "effective-mask-phash-distance-v1"
     maximum_phash_distance: int = Field(default=0, ge=0, le=64)
+    maximum_replay_phash_distance: int = Field(default=2, ge=0, le=64)
     require_same_effective_mask: Literal[True] = True
 
 
@@ -137,9 +149,7 @@ class InputContract(BaseModel):
 
     @model_validator(mode="after")
     def _validate_format_pattern(self) -> Self:
-        if (self.value_shape is InputValueShape.FORMATTED) != (
-            self.format_pattern is not None
-        ):
+        if (self.value_shape is InputValueShape.FORMATTED) != (self.format_pattern is not None):
             raise ValueError("Only formatted input requires a format pattern.")
         return self
 
@@ -152,7 +162,12 @@ class SemanticRouteAction(BaseModel):
     action: ActionKind
     target_description: str | None = Field(default=None, min_length=1, max_length=2_000)
     destination_description: str | None = Field(default=None, min_length=1, max_length=2_000)
-    expected_outcome: MemoryText
+    expected_outcome: MemoryText = Field(
+        description=(
+            "Unverified action intent retained for replay authorization. Transition outcome "
+            "signals and destination observations provide the reusable evidence."
+        )
+    )
     direction: ScrollDirection | None = None
     distance: ScrollDistance | None = None
     duration_seconds: float | None = Field(default=None, gt=0)
@@ -201,7 +216,7 @@ class SemanticRouteAction(BaseModel):
 
 
 class AcceptedTransition(BaseModel):
-    """One dispatched action supported by an accepted immediate outcome."""
+    """One dispatched action supported by observed outcome and destination evidence."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -219,6 +234,8 @@ class AcceptedTransition(BaseModel):
     grounding_profile_ids: tuple[RecordIdentifier, ...] = ()
     grounder_model_profile_ids: tuple[RecordIdentifier, ...] = ()
     requested_grounder_models: tuple[str, ...] = ()
+    target_grounding: AcceptedGrounding | None = None
+    destination_grounding: AcceptedGrounding | None = None
     source_step_id: RecordIdentifier
 
     @field_serializer("outcome_signals")
@@ -238,6 +255,10 @@ class AcceptedTransition(BaseModel):
         }
         if len(counts) != 1:
             raise ValueError("Transition grounding provenance must describe the same attempts.")
+        if self.target_grounding is not None and self.action.target_description is None:
+            raise ValueError("Transition target grounding requires a target expression.")
+        if self.destination_grounding is not None and self.action.destination_description is None:
+            raise ValueError("Transition destination grounding requires a destination expression.")
         return self
 
 
@@ -370,6 +391,7 @@ class AppMemory(BaseModel):
     screens: tuple[LogicalScreen, ...] = Field(min_length=1)
     transitions: tuple[AcceptedTransition, ...] = ()
     unsuccessful_attempts: tuple[UnsuccessfulAttempt, ...] = ()
+    checkpoints: tuple[DiscoveryCheckpoint, ...] = ()
     routes: tuple[VerifiedRoute, ...] = ()
     capabilities: tuple[CapabilityEvidence, ...] = ()
     updated_at: datetime
@@ -392,6 +414,7 @@ class AppMemory(BaseModel):
             for transition in self.transitions
         ):
             raise ValueError("Every transition must reference known logical screens.")
+        validate_transition_groundings(self.screens, self.transitions)
         attempt_ids = [attempt.attempt_id for attempt in self.unsuccessful_attempts]
         if len(attempt_ids) != len(set(attempt_ids)):
             raise ValueError("App memory unsuccessful-attempt identifiers must be unique.")
@@ -413,6 +436,11 @@ class AppMemory(BaseModel):
             if attempt.source_run_id not in self.source_run_ids:
                 raise ValueError("An unsuccessful attempt must reference a source memory run.")
         known_transitions = set(transition_ids)
+        validate_discovery_checkpoints(
+            self.source_run_ids,
+            self.transitions,
+            self.checkpoints,
+        )
         route_ids = [route.route_id for route in self.routes]
         if len(route_ids) != len(set(route_ids)):
             raise ValueError("App memory route identifiers must be unique.")
@@ -428,11 +456,14 @@ class AppMemory(BaseModel):
             raise ValueError("App memory capability identifiers must be unique.")
         if any(capability.route_id not in known_routes for capability in self.capabilities):
             raise ValueError("Every capability must reference a verified route.")
+        transitions_by_id = {
+            transition.transition_id: transition for transition in self.transitions
+        }
+        validate_route_evidence(self.routes, self.capabilities, transitions_by_id)
         observation_ids = [
             variant.observation_id for screen in self.screens for variant in screen.variants
         ]
-        if len(observation_ids) != len(set(observation_ids)):
-            raise ValueError("A memory observation must belong to one logical screen.")
+        validate_retained_observations(observation_ids, self.routes, self.capabilities)
         masks_by_shape: dict[tuple[DeviceOrientation | None, int, int], str | None] = {}
         for screen in self.screens:
             for variant in screen.variants:
@@ -443,13 +474,29 @@ class AppMemory(BaseModel):
                         "A compatible device shape must use one canonical effective mask."
                     )
                 masks_by_shape[shape] = mask
+        referenced_observations = referenced_memory_observation_ids(
+            self.transitions,
+            self.unsuccessful_attempts,
+            self.routes,
+            self.capabilities,
+        )
+        maximum_optional = self.compatibility.retention.maximum_variants_per_screen
         if any(
-            len(screen.variants) > self.compatibility.retention.maximum_variants_per_screen
+            sum(
+                variant.observation_id not in referenced_observations
+                for variant in screen.variants
+            )
+            > maximum_optional
             for screen in self.screens
         ):
-            raise ValueError("A logical screen exceeds the memory variant retention limit.")
-        if len(self.transitions) > self.compatibility.retention.maximum_transitions:
-            raise ValueError("App memory exceeds the transition retention limit.")
+            raise ValueError("A logical screen exceeds the optional-variant retention limit.")
+        if (
+            len(self.transitions) > self.compatibility.retention.maximum_transitions
+            or len(self.routes) > self.compatibility.retention.maximum_transitions
+            or len(self.capabilities) > self.compatibility.retention.maximum_transitions
+            or len(self.checkpoints) > MAXIMUM_DISCOVERY_CHECKPOINTS
+        ):
+            raise ValueError("App memory exceeds a graph retention limit.")
         return self
 
 
@@ -481,28 +528,4 @@ def build_memory_compatibility(
             artifact_sha256=application.artifact_sha256,
         ),
         setup_contract_sha256=sha256(setup_contract).hexdigest(),
-    )
-
-
-def select_verified_route(
-    memory: AppMemory,
-    objective: str,
-    *,
-    objective_id: RecordIdentifier | None = None,
-) -> VerifiedRoute | None:
-    """Select the newest capability-backed route for one exact objective."""
-    capability_route_ids = {
-        capability.route_id
-        for capability in memory.capabilities
-        if objective_id is None or capability.objective_id == objective_id
-    }
-    return next(
-        (
-            route
-            for route in reversed(memory.routes)
-            if route.objective == objective
-            and route.route_id in capability_route_ids
-            and (objective_id is None or route.objective_id == objective_id)
-        ),
-        None,
     )

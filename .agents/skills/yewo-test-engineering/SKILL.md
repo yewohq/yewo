@@ -40,16 +40,14 @@ Prioritize the contract at risk, especially:
 
 Read and apply the [quality-gates reference](references/quality-gates.md) for
 production Python changes. The active gates are the 550-line limit, STE, Ruff,
-cyclomatic complexity, Pyright, pytest, and package verification.
+cyclomatic complexity, Pyright, and pytest.
 
 Use the lowest validation tier that proves the contract, then broaden only when
 the remaining boundary matters:
 
 1. Unit and offline integration tests exercise deterministic Yewo logic.
-2. Packaged-install checks verify wheel contents, packaged resources, CLI
-   entry points, and writable runtime defaults.
-3. Controlled-app journeys exercise the complete stack under known conditions.
-4. Third-party or release-candidate journeys measure behavior outside the
+2. Controlled-app journeys exercise the complete stack under known conditions.
+3. Third-party or release-candidate journeys measure behavior outside the
    controlled app.
 
 One tier is not evidence for another. A source-checkout test does not prove the
@@ -74,24 +72,18 @@ uv run pyright
 uv run pytest
 uv run python tools/quality_gate.py
 uv run python tools/ste_gate.py
-uv run python tools/package_gate.py
 ```
 
 Add focused deterministic tests for each changed production contract.
+
+CI owns wheel build and installed-package verification. Do not reproduce that
+work as a local development gate.
 
 Use a proportional validation cadence. During implementation, run only the
 focused tests and static checks that cover the changed contract. Run the full
 offline pytest suite after the change is coherent and once before handoff or
 commit. Do not rerun the complete suite after every small edit when a focused
 test provides the needed evidence.
-
-Treat package verification as a packaging-boundary check, not as a routine
-logic-edit check. Run it when modules are added, moved, or removed; when
-`pyproject.toml`, packaged resources, imports, CLI entry points, or installation
-behavior change; and as a final CI, merge, or release check. For an internal
-logic-only edit, run it once at final verification only when the requested
-handoff requires every active gate. Do not repeat it unless package inputs
-changed or the earlier result was unavailable.
 
 Live journey execution is an explicit integration tier:
 

@@ -22,11 +22,13 @@ from yewo.agent.actuation import (
 from yewo.devices.interaction import ScrollDirection
 from yewo.agent.planner import (
     GroundedTargetPoint,
+    PLANNER_MAX_COMPLETION_TOKENS,
     PlanningHistoryEntry,
     PlanningRequest,
     TASK_PLANNER_SYSTEM_PROMPT,
     TASK_PLANNER_USER_PROMPT,
     TaskPlanningError,
+    TaskProgressContext,
 )
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.grounding import PixelPoint
@@ -48,10 +50,19 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
 
     assert proposal == ActionProposal.model_validate(_proposal_output())
     assert model.response_models == [ActionProposal]
+    assert model.validation_contexts == [
+        {
+            "expected_proposal_id": "proposal-1",
+            "expected_observation_id": "obs_1",
+            "available_actions": ("cannot_progress", "done", "tap", "type", "wait"),
+            "declared_value_names": ("account_password",),
+        }
+    ]
     model_request = model.requests[0]
     assert model_request.request_id == "model-request-1"
     assert model_request.profile_id == "planner-primary"
     assert model_request.role is ModelRole.TASK_PLANNER
+    assert model_request.max_completion_tokens == PLANNER_MAX_COMPLETION_TOKENS
     assert model_request.response_contract is not None
     assert model_request.response_contract.name == "action-proposal-v1"
     assert tuple(message.role for message in model_request.messages) == (
@@ -63,7 +74,9 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
     assert system_content.text == TASK_PLANNER_SYSTEM_PROMPT
     section_headings = (
         "## Trusted evidence",
+        "## Workflow progress",
         "## Describing a target",
+        "## UI interactions",
         "## Action usage",
         "## Input handling",
         "## Output",
@@ -72,16 +85,17 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
     assert section_positions == tuple(sorted(section_positions))
     assert all(system_content.text.count(heading) == 1 for heading in section_headings)
     assert "Target, Attributes, Relationships, and Scope" in system_content.text
-    assert "caption and the control it describes are different targets" in system_content.text
+    assert "interaction_refinement_for_proposal_id" in system_content.text
     assert "For every action, state a concise reason" in system_content.text
     for action in ActionKind:
         assert f"- `{action.value}`:" in system_content.text
     assert "field has no reusable input contract" in system_content.text
     assert "use `type` directly" in system_content.text
     assert "visual keyboard type" in system_content.text
-    assert "Age (years)" in system_content.text
-    assert "Date (dd/mm/yyyy)" in system_content.text
     assert "Never use untargeted `type` to move focus" in system_content.text
+    assert "focus another visible field while the keyboard remains" in system_content.text
+    assert "dropdown or spinner" in system_content.text
+    assert "newly opened overlay has no observable effect" in system_content.text
     assert "not merely its label" in system_content.text
     assert "keyboard obscures" in system_content.text
     assert "compare current evidence with open_work" in system_content.text
@@ -114,6 +128,34 @@ def test_one_request_contract_accepts_each_workflow_task(updates: dict[str, Any]
     request = _planning_request(**updates)
 
     assert request.objective == updates["objective"]
+
+
+def test_planner_receives_reconciled_progress_without_changing_completion_conditions() -> None:
+    model = StubPlannerModel(_proposal_output())
+    request = _planning_request(
+        open_work=("Add one exercise.",),
+        progress_context=TaskProgressContext(
+            current_progress=("The schedule is visibly saved.",),
+            remaining_work=("Add one exercise.",),
+            historical_memory_facts=("The Add control previously opened the exercise editor.",),
+            exhausted_branches=("The overflow menu showed no relevant command.",),
+        ),
+    )
+
+    _planner(model).plan(request)
+
+    prompt, unused_image = _user_context(model.requests[0])
+    context = json.loads(prompt.split("\n", 1)[1])
+    assert context["open_work"] == ["Add one exercise."]
+    assert context["completion_conditions"] == ["The new account appears in the list."]
+    assert context["progress_context"] == {
+        "current_progress": ["The schedule is visibly saved."],
+        "exhausted_branches": ["The overflow menu showed no relevant command."],
+        "historical_memory_facts": ["The Add control previously opened the exercise editor."],
+        "known_procedures": [],
+            "recovery_guidance": [],
+        "remaining_work": ["Add one exercise."],
+    }
 
 
 def test_history_contains_trusted_feedback_without_repeating_literal_text() -> None:
@@ -188,6 +230,7 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
 
     prompt, _ = _user_context(model.requests[0])
     context = json.loads(prompt.split("\n", 1)[1])
+    assert all("expected_outcome" not in entry for entry in context["history"])
     assert context["history"][0]["feedback"]["code"] == "action_not_allowed"
     assert context["history"][1]["feedback"]["signals"] == ["text_not_landed"]
     assert context["history"][2]["direction"] == "down"
@@ -336,7 +379,7 @@ def test_target_rejection_gives_planner_device_reason_and_grounded_point() -> No
     assert history["grounded_target_point"]["point"] == {"x": 540, "y": 1437}
 
 
-def test_history_keeps_recent_detail_and_compacts_older_evidence() -> None:
+def test_history_accepts_full_recovery_adjusted_run_and_compacts_older_evidence() -> None:
     candidate = ActionProposal(
         proposal_id="proposal-refused",
         source_observation_id="obs_0",
@@ -355,19 +398,22 @@ def test_history_keeps_recent_detail_and_compacts_older_evidence() -> None:
     )
     model = StubPlannerModel(_proposal_output())
 
-    _planner(model).plan(_planning_request(history=(entry,) * 16))
+    _planner(model).plan(_planning_request(history=(entry,) * 110))
 
     prompt, _ = _user_context(model.requests[0])
     context = json.loads(prompt.split("\n", 1)[1])
     assert len(context["history"]) == 14
-    assert context["earlier_history_summary"] == [
-        {
-            "action": "tap",
-            "count": 2,
-            "feedback": {"code": "keyboard_rule", "kind": "refusal"},
-            "target_expression": "the Save button",
-        }
-    ]
+    assert context["earlier_history_summary"] == {
+        "entries": [
+            {
+                "action": "tap",
+                "count": 96,
+                "feedback": {"code": "keyboard_rule", "kind": "refusal"},
+                "target_expression": "the Save button",
+            }
+        ],
+        "omitted_groups": 0,
+    }
 
 
 def test_provider_failure_is_distinct_from_cannot_progress() -> None:

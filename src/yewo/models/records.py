@@ -27,6 +27,8 @@ class ModelRole(StrEnum):
     TASK_PLANNER = "task_planner"
     GROUNDER = "grounder"
     AUDITOR = "auditor"
+    RECOVERY_ADVISOR = "recovery_advisor"
+    ACTION_VERIFIER = "action_verifier"
 
 
 class ModelMessageRole(StrEnum):
@@ -159,6 +161,7 @@ class ModelRequest(BaseModel):
     request_id: RecordIdentifier
     profile_id: RecordIdentifier
     role: ModelRole
+    max_completion_tokens: int | None = Field(default=None, gt=0)
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     response_contract: ModelResponseContract | None = None
     sensitivity: ArtifactSensitivity

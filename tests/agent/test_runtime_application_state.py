@@ -3,7 +3,17 @@
 from pathlib import Path
 
 from yewo.agent import AgentTerminalReason
+from yewo.agent.action_diagnostics import ActionApplicationFailure
+from yewo.agent.application_state import restart_and_rebaseline_application
 from yewo.agent.actuation import ActionKind, ActionOutcomeSignal
+from yewo.agent.planner import PlanningRequest
+from yewo.agent.recovery_advisor import RecoveryAssessment, RecoveryDisposition
+from yewo.agent.runtime_records import AgentStep
+from yewo.devices.diagnostics import (
+    ApplicationDiagnosticClassification,
+    ApplicationFailureKind,
+)
+from yewo.observations import Observation
 
 from agent.actuation.support import proposal
 from agent.test_runtime import (
@@ -76,6 +86,20 @@ def test_discovery_can_recover_one_initial_application_exit(tmp_path: Path) -> N
     assert result.terminal_reason is AgentTerminalReason.DONE_REQUESTED
     assert recovery_calls == 1
     assert planner.requests[0].observation.observation_id == "obs_2"
+
+
+def test_relaunch_consumes_recovery_owned_diagnostics_before_returning() -> None:
+    events: list[str] = []
+
+    recovered = restart_and_rebaseline_application(
+        lambda: True,
+        lambda: events.append("relaunch"),
+        lambda recovery_id: events.append(f"drain:{recovery_id}"),
+        lambda: "recovery_1",
+    )
+
+    assert recovered
+    assert events == ["relaunch", "drain:recovery_1"]
 
 
 def test_unchanged_screen_settles_only_on_the_final_attempt(tmp_path: Path) -> None:
@@ -152,6 +176,141 @@ def test_discovery_can_recover_one_post_action_application_exit(tmp_path: Path) 
     assert result.steps[0].settled_observation_id == "obs_3"
     assert result.steps[0].recovery_observation_id == "obs_4"
     assert planner.requests[1].observation.observation_id == "obs_4"
+
+
+def test_action_diagnostic_restarts_and_informs_the_planner(tmp_path: Path) -> None:
+    planner = SequencePlanner([proposal(ActionKind.WAIT), proposal(ActionKind.DONE)])
+    observations = ObservationSequence(
+        [
+            _observation("obs_1", "0000000000000000"),
+            _observation("obs_2", "1111111111111111"),
+            _observation("obs_3", "1111111111111111"),
+            _observation("obs_4", "2222222222222222"),
+        ]
+    )
+    recovery_calls = 0
+    diagnostic_action_ids: list[str] = []
+
+    def restart_application() -> bool:
+        nonlocal recovery_calls
+        recovery_calls += 1
+        return True
+
+    def read_action_diagnostic(action_id: str) -> ActionApplicationFailure:
+        diagnostic_action_ids.append(action_id)
+        return ActionApplicationFailure(
+            classification=ApplicationDiagnosticClassification.APPLICATION_CRASH,
+            failure_kinds=(ApplicationFailureKind.CRASH,),
+            summary="The application crashed after Save.",
+            source_artifact_ids=("diagnostic_1",),
+        )
+
+    result = _runtime(
+        tmp_path,
+        planner,
+        observations,
+        RuntimeDevice(),
+        application_failure_recovery=restart_application,
+        action_diagnostic_source=read_action_diagnostic,
+    ).run(_task(), _mode_policy(), NeverInterrupted())
+
+    failure = result.steps[0].application_failure
+    assert result.terminal_reason is AgentTerminalReason.DONE_REQUESTED
+    assert recovery_calls == 1
+    assert len(diagnostic_action_ids) == 1
+    assert failure is not None
+    assert failure.recovery_succeeded
+    assert result.steps[0].terminal_reason is None
+    assert result.steps[0].recovery_observation_id == "obs_4"
+    assert result.steps[0].outcome is not None
+    assert ActionOutcomeSignal.APP_EXITED in result.steps[0].outcome.signals
+    assert planner.requests[1].observation.observation_id == "obs_4"
+    assert planner.requests[1].history[0].application_failure == failure
+
+
+def test_recovery_advisor_can_stop_after_one_relaunch(tmp_path: Path) -> None:
+    planner = SequencePlanner([proposal(ActionKind.WAIT), proposal(ActionKind.DONE)])
+    observations = ObservationSequence(
+        [
+            _observation("obs_1", "0000000000000000"),
+            _observation("obs_2", "1111111111111111"),
+            _observation("obs_3", "1111111111111111"),
+            _observation("obs_4", "2222222222222222"),
+        ]
+    )
+
+    class StopAdvisor:
+        def assess(
+            self,
+            planning_request: PlanningRequest,
+            failed_step: AgentStep,
+            recovery_observation: Observation,
+        ) -> RecoveryAssessment:
+            return RecoveryAssessment(
+                assessment_id="assessment_1",
+                failed_proposal_id=failed_step.proposal.proposal_id,
+                pre_failure_observation_id=planning_request.observation.observation_id,
+                recovery_observation_id=recovery_observation.observation_id,
+                disposition=RecoveryDisposition.STOP,
+                reason="The same submission cannot recover safely.",
+                model_request_id="request_1",
+                model_call_count=1,
+            )
+
+    def read_action_diagnostic(unused_action_id: str) -> ActionApplicationFailure:
+        return ActionApplicationFailure(
+            classification=ApplicationDiagnosticClassification.APPLICATION_CRASH,
+            failure_kinds=(ApplicationFailureKind.CRASH,),
+            summary="The application crashed after Save.",
+        )
+
+    result = _runtime(
+        tmp_path,
+        planner,
+        observations,
+        RuntimeDevice(),
+        application_failure_recovery=lambda: True,
+        action_diagnostic_source=read_action_diagnostic,
+        recovery_advisor=StopAdvisor(),
+    ).run(_task(), _mode_policy(), NeverInterrupted())
+
+    assert result.terminal_reason is AgentTerminalReason.APPLICATION_EXITED
+    assert len(planner.requests) == 1
+    assert result.usage.planning_requests == 2
+    assert result.recovery_budget_credit.planning_requests == 1
+    assert result.recovery_budget_credit.assessment_id == "assessment_1"
+
+
+def test_action_diagnostic_overrides_a_foreground_visual_transition(tmp_path: Path) -> None:
+    planner = SequencePlanner([proposal(ActionKind.WAIT)])
+    observations = ObservationSequence(
+        [
+            _observation("obs_1", "0000000000000000"),
+            _observation("obs_2", "1111111111111111"),
+            _observation("obs_3", "1111111111111111"),
+        ]
+    )
+
+    def read_action_diagnostic(unused_action_id: str) -> ActionApplicationFailure:
+        return ActionApplicationFailure(
+            classification=ApplicationDiagnosticClassification.APPLICATION_CRASH,
+            failure_kinds=(ApplicationFailureKind.CRASH,),
+            summary="The application crashed after Save.",
+            source_artifact_ids=("diagnostic_1",),
+        )
+
+    result = _runtime(
+        tmp_path,
+        planner,
+        observations,
+        RuntimeDevice(),
+        action_diagnostic_source=read_action_diagnostic,
+    ).run(_task(), _mode_policy(), NeverInterrupted())
+
+    assert result.terminal_reason is AgentTerminalReason.APPLICATION_EXITED
+    assert result.reason == "The application crashed after Save."
+    assert result.steps[0].terminal_reason is AgentTerminalReason.APPLICATION_EXITED
+    assert result.steps[0].application_failure is not None
 
 
 def test_discovery_recovery_is_attempted_only_once(tmp_path: Path) -> None:

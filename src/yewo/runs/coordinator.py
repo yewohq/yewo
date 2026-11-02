@@ -336,7 +336,8 @@ class RunCoordinator:
                 reason = f"Yewo infrastructure failed during {stage.value}."
                 narrator.trace(
                     _NARRATION_SOURCE,
-                    f"{type(error).__name__} during {stage.value} chain={_error_chain(error)}",
+                    f"{type(error).__name__} during {stage.value} "
+                    f"chain={_error_chain(error)}{_validation_detail(error)}",
                 )
 
             preceding_category = workflow_preceding_category
@@ -476,6 +477,17 @@ def _error_chain(error: BaseException) -> str:
         names.append(type(current).__name__)
         current = current.__cause__ or current.__context__
     return "<-".join(names)
+
+
+def _validation_detail(error: BaseException) -> str:
+    """Render validation failures without copying validated inputs into the trace."""
+    if not isinstance(error, ValidationError):
+        return ""
+    failures = (
+        f"{'.'.join(str(part) for part in item['loc']) or '<root>'}: {item['msg']}"
+        for item in error.errors(include_url=False, include_input=False)
+    )
+    return f" detail={' | '.join(failures)}"
 
 
 def _has_partial_evidence(root: Path) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from yewo.devices.logs.capture import DeviceLogCapturePolicy
 from yewo.devices.logs.errors import DeviceLogCaptureError, DeviceLogRollbackError
@@ -31,6 +32,15 @@ from yewo.devices.logs.store import DeviceLogStore
 from yewo.devices.diagnostics import (
     ApplicationDiagnosticClassification,
     classify_application_failures,
+)
+
+
+_EXCEPTION_CLASS_PATTERN = re.compile(
+    r"\b(?:[A-Za-z_$][\w$]*\.)*([A-Za-z_$][\w$]*(?:Exception|Error))(?=[:\s]|$)"
+)
+_STACK_FRAME_PATTERN = re.compile(
+    r"\bat\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)"
+    r"\(([A-Za-z_$][\w$]*\.java):(\d+)\)"
 )
 
 
@@ -113,6 +123,10 @@ class DeviceLogArtifactProducer:
                     item.failure_kind
                     for item in batch.items
                     if isinstance(item, ApplicationDiagnosticReport)
+                ),
+                diagnostic_hints=_diagnostic_hints(
+                    batch,
+                    boundary.application.application_id,
                 ),
                 diagnostic_classification=(
                     classify_application_failures(
@@ -331,3 +345,21 @@ class DeviceLogArtifactProducer:
         if not isinstance(result, DeviceLogRedactionResult):
             raise DeviceLogCaptureError("The device-log scrubber returned an invalid result.")
         return result
+
+
+def _diagnostic_hints(batch: DeviceLogBatch, application_id: str) -> tuple[str, ...]:
+    """Extract bounded code identifiers without retaining exception messages."""
+    text = "\n".join(
+        item.text for item in batch.items if isinstance(item, DeviceLogTextEntry)
+    )
+    hints: list[str] = []
+    for frame in _STACK_FRAME_PATTERN.finditer(text):
+        owner, source_file, line_number = frame.groups()
+        if owner != application_id and not owner.startswith(f"{application_id}."):
+            continue
+        preceding_text = text[max(0, frame.start() - 2_000) : frame.start()]
+        exception_classes = _EXCEPTION_CLASS_PATTERN.findall(preceding_text)
+        if exception_classes:
+            hints.append(f"Exception class: {exception_classes[-1]}")
+        hints.append(f"App frame: {owner}({source_file}:{line_number})")
+    return tuple(dict.fromkeys(hints))[:20]

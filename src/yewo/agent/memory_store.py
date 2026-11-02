@@ -27,6 +27,7 @@ from yewo.agent.app_memory import (
     AppMemory,
     MemoryCompatibility,
     ObservationVariant,
+    UnsuccessfulAttemptDisposition,
 )
 
 
@@ -53,7 +54,16 @@ class AppMemoryStore:
         application_root = self._application_root(compatibility)
         with self._locked(application_root):
             memory = self._load_unlocked(application_root, compatibility)
-        _narrate_memory_load(memory)
+        legacy_attempt_count = 0
+        if memory is not None:
+            retained_attempts = tuple(
+                attempt
+                for attempt in memory.unsuccessful_attempts
+                if attempt.disposition is not UnsuccessfulAttemptDisposition.TARGET_REJECTED
+            )
+            legacy_attempt_count = len(memory.unsuccessful_attempts) - len(retained_attempts)
+            memory = memory.model_copy(update={"unsuccessful_attempts": retained_attempts})
+        _narrate_memory_load(memory, legacy_attempt_count)
         return memory
 
     def save(self, memory: AppMemory, source_run_root: Path) -> AppMemory:
@@ -113,12 +123,13 @@ class AppMemoryStore:
         try:
             if path.is_symlink() or not path.is_file():
                 raise AppMemoryStoreError("The app-memory snapshot must be a regular file.")
-            envelope = _MemoryEnvelope.model_validate_json(path.read_bytes())
+            payload = json.loads(path.read_bytes())
+            envelope = _MemoryEnvelope.model_validate(payload)
         except AppMemoryStoreError:
             raise
-        except (OSError, ValidationError) as error:
+        except (json.JSONDecodeError, KeyError, OSError, TypeError, ValidationError) as error:
             raise AppMemoryStoreError("The app-memory snapshot is invalid.") from error
-        content = _canonical_bytes(envelope.memory.model_dump(mode="json"))
+        content = _canonical_bytes(payload["memory"])
         if sha256(content).hexdigest() != envelope.memory_sha256:
             raise AppMemoryStoreError("The app-memory snapshot digest does not match.")
         if envelope.memory.compatibility != compatibility:
@@ -313,7 +324,7 @@ def _canonical_bytes(value: object) -> bytes:
         raise AppMemoryStoreError("App memory is not serializable.") from error
 
 
-def _narrate_memory_load(memory: AppMemory | None) -> None:
+def _narrate_memory_load(memory: AppMemory | None, legacy_attempt_count: int = 0) -> None:
     narrator = current_narrator()
     if narrator is None:
         return
@@ -325,10 +336,16 @@ def _narrate_memory_load(memory: AppMemory | None) -> None:
         "agent-memory",
         f"Loaded application memory with {len(memory.capabilities)} capability record(s).",
     )
+    if legacy_attempt_count:
+        narrator.record(
+            "agent-memory",
+            f"Invalidated {legacy_attempt_count} legacy target-rejection record(s).",
+        )
     narrator.trace(
         "agent-memory",
         f"load=completed memory={memory.memory_id} screens={len(memory.screens)} "
-        f"routes={len(memory.routes)} capabilities={len(memory.capabilities)}",
+        f"routes={len(memory.routes)} capabilities={len(memory.capabilities)} "
+        f"invalidated_legacy_target_rejections={legacy_attempt_count}",
     )
 
 

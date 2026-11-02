@@ -10,6 +10,12 @@ from typing import Mapping
 from pydantic import ValidationError
 
 from yewo.agent.runtime_records import AgentResult, AgentStep, AgentTerminalReason
+from yewo.agent.grounding_memory import AcceptedGrounding
+from yewo.agent.discovery_checkpoint import (
+    MAXIMUM_DISCOVERY_CHECKPOINTS,
+    build_discovery_checkpoint,
+    retain_discovery_graph,
+)
 from yewo.agent.actuation import (
     ActionKind,
     ActionOutcomeDisposition,
@@ -18,12 +24,11 @@ from yewo.agent.actuation import (
     DispatchDisposition,
 )
 from yewo.artifacts import RecordIdentifier
-from yewo.grounding import GroundedPoint
+from yewo.grounding import GroundedPoint, GroundingEvidence
 from yewo.observations import Observation
 from yewo.agent.app_memory import (
     AcceptedTransition,
     AppMemory,
-    CapabilityEvidence,
     InputContract,
     InputValueShape,
     LogicalScreen,
@@ -35,14 +40,18 @@ from yewo.agent.app_memory import (
     VerifiedRoute,
     derived_memory_identifier,
 )
-from yewo.agent.screen_memory import add_observation_screen, validate_memory_observations
+from yewo.agent.screen_memory import (
+    add_observation_screen,
+    retain_observation_variants,
+    validate_memory_observations,
+)
 from yewo.agent.discovery.records import (
     DiscoveryCoverage,
     DiscoveryCoverageEntry,
-    DiscoveryObjective,
     DiscoveryObjectiveState,
     DiscoveryRequest,
 )
+from yewo.agent.discovery.coverage import build_objective_evidence
 
 
 @dataclass(frozen=True)
@@ -78,6 +87,7 @@ class AppMemoryBuilder:
         screens = list(existing.screens if existing is not None else ())
         transitions = list(existing.transitions if existing is not None else ())
         unsuccessful_attempts = list(existing.unsuccessful_attempts if existing is not None else ())
+        checkpoints = list(existing.checkpoints if existing is not None else ())
         run_transitions: list[AcceptedTransition] = []
         new_unsuccessful_attempts: list[UnsuccessfulAttempt] = []
 
@@ -105,20 +115,35 @@ class AppMemoryBuilder:
                 continue
             if run_transitions:
                 transition = _add_input_contract(run_transitions[-1], transition)
-            equivalent = next(
-                (item for item in transitions if _same_semantic_transition(item, transition)),
+            equivalent_index = next(
+                (
+                    index
+                    for index, item in enumerate(transitions)
+                    if _same_semantic_transition(item, transition)
+                ),
                 None,
             )
-            if equivalent is None:
+            if equivalent_index is None:
                 transitions.append(transition)
-            run_transitions.append(transition if equivalent is None else equivalent)
+            else:
+                equivalent = transitions[equivalent_index]
+                transition = equivalent.model_copy(
+                    update={
+                        "target_grounding": equivalent.target_grounding
+                        or transition.target_grounding,
+                        "destination_grounding": equivalent.destination_grounding
+                        or transition.destination_grounding,
+                    }
+                )
+                transitions[equivalent_index] = transition
+            run_transitions.append(transition)
 
         routes = list(existing.routes if existing is not None else ())
         capabilities = list(existing.capabilities if existing is not None else ())
         coverage_entries: list[DiscoveryCoverageEntry] = []
         route = _verified_route(request, agent_result, run_transitions)
         for objective in request.objectives:
-            entry, objective_route, capability = _objective_evidence(
+            entry, objective_route, capability = build_objective_evidence(
                 objective,
                 agent_result,
                 route,
@@ -135,17 +160,67 @@ class AppMemoryBuilder:
                 capabilities.append(capability)
 
         coverage = DiscoveryCoverage(entries=tuple(coverage_entries))
+        verified_ids = {
+            entry.objective_id
+            for entry in coverage.entries
+            if entry.state is DiscoveryObjectiveState.SUPPORTED
+        }
+        checkpoints = [item for item in checkpoints if item.objective_id not in verified_ids]
+        if request.objectives[0].objective_id not in verified_ids:
+            checkpoint = build_discovery_checkpoint(
+                request.objectives[0].objective_id,
+                request.objectives[0].statement,
+                run_transitions,
+                source_run_id,
+                updated_at,
+            )
+            if checkpoint is not None:
+                checkpoints = [
+                    item for item in checkpoints if item.objective_id != checkpoint.objective_id
+                ]
+                checkpoints.append(checkpoint)
         if not run_transitions and not new_unsuccessful_attempts:
             return DiscoveryPromotion(memory=existing, coverage=coverage)
         source_run_ids = tuple(
             dict.fromkeys((*(existing.source_run_ids if existing else ()), source_run_id))
         )
-        retained_transitions = _retain_referenced_transitions(
+        checkpoints = checkpoints[-MAXIMUM_DISCOVERY_CHECKPOINTS:]
+        retained_graph = retain_discovery_graph(
             transitions,
             routes,
+            checkpoints,
+            capabilities,
             compatibility.retention.maximum_transitions,
         )
+        retained_capability_ids = {
+            capability.capability_id for capability in retained_graph.capabilities
+        }
+        coverage = DiscoveryCoverage(
+            entries=tuple(
+                entry
+                if entry.capability_id is None or entry.capability_id in retained_capability_ids
+                else entry.model_copy(
+                    update={
+                        "state": DiscoveryObjectiveState.UNRESOLVED,
+                        "capability_id": None,
+                        "route_id": None,
+                        "evidence_observation_ids": (),
+                        "reason": "Memory retention could not retain the verified route.",
+                    }
+                )
+                for entry in coverage.entries
+            )
+        )
         maximum_attempts = compatibility.retention.maximum_unsuccessful_attempts
+        retained_attempts = tuple(unsuccessful_attempts[-maximum_attempts:])
+        retained_screens = retain_observation_variants(
+            screens,
+            retained_graph.transitions,
+            retained_attempts,
+            retained_graph.routes,
+            retained_graph.capabilities,
+            compatibility.retention.maximum_variants_per_screen,
+        )
         memory = AppMemory(
             memory_id=(
                 existing.memory_id
@@ -154,11 +229,12 @@ class AppMemoryBuilder:
             ),
             compatibility=compatibility,
             source_run_ids=source_run_ids,
-            screens=tuple(screens),
-            transitions=retained_transitions,
-            unsuccessful_attempts=tuple(unsuccessful_attempts[-maximum_attempts:]),
-            routes=tuple(routes),
-            capabilities=tuple(capabilities),
+            screens=retained_screens,
+            transitions=retained_graph.transitions,
+            unsuccessful_attempts=retained_attempts,
+            checkpoints=retained_graph.checkpoints,
+            routes=retained_graph.routes,
+            capabilities=retained_graph.capabilities,
             updated_at=updated_at,
         )
         return DiscoveryPromotion(memory=memory, coverage=coverage)
@@ -244,8 +320,27 @@ class AppMemoryBuilder:
                 for evidence in (step.target_grounding, step.destination_grounding)
                 if evidence is not None
             ),
+            target_grounding=_accepted_grounding(step.target_grounding, source),
+            destination_grounding=_accepted_grounding(step.destination_grounding, source),
             source_step_id=step.step_id,
         )
+
+
+def _accepted_grounding(
+    evidence: GroundingEvidence | None,
+    source: Observation,
+) -> AcceptedGrounding | None:
+    if evidence is None or evidence.result.location is None:
+        return None
+    return AcceptedGrounding(
+        location=evidence.result.location,
+        source_observation_id=source.observation_id,
+        source_masked_pixels_sha256=source.screen_fingerprint.masked_pixels_sha256,
+        source_system_region_mask_sha256=source.screen_fingerprint.system_region_mask_sha256,
+        profile_id=evidence.result.profile_id,
+        model_profile_id=evidence.result.model_profile_id,
+        requested_model=evidence.result.requested_model,
+    )
 
 
 def _unsuccessful_attempt(
@@ -389,20 +484,6 @@ def _same_semantic_transition(
     )
 
 
-def _retain_referenced_transitions(
-    transitions: list[AcceptedTransition],
-    routes: list[VerifiedRoute],
-    maximum: int,
-) -> tuple[AcceptedTransition, ...]:
-    required = {segment.transition_id for route in routes for segment in route.segments}
-    retained = [item for item in transitions if item.transition_id in required]
-    optional = [item for item in transitions if item.transition_id not in required]
-    available = maximum - len(retained)
-    if available < 0:
-        raise ValueError("Verified routes exceed the transition retention limit.")
-    return tuple((*retained, *optional[-available:])) if available else tuple(retained)
-
-
 def _verified_route(
     request: DiscoveryRequest,
     agent_result: AgentResult,
@@ -412,6 +493,11 @@ def _verified_route(
         return None
     represented_step_ids = {transition.source_step_id for transition in transitions}
     for step in agent_result.steps:
+        if (
+            step.receipt is not None
+            and step.receipt.disposition is DispatchDisposition.DISPATCH_UNVERIFIED
+        ):
+            return None
         if step.receipt is None or step.receipt.disposition is not DispatchDisposition.DISPATCHED:
             continue
         if step.step_id in represented_step_ids:
@@ -450,99 +536,3 @@ def _verified_route(
         ),
         evidence_observation_ids=tuple(dict.fromkeys(observations)),
     )
-
-
-def _objective_evidence(
-    objective: DiscoveryObjective,
-    agent_result: AgentResult,
-    shared_route: VerifiedRoute | None,
-    independently_verified: bool,
-) -> tuple[DiscoveryCoverageEntry, VerifiedRoute | None, CapabilityEvidence | None]:
-    if shared_route is not None and independently_verified:
-        route = shared_route.model_copy(
-            update={
-                "route_id": derived_memory_identifier(
-                    "route", objective.objective_id, shared_route.route_id
-                ),
-                "objective_id": objective.objective_id,
-                "objective": objective.statement,
-            }
-        )
-        capability = CapabilityEvidence(
-            capability_id=derived_memory_identifier(
-                "capability", objective.objective_id, route.route_id
-            ),
-            objective_id=objective.objective_id,
-            statement=f"The application can reach: {objective.statement}",
-            route_id=route.route_id,
-            evidence_observation_ids=route.evidence_observation_ids,
-        )
-        return (
-            DiscoveryCoverageEntry(
-                objective_id=objective.objective_id,
-                state=DiscoveryObjectiveState.SUPPORTED,
-                capability_id=capability.capability_id,
-                route_id=route.route_id,
-                evidence_observation_ids=route.evidence_observation_ids,
-                reason="A contiguous accepted route reached the requested state.",
-            ),
-            route,
-            capability,
-        )
-    if shared_route is not None:
-        return (
-            DiscoveryCoverageEntry(
-                objective_id=objective.objective_id,
-                state=DiscoveryObjectiveState.UNRESOLVED,
-                reason=(
-                    "A reusable route was observed, but independent final-state verification "
-                    "did not support the objective."
-                ),
-            ),
-            shared_route.model_copy(
-                update={
-                    "route_id": derived_memory_identifier(
-                        "route", objective.objective_id, shared_route.route_id
-                    ),
-                    "objective_id": objective.objective_id,
-                    "objective": objective.statement,
-                }
-            ),
-            None,
-        )
-    state = (
-        DiscoveryObjectiveState.BLOCKED
-        if agent_result.terminal_reason
-        in {
-            AgentTerminalReason.APPLICATION_EXITED,
-            AgentTerminalReason.APPLICATION_INACTIVE,
-            AgentTerminalReason.DEVICE_REFUSED,
-        }
-        else DiscoveryObjectiveState.UNRESOLVED
-    )
-    return (
-        DiscoveryCoverageEntry(
-            objective_id=objective.objective_id,
-            state=state,
-            reason=_coverage_reason(agent_result),
-        ),
-        None,
-        None,
-    )
-
-
-def _coverage_reason(agent_result: AgentResult) -> str:
-    return {
-        AgentTerminalReason.DONE_REQUESTED: (
-            "The planner requested completion without a contiguous reusable route."
-        ),
-        AgentTerminalReason.CANNOT_PROGRESS: (
-            "The agent found no further permitted useful action. The objective remains unresolved."
-        ),
-        AgentTerminalReason.BUDGET_EXHAUSTED: (
-            "The discovery budget ended. Evidence does not support the objective."
-        ),
-        AgentTerminalReason.APPLICATION_EXITED: "The application exited during discovery.",
-        AgentTerminalReason.APPLICATION_INACTIVE: "The application became inactive during discovery.",
-        AgentTerminalReason.DEVICE_REFUSED: "The device refused a discovery action.",
-    }[agent_result.terminal_reason]

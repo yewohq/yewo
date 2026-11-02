@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -28,6 +28,7 @@ from yewo.devices.diagnostics import (
 _LOG_TYPE_PATTERN = r"^[^\s\x00-\x1f\x7f/\\]{1,128}$"
 _ARTIFACT_STEM_PATTERN = r"^[a-z][a-z0-9_-]{0,63}$"
 _POLICY_ID_PATTERN = r"^[a-z0-9][a-z0-9_.-]{0,127}$"
+DiagnosticHint = Annotated[str, Field(min_length=1, max_length=256)]
 
 
 class DeviceLogBoundaryState(StrEnum):
@@ -53,6 +54,7 @@ class DeviceLogCheckpointKind(StrEnum):
 
     SESSION_START = "session_start"
     ACTION = "action"
+    RECOVERY = "recovery"
     SCENARIO = "scenario"
     SESSION_END = "session_end"
 
@@ -86,7 +88,7 @@ def validate_device_log_checkpoint(
             raise ValueError("A session boundary log drain cannot have a checkpoint ID.")
         return None
     if checkpoint_id is None:
-        raise ValueError("An action or scenario log drain requires a checkpoint ID.")
+        raise ValueError("An action, recovery, or scenario log drain requires a checkpoint ID.")
     return validate_record_identifier(checkpoint_id)
 
 
@@ -229,6 +231,7 @@ class DeviceLogSourceReceipt(BaseModel):
     omission: DeviceLogOmission = DeviceLogOmission.NONE
     artifacts: tuple[DeviceLogArtifactReference, ...] = ()
     observed_failure_kinds: tuple[ApplicationFailureKind, ...] = ()
+    diagnostic_hints: tuple[DiagnosticHint, ...] = Field(default=(), max_length=20)
     diagnostic_classification: ApplicationDiagnosticClassification | None = None
     reason: str | None = Field(default=None, min_length=1)
 

@@ -16,8 +16,10 @@ from yewo.models import (
     ModelCallUsage,
 )
 from yewo.observations import (
+    DeviceOrientation,
     PixelRegion,
     ScreenRegion,
+    ScreenFingerprint,
     ScreenshotRedactionState,
     ScreenshotReference,
 )
@@ -50,6 +52,13 @@ class GroundingDisposition(StrEnum):
     OUT_OF_BOUNDS = "out_of_bounds"
     REPEATED_POINT = "repeated_point"
     AMBIGUOUS = "ambiguous"
+
+
+class GroundingResolutionSource(StrEnum):
+    """The evidence source that resolved one grounding request."""
+
+    MODEL = "model"
+    MEMORY = "memory"
 
 
 class GroundingCoordinateConvention(StrEnum):
@@ -145,6 +154,9 @@ class GroundingRequest(BaseModel):
 
     grounding_id: RecordIdentifier
     screenshot: ScreenshotReference
+    source_fingerprint: ScreenFingerprint | None = None
+    source_orientation: DeviceOrientation | None = None
+    source_keyboard_visible: bool | None = None
     expression: str = Field(min_length=1)
     operation: GroundingTargetOperation
     output_shape: GroundingOutputShape
@@ -186,6 +198,25 @@ class GroundingProfile(BaseModel):
     supported_shapes: frozenset[GroundingOutputShape] = Field(min_length=1)
 
 
+class GroundingInputError(ValueError):
+    """Raised when a grounding request is incompatible with its profile."""
+
+
+def validate_grounding_request(
+    profile: GroundingProfile,
+    request: GroundingRequest,
+) -> None:
+    """Require one grounding request to use a supported operation and shape."""
+    if request.operation not in profile.supported_operations:
+        raise GroundingInputError(
+            f"The grounding profile does not support {request.operation.value}."
+        )
+    if request.output_shape not in profile.supported_shapes:
+        raise GroundingInputError(
+            f"The grounding profile does not support {request.output_shape.value} output."
+        )
+
+
 class GroundingResult(BaseModel):
     """A validated grounding decision with its model-call evidence."""
 
@@ -197,6 +228,7 @@ class GroundingResult(BaseModel):
     source_screenshot_sha256: Sha256Digest
     output_shape: GroundingOutputShape
     disposition: GroundingDisposition
+    resolution_source: GroundingResolutionSource = GroundingResolutionSource.MODEL
     location: GroundedLocation | None = None
     reason: str | None = Field(default=None, min_length=1)
     requested_provider: str = Field(min_length=1)
@@ -204,16 +236,30 @@ class GroundingResult(BaseModel):
     requested_revision: str | None = Field(default=None, min_length=1)
     served_model: str | None = Field(default=None, min_length=1)
     upstream_provider: str | None = Field(default=None, min_length=1)
-    transport_disposition: ModelCallDisposition
-    raw_response_artifact: ModelArtifactReference
+    transport_disposition: ModelCallDisposition | None = None
+    raw_response_artifact: ModelArtifactReference | None = None
+    cached_transition_id: RecordIdentifier | None = None
     latency_ms: float | None = Field(default=None, ge=0)
     usage: ModelCallUsage
     confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def _validate_result(self) -> Self:
-        if self.raw_response_artifact.kind is not ModelArtifactKind.CALL:
-            raise ValueError("A grounding response artifact must contain a model call.")
+        if self.resolution_source is GroundingResolutionSource.MODEL:
+            if self.transport_disposition is None or self.raw_response_artifact is None:
+                raise ValueError("Model grounding requires transport and call evidence.")
+            if self.raw_response_artifact.kind is not ModelArtifactKind.CALL:
+                raise ValueError("A grounding response artifact must contain a model call.")
+            if self.cached_transition_id is not None:
+                raise ValueError("Model grounding cannot reference a cached transition.")
+        elif (
+            self.cached_transition_id is None
+            or self.transport_disposition is not None
+            or self.raw_response_artifact is not None
+            or self.disposition is not GroundingDisposition.ACCEPTED
+            or self.usage != ModelCallUsage()
+        ):
+            raise ValueError("Memory grounding requires accepted zero-usage transition evidence.")
         if self.disposition is GroundingDisposition.ACCEPTED:
             if self.location is None or self.reason is not None:
                 raise ValueError("An accepted grounding must contain one location and no reason.")
@@ -248,4 +294,16 @@ class GroundingEvidence(BaseModel):
 class VisualGrounder(Protocol):
     """Resolve a visual target without receiving planning state."""
 
+    def required_model_requests(self, request: GroundingRequest) -> int: ...
+
     def ground(self, request: GroundingRequest) -> GroundingResult: ...
+
+
+def resolve_grounding_request(
+    grounder: VisualGrounder,
+    request: GroundingRequest | None,
+) -> GroundingEvidence | None:
+    """Resolve one optional request and bind its evidence."""
+    if request is None:
+        return None
+    return GroundingEvidence(request=request, result=grounder.ground(request))

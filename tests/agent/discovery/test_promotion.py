@@ -1,13 +1,10 @@
-"""YewoAgent discovery-promotion tests."""
-
 from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
 
 from yewo.agent import (
-    AgentResult,
-    AgentTerminalReason,
+    AgentResult, AgentTerminalReason,
     AgentUsage,
     InputValueShape,
     MemoryCompatibility,
@@ -22,6 +19,7 @@ from yewo.agent.actuation import (
 )
 from yewo.artifacts import EvidenceApplicationIdentity
 from yewo.devices.inventory import DevicePlatform
+from yewo.grounding import GroundedPoint
 from yewo.agent.discovery import (
     AppMemoryBuilder,
     DiscoveryObjective,
@@ -93,7 +91,7 @@ def test_memory_requires_a_versioned_application_build() -> None:
         )
 
 
-def test_done_promotes_one_route_and_capability_without_coordinates() -> None:
+def test_done_promotes_one_route_capability_and_exact_source_grounding() -> None:
     promotion = _promote()
 
     assert promotion.memory is not None
@@ -104,9 +102,15 @@ def test_done_promotes_one_route_and_capability_without_coordinates() -> None:
     serialized = promotion.memory.model_dump_json()
     assert '"target_description":"the add button"' in serialized
     assert '"target"' not in serialized
-    assert '"x"' not in serialized
-    assert '"y"' not in serialized
     transition = promotion.memory.transitions[0]
+    assert transition.target_grounding is not None
+    assert isinstance(transition.target_grounding.location, GroundedPoint)
+    assert transition.target_grounding.location.pixel.x == 100
+    assert transition.target_grounding.location.pixel.y == 200
+    assert (
+        transition.target_grounding.source_masked_pixels_sha256
+        == promotion.memory.screens[0].variants[0].fingerprint.masked_pixels_sha256
+    )
     assert transition.outcome_signals
     assert len(transition.grounding_profile_ids) == 1
     assert len(transition.grounder_model_profile_ids) == 1
@@ -398,7 +402,7 @@ def test_focus_then_literal_type_learns_a_targeted_input_contract() -> None:
         terminal_reason=AgentTerminalReason.DONE_REQUESTED,
         reason="The planner requested completion.",
         final_observation_id=typed.observation_id,
-        usage=AgentUsage(planning_requests=3, grounding_requests=1, dispatched_actions=2),
+        usage=AgentUsage(steps=3, planning_requests=3, grounding_requests=1, dispatched_actions=2),
         steps=(focus_result.steps[0], type_step, terminal_step),
     )
 
@@ -488,6 +492,7 @@ def test_route_remains_contiguous_across_disposable_text_input() -> None:
         reason="The planner requested completion.",
         final_observation_id=destination.observation_id,
         usage=AgentUsage(
+            steps=3,
             planning_requests=3,
             grounding_requests=2,
             dispatched_actions=2,

@@ -33,7 +33,10 @@ from grounding.support import DeterministicGrounder
 
 
 def _memory_route_and_evidence(
-    *, maximum_phash_distance: int = 0, action: ActionKind = ActionKind.TAP
+    *,
+    maximum_phash_distance: int = 0,
+    maximum_replay_phash_distance: int = 2,
+    action: ActionKind = ActionKind.TAP,
 ):
     before = observation("obs_1", "0000000000000000")
     after = observation(
@@ -58,7 +61,10 @@ def _memory_route_and_evidence(
         {before.observation_id: before, after.observation_id: after},
         MemoryCompatibility(
             application=before.application,
-            screen_comparison=ScreenComparisonPolicy(maximum_phash_distance=maximum_phash_distance),
+            screen_comparison=ScreenComparisonPolicy(
+                maximum_phash_distance=maximum_phash_distance,
+                maximum_replay_phash_distance=maximum_replay_phash_distance,
+            ),
         ),
         verified_objective_ids=frozenset({"account_form"}),
         source_run_id="run_1",
@@ -84,6 +90,7 @@ def test_route_source_emits_semantic_action_then_done_after_destination_guard() 
     source = RouteActionSource(memory, route, identifier_factory=lambda: next(identifiers))
 
     action = source.plan(_request(before))
+    action_decision = source.decision_metadata()
     outcome = evidence.steps[0].outcome
     assert outcome is not None
     terminal = source.plan(
@@ -97,6 +104,9 @@ def test_route_source_emits_semantic_action_then_done_after_destination_guard() 
     assert action.target_expression == "the add button"
     assert action.model_dump().get("target") is None
     assert terminal.action is ActionKind.DONE
+    assert action_decision.reused_flow_id == route.route_id
+    assert action_decision.reused_transition_ids == (route.segments[0].transition_id,)
+    assert action_decision.reused_segment_index == 0
     assert source.completed_segment_count == 1
     assert source.failed_segment_index is None
 
@@ -144,7 +154,7 @@ def test_route_source_collapses_learned_focus_and_type_into_targeted_type() -> N
         terminal_reason=AgentTerminalReason.DONE_REQUESTED,
         reason="The planner requested completion.",
         final_observation_id=typed.observation_id,
-        usage=AgentUsage(planning_requests=3, grounding_requests=1, dispatched_actions=2),
+        usage=AgentUsage(steps=3, planning_requests=3, grounding_requests=1, dispatched_actions=2),
         steps=(focus_result.steps[0], type_step, terminal_step),
     )
     request = DiscoveryRequest(
@@ -167,6 +177,12 @@ def test_route_source_collapses_learned_focus_and_type_into_targeted_type() -> N
     )
     assert promotion.memory is not None
     route = promotion.memory.routes[0]
+    divergent = RouteActionSource(
+        promotion.memory,
+        route,
+        known_divergent_transition_id=route.segments[0].transition_id,
+    )
+    blocked = divergent.plan(_request(first, available=frozenset({ActionKind.TYPE})))
     identifiers = iter(("proposal_replay", "proposal_done"))
     source = RouteActionSource(
         promotion.memory,
@@ -175,9 +191,7 @@ def test_route_source_collapses_learned_focus_and_type_into_targeted_type() -> N
     )
 
     action = source.plan(_request(first, available=frozenset({ActionKind.TYPE})))
-    replay_outcome = type_outcome.model_copy(
-        update={"source_observation_id": first.observation_id}
-    )
+    replay_outcome = type_outcome.model_copy(update={"source_observation_id": first.observation_id})
     terminal = source.plan(
         _request(
             typed,
@@ -191,6 +205,8 @@ def test_route_source_collapses_learned_focus_and_type_into_targeted_type() -> N
     assert action.text == LiteralText(value="hello")
     assert terminal.action is ActionKind.DONE
     assert source.completed_segment_count == 2
+    assert blocked.action is ActionKind.CANNOT_PROGRESS
+    assert divergent.rejoin_segment_index == 1
 
 
 def test_route_selection_requires_an_exact_capability_backed_objective() -> None:
@@ -210,6 +226,25 @@ def test_route_source_stops_before_action_when_source_guard_diverges() -> None:
     assert terminal.action is ActionKind.CANNOT_PROGRESS
     assert source.completed_segment_count == 0
     assert source.failed_segment_index == 0
+
+
+def test_known_repeated_divergence_stops_before_dispatching_that_transition() -> None:
+    memory, route, before, _, _ = _memory_route_and_evidence()
+    transition_id = route.segments[0].transition_id
+    source = RouteActionSource(
+        memory,
+        route,
+        known_divergent_transition_id=transition_id,
+        identifier_factory=lambda: "terminal_1",
+    )
+
+    terminal = source.plan(_request(before))
+
+    assert terminal.action is ActionKind.CANNOT_PROGRESS
+    assert source.completed_segment_count == 0
+    assert source.failed_segment_index == 0
+    assert source.rejoin_segment_index == 1
+    assert source.replay_transition_ids[0] == transition_id
 
 
 def test_route_source_stops_when_destination_guard_diverges() -> None:
@@ -238,36 +273,26 @@ def test_route_source_stops_when_destination_guard_diverges() -> None:
     assert source.failed_segment_index == 0
 
 
-def test_route_guards_use_the_explicit_nonzero_comparison_policy() -> None:
-    memory, route, _, _, evidence = _memory_route_and_evidence(maximum_phash_distance=1)
-    current_source = observation("source_variant", "0000000000000001")
-    current_destination = observation(
-        "destination_variant",
-        "1111111111111110",
-        predecessor_observation_id=current_source.observation_id,
-        offset_seconds=1,
-    )
-    identifiers = iter(("proposal_replay", "proposal_done"))
-    source = RouteActionSource(memory, route, identifier_factory=lambda: next(identifiers))
+def test_route_guard_tolerates_two_transient_phash_bits() -> None:
+    memory, route, _, _, unused_evidence = _memory_route_and_evidence()
+    current_source = observation("source_variant", "0000000000000003")
+    source = RouteActionSource(memory, route, identifier_factory=lambda: "proposal_replay")
 
     action = source.plan(_request(current_source))
-    outcome = evidence.steps[0].outcome
-    assert outcome is not None
-    outcome = outcome.model_copy(
-        update={
-            "source_observation_id": current_source.observation_id,
-            "settled_observation_id": current_destination.observation_id,
-        }
-    )
-    terminal = source.plan(
-        _request(
-            current_destination,
-            history=(PlanningHistoryEntry(proposal=action, outcome=outcome),),
-        )
-    )
 
     assert action.action is ActionKind.TAP
-    assert terminal.action is ActionKind.DONE
+    assert source.failed_segment_index is None
+
+
+def test_route_guard_rejects_phash_difference_beyond_replay_policy() -> None:
+    memory, route, _, _, unused_evidence = _memory_route_and_evidence()
+    current_source = observation("source_variant", "0000000000000007")
+    source = RouteActionSource(memory, route, identifier_factory=lambda: "proposal_terminal")
+
+    terminal = source.plan(_request(current_source))
+
+    assert terminal.action is ActionKind.CANNOT_PROGRESS
+    assert source.failed_segment_index == 0
 
 
 def test_route_source_stops_when_active_policy_excludes_route_action() -> None:

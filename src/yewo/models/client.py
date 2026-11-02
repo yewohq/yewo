@@ -29,7 +29,9 @@ from yewo.models._litellm_response import (
     normalize_litellm_completion,
 )
 from yewo.models.profiles import (
+    MINIMUM_COMPLETION_TOKENS,
     ModelProfile,
+    ModelReasoningMode,
     ModelProfileRegistry,
     StructuredOutputMode,
     missing_model_credentials,
@@ -46,6 +48,14 @@ from yewo.models.records import (
     ModelResponse,
     TextModelContent,
     build_model_response_contract,
+)
+
+_RETRYABLE_RESPONSE_DISPOSITIONS = frozenset(
+    {
+        ModelCallDisposition.MALFORMED,
+        ModelCallDisposition.TRUNCATED,
+        ModelCallDisposition.EMPTY,
+    }
 )
 
 CompletionCall = Callable[..., object]
@@ -129,6 +139,7 @@ class LiteLLMModelClient:
             artifact_messages = message_encoder.artifact_messages(messages)
             completion_arguments = self._completion_arguments(
                 profile,
+                request,
                 provider_messages,
                 response_format,
             )
@@ -206,7 +217,8 @@ class LiteLLMModelClient:
                 calls.append(self._persist_call(call, response_evidence))
                 if (
                     response_model is not None
-                    and normalized.disposition is ModelCallDisposition.MALFORMED
+                    and normalized.disposition
+                    in _RETRYABLE_RESPONSE_DISPOSITIONS
                     and validation_attempt < validation_attempts
                 ):
                     corrections = self._correction_messages(normalized)
@@ -339,6 +351,7 @@ class LiteLLMModelClient:
     def _completion_arguments(
         self,
         profile: ModelProfile,
+        request: ModelRequest,
         messages: list[dict[str, object]],
         response_format: dict[str, object] | None,
     ) -> dict[str, object]:
@@ -346,7 +359,10 @@ class LiteLLMModelClient:
             "model": profile.model,
             "messages": messages,
             "timeout": profile.retry.timeout_seconds,
-            "max_completion_tokens": profile.generation.max_completion_tokens,
+            "max_tokens": max(
+                request.max_completion_tokens or profile.generation.max_completion_tokens,
+                MINIMUM_COMPLETION_TOKENS,
+            ),
         }
         optional_generation_settings = {
             "temperature": profile.generation.temperature,
@@ -364,7 +380,12 @@ class LiteLLMModelClient:
             arguments["cache_control_injection_points"] = [
                 {"location": "message", "role": profile.cache_control_role.value}
             ]
+        disabled = profile.generation.reasoning is ModelReasoningMode.DISABLED
+        if disabled and profile.provider != "openrouter":
+            arguments["thinking"] = {"type": "disabled"}
         router_options: dict[str, object] = {}
+        if disabled and profile.provider == "openrouter":
+            router_options["reasoning"] = {"enabled": False}
         if profile.router_response_healing:
             router_options["plugins"] = [{"id": "response-healing"}]
         if profile.router_cache_affinity and self._cache_affinity is not None:
@@ -382,6 +403,28 @@ class LiteLLMModelClient:
         self,
         normalized: NormalizedModelCompletion,
     ) -> tuple[ModelMessage, ...]:
+        if normalized.disposition is ModelCallDisposition.TRUNCATED:
+            text = self._scrub_input_text(
+                "Your previous reply reached its output limit before returning a complete "
+                "answer. Return only one concise JSON object that matches the schema."
+            )
+            return (
+                ModelMessage(
+                    role=ModelMessageRole.USER,
+                    content=(TextModelContent(text=text),),
+                ),
+            )
+        if normalized.disposition is ModelCallDisposition.EMPTY:
+            text = self._scrub_input_text(
+                "Your previous reply contained no answer. Return one JSON object that "
+                "matches the schema. Keep any private reasoning short."
+            )
+            return (
+                ModelMessage(
+                    role=ModelMessageRole.USER,
+                    content=(TextModelContent(text=text),),
+                ),
+            )
         if normalized.rejected_text is None:
             raise ModelInputError("A malformed structured response has no rejected text.")
         rejected_text = self._scrub_input_text(normalized.rejected_text)

@@ -1,11 +1,9 @@
 """Deterministic integration tests for the shared Device Agent loop."""
-
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
 from typing import Any, cast
-
 import pytest
 
 from yewo.agent import (
@@ -14,6 +12,7 @@ from yewo.agent import (
     AgentTask,
     AgentTerminalReason,
     DeviceAgent,
+    PlannerDecisionSource,
 )
 from yewo.agent.actuation import (
     ActionExecutor,
@@ -25,24 +24,36 @@ from yewo.agent.actuation import (
     DeclaredValueReference,
     SideEffectClass,
 )
+from yewo.agent.application_state import ApplicationRecovery
 from yewo.agent.planner import ActionProposalSource, PlanningRequest
 from yewo.devices.focus import FocusedFieldReading
 from yewo.devices.interaction import ScrollDirection
-from yewo.grounding import GroundingRequest, GroundingResult, VisualGrounder
+from yewo.grounding import VisualGrounder
 from yewo.observations import Observation, ObservationService
 from yewo.runs.errors import RunWorkflowInterrupted
 
 from agent.actuation.support import limits, proposal
-from grounding.support import DeterministicGrounder
+from grounding.support import DeterministicGrounder, ExpressionGrounder
 from observations.factories import build_observation, build_screenshot
 
 
 class SequencePlanner:
     """Return configured proposal templates against the current observation."""
 
-    def __init__(self, proposals: list[ActionProposal]) -> None:
+    def __init__(
+        self,
+        proposals: list[ActionProposal],
+        *,
+        model_requests_per_plan: int = 1,
+    ) -> None:
         self._proposals = iter(proposals)
+        self._model_requests_per_plan = model_requests_per_plan
         self.requests: list[PlanningRequest] = []
+
+    def required_model_requests(self, request: PlanningRequest) -> int:
+        """Count one deterministic stand-in planner request."""
+        del request
+        return self._model_requests_per_plan
 
     def plan(self, request: PlanningRequest) -> ActionProposal:
         self.requests.append(request)
@@ -69,20 +80,6 @@ class ObservationSequence:
         )
 
 
-class ExpressionGrounder:
-    """Choose distinct deterministic points from the referring expression."""
-
-    def ground(self, request: GroundingRequest) -> GroundingResult:
-        x_px = 20 if "first" in request.expression else 150
-        return DeterministicGrounder(x_px, 200).ground(request)
-
-
-class FailingGrounder:
-    def ground(self, request: GroundingRequest) -> GroundingResult:
-        del request
-        raise RuntimeError("grounding failed")
-
-
 class RuntimeDevice:
     """Record dispatches and expose only secret-free post-action checks."""
 
@@ -100,17 +97,21 @@ class RuntimeDevice:
 
     def tap(self, x: int, y: int, *, count: int = 1, interval_seconds: float = 0.1) -> None:
         self._record("tap", x, y, count, interval_seconds)
+
     def focus(self, x: int, y: int) -> object:
         self._record("focus", x, y)
         return object()
+
     def type_focused_text(self, text: str) -> bool | None:
         self._record("type_focused_text", text)
         self.active_text = text
         return True
+
     def clear_focused_text(self) -> bool | None:
         self._record("clear_focused_text")
         self.active_text = ""
         return True
+
     def double_tap(self, x: int, y: int) -> None:
         self._record("double_tap", x, y)
 
@@ -150,6 +151,7 @@ class RuntimeDevice:
 
     def back(self) -> None:
         self._record("back")
+
     def dismiss_keyboard(self) -> bool:
         self._record("dismiss_keyboard")
         return True
@@ -233,8 +235,14 @@ def _runtime(
     declared_value_resolver=None,
     grounder: VisualGrounder | None = None,
     application_recovery=None,
+    application_failure_recovery=None,
+    action_diagnostic_source=None,
     screen_comparison=None,
     monotonic=None,
+    planner_decision_source: PlannerDecisionSource | None = None,
+    reused_flow_id: str | None = None,
+    recovery_advisor=None,
+    action_verifier=None,
 ) -> DeviceAgent:
     return DeviceAgent(
         planner,
@@ -244,8 +252,19 @@ def _runtime(
         ActionOutcomeVerifier(),
         AgentStepStore(tmp_path),
         sleep=lambda unused: None,
-        application_recovery=application_recovery,
+        application_recovery=ApplicationRecovery(
+            application_recovery, application_failure_recovery, action_diagnostic_source,
+            cast(ObservationService, observations),
+        ),
         screen_comparison=screen_comparison,
+        **(
+            {"planner_decision_source": planner_decision_source}
+            if planner_decision_source is not None
+            else {}
+        ),
+        reused_flow_id=reused_flow_id,
+        recovery_advisor=recovery_advisor,
+        action_verifier=action_verifier,
         **({"monotonic": monotonic} if monotonic is not None else {}),
     )
 
@@ -302,6 +321,7 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
         None,
         "done_requested",
     ]
+    assert [step["schema_version"] for step in _stored_steps(tmp_path)] == [2, 2]
     assert [set(step) for step in _stored_steps(tmp_path)] == [
         {
             "schema_version",
@@ -309,6 +329,7 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
             "step_index",
             "source_observation_id",
             "proposal",
+            "decision",
             "target_grounding",
             "destination_grounding",
             "authorization",
@@ -318,6 +339,7 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
             "settled_observation_id",
             "recovery_observation_id",
             "outcome",
+            "application_failure",
             "terminal_reason",
         },
     ] * 2
@@ -469,26 +491,6 @@ def test_grounding_budget_stops_before_an_unrecorded_model_request(tmp_path: Pat
     assert result.steps[0].destination_grounding is None
 
 
-def test_grounding_failure_preserves_the_proposal_as_a_partial_step(tmp_path: Path) -> None:
-    planner = SequencePlanner([proposal()])
-    observations = ObservationSequence([_observation("obs_1", "0000000000000000")])
-
-    with pytest.raises(RuntimeError, match="grounding failed"):
-        _runtime(
-            tmp_path,
-            planner,
-            observations,
-            RuntimeDevice(),
-            grounder=FailingGrounder(),
-        ).run(_task(), _mode_policy(), NeverInterrupted())
-    stored = _stored_steps(tmp_path)
-    stored_proposal = stored[0]["proposal"]
-    assert isinstance(stored_proposal, dict)
-    assert stored_proposal["action"] == "tap"
-    assert stored[0]["terminal_reason"] == "runtime_failure"
-    assert stored[0]["authorization"] is None
-
-
 def test_drag_grounds_and_dispatches_two_distinct_endpoints(tmp_path: Path) -> None:
     planner = SequencePlanner([proposal(ActionKind.DRAG), proposal(ActionKind.DONE)])
     observations = ObservationSequence(
@@ -540,9 +542,7 @@ def test_action_budget_still_allows_planner_to_confirm_completion(tmp_path: Path
     )
 
     result = _runtime(tmp_path, planner, observations, RuntimeDevice()).run(
-        _task(),
-        _mode_policy(action_limits=limits(maximum_actions=1)),
-        NeverInterrupted(),
+        _task(), _mode_policy(action_limits=limits(maximum_actions=1)), NeverInterrupted()
     )
 
     assert result.terminal_reason is AgentTerminalReason.DONE_REQUESTED

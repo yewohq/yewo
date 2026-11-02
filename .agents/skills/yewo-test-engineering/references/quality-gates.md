@@ -14,7 +14,6 @@ uv run pyright
 uv run pytest
 uv run python tools/quality_gate.py
 uv run python tools/ste_gate.py
-uv run python tools/package_gate.py
 ```
 
 `quality_gate.py` rejects a Python file above 550 physical lines. It reads
@@ -30,8 +29,8 @@ out a pinned revision of the external STE skill.
 
 Ruff enforces correctness rules separately from its `C90` cyclomatic
 complexity rules. Pyright checks the active production tree. Pytest exercises
-the active test tree. `package_gate.py` builds the distributions, installs the
-wheel in a new environment, imports `yewo`, and starts the packaged CLI.
+the active test tree. CI builds the wheel and checks its installed import and
+CLI separately from the local gates.
 
 ## Conditional checks
 

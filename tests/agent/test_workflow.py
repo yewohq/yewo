@@ -57,6 +57,7 @@ class StubAgent:
             reason="The configured terminal occurred.",
             final_observation_id="observation-1",
             usage=AgentUsage(
+                steps=self._planning_requests,
                 planning_requests=self._planning_requests,
                 grounding_requests=0,
                 dispatched_actions=0,
@@ -110,6 +111,8 @@ def _workflow(
         ),
         "planner-primary",
         "auditor-primary",
+        "recovery-primary",
+        "action-verifier-primary",
         lambda text: text,
         memory_store=cast(AppMemoryStore, memory_store) if memory_store else None,
         declared_value_resolver=declared_value_resolver,

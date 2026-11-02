@@ -41,6 +41,7 @@ def test_service_sends_only_target_context_and_preserves_call_evidence() -> None
     assert result.source_screenshot_sha256 == "a" * 64
     assert result.served_model == "example/grounder"
     assert result.upstream_provider == "example-provider"
+    assert result.raw_response_artifact is not None
     assert result.raw_response_artifact.path.as_posix() == "assets/models/calls.jsonl"
     assert result.latency_ms == 25
     assert result.usage.total_tokens == 105

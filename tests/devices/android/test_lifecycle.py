@@ -44,11 +44,22 @@ class _InventoryStub:
 
 
 class _AdbStub:
-    def __init__(self, *, booted: bool = True, executable: str | None = "emulator") -> None:
+    def __init__(
+        self,
+        *,
+        booted: bool = True,
+        executable: str | None = "emulator",
+        keyboard_setting: bool | None = False,
+        handwriting_setting: bool | None = True,
+    ) -> None:
         self.booted = booted
         self.executable = executable
+        self.keyboard_setting = keyboard_setting
+        self.handwriting_setting = handwriting_setting
         self.boot_checks: list[str] = []
         self.killed: list[str] = []
+        self.keyboard_changes: list[tuple[str, bool | None]] = []
+        self.handwriting_changes: list[tuple[str, bool | None]] = []
 
     def emulator_executable(self) -> str | None:
         return self.executable
@@ -56,6 +67,24 @@ class _AdbStub:
     def boot_completed(self, connection_id: str) -> bool:
         self.boot_checks.append(connection_id)
         return self.booted
+
+    def read_show_ime_with_hard_keyboard(self, connection_id: str) -> bool | None:
+        del connection_id
+        return self.keyboard_setting
+
+    def set_show_ime_with_hard_keyboard(
+        self, connection_id: str, enabled: bool | None
+    ) -> None:
+        self.keyboard_changes.append((connection_id, enabled))
+
+    def read_stylus_handwriting_enabled(self, connection_id: str) -> bool | None:
+        del connection_id
+        return self.handwriting_setting
+
+    def set_stylus_handwriting_enabled(
+        self, connection_id: str, enabled: bool | None
+    ) -> None:
+        self.handwriting_changes.append((connection_id, enabled))
 
     def kill_emulator(self, connection_id: str) -> None:
         self.killed.append(connection_id)
@@ -118,6 +147,8 @@ def test_running_avd_is_external_and_is_not_stopped() -> None:
     assert lease.ownership is ResourceOwnership.EXTERNAL
     assert lease.descriptor is device
     assert adb.killed == []
+    assert adb.keyboard_changes == []
+    assert adb.handwriting_changes == []
 
 
 def test_stopped_avd_is_started_waited_for_and_stopped_once() -> None:
@@ -145,7 +176,42 @@ def test_stopped_avd_is_started_waited_for_and_stopped_once() -> None:
     assert starter.commands == [("emulator", "-avd", "Pixel_9", "-no-window")]
     assert lease.ownership is ResourceOwnership.RUN
     assert lease.descriptor == ready
+    assert adb.keyboard_changes == [
+        ("emulator-5554", True),
+        ("emulator-5554", False),
+    ]
+    assert adb.handwriting_changes == [
+        ("emulator-5554", False),
+        ("emulator-5554", True),
+    ]
     assert adb.killed == ["emulator-5554"]
+
+
+def test_owned_avd_restores_an_absent_soft_keyboard_setting() -> None:
+    stopped = _android_device(readiness=DeviceReadiness.STARTABLE)
+    ready = _android_device(
+        readiness=DeviceReadiness.READY,
+        connection_id="emulator-5554",
+        native_state="device",
+    )
+    adb = _AdbStub(keyboard_setting=None, handwriting_setting=None)
+    lease = AndroidDeviceLifecycle(
+        _InventoryStub((ready,)),
+        adb,
+        process_starter=_ProcessStarterStub(_ProcessStub()),
+        clock=_ClockStub(),
+    ).prepare(stopped)
+
+    lease.close()
+
+    assert adb.keyboard_changes == [
+        ("emulator-5554", True),
+        ("emulator-5554", None),
+    ]
+    assert adb.handwriting_changes == [
+        ("emulator-5554", False),
+        ("emulator-5554", None),
+    ]
 
 
 def test_avd_startup_timeout_stops_the_owned_process() -> None:

@@ -15,7 +15,8 @@ from yewo.agent.goal_verifier import (
     GoalVerifier,
     ModelGoalVerifier,
 )
-from yewo.agent.discovery.workflow import DiscoveryEvidenceError, DiscoveryWorkflow
+from yewo.agent.discovery.conclusion import DiscoveryEvidenceError
+from yewo.agent.discovery.workflow import DiscoveryWorkflow
 
 __all__ = [
     "AppMemoryBuilder",

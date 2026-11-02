@@ -5,6 +5,9 @@ from typing import cast
 
 import pytest
 
+from yewo.agent import AgentTerminalReason
+from yewo.agent.discovery.narration import narrate_replay_handoff
+from yewo.agent.route_replay import ReplayPathKind, RouteReplayResult, RouteReplayTerminal
 from yewo.models import ModelClient
 from yewo.run_narration import RunNarrator, narration_scope
 from yewo.runs import NeverInterrupted
@@ -54,6 +57,40 @@ def test_discovery_narrates_coverage_verification_and_memory(
     assert "Independent goal verification satisfied" in narration
     trace = (tmp_path / "runtime/trace.log").read_text()
     assert "request=request_1 objectives=1" in trace
-    assert "stored_route=none" in trace
+    assert "flow_lookup=miss reason=no_compatible_verified_route_or_checkpoint" in trace
     assert "objective=account_form state=supported" in trace
     assert "memory=" in trace
+
+
+def test_discovery_narrates_invalidated_stored_flow(tmp_path: Path) -> None:
+    before = observation("obs_1", "0000000000000000")
+    after = observation(
+        "obs_2",
+        "1111111111111111",
+        predecessor_observation_id=before.observation_id,
+        offset_seconds=1,
+    )
+    replay = RouteReplayResult(
+        path_id="checkpoint_1",
+        path_kind=ReplayPathKind.DISCOVERY_CHECKPOINT,
+        terminal=RouteReplayTerminal.DIVERGED,
+        completed_segment_count=2,
+        failed_segment_index=2,
+        reason="The source guard changed.",
+        agent_result=agent_result(
+            before,
+            after,
+            terminal=AgentTerminalReason.CANNOT_PROGRESS,
+        ),
+    )
+
+    with narration_scope(RunNarrator(tmp_path)):
+        narrate_replay_handoff(replay)
+
+    narration = (tmp_path / "runtime/yewo-session.log").read_text()
+    assert "Stored flow was invalidated at segment 2." in narration
+    trace = (tmp_path / "runtime/trace.log").read_text()
+    assert (
+        "flow=checkpoint_1 flow_kind=discovery_checkpoint "
+        "reuse=invalidated failed_segment=2"
+    ) in trace

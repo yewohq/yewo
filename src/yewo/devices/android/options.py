@@ -11,7 +11,7 @@ from yewo.applications.records import (
 )
 from yewo.automation.driver_options import validate_driver_inputs
 from yewo.automation.errors import DriverOptionsError
-from yewo.devices.inventory import DeviceDescriptor, DevicePlatform
+from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
 
 
 class AndroidDriverOptionsBuilder:
@@ -46,6 +46,11 @@ class AndroidDriverOptionsBuilder:
         options.app_package = application.application_id
         options.app_activity = launch_target
         options.set_capability("appium:disableSuppressAccessibilityService", True)
+        if device.kind is DeviceKind.VIRTUAL:
+            # Reload the emulator's selected IME after lifecycle display settings
+            # are applied. Android 16 otherwise may leave only its hardware-keyboard
+            # toolbar visible even though it reports the soft keyboard as shown.
+            options.set_capability("appium:hideKeyboard", False)
 
         if request.install_mode is ApplicationInstallMode.REUSE:
             options.no_reset = True

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from yewo.devices.application_lifecycle import ApplicationLifecycleDriver
 from yewo.devices.focus import TextElement
-from yewo.devices.interaction import InteractionDriver
+from yewo.devices.interaction import InteractionDriver, TextInputConstraint
 from yewo.devices.screen import (
     ScreenCalibration,
     ScreenCoordinateSpace,
@@ -53,6 +53,14 @@ class IosInteractionBackend:
         """Clear the focused iOS field through WebDriver."""
         del driver
         element.clear()
+
+    def focused_text_constraint(
+        self,
+        driver: InteractionDriver,
+    ) -> TextInputConstraint | None:
+        """Return unknown until XCUITest exposes a stable focused-field input type."""
+        del driver
+        return None
 
     def active_application_id(
         self,

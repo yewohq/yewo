@@ -49,7 +49,8 @@ def test_reader_discards_baseline_and_classifies_new_application_reports() -> No
     assert batch.observed_item_count == 2
     assert batch.filtered_item_count == 1
     assert baseline.filtered_item_count == 1
-    assert not reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.ACTION)
+    assert reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.ACTION)
+    assert reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.RECOVERY)
 
 
 def test_reader_counts_an_invalid_entry_without_losing_valid_reports() -> None:

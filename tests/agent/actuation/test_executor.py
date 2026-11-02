@@ -20,7 +20,7 @@ from yewo.agent.actuation import (
     TextDeliveryStatus,
 )
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
-from yewo.devices.errors import DeviceActionRejectedError
+from yewo.devices.errors import DeviceActionRejectedError, DeviceInputRejectedError
 from yewo.devices.focus import FocusedFieldReading
 from yewo.devices.interaction import ScrollDirection
 from yewo.grounding import PixelPoint
@@ -314,6 +314,24 @@ def test_refusal_receipt_does_not_retry_or_retain_driver_detail() -> None:
     assert "private field value" not in receipt.model_dump_json()
     with pytest.raises(AuthorizationReplayError):
         executor.dispatch(action)
+
+
+def test_input_constraint_refusal_returns_safe_planner_feedback() -> None:
+    class InputRefusingDevice(RecordingDevice):
+        def type_focused_text(self, text: str) -> bool | None:
+            del text
+            raise DeviceInputRejectedError(
+                "The focused field accepts numeric input. Choose a compatible numeric value."
+            )
+
+    action = authorization(ActionKind.TYPE, text=LiteralText(value="medium"))
+
+    receipt = ActionExecutor(InputRefusingDevice()).dispatch(action)
+
+    assert receipt.disposition is DispatchDisposition.INPUT_REJECTED
+    assert receipt.reason == (
+        "The focused field accepts numeric input. Choose a compatible numeric value."
+    )
 
 
 def test_executor_rejects_proposal_without_authorization() -> None:

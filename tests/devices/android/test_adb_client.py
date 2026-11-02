@@ -48,6 +48,62 @@ def test_visual_feedback_reads_both_settings() -> None:
     assert settings == VisualFeedbackSettings(pointer_location=True, tap_highlights=False)
 
 
+@pytest.mark.parametrize(
+    ("native_value", "expected"),
+    [("1\n", True), ("0\n", False), ("null\n", None)],
+)
+def test_soft_keyboard_setting_is_read_without_guessing(
+    native_value: str,
+    expected: bool | None,
+) -> None:
+    runner = CommandRunnerStub(stdout=native_value)
+
+    value = AdbClient(runner).read_show_ime_with_hard_keyboard("emulator-5554")
+
+    assert value is expected
+
+
+def test_soft_keyboard_setting_can_be_enabled_and_restored_to_absent() -> None:
+    runner = CommandRunnerStub()
+    client = AdbClient(runner)
+
+    client.set_show_ime_with_hard_keyboard("emulator-5554", True)
+    client.set_show_ime_with_hard_keyboard("emulator-5554", None)
+
+    assert [call[0][-5:] for call in runner.calls] == [
+        ("settings", "put", "secure", "show_ime_with_hard_keyboard", "1"),
+        ("shell", "settings", "delete", "secure", "show_ime_with_hard_keyboard"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("native_value", "expected"),
+    [("1\n", True), ("0\n", False), ("null\n", None)],
+)
+def test_stylus_handwriting_setting_is_read_without_guessing(
+    native_value: str,
+    expected: bool | None,
+) -> None:
+    runner = CommandRunnerStub(stdout=native_value)
+
+    value = AdbClient(runner).read_stylus_handwriting_enabled("emulator-5554")
+
+    assert value is expected
+
+
+def test_stylus_handwriting_setting_can_be_disabled_and_restored_to_absent() -> None:
+    runner = CommandRunnerStub()
+    client = AdbClient(runner)
+
+    client.set_stylus_handwriting_enabled("emulator-5554", False)
+    client.set_stylus_handwriting_enabled("emulator-5554", None)
+
+    assert [call[0][-5:] for call in runner.calls] == [
+        ("settings", "put", "secure", "stylus_handwriting_enabled", "0"),
+        ("shell", "settings", "delete", "secure", "stylus_handwriting_enabled"),
+    ]
+
+
 def test_avd_name_uses_console_only_when_the_property_is_empty() -> None:
     runner = CommandRunnerStub(responses=(("", "", 0), ("Pixel_9\nOK\n", "", 0)))
 

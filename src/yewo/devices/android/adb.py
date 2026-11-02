@@ -5,13 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import re
-import shlex
 import shutil
 import subprocess
-from urllib.parse import urlsplit
 
-from yewo.devices.android._validation import validate_remote_value as _validate_remote_value
+from yewo.devices.android._validation import (
+    ACTIVITY_PATTERN as _ACTIVITY_PATTERN,
+    LOCALE_PATTERN as _LOCALE_PATTERN,
+    TIMEZONE_PATTERN as _TIMEZONE_PATTERN,
+    quote_remote_arguments as _quote_remote_arguments,
+    validate_component_name as _validate_component_name,
+    validate_deep_link as _validate_deep_link,
+    validate_package_id as _validate_package_id,
+    validate_pattern as _validate_pattern,
+)
 from yewo.devices._commands import (
     CommandRunner,
     capture_optional,
@@ -19,12 +25,6 @@ from yewo.devices._commands import (
     run_command,
 )
 from yewo.devices.errors import DeviceCommandError
-
-
-_PACKAGE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$")
-_ACTIVITY_PATTERN = re.compile(r"^\.?[A-Za-z][A-Za-z0-9_.$]*(?:\.[A-Za-z][A-Za-z0-9_.$]*)*$")
-_LOCALE_PATTERN = re.compile(r"^[A-Za-z0-9]{1,8}(?:-[A-Za-z0-9]{1,8})*$")
-_TIMEZONE_PATTERN = re.compile(r"^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$")
 
 
 @dataclass(frozen=True)
@@ -166,6 +166,76 @@ class AdbClient:
     def boot_completed(self, connection_id: str) -> bool:
         """Return whether Android finished booting."""
         return self.ask(connection_id, "getprop", "sys.boot_completed") == "1"
+
+    def read_show_ime_with_hard_keyboard(self, connection_id: str) -> bool | None:
+        """Read whether Android renders its soft keyboard with a hardware keyboard."""
+        result = self.shell(
+            connection_id,
+            "settings",
+            "get",
+            "secure",
+            "show_ime_with_hard_keyboard",
+            purpose="read the soft-keyboard display setting",
+        )
+        value = (result.stdout or "").strip()
+        if value in {"", "null"}:
+            return None
+        if value in {"0", "1"}:
+            return value == "1"
+        raise DeviceCommandError("Android returned an invalid soft-keyboard display setting.")
+
+    def set_show_ime_with_hard_keyboard(
+        self,
+        connection_id: str,
+        enabled: bool | None,
+    ) -> None:
+        """Set the soft-keyboard display setting or restore its absent state."""
+        operation = "delete" if enabled is None else "put"
+        arguments = () if enabled is None else ("1" if enabled else "0",)
+        self.shell(
+            connection_id,
+            "settings",
+            operation,
+            "secure",
+            "show_ime_with_hard_keyboard",
+            *arguments,
+            purpose="set the soft-keyboard display setting",
+        )
+
+    def read_stylus_handwriting_enabled(self, connection_id: str) -> bool | None:
+        """Read whether Android may replace the keyboard with handwriting UI."""
+        result = self.shell(
+            connection_id,
+            "settings",
+            "get",
+            "secure",
+            "stylus_handwriting_enabled",
+            purpose="read the stylus-handwriting setting",
+        )
+        value = (result.stdout or "").strip()
+        if value in {"", "null"}:
+            return None
+        if value in {"0", "1"}:
+            return value == "1"
+        raise DeviceCommandError("Android returned an invalid stylus-handwriting setting.")
+
+    def set_stylus_handwriting_enabled(
+        self,
+        connection_id: str,
+        enabled: bool | None,
+    ) -> None:
+        """Set the stylus-handwriting setting or restore its absent state."""
+        operation = "delete" if enabled is None else "put"
+        arguments = () if enabled is None else ("1" if enabled else "0",)
+        self.shell(
+            connection_id,
+            "settings",
+            operation,
+            "secure",
+            "stylus_handwriting_enabled",
+            *arguments,
+            purpose="set the stylus-handwriting setting",
+        )
 
     def avd_name(self, connection_id: str) -> str | None:
         """Return the stable AVD name of a running emulator."""
@@ -470,36 +540,3 @@ class AdbClient:
         elif not enabled and service in services:
             services.remove(service)
         self.set_accessibility_services(connection_id, ":".join(services))
-
-
-def _quote_remote_arguments(arguments: tuple[str, ...]) -> tuple[str, ...]:
-    for argument in arguments:
-        if any(character in argument for character in ("\x00", "\n", "\r")):
-            raise DeviceCommandError("An Android shell argument contains a control character.")
-    return tuple(shlex.quote(argument) for argument in arguments)
-
-
-def _validate_pattern(value: str, pattern: re.Pattern[str], name: str) -> None:
-    if pattern.fullmatch(value) is None:
-        raise DeviceCommandError(f"The {name} has an invalid format.")
-
-
-def _validate_package_id(value: str, *, name: str = "package ID") -> None:
-    _validate_pattern(value, _PACKAGE_PATTERN, name)
-
-
-def _validate_component_name(value: str) -> None:
-    try:
-        package_id, activity = value.split("/", maxsplit=1)
-    except ValueError as error:
-        raise DeviceCommandError(
-            "The accessibility service must use package/activity format."
-        ) from error
-    _validate_package_id(package_id)
-    _validate_pattern(activity, _ACTIVITY_PATTERN, "accessibility service activity")
-
-
-def _validate_deep_link(url: str) -> None:
-    _validate_remote_value(url, "deep link URL")
-    if not urlsplit(url).scheme:
-        raise DeviceCommandError("The deep link URL must include a scheme.")

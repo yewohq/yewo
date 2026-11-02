@@ -16,6 +16,9 @@ from yewo.models.errors import ModelInputError
 from yewo.models.records import ModelMessageRole, ModelRole
 
 
+MINIMUM_COMPLETION_TOKENS = 8_192
+
+
 class StructuredOutputMode(StrEnum):
     """How a profile asks a model for locally validated JSON."""
 
@@ -51,6 +54,17 @@ class ModelEndpoint(BaseModel):
         return value.rstrip("/")
 
 
+class ModelReasoningMode(StrEnum):
+    """Reasoning control a provider accepts through the LiteLLM boundary.
+
+    Anthropic models reject an explicit thinking budget, so a profile can only
+    keep the provider default or turn reasoning off.
+    """
+
+    PROVIDER_DEFAULT = "provider_default"
+    DISABLED = "disabled"
+
+
 class ModelGenerationSettings(BaseModel):
     """Explicit provider-neutral generation settings."""
 
@@ -58,7 +72,8 @@ class ModelGenerationSettings(BaseModel):
 
     temperature: float | None = Field(default=None, ge=0, le=2)
     top_p: float | None = Field(default=None, gt=0, le=1)
-    max_completion_tokens: int = Field(gt=0)
+    max_completion_tokens: int = Field(ge=MINIMUM_COMPLETION_TOKENS)
+    reasoning: ModelReasoningMode = ModelReasoningMode.PROVIDER_DEFAULT
     seed: int | None = None
 
 
@@ -79,6 +94,9 @@ class ModelRetryPolicy(BaseModel):
         if any(delay < 0 for delay in self.backoff_seconds):
             raise ValueError("Retry backoff delays cannot be negative.")
         return self
+
+
+_MINIMUM_ROLE_IMAGES = {ModelRole.RECOVERY_ADVISOR: 2}
 
 
 class ModelImageConstraints(BaseModel):
@@ -117,6 +135,15 @@ class ModelProfile(BaseModel):
             self.router_cache_affinity or self.router_response_healing
         ) and self.provider != "openrouter":
             raise ValueError("Router options require an OpenRouter profile.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_role_image_capacity(self) -> Self:
+        required = _MINIMUM_ROLE_IMAGES.get(self.role)
+        if required is not None and self.images.max_images < required:
+            raise ValueError(
+                f"A {self.role.value} profile must accept at least {required} images."
+            )
         return self
 
 

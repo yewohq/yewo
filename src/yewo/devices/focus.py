@@ -101,13 +101,12 @@ class FocusService:
                 target_element.click()
             except Exception:  # noqa: BLE001 - coordinate focus remains available
                 target_element = None
-            else:
-                return target_element
-        if self._keyboard_visible() is True:
+        if target_element is None and self._keyboard_visible() is True:
             raise DeviceTargetRejectedError(
                 "The keyboard is visible, but no editable target field contains the grounded point."
             )
-        self._tap(x, y)
+        if target_element is None:
+            self._tap(x, y)
         deadline = self._clock.monotonic() + self._timeout_seconds
         while True:
             field = _active_element(self._driver)
@@ -119,9 +118,10 @@ class FocusService:
                     driver_point,
                     calibration,
                 )
-                if field is not None and (
-                    _boolean_attribute(field.get_attribute("focused")) is True
-                    or self._keyboard_visible() is True
+                if (
+                    field is not None
+                    and _boolean_attribute(field.get_attribute("focused")) is True
+                    and _is_target_field(_element_bounds(field), driver_point, calibration)
                 ):
                     return field
             if field is not None:

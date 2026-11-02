@@ -307,13 +307,32 @@ def test_incompatible_fingerprints_report_unavailable() -> None:
 def test_refuses_a_receipt_that_was_not_dispatched() -> None:
     action = _authorization()
 
-    with pytest.raises(ValueError, match="requires a dispatched action"):
+    with pytest.raises(ValueError, match="requires an attempted device dispatch"):
         ActionOutcomeVerifier().verify(
             action,
             _receipt(action, disposition=DispatchDisposition.DEVICE_REFUSED),
             build_observation(),
             _settled_observation(),
         )
+
+
+def test_unverified_dispatch_uses_fresh_evidence_without_claiming_success() -> None:
+    action = _authorization()
+    receipt = _receipt(
+        action,
+        disposition=DispatchDisposition.DISPATCH_UNVERIFIED,
+    ).model_copy(update={"reason": "Focus verification timed out."})
+
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        receipt,
+        build_observation(),
+        _settled_observation(),
+    )
+
+    assert outcome.disposition is ActionOutcomeDisposition.AMBIGUOUS
+    assert outcome.settled_observation_id == "obs_2"
+    assert outcome.signals == frozenset()
 
 
 def test_refuses_mismatched_evidence() -> None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from enum import IntEnum
 import time
 from typing import Protocol, Self, cast
 
@@ -16,7 +15,11 @@ from yewo.devices.application_lifecycle import (
     ApplicationState,
     DEFAULT_MAXIMUM_BACKGROUND_SECONDS,
 )
-from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
+from yewo.devices.errors import (
+    DeviceActionRejectedError,
+    DeviceInputRejectedError,
+    DeviceInteractionError,
+)
 from yewo.devices.focus import (
     ANDROID_FOCUS_TIMEOUT_SECONDS,
     DEFAULT_FOCUS_POLL_SECONDS,
@@ -26,37 +29,13 @@ from yewo.devices.focus import (
     TextElement,
 )
 from yewo.devices.inventory import DeviceKind, DevicePlatform
+from yewo.devices.interaction_records import AndroidKey, TextInputConstraint
 from yewo.devices.screen import (
     ScreenCalibration,
     ScreenGeometry,
     ScreenRegionReading,
 )
 from yewo.devices.scroll import ScrollDirection, scroll_gesture
-
-
-class AndroidKey(IntEnum):
-    """Supported Android hardware and navigation keys."""
-
-    HOME = 3
-    BACK = 4
-    A = 29
-    DPAD_UP = 19
-    DPAD_DOWN = 20
-    DPAD_LEFT = 21
-    DPAD_RIGHT = 22
-    DPAD_CENTER = 23
-    TAB = 61
-    ENTER = 66
-    DELETE = 67
-    ESCAPE = 111
-
-    @classmethod
-    def parse_name(cls, value: str) -> Self:
-        """Resolve one case-insensitive key name through the canonical vocabulary."""
-        try:
-            return cls[value.upper()]
-        except KeyError as error:
-            raise ValueError("The Android key name is unsupported.") from error
 
 
 MINIMUM_WAIT_SECONDS = 0.1
@@ -134,6 +113,11 @@ class PlatformInteractionBackend(Protocol):
         driver: InteractionDriver,
         element: TextElement,
     ) -> None: ...
+
+    def focused_text_constraint(
+        self,
+        driver: InteractionDriver,
+    ) -> TextInputConstraint | None: ...
 
     def active_application_id(
         self,
@@ -232,8 +216,12 @@ class DeviceInteraction:
         platform = session.device.descriptor.platform
         if platform is DevicePlatform.ANDROID:
             from yewo.devices.android.interaction import AndroidInteractionBackend
+            from yewo.devices.android.adb import AdbClient
 
-            backend: PlatformInteractionBackend = AndroidInteractionBackend()
+            descriptor = session.device.descriptor
+            backend: PlatformInteractionBackend = AndroidInteractionBackend(
+                AdbClient(), descriptor.connection_id or descriptor.target_id
+            )
         else:
             from yewo.devices.ios.interaction import IosInteractionBackend
 
@@ -342,6 +330,11 @@ class DeviceInteraction:
         return self._type_in_field(self._focus.focused_field(), text)
 
     def _type_in_field(self, field: TextElement, text: str) -> bool | None:
+        constraint = self._backend.focused_text_constraint(self._driver)
+        if constraint is not None and not constraint.accepts(text):
+            raise DeviceInputRejectedError(
+                "The focused field accepts numeric input. Choose a compatible numeric value."
+            )
         before = self._text_value(field)
         field.send_keys(text)
         after = self._text_value(field)

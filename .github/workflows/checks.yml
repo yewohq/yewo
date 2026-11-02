@@ -41,5 +41,12 @@ jobs:
         run: uv run python tools/ste_gate.py
         env:
           YEWO_STE_LINT: .tools/asd-ste100/scripts/ste-lint.py
-      - name: Verify the package in a clean environment
-        run: uv run python tools/package_gate.py
+      - name: Verify the built package
+        run: |
+          uv build --wheel --out-dir dist
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          uv venv --python 3.12 .package-venv
+          uv pip install --python .package-venv/bin/python "${wheels[0]}"
+          .package-venv/bin/python -c "import yewo"
+          .package-venv/bin/yewo --help

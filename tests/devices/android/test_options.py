@@ -69,6 +69,7 @@ def test_android_install_options_target_the_prepared_connection() -> None:
         "appium:appPackage": "com.example.app",
         "appium:appActivity": "com.example.app.MainActivity",
         "appium:disableSuppressAccessibilityService": True,
+        "appium:hideKeyboard": False,
         "appium:app": "build/app.apk",
         "appium:enforceAppInstall": True,
     }
@@ -105,6 +106,22 @@ def test_android_reuse_targets_the_observed_installed_application() -> None:
     assert capabilities["appium:noReset"] is True
     assert "appium:app" not in capabilities
     assert "appium:enforceAppInstall" not in capabilities
+
+
+def test_android_physical_device_does_not_reset_its_selected_keyboard() -> None:
+    device = _device().model_copy(update={"kind": DeviceKind.PHYSICAL})
+
+    capabilities = (
+        AndroidDriverOptionsBuilder()
+        .build(
+            device,
+            _request(ApplicationInstallMode.INSTALL),
+            _application(),
+        )
+        .to_capabilities()
+    )
+
+    assert "appium:hideKeyboard" not in capabilities
 
 
 def test_android_options_require_a_prepared_device() -> None:

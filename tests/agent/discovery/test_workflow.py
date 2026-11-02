@@ -18,8 +18,8 @@ from yewo.agent import (
     AppMemory,
     AppMemoryStore,
     MemoryCompatibility,
-    RouteReplayResult,
-    RouteReplayTerminal,
+    ReplayPathKind,
+    RouteReplayResult, RouteReplayTerminal,
 )
 from yewo.agent.actuation import (
     ActionKind,
@@ -170,8 +170,7 @@ def _workflow(
         _mode_policy(),
         cast(ModelProfileRegistry, object()),
         cast(GroundingProfile, object()),
-        "planner-primary",
-        "auditor-primary",
+        "planner-primary", "auditor-primary", "recovery-primary", "action-verifier-primary",
         tmp_path / "memory",
         lambda text: text,
         memory_store=cast(AppMemoryStore, memory_store),
@@ -258,7 +257,7 @@ def test_workflow_uses_shared_agent_and_promotes_supported_memory(
     assert agent.task.completion_conditions == ("The account form is reachable.",)
     assert agent.task.known_facts == _discovery_request().known_facts
     assert agent.task.open_work[:-1] == _discovery_request().priorities
-    assert "every visible interactive control and setting" in agent.task.open_work[-1]
+    assert "visible default does not prove coverage" in agent.task.open_work[-1]
     assert memory_store.saved is not None
     assert len(memory_store.saved.routes) == 1
     assert (tmp_path / "run/assets/agent/discovery/result.json").is_file()
@@ -403,7 +402,7 @@ def test_completed_replay_branch_skips_task_planner(
     memory = _existing_memory(before, after)
     replay_agent_result = agent_result(before, after)
     replay = RouteReplayResult(
-        route_id=memory.routes[0].route_id,
+        path_id=memory.routes[0].route_id, path_kind=ReplayPathKind.VERIFIED_ROUTE,
         terminal=RouteReplayTerminal.COMPLETED,
         completed_segment_count=1,
         reason="The route completed.",
@@ -423,11 +422,11 @@ def test_completed_replay_branch_skips_task_planner(
         "yewo.agent.discovery.workflow.build_device_agent",
         lambda *args, **kwargs: pytest.fail("task planner should not run"),
     )
-
     outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
-
     assert outcome.category is RunTerminalCategory.COMPLETED
     assert memory_store.saved is None
+    assert (tmp_path / "run/assets/agent/replay/evidence.json").is_file()
+    assert (tmp_path / "run/assets/agent/replay/report.json").is_file()
 
 
 def test_diverged_replay_runs_bounded_discovery_and_keeps_old_route(
@@ -451,7 +450,7 @@ def test_diverged_replay_runs_bounded_discovery_and_keeps_old_route(
     )
     replay_agent_result = _diverged_agent_result(changed_start)
     replay = RouteReplayResult(
-        route_id=memory.routes[0].route_id,
+        path_id=memory.routes[0].route_id, path_kind=ReplayPathKind.VERIFIED_ROUTE,
         terminal=RouteReplayTerminal.DIVERGED,
         completed_segment_count=0,
         failed_segment_index=0,
@@ -519,13 +518,14 @@ def test_replay_and_repair_share_one_step_budget(
     )
     memory = _existing_memory(before, after)
     replay_usage = AgentUsage(
+        steps=_mode_policy().maximum_steps,
         planning_requests=_mode_policy().maximum_steps,
         grounding_requests=0,
         dispatched_actions=0,
     )
     replay_result = _diverged_agent_result(before).model_copy(update={"usage": replay_usage})
     replay = RouteReplayResult(
-        route_id=memory.routes[0].route_id,
+        path_id=memory.routes[0].route_id, path_kind=ReplayPathKind.VERIFIED_ROUTE,
         terminal=RouteReplayTerminal.DIVERGED,
         completed_segment_count=0,
         failed_segment_index=0,

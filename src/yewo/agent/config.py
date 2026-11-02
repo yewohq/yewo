@@ -43,6 +43,8 @@ class YewoRunConfiguration(BaseModel):
     grounding_profile: GroundingProfile
     planner_profile_id: RecordIdentifier
     auditor_profile_id: RecordIdentifier
+    recovery_profile_id: RecordIdentifier
+    action_verifier_profile_id: RecordIdentifier
     memory_root: Path | None = None
     redaction_regions: tuple[RedactionRegion, ...] = ()
 
@@ -65,6 +67,8 @@ class YewoRunConfiguration(BaseModel):
             self.grounding_profile,
             self.planner_profile_id,
             self.auditor_profile_id,
+            self.recovery_profile_id,
+            self.action_verifier_profile_id,
         )
         return self
 
@@ -75,14 +79,22 @@ def validate_agent_configuration(
     grounding_profile: GroundingProfile,
     planner_profile_id: RecordIdentifier,
     auditor_profile_id: RecordIdentifier,
+    recovery_profile_id: RecordIdentifier,
+    action_verifier_profile_id: RecordIdentifier,
 ) -> None:
     """Validate model roles and grounding coverage shared by agent workflows."""
     try:
         model_profiles.resolve(planner_profile_id, ModelRole.TASK_PLANNER)
         model_profiles.resolve(auditor_profile_id, ModelRole.AUDITOR)
+        recovery_profile = model_profiles.resolve(
+            recovery_profile_id, ModelRole.RECOVERY_ADVISOR
+        )
+        model_profiles.resolve(action_verifier_profile_id, ModelRole.ACTION_VERIFIER)
         model_profiles.resolve(grounding_profile.model_profile_id, ModelRole.GROUNDER)
     except LookupError as error:
         raise ValueError("The run references an incompatible model profile.") from error
+    if recovery_profile.images.max_images < 2:
+        raise ValueError("The recovery profile must allow at least two images.")
     available_actions = (
         mode_policy.action_limits.allowed_actions & mode_policy.action_limits.supported_actions
     )

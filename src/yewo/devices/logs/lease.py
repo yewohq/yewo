@@ -50,6 +50,10 @@ class DeviceLogCaptureLease:
         """Drain entries produced through one completed action."""
         return self._drain(DeviceLogCheckpointKind.ACTION, action_id)
 
+    def drain_recovery(self, recovery_id: str) -> DeviceLogDrainReceipt:
+        """Drain entries produced by one Yewo-owned application recovery."""
+        return self._drain(DeviceLogCheckpointKind.RECOVERY, recovery_id)
+
     def drain_scenario(self, scenario_id: str) -> DeviceLogDrainReceipt:
         """Drain entries produced through one completed scenario."""
         return self._drain(DeviceLogCheckpointKind.SCENARIO, scenario_id)

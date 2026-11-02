@@ -2,13 +2,12 @@
 
 from pathlib import Path
 
-from yewo.agent.actuation import ActionKind, DispatchDisposition
-from yewo.devices.errors import DeviceTargetRejectedError
+from yewo.agent.actuation import ActionKind, DispatchDisposition, LiteralText
+from yewo.devices.errors import DeviceInputRejectedError, DeviceTargetRejectedError
 from yewo.runs import NeverInterrupted
 
 from agent.actuation.support import proposal
 from agent.test_runtime import (
-    FailingGrounder,
     ObservationSequence,
     RuntimeDevice,
     SequencePlanner,
@@ -17,6 +16,7 @@ from agent.test_runtime import (
     _runtime,
     _task,
 )
+from grounding.support import FailingGrounder
 
 
 def test_keyboard_state_filters_planner_actions_and_keeps_direct_type(
@@ -118,13 +118,21 @@ class _RejectFirstTextTarget(RuntimeDevice):
         return super().type_focused_text(text)
 
 
-def test_rejected_text_target_returns_to_planner_for_keyboard_dismissal(
+class _RejectIncompatibleInput(RuntimeDevice):
+    def type_focused_text(self, text: str) -> bool | None:
+        if text == "medium":
+            raise DeviceInputRejectedError(
+                "The focused field accepts numeric input. Choose a compatible numeric value."
+            )
+        return super().type_focused_text(text)
+
+
+def test_unverified_text_target_reobserves_before_returning_to_planner(
     tmp_path: Path,
 ) -> None:
     planner = SequencePlanner(
         [
             proposal(ActionKind.TYPE),
-            proposal(ActionKind.DISMISS_KEYBOARD),
             proposal(ActionKind.DONE),
         ]
     )
@@ -147,8 +155,47 @@ def test_rejected_text_target_returns_to_planner_for_keyboard_dismissal(
     )
 
     assert result.steps[0].receipt is not None
-    assert result.steps[0].receipt.disposition is DispatchDisposition.TARGET_REJECTED
-    assert planner.requests[1].history[0].receipt == result.steps[0].receipt
-    assert ActionKind.DISMISS_KEYBOARD in planner.requests[1].available_actions
-    assert [name for name, unused in device.calls] == ["dismiss_keyboard"]
+    assert result.steps[0].receipt.disposition is DispatchDisposition.DISPATCH_UNVERIFIED
+    assert result.steps[0].outcome is not None
+    assert result.steps[0].settled_observation_id == "obs_3"
+    assert planner.requests[1].observation.observation_id == "obs_3"
+    assert planner.requests[1].history[0].outcome == result.steps[0].outcome
+    assert planner.requests[1].history[0].destination_screen is not None
+    assert [name for name, unused in device.calls] == []
+    assert result.usage.dispatched_actions == 1
+
+
+def test_rejected_input_returns_to_planner_and_allows_one_corrected_value(
+    tmp_path: Path,
+) -> None:
+    planner = SequencePlanner(
+        [
+            proposal(ActionKind.TYPE, text=LiteralText(value="medium")),
+            proposal(ActionKind.TYPE, text=LiteralText(value="5")),
+            proposal(ActionKind.DONE),
+        ]
+    )
+    observations = ObservationSequence(
+        [
+            _observation("obs_1", "0000000000000000", keyboard_visible=True),
+            _observation(
+                "obs_2", "1111111111111111", keyboard_visible=True, offset_seconds=1
+            ),
+            _observation(
+                "obs_3", "1111111111111111", keyboard_visible=True, offset_seconds=2
+            ),
+        ]
+    )
+    device = _RejectIncompatibleInput()
+
+    result = _runtime(tmp_path, planner, observations, device).run(
+        _task(), _mode_policy(), NeverInterrupted()
+    )
+
+    rejected = result.steps[0]
+    assert rejected.receipt is not None
+    assert rejected.receipt.disposition is DispatchDisposition.INPUT_REJECTED
+    assert planner.requests[1].history[0].receipt == rejected.receipt
+    assert [name for name, unused in device.calls] == ["type_focused_text"]
+    assert device.active_text == "5"
     assert result.usage.dispatched_actions == 1

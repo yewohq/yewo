@@ -52,6 +52,8 @@ class DiscoveryRequest(BaseModel):
         objective_ids = [objective.objective_id for objective in self.objectives]
         if len(objective_ids) != len(set(objective_ids)):
             raise ValueError("Discovery objective identifiers must be unique.")
+        if not any(objective.required for objective in self.objectives):
+            raise ValueError("Discovery requires at least one required objective.")
         if len(self.declared_value_names) != len(set(self.declared_value_names)):
             raise ValueError("Discovery declared-value names must be unique.")
         return self
@@ -115,6 +117,7 @@ class DiscoveryResult(BaseModel):
     replay: RouteReplayResult | None = None
     verification: GoalVerification | None = None
     memory_id: RecordIdentifier | None = None
+    memory_persistence_error: DiscoveryText | None = None
 
     @model_validator(mode="after")
     def _validate_result(self) -> Self:

@@ -45,6 +45,18 @@ class _AndroidControl(Protocol):
 
     def boot_completed(self, connection_id: str) -> bool: ...
 
+    def read_show_ime_with_hard_keyboard(self, connection_id: str) -> bool | None: ...
+
+    def set_show_ime_with_hard_keyboard(
+        self, connection_id: str, enabled: bool | None
+    ) -> None: ...
+
+    def read_stylus_handwriting_enabled(self, connection_id: str) -> bool | None: ...
+
+    def set_stylus_handwriting_enabled(
+        self, connection_id: str, enabled: bool | None
+    ) -> None: ...
+
     def kill_emulator(self, connection_id: str) -> None: ...
 
 
@@ -133,17 +145,38 @@ class AndroidDeviceLifecycle:
             ) from error
         try:
             ready, connection_id = self._wait_until_ready(device, process=process)
+            prior_keyboard_setting = self._adb.read_show_ime_with_hard_keyboard(connection_id)
+            prior_handwriting_setting = self._adb.read_stylus_handwriting_enabled(connection_id)
+            self._adb.set_show_ime_with_hard_keyboard(connection_id, True)
+            self._adb.set_stylus_handwriting_enabled(connection_id, False)
         except BaseException:
             with suppress(Exception):
                 _stop_process(process)
             raise
 
         def release() -> None:
+            restore_errors: list[Exception] = []
+            for restore in (
+                lambda: self._adb.set_show_ime_with_hard_keyboard(
+                    connection_id, prior_keyboard_setting
+                ),
+                lambda: self._adb.set_stylus_handwriting_enabled(
+                    connection_id, prior_handwriting_setting
+                ),
+            ):
+                try:
+                    restore()
+                except Exception as error:  # noqa: BLE001 - cleanup must continue
+                    restore_errors.append(error)
             try:
                 self._adb.kill_emulator(connection_id)
-            except Exception:
+            except Exception as error:  # noqa: BLE001 - process fallback must still run
                 _stop_process(process)
+                for restore_error in restore_errors:
+                    error.add_note(f"Keyboard setting restoration also failed: {restore_error}")
                 raise
+            if restore_errors:
+                raise restore_errors[0]
 
         return DeviceLease(ready, ResourceOwnership.RUN, release)
 
