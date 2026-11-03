@@ -5,7 +5,7 @@ Clone the repository. The quality gates require Python 3.12. Install the
 `~/.agents/skills/asd-ste100/scripts/ste-lint.py` is available:
 
 ```bash
-git clone https://github.com/getyewo/yewo.git
+git clone https://github.com/yewohq/yewo.git
 cd yewo
 ```
 
