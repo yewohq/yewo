@@ -101,7 +101,7 @@ class AgentStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[1] = 1
     step_id: RecordIdentifier
     step_index: int = Field(gt=0)
     source_observation_id: RecordIdentifier

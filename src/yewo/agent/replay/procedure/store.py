@@ -71,10 +71,13 @@ class ProcedureReplayStore:
             )
         if result.divergences:
             paths.append(directory / "divergences.json")
-            content = b"[\n" + b",\n".join(
-                item.model_dump_json(indent=2).encode("utf-8")
-                for item in result.divergences
-            ) + b"\n]\n"
+            content = (
+                b"[\n"
+                + b",\n".join(
+                    item.model_dump_json(indent=2).encode("utf-8") for item in result.divergences
+                )
+                + b"\n]\n"
+            )
             self._writer.write(paths[-1], content)
         return tuple(paths)
 
@@ -184,9 +187,7 @@ class CompiledProcedureStore:
             _prepare_procedure_root(self.root, procedure_root)
             lock_path = procedure_root / ".procedure.lock"
             if lock_path.is_symlink():
-                raise CompiledProcedureStoreError(
-                    "The compiled procedure lock cannot be symbolic."
-                )
+                raise CompiledProcedureStoreError("The compiled procedure lock cannot be symbolic.")
             flags = os.O_RDWR | os.O_CREAT
             if hasattr(os, "O_NOFOLLOW"):
                 flags |= os.O_NOFOLLOW
@@ -225,9 +226,7 @@ def _write_bundle(root: Path, bundle: StoredProcedureBundle) -> None:
             os.fsync(stream.fileno())
         destination = root / "procedure.json"
         if destination.is_symlink():
-            raise CompiledProcedureStoreError(
-                "The compiled procedure snapshot cannot be symbolic."
-            )
+            raise CompiledProcedureStoreError("The compiled procedure snapshot cannot be symbolic.")
         os.replace(temporary_path, destination)
         temporary_path = None
         directory_descriptor = os.open(root, os.O_RDONLY)
@@ -249,29 +248,21 @@ def _write_bundle(root: Path, bundle: StoredProcedureBundle) -> None:
 def _read_bundle(path: Path) -> StoredProcedureBundle:
     try:
         if path.is_symlink() or not path.is_file():
-            raise CompiledProcedureStoreError(
-                "The compiled procedure must be a regular file."
-            )
+            raise CompiledProcedureStoreError("The compiled procedure must be a regular file.")
         payload = json.loads(path.read_bytes())
         envelope = _StoredProcedureEnvelope.model_validate(payload)
         content = _canonical_bytes(payload["bundle"])
     except CompiledProcedureStoreError:
         raise
     except (json.JSONDecodeError, KeyError, OSError, TypeError, ValidationError) as error:
-        raise CompiledProcedureStoreError(
-            "The compiled procedure snapshot is invalid."
-        ) from error
+        raise CompiledProcedureStoreError("The compiled procedure snapshot is invalid.") from error
     if sha256(content).hexdigest() != envelope.bundle_sha256:
-        raise CompiledProcedureStoreError(
-            "The compiled procedure snapshot digest does not match."
-        )
+        raise CompiledProcedureStoreError("The compiled procedure snapshot digest does not match.")
     return envelope.bundle
 
 
 def _compatibility_key(compatibility: MemoryCompatibility) -> str:
-    return sha256(
-        _canonical_bytes(compatibility.model_dump(mode="json"))
-    ).hexdigest()[:32]
+    return sha256(_canonical_bytes(compatibility.model_dump(mode="json"))).hexdigest()[:32]
 
 
 def _canonical_bytes(payload: object) -> bytes:
@@ -287,9 +278,7 @@ def _prepare_procedure_root(store_root: Path, procedure_root: Path) -> None:
     try:
         store_root.mkdir(parents=True, exist_ok=True)
         if store_root.is_symlink() or not store_root.is_dir():
-            raise CompiledProcedureStoreError(
-                "The compiled procedure root must be a directory."
-            )
+            raise CompiledProcedureStoreError("The compiled procedure root must be a directory.")
         relative = procedure_root.relative_to(store_root)
         current = store_root
         for part in relative.parts:

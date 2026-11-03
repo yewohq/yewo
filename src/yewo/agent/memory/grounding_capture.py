@@ -8,7 +8,7 @@ from yewo.agent.memory.knowledge import (
     GroundingRole,
     KnowledgeEvidenceReference,
 )
-from yewo.agent.memory.records import AppMemory, derived_memory_identifier
+from yewo.agent.memory.records import AcceptedTransition, AppMemory, derived_memory_identifier
 from yewo.agent.replay.procedure.records import (
     ProcedureGroundingDecision,
     ProcedureGroundingDecisionCode,
@@ -38,60 +38,79 @@ def build_grounding_assessments(
     }
     assessments: list[GroundingAssessment] = []
     for decision in replay.grounding_decisions:
-        if (
-            decision.procedure_index is None
-            or decision.procedure_index >= replay.completed_step_count
-        ):
-            continue
-        procedure_step = procedure_steps_by_index.get(decision.procedure_index)
-        if procedure_step is None or decision.source_step_id != procedure_step.source_step_id:
-            continue
-        transition = transitions_by_source_step_id.get(procedure_step.source_step_id)
-        if transition is None:
-            continue
-        role = _grounding_role(procedure_step, decision)
-        if role is None:
-            continue
-        grounding = (
-            transition.target_grounding
-            if role is GroundingRole.TARGET
-            else transition.destination_grounding
-        )
-        if grounding is None:
-            continue
-        status = _grounding_status(decision)
-        if status is None:
-            continue
-        source_observation_id = grounding.source_observation_id or transition.source_observation_id
-        source = KnowledgeEvidenceReference(
-            run_id=current_run_id,
-            step_id=replay_step_ids_by_procedure_index.get(decision.procedure_index),
-            observation_id=decision.observation_id,
+        assessment = _assessment_for_decision(
+            decision=decision,
+            completed_step_count=replay.completed_step_count,
+            procedure_steps_by_index=procedure_steps_by_index,
+            transitions_by_source_step_id=transitions_by_source_step_id,
+            replay_step_ids_by_procedure_index=replay_step_ids_by_procedure_index,
+            current_run_id=current_run_id,
             procedure_attempt_id=replay.setup_id,
+            assessed_at=assessed_at,
         )
-        assessment_id = derived_memory_identifier(
+        if assessment is not None:
+            assessments.append(assessment)
+    return tuple(assessments)
+
+
+def _assessment_for_decision(
+    *,
+    decision: ProcedureGroundingDecision,
+    completed_step_count: int,
+    procedure_steps_by_index: dict[int, ReplayProcedureStep],
+    transitions_by_source_step_id: dict[str, AcceptedTransition],
+    replay_step_ids_by_procedure_index: dict[int, str],
+    current_run_id: str,
+    procedure_attempt_id: str,
+    assessed_at: datetime,
+) -> GroundingAssessment | None:
+    procedure_index = decision.procedure_index
+    if procedure_index is None or procedure_index >= completed_step_count:
+        return None
+    procedure_step = procedure_steps_by_index.get(procedure_index)
+    if procedure_step is None or decision.source_step_id != procedure_step.source_step_id:
+        return None
+    transition = transitions_by_source_step_id.get(procedure_step.source_step_id)
+    if transition is None:
+        return None
+    role = _grounding_role(procedure_step, decision)
+    status = _grounding_status(decision)
+    if role is None or status is None:
+        return None
+    grounding = (
+        transition.target_grounding
+        if role is GroundingRole.TARGET
+        else transition.destination_grounding
+    )
+    if grounding is None:
+        return None
+    source_observation_id = grounding.source_observation_id or transition.source_observation_id
+    is_active = status is GroundingAssessmentStatus.ACTIVE
+    return GroundingAssessment(
+        assessment_id=derived_memory_identifier(
             "grounding-assessment",
             transition.transition_id,
             role.value,
             source_observation_id,
-        )
-        is_active = status is GroundingAssessmentStatus.ACTIVE
-        assessments.append(
-            GroundingAssessment(
-                assessment_id=assessment_id,
-                transition_id=transition.transition_id,
-                role=role,
-                source_observation_id=source_observation_id,
-                status=status,
-                successful_use_count=int(is_active),
-                last_success_at=assessed_at if is_active else None,
-                invalidation_reason=(
-                    None if is_active else "A completed replay used a corrected grounding location."
-                ),
-                sources=(source,),
-            )
-        )
-    return tuple(assessments)
+        ),
+        transition_id=transition.transition_id,
+        role=role,
+        source_observation_id=source_observation_id,
+        status=status,
+        successful_use_count=int(is_active),
+        last_success_at=assessed_at if is_active else None,
+        invalidation_reason=(
+            None if is_active else "A completed replay used a corrected grounding location."
+        ),
+        sources=(
+            KnowledgeEvidenceReference(
+                run_id=current_run_id,
+                step_id=replay_step_ids_by_procedure_index.get(procedure_index),
+                observation_id=decision.observation_id,
+                procedure_attempt_id=procedure_attempt_id,
+            ),
+        ),
+    )
 
 
 def _grounding_role(

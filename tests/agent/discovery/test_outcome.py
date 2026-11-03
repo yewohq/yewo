@@ -48,7 +48,7 @@ def test_non_completed_discovery_never_compiles(
         lambda *args: expected,
     )
     monkeypatch.setattr(
-        "yewo.agent.discovery.outcome.compile_completed_run",
+        "yewo.agent.discovery.outcome.compile_completed_discovery_run",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("compilation called")),
     )
 
@@ -74,7 +74,7 @@ def test_compilation_failure_does_not_change_completed_terminal(
         lambda *args: expected,
     )
     monkeypatch.setattr(
-        "yewo.agent.discovery.outcome.compile_completed_run",
+        "yewo.agent.discovery.outcome.compile_completed_discovery_run",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("compilation failure")),
     )
 
@@ -106,7 +106,7 @@ def test_completed_procedure_replay_does_not_recompile(
         lambda *args: expected,
     )
     monkeypatch.setattr(
-        "yewo.agent.discovery.outcome.compile_completed_run",
+        "yewo.agent.discovery.outcome.compile_completed_discovery_run",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("compilation called")),
     )
 
@@ -132,7 +132,7 @@ def test_writeback_failure_does_not_change_completed_terminal(
         lambda *args: expected,
     )
     monkeypatch.setattr(
-        "yewo.agent.discovery.outcome.compile_completed_run",
+        "yewo.agent.discovery.outcome.compile_completed_discovery_run",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("compilation failure")),
     )
     monkeypatch.setattr(

@@ -13,7 +13,7 @@ from yewo.agent.discovery.records import DiscoveryRequest, DiscoveryResult
 from yewo.agent.discovery.preparation import DiscoveryPreparation
 from yewo.agent.replay.procedure.budget import procedure_budget_refusal_reason
 from yewo.agent.replay.procedure.execution import execute_compiled_procedure
-from yewo.agent.replay.procedure.hazards import compiled_procedure_hazard_reasons
+from yewo.agent.replay.procedure.action_risks import compiled_procedure_action_risk_reasons
 from yewo.agent.replay.procedure.records import (
     ProcedureReplayResult,
     ProcedureReplaySetup,
@@ -87,9 +87,7 @@ def prepare_procedure_replay_entry(
         verification_task=EvidenceTask(
             objective_id=objective.objective_id,
             objective=objective.statement,
-            completion_conditions=(
-                objective.completion_conditions or (objective.statement,)
-            ),
+            completion_conditions=(objective.completion_conditions or (objective.statement,)),
         ),
     )
     if replay is None:
@@ -131,9 +129,7 @@ def replay_compiled_procedure_if_available(
     }:
         return None
     selection = preparation.procedure_selection if preparation is not None else None
-    stored_objective_id = (
-        selection.stored_objective_id if selection is not None else objective_id
-    )
+    stored_objective_id = selection.stored_objective_id if selection is not None else objective_id
     stored_objective = selection.stored_objective if selection is not None else objective
     bundle = procedure_store.load(
         compatibility,
@@ -147,17 +143,16 @@ def replay_compiled_procedure_if_available(
     if (
         selection is None
         and verification_task is not None
-        and bundle.evidence.task.completion_conditions
-        != verification_task.completion_conditions
+        and bundle.evidence.task.completion_conditions != verification_task.completion_conditions
     ):
         return None
-    hazard_reasons = compiled_procedure_hazard_reasons(
+    action_risk_reasons = compiled_procedure_action_risk_reasons(
         bundle.evidence,
         bundle.procedure,
         memory,
     )
-    if hazard_reasons:
-        _narrate_hazard_refusal(bundle.procedure, hazard_reasons)
+    if action_risk_reasons:
+        _narrate_action_risk_refusal(bundle.procedure, action_risk_reasons)
         return None
     if not _policy_can_execute(mode_policy, bundle.procedure):
         return None
@@ -208,25 +203,23 @@ def _policy_can_execute(
     return all(step.proposal.action in available_actions for step in procedure.steps)
 
 
-def _narrate_hazard_refusal(
+def _narrate_action_risk_refusal(
     procedure: ReplayProcedure,
     reasons: tuple[CompilerReason, ...],
 ) -> None:
     narrator = current_narrator()
     if narrator is None:
         return
-    hazard_ids = tuple(
-        reason.hazard_id
-        for reason in reasons
-        if reason.hazard_id is not None
+    action_risk_ids = tuple(
+        reason.action_risk_id for reason in reasons if reason.action_risk_id is not None
     )
     narrator.record(
-        "procedure-hazard-gate",
-        "A compiled procedure was not replayed because it matches known application hazards.",
+        "procedure-action-risk-gate",
+        "A compiled procedure was not replayed because it matches known application action risks.",
     )
     narrator.trace(
-        "procedure-hazard-gate",
-        f"procedure={procedure.procedure_id} hazard_ids={','.join(hazard_ids)}",
+        "procedure-action-risk-gate",
+        f"procedure={procedure.procedure_id} action_risk_ids={','.join(action_risk_ids)}",
     )
 
 

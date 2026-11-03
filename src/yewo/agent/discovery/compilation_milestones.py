@@ -20,7 +20,7 @@ from yewo.agent.replay.reconciliation.records import (
     ProcedureCompilationReport,
     ProcedureCompilationStatus,
 )
-from yewo.agent.replay.procedure.preparation import compile_completed_run
+from yewo.agent.replay.reconciliation.compilation import compile_completed_discovery_run
 from yewo.agent.replay.reconciliation.store import (
     EVIDENCE_DOCUMENT_PATH,
     REPLAY_PROCEDURE_PATH,
@@ -120,10 +120,10 @@ def compile_discovery_milestones(
     memory: AppMemory | None = None,
 ) -> DiscoveryCompilationMilestones:
     """Compile without durable promotion and expose mapped milestone evidence."""
-    report = compile_completed_run(
+    report = compile_completed_discovery_run(
         root=root,
         run_id=run_id,
-        result=result,
+        discovery_result=result,
         model_client=model_client,
         model_profile_id=model_profile_id,
         comparison=comparison,

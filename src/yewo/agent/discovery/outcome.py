@@ -10,7 +10,7 @@ from yewo.agent.memory.runtime_writeback import write_back_discovery_knowledge
 from yewo.agent.memory.store import AppMemoryStore
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
-from yewo.agent.replay.procedure.preparation import compile_completed_run
+from yewo.agent.replay.reconciliation.compilation import compile_completed_discovery_run
 from yewo.agent.replay.reconciliation.records import ProcedureCompilationReport
 from yewo.models import ModelClient
 from yewo.run_narration import current_narrator
@@ -53,10 +53,10 @@ def persist_discovery_outcome_and_compile(
             if memory_store is not None and compatibility is not None
             else None
         )
-        report = compile_completed_run(
+        report = compile_completed_discovery_run(
             root=context.workspace.root,
             run_id=context.workspace.start.run_id,
-            result=result,
+            discovery_result=result,
             model_client=model_client,
             model_profile_id=model_profile_id,
             comparison=comparison,

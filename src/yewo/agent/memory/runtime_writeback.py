@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -15,7 +16,7 @@ from yewo.agent.discovery.promotion import AppMemoryBuilder
 from yewo.agent.discovery.replay_handoff import replay_observation_ids
 from yewo.agent.memory.grounding_capture import build_grounding_assessments
 from yewo.agent.memory.knowledge_capture import build_memory_delta
-from yewo.agent.memory.records import MemoryCompatibility
+from yewo.agent.memory.records import AppMemory, MemoryCompatibility
 from yewo.agent.memory.store import AppMemoryStore
 from yewo.agent.memory.writeback import (
     MemoryDelta,
@@ -28,7 +29,7 @@ from yewo.agent.recovery.advisor import (
     RECOVERY_ASSESSMENTS_PATH,
     RecoveryAssessment,
 )
-from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import CompiledProcedureStore, StoredProcedureBundle
 from yewo.agent.replay.reconciliation.records import ReconcilerResponse
 from yewo.agent.replay.reconciliation.store import RECONCILER_RESPONSE_PATH
 from yewo.artifacts import (
@@ -37,7 +38,8 @@ from yewo.artifacts import (
     AtomicArtifactWriter,
     RecordIdentifier,
 )
-from yewo.observations import ObservationStore
+from yewo.agent.runtime.records import AgentResult
+from yewo.observations import Observation, ObservationStore
 from yewo.run_narration import current_narrator
 
 
@@ -63,7 +65,7 @@ class MemoryWritebackReport(BaseModel):
     writeback_id: RecordIdentifier | None = None
     memory_id: RecordIdentifier | None = None
     grounding_assessment_count: int = Field(default=0, ge=0)
-    hazard_count: int = Field(default=0, ge=0)
+    action_risk_count: int = Field(default=0, ge=0)
     rule_count: int = Field(default=0, ge=0)
     finding_count: int = Field(default=0, ge=0)
     timing_count: int = Field(default=0, ge=0)
@@ -127,18 +129,7 @@ def _apply_writeback(
     observation_ids = replay_observation_ids(result.agent_result, replay)
     observations = ObservationStore(root).load_selected(observation_ids)
     observations_by_id = {item.observation_id: item for item in observations}
-    bundle = None
-    if replay is not None and replay.grounding_decisions:
-        if procedure_store is None:
-            raise ValueError("Procedure replay write-back requires its procedure store.")
-        objective = result.request.objectives[0]
-        bundle = procedure_store.load(
-            compatibility,
-            objective.objective_id,
-            objective.statement,
-        )
-        if bundle is None:
-            raise ValueError("Procedure replay write-back requires its retained procedure.")
+    bundle = _load_replayed_procedure(result, compatibility, procedure_store)
     combined_steps = tuple(
         {
             step.step_id: step
@@ -154,73 +145,23 @@ def _apply_writeback(
     applied_delta: list[MemoryDelta] = []
     delta_applications: list[MemoryDeltaApplication] = []
 
-    def update_memory(current):
-        graph_skip: MemoryWritebackSkip | None = None
-        try:
-            graph_result = replay.agent_result if replay is not None else None
-            if graph_result is None:
-                promoted = current
-            else:
-                promotion = AppMemoryBuilder().promote(
-                    result.request,
-                    graph_result,
-                    observations_by_id,
-                    compatibility,
-                    verified_objective_ids=None,
-                    source_run_id=source_run_id,
-                    updated_at=applied_at,
-                    existing=current,
-                )
-                promoted = promotion.memory or current
-        except (ValidationError, ValueError):
-            promoted = current
-            graph_skip = MemoryWritebackSkip(
-                record_kind="graph",
-                reason="Current-run repair graph evidence could not be promoted safely.",
-            )
-        grounding_assessments = (
-            build_grounding_assessments(
-                promoted,
-                source_run_id,
-                replay,
-                bundle.procedure,
-                applied_at,
-            )
-            if replay is not None and bundle is not None
-            else ()
-        )
-        delta = build_memory_delta(
-            promoted,
-            source_run_id,
-            combined_result,
-            observations_by_id,
-            applied_at,
-            procedure_attempt_id=replay.setup_id if replay is not None else None,
-            grounding_assessments=grounding_assessments,
-            recovery_assessments=recovery_assessments,
-            reconciler_response=reconciler_response,
-            verification=(
-                result.verification or (replay.verification if replay is not None else None)
-            ),
-            procedure_replay=replay,
-        )
-        if graph_skip is not None:
-            delta = delta.model_copy(
-                update={"skipped_records": (*delta.skipped_records, graph_skip)}
-            )
-        applied_delta.append(delta)
-        application = apply_memory_delta_result(promoted, delta)
-        delta_applications.append(application)
-        return (
-            application.memory
-            if application.disposition is MemoryDeltaDisposition.APPLIED
-            else current
-        )
-
     updated = memory_store.update(
         compatibility,
         root,
-        update_memory,
+        partial(
+            _update_memory,
+            discovery_result=result,
+            source_run_id=source_run_id,
+            compatibility=compatibility,
+            observations_by_id=observations_by_id,
+            combined_result=combined_result,
+            bundle=bundle,
+            recovery_assessments=recovery_assessments,
+            reconciler_response=reconciler_response,
+            applied_at=applied_at,
+            applied_deltas=applied_delta,
+            delta_applications=delta_applications,
+        ),
     )
     delta = applied_delta[0]
     application = delta_applications[0]
@@ -242,7 +183,7 @@ def _apply_writeback(
         writeback_id=delta.receipt.writeback_id,
         memory_id=updated.memory_id,
         grounding_assessment_count=len(delta.grounding_assessments),
-        hazard_count=len(delta.hazards),
+        action_risk_count=len(delta.action_risks),
         rule_count=len(delta.rules),
         finding_count=len(delta.findings),
         timing_count=len(delta.timing),
@@ -253,6 +194,117 @@ def _apply_writeback(
         skipped_records=delta.skipped_records,
         reason="Yewo applied current-run evidence to AppMemory.",
     )
+
+
+def _load_replayed_procedure(
+    discovery_result: DiscoveryResult,
+    compatibility: MemoryCompatibility,
+    procedure_store: CompiledProcedureStore | None,
+) -> StoredProcedureBundle | None:
+    replay = discovery_result.procedure_replay
+    if replay is None or not replay.grounding_decisions:
+        return None
+    if procedure_store is None:
+        raise ValueError("Procedure replay write-back requires its procedure store.")
+    objective = discovery_result.request.objectives[0]
+    bundle = procedure_store.load(
+        compatibility,
+        objective.objective_id,
+        objective.statement,
+    )
+    if bundle is None:
+        raise ValueError("Procedure replay write-back requires its retained procedure.")
+    return bundle
+
+
+def _promote_replay_graph(
+    current: AppMemory,
+    discovery_result: DiscoveryResult,
+    observations_by_id: dict[str, Observation],
+    compatibility: MemoryCompatibility,
+    source_run_id: RecordIdentifier,
+    applied_at: datetime,
+) -> tuple[AppMemory, MemoryWritebackSkip | None]:
+    replay = discovery_result.procedure_replay
+    if replay is None:
+        return current, None
+    try:
+        promotion = AppMemoryBuilder().promote(
+            discovery_result.request,
+            replay.agent_result,
+            observations_by_id,
+            compatibility,
+            verified_objective_ids=None,
+            source_run_id=source_run_id,
+            updated_at=applied_at,
+            existing=current,
+        )
+    except (ValidationError, ValueError):
+        return current, MemoryWritebackSkip(
+            record_kind="graph",
+            reason="Current-run repair graph evidence could not be promoted safely.",
+        )
+    return promotion.memory or current, None
+
+
+def _update_memory(
+    current: AppMemory,
+    *,
+    discovery_result: DiscoveryResult,
+    source_run_id: RecordIdentifier,
+    compatibility: MemoryCompatibility,
+    observations_by_id: dict[str, Observation],
+    combined_result: AgentResult,
+    bundle: StoredProcedureBundle | None,
+    recovery_assessments: tuple[RecoveryAssessment, ...],
+    reconciler_response: ReconcilerResponse | None,
+    applied_at: datetime,
+    applied_deltas: list[MemoryDelta],
+    delta_applications: list[MemoryDeltaApplication],
+) -> AppMemory:
+    promoted, graph_skip = _promote_replay_graph(
+        current,
+        discovery_result,
+        observations_by_id,
+        compatibility,
+        source_run_id,
+        applied_at,
+    )
+    replay = discovery_result.procedure_replay
+    grounding_assessments = (
+        build_grounding_assessments(
+            promoted,
+            source_run_id,
+            replay,
+            bundle.procedure,
+            applied_at,
+        )
+        if replay is not None and bundle is not None
+        else ()
+    )
+    delta = build_memory_delta(
+        promoted,
+        source_run_id,
+        combined_result,
+        observations_by_id,
+        applied_at,
+        procedure_attempt_id=replay.setup_id if replay is not None else None,
+        grounding_assessments=grounding_assessments,
+        recovery_assessments=recovery_assessments,
+        reconciler_response=reconciler_response,
+        verification=(
+            discovery_result.verification or (replay.verification if replay is not None else None)
+        ),
+        procedure_replay=replay,
+    )
+    if graph_skip is not None:
+        delta = delta.model_copy(update={"skipped_records": (*delta.skipped_records, graph_skip)})
+    applied_deltas.append(delta)
+    application = apply_memory_delta_result(promoted, delta)
+    delta_applications.append(application)
+    if application.disposition is MemoryDeltaDisposition.APPLIED:
+        return application.memory
+    return current
 
 
 def _load_recovery_assessments(root: Path) -> tuple[RecoveryAssessment, ...]:

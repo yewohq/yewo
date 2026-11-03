@@ -69,7 +69,7 @@ class CompilerCheck(StrEnum):
     NO_LOST_STATE = "no_lost_state_setting_work"
     RESULTS_REUSABLE = "results_are_reusable"
     COVERS_TASK = "covers_the_task"
-    AVOIDS_KNOWN_HAZARDS = "avoids_known_hazards"
+    AVOIDS_KNOWN_ACTION_RISKS = "avoids_known_action_risks"
 
 
 class CompilerReason(BaseModel):
@@ -80,15 +80,18 @@ class CompilerReason(BaseModel):
     check: CompilerCheck
     source_step: int | None = Field(default=None, gt=0)
     reason: str = Field(min_length=1, max_length=2_000)
-    hazard_id: RecordIdentifier | None = None
-    hazard_sources: tuple[KnowledgeEvidenceReference, ...] = ()
+    action_risk_id: RecordIdentifier | None = None
+    action_risk_sources: tuple[KnowledgeEvidenceReference, ...] = ()
 
     @model_validator(mode="after")
-    def _validate_hazard_evidence(self) -> Self:
-        if self.hazard_sources and self.hazard_id is None:
-            raise ValueError("Hazard evidence requires a hazard identifier.")
-        if self.hazard_id is not None and self.check is not CompilerCheck.AVOIDS_KNOWN_HAZARDS:
-            raise ValueError("Only the known-hazard check can reference a hazard.")
+    def _validate_action_risk_evidence(self) -> Self:
+        if self.action_risk_sources and self.action_risk_id is None:
+            raise ValueError("Action-risk evidence requires an action-risk identifier.")
+        if (
+            self.action_risk_id is not None
+            and self.check is not CompilerCheck.AVOIDS_KNOWN_ACTION_RISKS
+        ):
+            raise ValueError("Only the known-action-risk check can reference an action risk.")
         return self
 
 
@@ -156,7 +159,7 @@ class ReplayProcedure(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    visual_policy_version: Literal[1, 2] = 1
+    visual_policy_version: Literal[1] = 1
     procedure_id: RecordIdentifier
     request_id: RecordIdentifier
     evidence_id: RecordIdentifier

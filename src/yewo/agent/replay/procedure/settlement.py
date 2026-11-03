@@ -52,7 +52,7 @@ class ProcedureSettlementPolicySource:
         replay_default = _replay_default_policy(default)
         samples = self._samples_by_step.get(decision.reused_procedure_step_ids[0], ())
         reliable = tuple(
-            sample for sample in samples if sample.measurement == "dispatch_to_settled_v2"
+            sample for sample in samples if sample.measurement == "dispatch_to_settled_v1"
         )
         if len(reliable) < MINIMUM_TIMING_SAMPLE_COUNT:
             return replay_default
@@ -77,9 +77,7 @@ def _timed_policy(
 ) -> ActionSettlementPolicy:
     maximum_duration_seconds = max(sample.duration_ms for sample in samples) / 1_000
     interval_count = default.maximum_observations - 1
-    evidence_interval_seconds = (
-        maximum_duration_seconds * TIMING_SAFETY_MULTIPLIER / interval_count
-    )
+    evidence_interval_seconds = maximum_duration_seconds * TIMING_SAFETY_MULTIPLIER / interval_count
     interval_seconds = min(
         default.interval_seconds,
         max(MINIMUM_SETTLEMENT_INTERVAL_SECONDS, evidence_interval_seconds),

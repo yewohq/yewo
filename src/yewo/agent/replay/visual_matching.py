@@ -63,9 +63,7 @@ def build_state_visual_signature(
     decoded = tuple(image for image in images if image is not None)
     if len({image.size for image in decoded}) != 1:
         return None
-    hashes_by_image = tuple(
-        _tile_hashes(image, column_count, row_count) for image in decoded
-    )
+    hashes_by_image = tuple(_tile_hashes(image, column_count, row_count) for image in decoded)
     stable_tiles: list[VisualTileFingerprint] = []
     for tile_index, reference_hash in enumerate(hashes_by_image[0]):
         if all(reference_hash - hashes[tile_index] == 0 for hashes in hashes_by_image[1:]):
@@ -156,10 +154,7 @@ def match_target_neighborhood(
     )
     if best_distance > descriptor.maximum_hash_distance:
         return None
-    if (
-        runner_up is not None
-        and runner_up - best_distance < descriptor.minimum_runner_up_margin
-    ):
+    if runner_up is not None and runner_up - best_distance < descriptor.minimum_runner_up_margin:
         return None
     return TargetMatch(
         GroundedPoint(
@@ -203,8 +198,7 @@ def _match_ratio(
     maximum_distance: int,
 ) -> float:
     matched = sum(
-        hashes[tile.tile_index] - imagehash.hex_to_hash(tile.hash_value)
-        <= maximum_distance
+        hashes[tile.tile_index] - imagehash.hex_to_hash(tile.hash_value) <= maximum_distance
         for tile in stable_tiles
     )
     return matched / len(stable_tiles)

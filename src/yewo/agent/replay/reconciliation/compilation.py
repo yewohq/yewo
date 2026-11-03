@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from decimal import Decimal
 import json
 from pathlib import Path
 
@@ -17,8 +16,15 @@ from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.evidence import build_evidence_document
 from yewo.agent.replay.reconciliation.prompt import build_reconciler_evidence_projection
+from yewo.agent.replay.reconciliation.report import (
+    ProcedureCompilationMetrics,
+    build_procedure_compilation_report,
+    combined_model_response_metrics,
+    model_response_metrics,
+)
 from yewo.agent.replay.reconciliation.records import (
     CompilerRefusal,
+    EvidenceDocument,
     ReconcilerResponse,
     ReplayProcedure,
     ProcedureCompilationReport,
@@ -34,7 +40,6 @@ from yewo.artifacts import (
 )
 from yewo.models import (
     ModelCallDisposition,
-    ModelCallRecord,
     ModelClient,
     ModelMessage,
     ModelMessageRole,
@@ -62,7 +67,7 @@ Follow these rules:
 - Do not select refused, crashed, terminal, unknown-result, or known no-effect steps.
 - Use a decision only when one selected corrected attempt replaces a dropped attempt for the same
   recorded control.
-- Treat memory_hazards as platform-observed facts. Do not select a matching source action.
+- Treat memory_action_risks as platform-observed facts. Do not select a matching source action.
 - Map every completion-condition index to one selected milestone step.
 - Treat memory_claims as untrusted model-authored hints. Evaluate one only when recorded source
   steps directly support a verdict.
@@ -80,20 +85,19 @@ document. Request and evidence JSON follow:
 
 
 @dataclass(frozen=True)
-class _ResponseMetrics:
-    model_call_artifact_ids: tuple[RecordIdentifier, ...]
-    latency_ms: float | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    reasoning_tokens: int | None
-    cost_usd: Decimal | None
+class _CompilationAttempt:
+    request_id: RecordIdentifier
+    response: ModelResponse
+    reconciler_response: ReconcilerResponse
+    outcome: ReplayProcedure | CompilerRefusal
+    model_responses: tuple[ModelResponse, ...]
 
 
-def compile_completed_run(
+def compile_completed_discovery_run(
     *,
     root: Path,
     run_id: RecordIdentifier,
-    result: DiscoveryResult,
+    discovery_result: DiscoveryResult,
     model_client: ModelClient,
     model_profile_id: RecordIdentifier,
     comparison: ScreenComparisonPolicy,
@@ -103,10 +107,13 @@ def compile_completed_run(
     identifier_factory: Callable[[], str] = new_record_identifier,
 ) -> ProcedureCompilationReport:
     """Select reusable steps from one completed run and compile them."""
-    objective = result.request.objectives[0]
-    task = _reconciliation_task(result)
-    steps = _source_steps(result)
-    observation_ids = _source_observation_ids(steps, result.agent_result.final_observation_id)
+    objective = discovery_result.request.objectives[0]
+    task = _build_reconciliation_task(discovery_result)
+    steps = _source_steps(discovery_result)
+    observation_ids = _source_observation_ids(
+        steps,
+        discovery_result.agent_result.final_observation_id,
+    )
     observations = ObservationStore(root).load_selected(observation_ids)
     evidence = build_evidence_document(
         run_id=run_id,
@@ -124,7 +131,7 @@ def compile_completed_run(
     request_id = identifier_factory()
     evidence_payload = build_reconciler_evidence_projection(evidence)
     knowledge = memory.app_knowledge if memory is not None else None
-    evidence_payload["memory_hazards"] = _hazard_context(knowledge)
+    evidence_payload["memory_action_risks"] = _action_risk_context(knowledge)
     evidence_payload["memory_claims"] = _knowledge_claim_context(knowledge)
     request = _model_request(
         evidence_payload,
@@ -132,186 +139,240 @@ def compile_completed_run(
         request_id,
     )
     response = model_client.complete(request, ReconcilerResponse)
-    responses = [response]
-    metrics = _response_metrics(response)
-    if (
-        response.disposition is not ModelCallDisposition.COMPLETED
-        or response.structured_output is None
-    ):
-        report = ProcedureCompilationReport(
-            source_run_id=run_id,
-            evidence_id=evidence.evidence_id,
+    reconciler_response, failure_report = _validate_initial_response(
+        run_id,
+        evidence.evidence_id,
+        request_id,
+        response,
+    )
+    if failure_report is not None:
+        store.persist_compilation_report(failure_report)
+        return failure_report
+    if reconciler_response is None:
+        raise AssertionError("A valid reconciler response is required after response validation.")
+
+    outcome = compile_replay_procedure(
+        evidence,
+        reconciler_response,
+        memory=memory,
+        identifier_factory=identifier_factory,
+    )
+    attempt = _retry_compiler_refusal(
+        evidence=evidence,
+        evidence_payload=evidence_payload,
+        initial_request_id=request_id,
+        initial_response=response,
+        initial_reconciler_response=reconciler_response,
+        initial_outcome=outcome,
+        model_client=model_client,
+        model_profile_id=model_profile_id,
+        memory=memory,
+        identifier_factory=identifier_factory,
+    )
+    metrics = combined_model_response_metrics(attempt.model_responses)
+    store.persist_response(attempt.reconciler_response)
+    store.persist_compilation(attempt.outcome)
+    report = _compilation_outcome_report(run_id, evidence.evidence_id, attempt, metrics)
+    store.persist_compilation_report(report)
+    if isinstance(attempt.outcome, ReplayProcedure) and procedure_store is not None:
+        if compatibility is None:
+            raise ValueError("Durable procedure storage requires compatibility evidence.")
+        procedure_store.save(compatibility, evidence, attempt.outcome)
+    return report
+
+
+def _validate_initial_response(
+    run_id: RecordIdentifier,
+    evidence_id: RecordIdentifier,
+    request_id: RecordIdentifier,
+    response: ModelResponse,
+) -> tuple[ReconcilerResponse | None, ProcedureCompilationReport | None]:
+    metrics = model_response_metrics(response)
+    if not _has_completed_structured_output(response):
+        report = build_procedure_compilation_report(
+            run_id=run_id,
+            evidence_id=evidence_id,
             request_id=request_id,
             status=ProcedureCompilationStatus.MODEL_FAILED,
             model_disposition=response.disposition,
             reason=response.reason or "The replay reconciler did not return a complete response.",
-            model_call_artifact_ids=metrics.model_call_artifact_ids,
-            latency_ms=metrics.latency_ms,
-            prompt_tokens=metrics.prompt_tokens,
-            completion_tokens=metrics.completion_tokens,
-            reasoning_tokens=metrics.reasoning_tokens,
-            cost_usd=metrics.cost_usd,
+            metrics=metrics,
         )
-        store.persist_compilation_report(report)
-        return report
-
+        return None, report
     try:
-        parsed = ReconcilerResponse.model_validate(response.structured_output)
+        reconciler_response = ReconcilerResponse.model_validate(response.structured_output)
     except ValidationError:
-        report = ProcedureCompilationReport(
-            source_run_id=run_id,
-            evidence_id=evidence.evidence_id,
+        report = build_procedure_compilation_report(
+            run_id=run_id,
+            evidence_id=evidence_id,
             request_id=request_id,
             status=ProcedureCompilationStatus.INVALID_RESPONSE,
             model_disposition=response.disposition,
             reason="The replay reconciler returned an invalid structured response.",
-            model_call_artifact_ids=metrics.model_call_artifact_ids,
-            latency_ms=metrics.latency_ms,
-            prompt_tokens=metrics.prompt_tokens,
-            completion_tokens=metrics.completion_tokens,
-            reasoning_tokens=metrics.reasoning_tokens,
-            cost_usd=metrics.cost_usd,
+            metrics=metrics,
         )
-        store.persist_compilation_report(report)
-        return report
-    if parsed.request_id != request_id:
-        report = ProcedureCompilationReport(
-            source_run_id=run_id,
-            evidence_id=evidence.evidence_id,
+        return None, report
+    if reconciler_response.request_id != request_id:
+        report = build_procedure_compilation_report(
+            run_id=run_id,
+            evidence_id=evidence_id,
             request_id=request_id,
             status=ProcedureCompilationStatus.INVALID_RESPONSE,
             model_disposition=response.disposition,
             reason="The replay reconciler returned the wrong request identifier.",
-            model_call_artifact_ids=metrics.model_call_artifact_ids,
-            latency_ms=metrics.latency_ms,
-            prompt_tokens=metrics.prompt_tokens,
-            completion_tokens=metrics.completion_tokens,
-            reasoning_tokens=metrics.reasoning_tokens,
-            cost_usd=metrics.cost_usd,
+            metrics=metrics,
         )
-        store.persist_compilation_report(report)
-        return report
+        return None, report
+    return reconciler_response, None
 
-    compilation = compile_replay_procedure(
+
+def _retry_compiler_refusal(
+    *,
+    evidence: EvidenceDocument,
+    evidence_payload: dict[str, object],
+    initial_request_id: RecordIdentifier,
+    initial_response: ModelResponse,
+    initial_reconciler_response: ReconcilerResponse,
+    initial_outcome: ReplayProcedure | CompilerRefusal,
+    model_client: ModelClient,
+    model_profile_id: RecordIdentifier,
+    memory: AppMemory | None,
+    identifier_factory: Callable[[], str],
+) -> _CompilationAttempt:
+    initial_attempt = _CompilationAttempt(
+        request_id=initial_request_id,
+        response=initial_response,
+        reconciler_response=initial_reconciler_response,
+        outcome=initial_outcome,
+        model_responses=(initial_response,),
+    )
+    if not isinstance(initial_outcome, CompilerRefusal):
+        return initial_attempt
+    fallback_request_id = identifier_factory()
+    fallback_request = _model_request(
+        evidence_payload,
+        model_profile_id,
+        fallback_request_id,
+        initial_outcome,
+    )
+    fallback_response = model_client.complete(fallback_request, ReconcilerResponse)
+    fallback_reconciler_response = _parse_completed_response(
+        fallback_response,
+        fallback_request_id,
+    )
+    if fallback_reconciler_response is None:
+        return _CompilationAttempt(
+            request_id=initial_attempt.request_id,
+            response=initial_attempt.response,
+            reconciler_response=initial_attempt.reconciler_response,
+            outcome=initial_attempt.outcome,
+            model_responses=(initial_response, fallback_response),
+        )
+    fallback_outcome = compile_replay_procedure(
         evidence,
-        parsed,
+        fallback_reconciler_response,
         memory=memory,
         identifier_factory=identifier_factory,
     )
-    if isinstance(compilation, CompilerRefusal):
-        fallback_request_id = identifier_factory()
-        fallback_request = _model_request(
-            evidence_payload,
-            model_profile_id,
-            fallback_request_id,
-            compilation,
-        )
-        fallback_response = model_client.complete(fallback_request, ReconcilerResponse)
-        responses.append(fallback_response)
-        if (
-            fallback_response.disposition is ModelCallDisposition.COMPLETED
-            and fallback_response.structured_output is not None
-        ):
-            try:
-                fallback_parsed = ReconcilerResponse.model_validate(
-                    fallback_response.structured_output
-                )
-            except ValidationError:
-                fallback_parsed = None
-            if fallback_parsed is not None and fallback_parsed.request_id == fallback_request_id:
-                parsed = fallback_parsed
-                request_id = fallback_request_id
-                response = fallback_response
-                compilation = compile_replay_procedure(
-                    evidence,
-                    parsed,
-                    memory=memory,
-                    identifier_factory=identifier_factory,
-                )
-    metrics = _combined_response_metrics(tuple(responses))
-    store.persist_response(parsed)
-    store.persist_compilation(compilation)
-    if isinstance(compilation, ReplayProcedure):
-        report = ProcedureCompilationReport(
-            source_run_id=run_id,
-            evidence_id=evidence.evidence_id,
-            request_id=request_id,
+    return _CompilationAttempt(
+        request_id=fallback_request_id,
+        response=fallback_response,
+        reconciler_response=fallback_reconciler_response,
+        outcome=fallback_outcome,
+        model_responses=(initial_response, fallback_response),
+    )
+
+
+def _has_completed_structured_output(response: ModelResponse) -> bool:
+    return (
+        response.disposition is ModelCallDisposition.COMPLETED
+        and response.structured_output is not None
+    )
+
+
+def _parse_completed_response(
+    response: ModelResponse,
+    request_id: RecordIdentifier,
+) -> ReconcilerResponse | None:
+    if not _has_completed_structured_output(response):
+        return None
+    try:
+        reconciler_response = ReconcilerResponse.model_validate(response.structured_output)
+    except ValidationError:
+        return None
+    if reconciler_response.request_id != request_id:
+        return None
+    return reconciler_response
+
+
+def _compilation_outcome_report(
+    run_id: RecordIdentifier,
+    evidence_id: RecordIdentifier,
+    attempt: _CompilationAttempt,
+    metrics: ProcedureCompilationMetrics,
+) -> ProcedureCompilationReport:
+    if isinstance(attempt.outcome, ReplayProcedure):
+        return build_procedure_compilation_report(
+            run_id=run_id,
+            evidence_id=evidence_id,
+            request_id=attempt.request_id,
             status=ProcedureCompilationStatus.COMPILED,
-            model_disposition=response.disposition,
-            procedure_id=compilation.procedure_id,
+            model_disposition=attempt.response.disposition,
             reason="The compiler accepted the compiled replay procedure.",
-            model_call_artifact_ids=metrics.model_call_artifact_ids,
-            latency_ms=metrics.latency_ms,
-            prompt_tokens=metrics.prompt_tokens,
-            completion_tokens=metrics.completion_tokens,
-            reasoning_tokens=metrics.reasoning_tokens,
-            cost_usd=metrics.cost_usd,
+            metrics=metrics,
+            procedure_id=attempt.outcome.procedure_id,
         )
-    elif isinstance(compilation, CompilerRefusal):
-        report = ProcedureCompilationReport(
-            source_run_id=run_id,
-            evidence_id=evidence.evidence_id,
-            request_id=request_id,
-            status=ProcedureCompilationStatus.COMPILER_REFUSED,
-            model_disposition=response.disposition,
-            compiler_refusal_reason_count=len(compilation.reasons),
-            reason="The compiler refused the compiled replay procedure.",
-            model_call_artifact_ids=metrics.model_call_artifact_ids,
-            latency_ms=metrics.latency_ms,
-            prompt_tokens=metrics.prompt_tokens,
-            completion_tokens=metrics.completion_tokens,
-            reasoning_tokens=metrics.reasoning_tokens,
-            cost_usd=metrics.cost_usd,
-        )
-    else:
-        raise TypeError("The replay compiler returned an unsupported outcome.")
-    store.persist_compilation_report(report)
-    if isinstance(compilation, ReplayProcedure) and procedure_store is not None:
-        if compatibility is None:
-            raise ValueError("Durable procedure storage requires compatibility evidence.")
-        procedure_store.save(compatibility, evidence, compilation)
-    return report
+    return build_procedure_compilation_report(
+        run_id=run_id,
+        evidence_id=evidence_id,
+        request_id=attempt.request_id,
+        status=ProcedureCompilationStatus.COMPILER_REFUSED,
+        model_disposition=attempt.response.disposition,
+        reason="The compiler refused the compiled replay procedure.",
+        metrics=metrics,
+        compiler_refusal_reason_count=len(attempt.outcome.reasons),
+    )
 
 
-def _reconciliation_task(result: DiscoveryResult) -> AgentTask:
-    objective = result.request.objectives[0]
+def _build_reconciliation_task(discovery_result: DiscoveryResult) -> AgentTask:
+    objective = discovery_result.request.objectives[0]
     completion_conditions = objective.completion_conditions or (objective.statement,)
     return AgentTask(
         objective=objective.statement,
-        known_facts=result.request.known_facts,
-        open_work=result.request.priorities,
+        known_facts=discovery_result.request.known_facts,
+        open_work=discovery_result.request.priorities,
         completion_conditions=completion_conditions,
-        declared_value_names=result.request.declared_value_names,
+        declared_value_names=discovery_result.request.declared_value_names,
         discovery_mode=True,
     )
 
 
-def _source_steps(result: DiscoveryResult) -> tuple[AgentStep, ...]:
+def _source_steps(discovery_result: DiscoveryResult) -> tuple[AgentStep, ...]:
     replay_steps = (
-        result.procedure_replay.agent_result.steps
-        if result.procedure_replay is not None
+        discovery_result.procedure_replay.agent_result.steps
+        if discovery_result.procedure_replay is not None
         else ()
     )
-    candidates = (*replay_steps, *result.agent_result.steps)
+    candidates = (*replay_steps, *discovery_result.agent_result.steps)
     step_by_id: dict[str, AgentStep] = {}
     for step in candidates:
         step_by_id.setdefault(step.step_id, step)
     return tuple(step_by_id.values())
 
 
-def _hazard_context(knowledge: AppKnowledge | None) -> tuple[dict[str, object], ...]:
+def _action_risk_context(knowledge: AppKnowledge | None) -> tuple[dict[str, object], ...]:
     if knowledge is None:
         return ()
     return tuple(
         {
-            "hazard_id": item.hazard_id,
+            "action_risk_id": item.action_risk_id,
             "screen_id": item.screen_id,
             "action": item.action.value,
             "target_description": item.target_description,
             "kind": item.kind.value,
             "sources": tuple(source.model_dump(mode="json") for source in item.sources),
         }
-        for item in knowledge.hazards
+        for item in knowledge.action_risks
     )
 
 
@@ -392,69 +453,4 @@ def _model_request(
         ),
         sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
-    )
-
-
-def _response_metrics(response: ModelResponse) -> _ResponseMetrics:
-    return _call_metrics(response.calls)
-
-
-def _combined_response_metrics(responses: tuple[ModelResponse, ...]) -> _ResponseMetrics:
-    return _call_metrics(tuple(call for response in responses for call in response.calls))
-
-
-def _call_metrics(calls: tuple[ModelCallRecord, ...]) -> _ResponseMetrics:
-    return _ResponseMetrics(
-        model_call_artifact_ids=tuple(
-            call.call_artifact.artifact_id for call in calls if call.call_artifact is not None
-        ),
-        latency_ms=_complete_float_sum(calls, "latency"),
-        prompt_tokens=_complete_int_sum(calls, "prompt"),
-        completion_tokens=_complete_int_sum(calls, "completion"),
-        reasoning_tokens=_complete_int_sum(calls, "reasoning"),
-        cost_usd=_complete_cost_sum(calls),
-    )
-
-
-def _complete_float_sum(
-    calls: tuple[ModelCallRecord, ...],
-    metric: str,
-) -> float | None:
-    if metric != "latency":
-        raise ValueError("The model-call float metric is not supported.")
-    values = tuple(call.latency_ms for call in calls)
-    return (
-        sum(value for value in values if value is not None)
-        if all(value is not None for value in values)
-        else None
-    )
-
-
-def _complete_int_sum(
-    calls: tuple[ModelCallRecord, ...],
-    metric: str,
-) -> int | None:
-    values = {
-        "prompt": tuple(call.usage.prompt_tokens for call in calls),
-        "completion": tuple(call.usage.completion_tokens for call in calls),
-        "reasoning": tuple(call.usage.reasoning_tokens for call in calls),
-    }.get(metric)
-    if values is None:
-        raise ValueError("The model-call token metric is not supported.")
-    return (
-        sum(value for value in values if value is not None)
-        if all(value is not None for value in values)
-        else None
-    )
-
-
-def _complete_cost_sum(calls: tuple[ModelCallRecord, ...]) -> Decimal | None:
-    values = tuple(call.usage.cost_usd for call in calls)
-    return (
-        sum(
-            (value for value in values if value is not None),
-            start=Decimal(0),
-        )
-        if all(value is not None for value in values)
-        else None
     )

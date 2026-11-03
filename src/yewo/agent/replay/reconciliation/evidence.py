@@ -52,6 +52,16 @@ _COMMIT_WORDS = re.compile(
 )
 _INTEGER = re.compile(r"^[+-]?\d+$")
 _DECIMAL = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+)$")
+_VALUE_TYPE_BY_ROLE = {
+    ControlRole.CHECKBOX: ControlValueType.BOOLEAN,
+    ControlRole.RADIO_BUTTON: ControlValueType.BOOLEAN,
+    ControlRole.SWITCH: ControlValueType.BOOLEAN,
+    ControlRole.DROPDOWN: ControlValueType.ENUM,
+    ControlRole.OPTION: ControlValueType.ENUM,
+    ControlRole.SLIDER: ControlValueType.RANGE,
+    ControlRole.DATE_PICKER: ControlValueType.DATE,
+    ControlRole.TIME_PICKER: ControlValueType.TIME,
+}
 
 
 class EvidenceConstructionError(ValueError):
@@ -392,32 +402,26 @@ def _value_type(
     role: ControlRole,
     expression: str | None,
 ) -> ControlValueType:
-    if role in {ControlRole.CHECKBOX, ControlRole.RADIO_BUTTON, ControlRole.SWITCH}:
-        return ControlValueType.BOOLEAN
-    if role in {ControlRole.DROPDOWN, ControlRole.OPTION}:
-        return ControlValueType.ENUM
-    if role is ControlRole.SLIDER:
-        return ControlValueType.RANGE
-    if role is ControlRole.DATE_PICKER:
-        return ControlValueType.DATE
-    if role is ControlRole.TIME_PICKER:
-        return ControlValueType.TIME
+    inferred_type = _VALUE_TYPE_BY_ROLE.get(role)
+    if inferred_type is not None:
+        return inferred_type
     if role is not ControlRole.TEXT_FIELD:
         return ControlValueType.NONE
     text = step.proposal.text
     if text is None or text.source != "literal":
         return ControlValueType.TEXT
     lowered = (expression or "").lower()
-    if ("numeric" in lowered or "number" in lowered) and _INTEGER.fullmatch(text.value):
+    is_numeric_target = "numeric" in lowered or "number" in lowered
+    if not is_numeric_target:
+        return ControlValueType.TEXT
+    if _INTEGER.fullmatch(text.value):
         return ControlValueType.INTEGER
-    if ("numeric" in lowered or "number" in lowered) and _DECIMAL.fullmatch(text.value):
+    if _DECIMAL.fullmatch(text.value):
         return ControlValueType.DECIMAL
     return ControlValueType.TEXT
 
 
-def _control_identity(
-    role: ControlRole, label: str | None, expression: str | None
-) -> str | None:
+def _control_identity(role: ControlRole, label: str | None, expression: str | None) -> str | None:
     source = label or expression
     if source is None:
         return None
@@ -427,6 +431,4 @@ def _control_identity(
 
 def is_commit_target(expression: str | None) -> bool:
     """Return whether recorded target wording positively identifies a commit control."""
-    return expression is not None and (
-        _COMMIT_WORDS.search(expression) is not None
-    )
+    return expression is not None and (_COMMIT_WORDS.search(expression) is not None)

@@ -106,7 +106,7 @@ def test_observation_rejects_naive_time_and_self_predecessor() -> None:
 
 def test_observation_rejects_an_incompatible_schema_version() -> None:
     payload = build_observation().model_dump()
-    payload["schema_version"] = 2
+    payload["schema_version"] = "unsupported"
 
     with pytest.raises(ValidationError, match="schema_version"):
         Observation.model_validate(payload)

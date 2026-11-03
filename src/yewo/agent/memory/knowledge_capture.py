@@ -9,8 +9,8 @@ from yewo.agent.actuation import ActionOutcomeDisposition
 from yewo.agent.memory.knowledge import (
     ClaimReview,
     GroundingAssessment,
-    HazardKind,
-    HazardKnowledge,
+    ActionRiskKind,
+    ActionRiskKnowledge,
     KnowledgeEvidenceReference,
     KnowledgeFinding,
     KnowledgeRule,
@@ -51,7 +51,7 @@ def build_memory_delta(
 ) -> MemoryDelta:
     """Build one deterministic batch from canonical run evidence."""
     skipped_records: list[MemoryWritebackSkip] = []
-    hazards = _hazards(
+    action_risks = _action_risks(
         memory,
         source_run_id,
         agent_result.steps,
@@ -77,14 +77,14 @@ def build_memory_delta(
             applied_at=applied_at,
         ),
         grounding_assessments=grounding_assessments,
-        hazards=hazards,
+        action_risks=action_risks,
         rules=_rules(
             memory,
             source_run_id,
             agent_result.steps,
             observations,
             recovery_assessments,
-            hazards,
+            action_risks,
             procedure_attempt_id,
             skipped_records,
         ),
@@ -127,15 +127,15 @@ def build_memory_delta(
     )
 
 
-def _hazards(
+def _action_risks(
     memory: AppMemory,
     source_run_id: RecordIdentifier,
     steps: tuple[AgentStep, ...],
     observations: Mapping[RecordIdentifier, Observation],
     procedure_attempt_id: RecordIdentifier | None,
     skipped_records: list[MemoryWritebackSkip],
-) -> tuple[HazardKnowledge, ...]:
-    hazards: list[HazardKnowledge] = []
+) -> tuple[ActionRiskKnowledge, ...]:
+    action_risks: list[ActionRiskKnowledge] = []
     for step in steps:
         failure = step.application_failure
         if failure is None:
@@ -145,17 +145,17 @@ def _hazards(
         if screen_id is None:
             skipped_records.append(
                 MemoryWritebackSkip(
-                    record_kind="hazard",
+                    record_kind="action_risk",
                     source_step_id=step.step_id,
                     reason="No unique retained source screen matched the failure evidence.",
                 )
             )
             continue
-        kind = _hazard_kind(failure.failure_kinds)
-        hazards.append(
-            HazardKnowledge(
-                hazard_id=derived_memory_identifier(
-                    "hazard",
+        kind = _action_risk_kind(failure.failure_kinds)
+        action_risks.append(
+            ActionRiskKnowledge(
+                action_risk_id=derived_memory_identifier(
+                    "action_risk",
                     screen_id,
                     step.proposal.action.value,
                     step.proposal.target_expression or "none",
@@ -170,7 +170,7 @@ def _hazards(
                 sources=(_reference(source_run_id, step, procedure_attempt_id),),
             )
         )
-    return tuple(hazards)
+    return tuple(action_risks)
 
 
 def _rules(
@@ -179,13 +179,13 @@ def _rules(
     steps: tuple[AgentStep, ...],
     observations: Mapping[RecordIdentifier, Observation],
     assessments: Sequence[RecoveryAssessment],
-    hazards: tuple[HazardKnowledge, ...],
+    action_risks: tuple[ActionRiskKnowledge, ...],
     procedure_attempt_id: RecordIdentifier | None,
     skipped_records: list[MemoryWritebackSkip],
 ) -> tuple[KnowledgeRule, ...]:
     steps_by_proposal_id = {step.proposal.proposal_id: step for step in steps}
-    hazards_by_scope = {
-        (item.screen_id, item.action, item.target_description): item for item in hazards
+    action_risks_by_scope = {
+        (item.screen_id, item.action, item.target_description): item for item in action_risks
     }
     rules: list[KnowledgeRule] = []
     for assessment in assessments:
@@ -214,7 +214,7 @@ def _rules(
             action=step.proposal.action,
             target_description=step.proposal.target_expression,
         )
-        hazard = hazards_by_scope.get(
+        action_risk = action_risks_by_scope.get(
             (screen_id, step.proposal.action, step.proposal.target_expression)
         )
         for guidance in assessment.planner_guidance:
@@ -225,7 +225,9 @@ def _rules(
                     ),
                     text=guidance,
                     scope=scope,
-                    linked_hazard_id=hazard.hazard_id if hazard is not None else None,
+                    linked_action_risk_id=action_risk.action_risk_id
+                    if action_risk is not None
+                    else None,
                     sources=(_reference(source_run_id, step, procedure_attempt_id),),
                 )
             )
@@ -432,7 +434,7 @@ def _timing(
         if receipt is None:
             raise AssertionError("A successful settled step must contain a dispatch receipt.")
         measurement = (
-            "dispatch_to_settled_v2"
+            "dispatch_to_settled_v1"
             if receipt.dispatched_at is not None
             else "source_to_settled_v1"
         )
@@ -524,13 +526,13 @@ def _reference(
     )
 
 
-def _hazard_kind(failure_kinds: tuple[ApplicationFailureKind, ...]) -> HazardKind:
+def _action_risk_kind(failure_kinds: tuple[ApplicationFailureKind, ...]) -> ActionRiskKind:
     kinds = frozenset(failure_kinds)
     if ApplicationFailureKind.ANR in kinds:
-        return HazardKind.ANR
+        return ActionRiskKind.ANR
     if ApplicationFailureKind.CRASH in kinds:
-        return HazardKind.CRASH
-    return HazardKind.APPLICATION_EXIT
+        return ActionRiskKind.CRASH
+    return ActionRiskKind.APPLICATION_EXIT
 
 
 def _normalized_text(text: str) -> str:

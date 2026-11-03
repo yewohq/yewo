@@ -56,6 +56,64 @@ class DiscoveryPromotion:
     coverage: DiscoveryCoverage
 
 
+def _build_discovery_coverage(
+    request: DiscoveryRequest,
+    agent_result: AgentResult,
+    verified_objective_ids: frozenset[RecordIdentifier] | None,
+    compiled_procedure: ReplayProcedure | None,
+    evidence_observation_ids: tuple[RecordIdentifier, ...],
+) -> DiscoveryCoverage:
+    if verified_objective_ids is None:
+        entries = tuple(
+            DiscoveryCoverageEntry(
+                objective_id=objective.objective_id,
+                state=DiscoveryObjectiveState.UNRESOLVED,
+                reason="The run did not independently verify objective coverage.",
+            )
+            for objective in request.objectives
+        )
+    else:
+        entries = tuple(
+            build_objective_evidence(
+                objective,
+                agent_result,
+                compiled_procedure,
+                evidence_observation_ids,
+                objective.objective_id in verified_objective_ids,
+            )
+            for objective in request.objectives
+        )
+    return DiscoveryCoverage(entries=entries)
+
+
+def _merge_transition(
+    transitions: list[AcceptedTransition],
+    candidate: AcceptedTransition,
+) -> AcceptedTransition:
+    equivalent_index = next(
+        (
+            index
+            for index, transition in enumerate(transitions)
+            if _same_semantic_transition(transition, candidate)
+        ),
+        None,
+    )
+    if equivalent_index is None:
+        transitions.append(candidate)
+        return candidate
+    retained = transitions[equivalent_index]
+    merged = retained.model_copy(
+        update={
+            "target_grounding": retained.target_grounding or candidate.target_grounding,
+            "destination_grounding": (
+                retained.destination_grounding or candidate.destination_grounding
+            ),
+        }
+    )
+    transitions[equivalent_index] = merged
+    return merged
+
+
 class AppMemoryBuilder:
     """Build memory only from internally consistent canonical step evidence."""
 
@@ -85,78 +143,22 @@ class AppMemoryBuilder:
         screens = list(existing.screens if existing is not None else ())
         transitions = list(existing.transitions if existing is not None else ())
         unsuccessful_attempts = list(existing.unsuccessful_attempts if existing is not None else ())
-        run_transitions: list[AcceptedTransition] = []
-        new_unsuccessful_attempts: list[UnsuccessfulAttempt] = []
-
-        for step in agent_result.steps:
-            unsuccessful_attempt = _unsuccessful_attempt(
-                step,
-                observations,
-                screens,
-                source_run_id,
-                compatibility,
-            )
-            if unsuccessful_attempt is not None and not any(
-                item.has_same_evidence(unsuccessful_attempt) for item in unsuccessful_attempts
-            ):
-                unsuccessful_attempts.append(unsuccessful_attempt)
-                new_unsuccessful_attempts.append(unsuccessful_attempt)
-            transition = self._accepted_transition(
-                step,
-                observations,
-                screens,
-                source_run_id,
-                compatibility,
-            )
-            if transition is None:
-                continue
-            if run_transitions:
-                transition = _add_input_contract(run_transitions[-1], transition)
-            equivalent_index = next(
-                (
-                    index
-                    for index, item in enumerate(transitions)
-                    if _same_semantic_transition(item, transition)
-                ),
-                None,
-            )
-            if equivalent_index is None:
-                transitions.append(transition)
-            else:
-                equivalent = transitions[equivalent_index]
-                transition = equivalent.model_copy(
-                    update={
-                        "target_grounding": equivalent.target_grounding
-                        or transition.target_grounding,
-                        "destination_grounding": equivalent.destination_grounding
-                        or transition.destination_grounding,
-                    }
-                )
-                transitions[equivalent_index] = transition
-            run_transitions.append(transition)
-
-        coverage_entries: list[DiscoveryCoverageEntry] = []
-        if verified_objective_ids is not None:
-            coverage_entries.extend(
-                build_objective_evidence(
-                    objective,
-                    agent_result,
-                    compiled_procedure,
-                    evidence_observation_ids,
-                    objective.objective_id in verified_objective_ids,
-                )
-                for objective in request.objectives
-            )
-        else:
-            coverage_entries.extend(
-                DiscoveryCoverageEntry(
-                    objective_id=objective.objective_id,
-                    state=DiscoveryObjectiveState.UNRESOLVED,
-                    reason="The run did not independently verify objective coverage.",
-                )
-                for objective in request.objectives
-            )
-        coverage = DiscoveryCoverage(entries=tuple(coverage_entries))
+        run_transitions, new_unsuccessful_attempts = self._promote_steps(
+            agent_result,
+            observations,
+            compatibility,
+            source_run_id,
+            screens,
+            transitions,
+            unsuccessful_attempts,
+        )
+        coverage = _build_discovery_coverage(
+            request,
+            agent_result,
+            verified_objective_ids,
+            compiled_procedure,
+            evidence_observation_ids,
+        )
         if not run_transitions and not new_unsuccessful_attempts:
             return DiscoveryPromotion(memory=existing, coverage=coverage)
         source_run_ids = tuple(
@@ -189,6 +191,46 @@ class AppMemoryBuilder:
             updated_at=updated_at,
         )
         return DiscoveryPromotion(memory=memory, coverage=coverage)
+
+    def _promote_steps(
+        self,
+        agent_result: AgentResult,
+        observations: Mapping[str, Observation],
+        compatibility: MemoryCompatibility,
+        source_run_id: RecordIdentifier,
+        screens: list[LogicalScreen],
+        transitions: list[AcceptedTransition],
+        unsuccessful_attempts: list[UnsuccessfulAttempt],
+    ) -> tuple[list[AcceptedTransition], list[UnsuccessfulAttempt]]:
+        run_transitions: list[AcceptedTransition] = []
+        new_unsuccessful_attempts: list[UnsuccessfulAttempt] = []
+        for step in agent_result.steps:
+            unsuccessful_attempt = _unsuccessful_attempt(
+                step,
+                observations,
+                screens,
+                source_run_id,
+                compatibility,
+            )
+            if unsuccessful_attempt is not None and not any(
+                item.has_same_evidence(unsuccessful_attempt) for item in unsuccessful_attempts
+            ):
+                unsuccessful_attempts.append(unsuccessful_attempt)
+                new_unsuccessful_attempts.append(unsuccessful_attempt)
+            transition = self._accepted_transition(
+                step,
+                observations,
+                screens,
+                source_run_id,
+                compatibility,
+            )
+            if transition is None:
+                continue
+            if run_transitions:
+                transition = _add_input_contract(run_transitions[-1], transition)
+            transition = _merge_transition(transitions, transition)
+            run_transitions.append(transition)
+        return run_transitions, new_unsuccessful_attempts
 
     def _accepted_transition(
         self,

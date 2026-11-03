@@ -5,14 +5,13 @@ from dataclasses import dataclass
 
 from yewo.agent.discovery.records import DiscoveryObjective
 from yewo.agent.memory.records import AppMemory, MemoryCompatibility
-from yewo.agent.replay.procedure.hazards import compiled_procedure_has_known_hazard
+from yewo.agent.replay.procedure.action_risks import compiled_procedure_has_known_action_risk
 from yewo.agent.replay.procedure.objective_matching import (
     ObjectiveMatcher,
     ReplayProcedureSelection,
     exact_procedure_selection,
 )
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
-from yewo.agent.replay.reconciliation.compilation import compile_completed_run
 from yewo.models import ModelClient
 
 
@@ -43,7 +42,7 @@ def prepare_replay_procedure(
     if (
         exact_bundle is not None
         and exact_bundle.evidence.task.completion_conditions == current_conditions
-        and not compiled_procedure_has_known_hazard(
+        and not compiled_procedure_has_known_action_risk(
             exact_bundle.evidence,
             exact_bundle.procedure,
             memory,
@@ -55,7 +54,7 @@ def prepare_replay_procedure(
     candidates = tuple(
         candidate
         for candidate in procedure_store.compatible_candidates(compatibility)
-        if not compiled_procedure_has_known_hazard(
+        if not compiled_procedure_has_known_action_risk(
             candidate.evidence,
             candidate.procedure,
             memory,
@@ -72,7 +71,6 @@ __all__ = [
     "ObjectiveMatcher",
     "ReplayProcedurePreparation",
     "ReplayProcedureSelection",
-    "compile_completed_run",
     "exact_procedure_selection",
     "prepare_replay_procedure",
 ]

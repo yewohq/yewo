@@ -111,12 +111,12 @@ def test_store_promotes_redacted_screenshots_and_loads_verified_memory(
     )
     assert (_stored_application_root(store) / "memory.json").is_file()
     envelope = json.loads((_stored_application_root(store) / "memory.json").read_text())
-    assert envelope["schema_version"] == 3
-    assert envelope["memory"]["schema_version"] == 3
+    assert envelope["schema_version"] == 1
+    assert envelope["memory"]["schema_version"] == 1
     assert envelope["memory"]["app_knowledge"] == {
         "findings": [],
         "grounding_assessments": [],
-        "hazards": [],
+        "action_risks": [],
         "rules": [],
         "timing": [],
         "controls": [],
@@ -148,16 +148,17 @@ def test_store_rejects_a_changed_snapshot_digest(tmp_path: Path) -> None:
         store.load(compatibility)
 
 
-def test_store_rejects_v1_memory_with_a_rebuild_instruction(tmp_path: Path) -> None:
+def test_store_rejects_an_unsupported_schema_with_a_rebuild_instruction(
+    tmp_path: Path,
+) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
     store.save(memory, source_root)
     path = _stored_application_root(store) / "memory.json"
     envelope = json.loads(path.read_text())
-    envelope["schema_version"] = 2
-    envelope["memory"]["schema_version"] = 2
-    envelope["memory"].pop("app_knowledge")
+    envelope["schema_version"] = "unsupported"
+    envelope["memory"]["schema_version"] = "unsupported"
     content = json.dumps(
         envelope["memory"],
         ensure_ascii=False,

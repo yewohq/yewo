@@ -7,6 +7,7 @@ from typing import Literal
 
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
+from yewo.agent.planning.history import PlanningHistoryEntry
 from yewo.agent.planning.planner import PlanningRequest
 from yewo.agent.replay.procedure.grounding import (
     ProcedureGroundingAuthorization,
@@ -28,6 +29,21 @@ from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingRequest
 from yewo.agent.replay.state_matching import match_evidence_state, state_matches_observation
 from yewo.observations import Observation, ScreenshotReference
+
+
+def _find_action_feedback(
+    history: tuple[PlanningHistoryEntry, ...],
+    proposal_id: str,
+) -> PlanningHistoryEntry | None:
+    return next(
+        (entry for entry in reversed(history) if entry.proposal.proposal_id == proposal_id),
+        None,
+    )
+
+
+def _application_recovered(feedback: PlanningHistoryEntry) -> bool:
+    failure = feedback.application_failure
+    return failure is not None and failure.recovery_succeeded
 
 
 class CompiledProcedureActionSource:
@@ -321,96 +337,100 @@ class CompiledProcedureActionSource:
         proposal_id = self._pending_proposal_id
         if step is None or proposal_id is None:
             raise AssertionError("A pending procedure step requires its proposal identifier.")
-        if not request.history:
-            return self._diverged(
-                request,
-                step,
-                "runtime",
-                step.expects.destination_state_id,
-                "Procedure action feedback is unavailable.",
-            )
-        feedback = next(
-            (
-                entry
-                for entry in reversed(request.history)
-                if entry.proposal.proposal_id == proposal_id
-            ),
-            None,
-        )
+        feedback = _find_action_feedback(request.history, proposal_id)
         if feedback is None:
+            reason = (
+                "Procedure action feedback does not match the pending action."
+                if request.history
+                else "Procedure action feedback is unavailable."
+            )
             return self._diverged(
                 request,
                 step,
                 "runtime",
                 step.expects.destination_state_id,
-                "Procedure action feedback does not match the pending action.",
+                reason,
             )
-        if (
-            feedback.application_failure is not None
-            and feedback.application_failure.recovery_succeeded
-        ):
-            self._pending_step = None
-            self._pending_proposal_id = None
-            self._grounding_authorization = None
+        if _application_recovered(feedback):
+            self._clear_pending_action()
             self._entry_selected = False
             return None
-        if feedback.refusal is not None or feedback.receipt is not None:
+        failure = self._settlement_failure(request, step, feedback)
+        if failure is not None:
+            guard, expected_state_id, reason = failure
             return self._diverged(
                 request,
                 step,
+                guard,
+                expected_state_id,
+                reason,
+            )
+        self._record_step_milestones(step, request.observation)
+        self._next_index += 1
+        self._completed_indexes.add(step.procedure_index)
+        self._clear_pending_action()
+        return None
+
+    def _settlement_failure(
+        self,
+        request: PlanningRequest,
+        step: ReplayProcedureStep,
+        feedback: PlanningHistoryEntry,
+    ) -> tuple[Literal["runtime", "expectation"], str | None, str] | None:
+        expected_state_id = step.expects.destination_state_id
+        if feedback.refusal is not None or feedback.receipt is not None:
+            return (
                 "runtime",
-                step.expects.destination_state_id,
+                expected_state_id,
                 "The procedure action was refused before accepted settlement.",
             )
         outcome = feedback.outcome
         if outcome is None:
-            return self._diverged(
-                request,
-                step,
+            return (
                 "expectation",
-                step.expects.destination_state_id,
+                expected_state_id,
                 "The procedure action has no settled outcome evidence.",
             )
-        missing_signals = step.expects.required_signals - outcome.signals
-        if missing_signals:
-            return self._diverged(
-                request,
-                step,
+        if step.expects.required_signals - outcome.signals:
+            return (
                 "expectation",
-                step.expects.destination_state_id,
+                expected_state_id,
                 "The procedure action did not produce every required outcome signal.",
             )
-        expected_state_id = step.expects.destination_state_id
         if expected_state_id is not None and not state_matches_observation(
             request.observation,
             self._evidence.states[expected_state_id],
             self._evidence.state_grouping_maximum_phash_distance,
             self._screenshot_loader,
         ):
-            return self._diverged(
-                request,
-                step,
+            return (
                 "expectation",
                 expected_state_id,
                 "The current observation does not match the procedure expectation.",
             )
+        return None
+
+    def _record_step_milestones(
+        self,
+        step: ReplayProcedureStep,
+        observation: Observation,
+    ) -> None:
         for condition_index in step.captures_completion_conditions:
             self._milestones.append(
                 MilestoneEvidence(
                     completion_condition_index=condition_index,
                     procedure_index=step.procedure_index,
                     source_step=step.source_step,
-                    observation_id=request.observation.observation_id,
-                    screenshot_artifact_id=request.observation.redacted_screenshot.artifact_id,
-                    screen_fingerprint=request.observation.screen_fingerprint,
+                    observation_id=observation.observation_id,
+                    screenshot_artifact_id=observation.redacted_screenshot.artifact_id,
+                    screen_fingerprint=observation.screen_fingerprint,
                 )
             )
-        self._next_index += 1
-        self._completed_indexes.add(step.procedure_index)
+
+    def _clear_pending_action(self) -> None:
         self._pending_step = None
         self._pending_proposal_id = None
         self._grounding_authorization = None
-        return None
 
     def _select_entry(self, observation: Observation) -> None:
         """Enter at the earliest matching safe source state."""

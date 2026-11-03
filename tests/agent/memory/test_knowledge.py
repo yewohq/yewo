@@ -14,8 +14,8 @@ from yewo.agent.memory.knowledge import (
     GroundingAssessment,
     GroundingAssessmentStatus,
     GroundingRole,
-    HazardKind,
-    HazardKnowledge,
+    ActionRiskKind,
+    ActionRiskKnowledge,
     KnowledgeEvidenceReference,
     KnowledgeRule,
     MemoryWritebackReceipt,
@@ -131,11 +131,11 @@ def test_grounding_invalidation_wins_without_erasing_success_evidence(
 
 def test_knowledge_rejects_references_outside_the_memory_graph(tmp_path: Path) -> None:
     unused_compatibility, memory = _memory(tmp_path)
-    hazard = HazardKnowledge(
-        hazard_id="hazard_1",
+    action_risk = ActionRiskKnowledge(
+        action_risk_id="action_risk_1",
         screen_id="unknown_screen",
         action=ActionKind.TAP,
-        kind=HazardKind.CRASH,
+        kind=ActionRiskKind.CRASH,
         seen_count=1,
         sources=(_reference(),),
     )
@@ -143,11 +143,11 @@ def test_knowledge_rejects_references_outside_the_memory_graph(tmp_path: Path) -
     payload.update(
         {
             "source_run_ids": ("run_1", "run_2"),
-            "app_knowledge": AppKnowledge(hazards=(hazard,)),
+            "app_knowledge": AppKnowledge(action_risks=(action_risk,)),
         }
     )
 
-    with pytest.raises(ValueError, match="hazard.*retained screen"):
+    with pytest.raises(ValueError, match="action risk.*retained screen"):
         AppMemory.model_validate(payload)
 
 
@@ -313,7 +313,7 @@ def test_capture_measures_settlement_after_dispatch_when_timestamp_exists(
     )
 
     sample = delta.timing[0].samples[0]
-    assert sample.measurement == "dispatch_to_settled_v2"
+    assert sample.measurement == "dispatch_to_settled_v1"
     assert sample.duration_ms == 400
 
 
@@ -379,7 +379,7 @@ def test_capture_records_auditor_observed_application_state(tmp_path: Path) -> N
     assert delta.run_outcomes[0].observed_app_state.startswith("The saved account")
 
 
-def test_capture_records_crash_hazard_and_unconfirmed_recovery_rule(
+def test_capture_records_crash_action_risk_and_unconfirmed_recovery_rule(
     tmp_path: Path,
 ) -> None:
     unused_compatibility, memory = _memory(tmp_path)
@@ -421,13 +421,13 @@ def test_capture_records_crash_hazard_and_unconfirmed_recovery_rule(
         recovery_assessments=(recovery,),
     )
 
-    assert delta.hazards[0].kind is HazardKind.CRASH
-    assert delta.hazards[0].recovered_count == 1
-    assert delta.rules[0].linked_hazard_id == delta.hazards[0].hazard_id
+    assert delta.action_risks[0].kind is ActionRiskKind.CRASH
+    assert delta.action_risks[0].recovered_count == 1
+    assert delta.rules[0].linked_action_risk_id == delta.action_risks[0].action_risk_id
     assert delta.timing == ()
 
 
-def test_unmatched_hazard_is_skipped_without_discarding_other_records(
+def test_unmatched_action_risk_is_skipped_without_discarding_other_records(
     tmp_path: Path,
 ) -> None:
     unused_compatibility, memory = _memory(tmp_path)
@@ -465,7 +465,7 @@ def test_unmatched_hazard_is_skipped_without_discarding_other_records(
         reconciler_response=response,
     )
 
-    assert delta.hazards == ()
+    assert delta.action_risks == ()
     assert len(delta.findings) == 1
     assert len(delta.skipped_records) == 1
-    assert delta.skipped_records[0].record_kind == "hazard"
+    assert delta.skipped_records[0].record_kind == "action_risk"

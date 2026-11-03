@@ -202,9 +202,9 @@ def _objective_candidates(
                 completion_conditions=task.completion_conditions,
             ),
         )
-    return tuple(
-        sorted(unique.values(), key=lambda item: item.procedure_id)
-    )[:MAXIMUM_OBJECTIVE_CANDIDATES]
+    return tuple(sorted(unique.values(), key=lambda item: item.procedure_id))[
+        :MAXIMUM_OBJECTIVE_CANDIDATES
+    ]
 
 
 def _model_request(

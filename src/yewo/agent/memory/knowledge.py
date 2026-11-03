@@ -18,7 +18,7 @@ RUN_OUTCOME_RETENTION = 1_000
 CLAIM_REVIEW_RETENTION = 5_000
 
 
-class HazardKind(StrEnum):
+class ActionRiskKind(StrEnum):
     """Observed application failure that an exact action may trigger."""
 
     CRASH = "crash"
@@ -81,16 +81,16 @@ class GroundingAssessment(BaseModel):
         return self
 
 
-class HazardKnowledge(BaseModel):
+class ActionRiskKnowledge(BaseModel):
     """Observed application failure tied to an exact screen and action."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    hazard_id: RecordIdentifier
+    action_risk_id: RecordIdentifier
     screen_id: RecordIdentifier
     action: ActionKind
     target_description: str | None = Field(default=None, min_length=1, max_length=2_000)
-    kind: HazardKind
+    kind: ActionRiskKind
     exception_type: str | None = Field(default=None, min_length=1, max_length=500)
     top_frame: str | None = Field(default=None, min_length=1, max_length=1_000)
     seen_count: int = Field(ge=1)
@@ -102,7 +102,7 @@ class HazardKnowledge(BaseModel):
     @model_validator(mode="after")
     def _validate_counts(self) -> Self:
         if self.recovered_count > self.seen_count:
-            raise ValueError("Hazard recovery count cannot exceed its seen count.")
+            raise ValueError("Action-risk recovery count cannot exceed its seen count.")
         return self
 
 
@@ -124,7 +124,7 @@ class KnowledgeRule(BaseModel):
     rule_id: RecordIdentifier
     text: str = Field(min_length=1, max_length=4_000)
     scope: KnowledgeScope = KnowledgeScope()
-    linked_hazard_id: RecordIdentifier | None = None
+    linked_action_risk_id: RecordIdentifier | None = None
     sources: tuple[KnowledgeEvidenceReference, ...] = Field(
         min_length=1, max_length=KNOWLEDGE_EVIDENCE_RETENTION
     )
@@ -149,9 +149,7 @@ class TransitionTimingSample(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     sample_id: RecordIdentifier
-    measurement: Literal["source_to_settled_v1", "dispatch_to_settled_v2"] = (
-        "source_to_settled_v1"
-    )
+    measurement: Literal["source_to_settled_v1", "dispatch_to_settled_v1"] = "source_to_settled_v1"
     duration_ms: float = Field(ge=0, le=300_000)
     source: KnowledgeEvidenceReference
 
@@ -248,7 +246,7 @@ class AppKnowledge(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     grounding_assessments: tuple[GroundingAssessment, ...] = Field(default=(), max_length=5_000)
-    hazards: tuple[HazardKnowledge, ...] = Field(default=(), max_length=1_000)
+    action_risks: tuple[ActionRiskKnowledge, ...] = Field(default=(), max_length=1_000)
     rules: tuple[KnowledgeRule, ...] = Field(default=(), max_length=1_000)
     findings: tuple[KnowledgeFinding, ...] = Field(default=(), max_length=1_000)
     timing: tuple[TransitionTimingKnowledge, ...] = Field(default=(), max_length=5_000)
@@ -277,6 +275,17 @@ def validate_app_knowledge(
     source_run_ids: set[RecordIdentifier],
 ) -> None:
     """Reject duplicate identifiers and references outside the memory graph."""
+    _validate_knowledge_identifiers(knowledge)
+    _validate_knowledge_graph_references(
+        knowledge,
+        screen_ids,
+        transition_ids,
+        observation_ids,
+    )
+    _validate_knowledge_sources(knowledge, source_run_ids)
+
+
+def _validate_knowledge_identifiers(knowledge: AppKnowledge) -> None:
     _validate_unique_ids(
         "grounding assessment",
         [item.assessment_id for item in knowledge.grounding_assessments],
@@ -287,7 +296,7 @@ def validate_app_knowledge(
     ]
     if len(grounding_keys) != len(set(grounding_keys)):
         raise ValueError("App knowledge grounding assessment keys must be unique.")
-    _validate_unique_ids("hazard", [item.hazard_id for item in knowledge.hazards])
+    _validate_unique_ids("action risk", [item.action_risk_id for item in knowledge.action_risks])
     _validate_unique_ids("rule", [item.rule_id for item in knowledge.rules])
     _validate_unique_ids("finding", [item.finding_id for item in knowledge.findings])
     _validate_unique_ids("timing transition", [item.transition_id for item in knowledge.timing])
@@ -296,35 +305,30 @@ def validate_app_knowledge(
     _validate_unique_ids("control", [item.control_id for item in knowledge.controls])
     _validate_unique_ids("claim review", [item.review_id for item in knowledge.claim_reviews])
     _validate_unique_ids("write-back", [item.writeback_id for item in knowledge.writebacks])
+
+
+def _validate_knowledge_graph_references(
+    knowledge: AppKnowledge,
+    screen_ids: set[RecordIdentifier],
+    transition_ids: set[RecordIdentifier],
+    observation_ids: set[RecordIdentifier],
+) -> None:
+    _validate_grounding_and_timing_references(knowledge, transition_ids, observation_ids)
+    _validate_screen_references(knowledge, screen_ids)
+    _validate_claim_references(knowledge)
+
+
+def _validate_grounding_and_timing_references(
+    knowledge: AppKnowledge,
+    transition_ids: set[RecordIdentifier],
+    observation_ids: set[RecordIdentifier],
+) -> None:
     if any(
         item.transition_id not in transition_ids
         or item.source_observation_id not in observation_ids
         for item in knowledge.grounding_assessments
     ):
         raise ValueError("Every grounding assessment must reference retained graph evidence.")
-    if any(item.screen_id not in screen_ids for item in knowledge.hazards):
-        raise ValueError("Every hazard must reference a retained screen.")
-    hazard_ids = {item.hazard_id for item in knowledge.hazards}
-    claim_ids = {
-        *(item.rule_id for item in knowledge.rules),
-        *(item.finding_id for item in knowledge.findings),
-    }
-    if any(item.claim_id not in claim_ids for item in knowledge.claim_reviews):
-        raise ValueError("Every claim review must reference a retained claim.")
-    if any(
-        item.scope.screen_id is not None and item.scope.screen_id not in screen_ids
-        for item in (*knowledge.rules, *knowledge.findings)
-    ):
-        raise ValueError("Every scoped claim must reference a retained screen.")
-    if any(item.screen_id not in screen_ids for item in knowledge.screen_summaries):
-        raise ValueError("Every screen summary must reference a retained screen.")
-    if any(item.screen_id not in screen_ids for item in knowledge.controls):
-        raise ValueError("Every control must reference a retained screen.")
-    if any(
-        item.linked_hazard_id is not None and item.linked_hazard_id not in hazard_ids
-        for item in knowledge.rules
-    ):
-        raise ValueError("Every linked rule must reference a retained hazard.")
     if any(item.transition_id not in transition_ids for item in knowledge.timing):
         raise ValueError("Every timing record must reference a retained transition.")
     assessment_ids = {item.assessment_id for item in knowledge.grounding_assessments}
@@ -334,6 +338,44 @@ def validate_app_knowledge(
         for item in knowledge.grounding_assessments
     ):
         raise ValueError("Every replacement grounding must reference a retained assessment.")
+
+
+def _validate_screen_references(
+    knowledge: AppKnowledge,
+    screen_ids: set[RecordIdentifier],
+) -> None:
+    if any(item.screen_id not in screen_ids for item in knowledge.action_risks):
+        raise ValueError("Every action risk must reference a retained screen.")
+    if any(
+        item.scope.screen_id is not None and item.scope.screen_id not in screen_ids
+        for item in (*knowledge.rules, *knowledge.findings)
+    ):
+        raise ValueError("Every scoped claim must reference a retained screen.")
+    if any(item.screen_id not in screen_ids for item in knowledge.screen_summaries):
+        raise ValueError("Every screen summary must reference a retained screen.")
+    if any(item.screen_id not in screen_ids for item in knowledge.controls):
+        raise ValueError("Every control must reference a retained screen.")
+
+
+def _validate_claim_references(knowledge: AppKnowledge) -> None:
+    claim_ids = {
+        *(item.rule_id for item in knowledge.rules),
+        *(item.finding_id for item in knowledge.findings),
+    }
+    if any(item.claim_id not in claim_ids for item in knowledge.claim_reviews):
+        raise ValueError("Every claim review must reference a retained claim.")
+    action_risk_ids = {item.action_risk_id for item in knowledge.action_risks}
+    if any(
+        item.linked_action_risk_id is not None and item.linked_action_risk_id not in action_risk_ids
+        for item in knowledge.rules
+    ):
+        raise ValueError("Every linked rule must reference a retained action risk.")
+
+
+def _validate_knowledge_sources(
+    knowledge: AppKnowledge,
+    source_run_ids: set[RecordIdentifier],
+) -> None:
     references = _knowledge_evidence_references(knowledge)
     referenced_run_ids = {
         *(reference.run_id for reference in references),
@@ -359,7 +401,7 @@ def _knowledge_evidence_references(
     references = [
         reference for item in knowledge.grounding_assessments for reference in item.sources
     ]
-    references.extend(reference for item in knowledge.hazards for reference in item.sources)
+    references.extend(reference for item in knowledge.action_risks for reference in item.sources)
     references.extend(
         reference for item in (*knowledge.rules, *knowledge.findings) for reference in item.sources
     )

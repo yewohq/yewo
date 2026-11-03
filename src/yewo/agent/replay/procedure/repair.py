@@ -11,6 +11,8 @@ from yewo.agent.planning.evidence import (
 from yewo.agent.planning.planner import ActionProposalSource, PlanningRequest
 from yewo.agent.replay.procedure.grounding import ProcedureGroundingMatch
 from yewo.agent.replay.procedure.records import (
+    MilestoneEvidence,
+    ProcedureDivergence,
     ProcedureEnvironmentEvent,
     ProcedureRepairEvidence,
     ProcedureRepairTarget,
@@ -22,7 +24,7 @@ from yewo.agent.runtime.observation_settlement import (
 )
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingRequest
-from yewo.devices.application_lifecycle import trusted_system_surface
+from yewo.devices.application_lifecycle import TrustedSystemSurface, trusted_system_surface
 
 
 PROCEDURE_REPAIR_MAXIMUM_ACTIONS_PER_ATTEMPT = 8
@@ -79,15 +81,15 @@ class BoundedProcedureRepairActionSource:
         return self._procedure_source.failed_procedure_index
 
     @property
-    def divergence(self):
+    def divergence(self) -> ProcedureDivergence | None:
         return self._procedure_source.divergence
 
     @property
-    def divergences(self):
+    def divergences(self) -> tuple[ProcedureDivergence, ...]:
         return self._procedure_source.divergences
 
     @property
-    def milestones(self):
+    def milestones(self) -> tuple[MilestoneEvidence, ...]:
         return self._procedure_source.milestones
 
     @property
@@ -347,7 +349,10 @@ class BoundedProcedureRepairActionSource:
         self._rejoined_observation_id = None
         self._keyboard_repair_stage = 0
 
-    def _trusted_system_surface(self, request: PlanningRequest):
+    def _trusted_system_surface(
+        self,
+        request: PlanningRequest,
+    ) -> TrustedSystemSurface | None:
         observation = request.observation
         if observation.foreground_application_id == self._procedure_source.application_id:
             return None

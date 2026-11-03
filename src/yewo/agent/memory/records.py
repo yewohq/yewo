@@ -171,12 +171,20 @@ class SemanticRouteAction(BaseModel):
 
     @model_validator(mode="after")
     def _validate_reusable_action(self) -> Self:
+        self._validate_reusable_action_kind()
+        self._validate_type_contract()
+        self._validate_action_descriptions()
+        return self
+
+    def _validate_reusable_action_kind(self) -> None:
         if self.action in {
             ActionKind.SET_DEVICE_CAPABILITY,
             ActionKind.DONE,
             ActionKind.CANNOT_PROGRESS,
         }:
             raise ValueError("This action cannot be stored as reusable route mechanics.")
+
+    def _validate_type_contract(self) -> None:
         if (
             self.action is ActionKind.TYPE
             and self.declared_value_name is None
@@ -189,6 +197,8 @@ class SemanticRouteAction(BaseModel):
             raise ValueError("A focused-field clear action cannot contain a target description.")
         if self.action is not ActionKind.TYPE and self.input_contract is not None:
             raise ValueError("Only a reusable type action can contain an input contract.")
+
+    def _validate_action_descriptions(self) -> None:
         if (
             self.action
             in {
@@ -205,7 +215,6 @@ class SemanticRouteAction(BaseModel):
             raise ValueError("A reusable drag requires a destination description.")
         if self.action is ActionKind.SCROLL and (self.direction is None or self.distance is None):
             raise ValueError("A reusable scroll requires direction and distance.")
-        return self
 
 
 class AcceptedTransition(BaseModel):
@@ -326,7 +335,7 @@ class AppMemory(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[3] = 3
+    schema_version: Literal[1] = 1
     memory_id: RecordIdentifier
     compatibility: MemoryCompatibility
     source_run_ids: tuple[RecordIdentifier, ...] = Field(min_length=1)
@@ -340,53 +349,93 @@ class AppMemory(BaseModel):
     def _validate_graph(self) -> Self:
         if self.updated_at.utcoffset() is None:
             raise ValueError("App memory time must include a timezone.")
+        screen_ids, screens_by_id = self._validate_screen_ids()
+        transition_ids = self._validate_transitions(screen_ids)
+        self._validate_unsuccessful_attempts(screen_ids, screens_by_id)
+        observation_ids = self._observation_ids()
+        self._validate_knowledge(screen_ids, transition_ids, observation_ids)
+        self._validate_screen_masks()
+        self._validate_retention_limits()
+        return self
+
+    def _validate_screen_ids(
+        self,
+    ) -> tuple[set[RecordIdentifier], dict[RecordIdentifier, LogicalScreen]]:
         screen_ids = [screen.screen_id for screen in self.screens]
         if len(screen_ids) != len(set(screen_ids)):
             raise ValueError("App memory screen identifiers must be unique.")
-        known_screens = set(screen_ids)
-        screens_by_id = {screen.screen_id: screen for screen in self.screens}
+        return set(screen_ids), {screen.screen_id: screen for screen in self.screens}
+
+    def _validate_transitions(
+        self,
+        screen_ids: set[RecordIdentifier],
+    ) -> set[RecordIdentifier]:
         transition_ids = [transition.transition_id for transition in self.transitions]
         if len(transition_ids) != len(set(transition_ids)):
             raise ValueError("App memory transition identifiers must be unique.")
         if any(
-            transition.source_screen_id not in known_screens
-            or transition.destination_screen_id not in known_screens
+            transition.source_screen_id not in screen_ids
+            or transition.destination_screen_id not in screen_ids
             for transition in self.transitions
         ):
             raise ValueError("Every transition must reference known logical screens.")
         validate_transition_groundings(self.screens, self.transitions)
+        return set(transition_ids)
+
+    def _validate_unsuccessful_attempts(
+        self,
+        screen_ids: set[RecordIdentifier],
+        screens_by_id: dict[RecordIdentifier, LogicalScreen],
+    ) -> None:
         attempt_ids = [attempt.attempt_id for attempt in self.unsuccessful_attempts]
         if len(attempt_ids) != len(set(attempt_ids)):
             raise ValueError("App memory unsuccessful-attempt identifiers must be unique.")
-        if any(attempt.screen_id not in known_screens for attempt in self.unsuccessful_attempts):
+        if any(attempt.screen_id not in screen_ids for attempt in self.unsuccessful_attempts):
             raise ValueError("Every unsuccessful attempt must reference a known logical screen.")
         for attempt in self.unsuccessful_attempts:
-            source_variants = tuple(
-                variant
-                for variant in screens_by_id[attempt.screen_id].variants
-                if variant.observation_id == attempt.source_observation_id
-            )
-            if len(source_variants) != 1:
-                raise ValueError("An unsuccessful attempt must reference its source observation.")
-            if attempt.grounded_point is not None and (
-                attempt.screenshot_width_px != source_variants[0].width_px
-                or attempt.screenshot_height_px != source_variants[0].height_px
-            ):
-                raise ValueError("An unsuccessful-attempt point must match its source screenshot.")
-            if attempt.source_run_id not in self.source_run_ids:
-                raise ValueError("An unsuccessful attempt must reference a source memory run.")
-        known_transitions = set(transition_ids)
-        observation_ids = [
-            variant.observation_id for screen in self.screens for variant in screen.variants
-        ]
+            self._validate_unsuccessful_attempt(attempt, screens_by_id)
+
+    def _validate_unsuccessful_attempt(
+        self,
+        attempt: UnsuccessfulAttempt,
+        screens_by_id: dict[RecordIdentifier, LogicalScreen],
+    ) -> None:
+        source_variants = tuple(
+            variant
+            for variant in screens_by_id[attempt.screen_id].variants
+            if variant.observation_id == attempt.source_observation_id
+        )
+        if len(source_variants) != 1:
+            raise ValueError("An unsuccessful attempt must reference its source observation.")
+        source_variant = source_variants[0]
+        has_wrong_grounding_dimensions = attempt.grounded_point is not None and (
+            attempt.screenshot_width_px != source_variant.width_px
+            or attempt.screenshot_height_px != source_variant.height_px
+        )
+        if has_wrong_grounding_dimensions:
+            raise ValueError("An unsuccessful-attempt point must match its source screenshot.")
+        if attempt.source_run_id not in self.source_run_ids:
+            raise ValueError("An unsuccessful attempt must reference a source memory run.")
+
+    def _observation_ids(self) -> list[RecordIdentifier]:
+        return [variant.observation_id for screen in self.screens for variant in screen.variants]
+
+    def _validate_knowledge(
+        self,
+        screen_ids: set[RecordIdentifier],
+        transition_ids: set[RecordIdentifier],
+        observation_ids: list[RecordIdentifier],
+    ) -> None:
         validate_app_knowledge(
             self.app_knowledge,
-            known_screens,
-            known_transitions,
+            screen_ids,
+            transition_ids,
             set(observation_ids),
             set(self.source_run_ids),
         )
         validate_retained_observations(observation_ids)
+
+    def _validate_screen_masks(self) -> None:
         masks_by_shape: dict[tuple[DeviceOrientation | None, int, int], str | None] = {}
         for screen in self.screens:
             for variant in screen.variants:
@@ -397,6 +446,8 @@ class AppMemory(BaseModel):
                         "A compatible device shape must use one canonical effective mask."
                     )
                 masks_by_shape[shape] = mask
+
+    def _validate_retention_limits(self) -> None:
         referenced_observations = referenced_memory_observation_ids(
             self.transitions,
             self.unsuccessful_attempts,
@@ -404,8 +455,7 @@ class AppMemory(BaseModel):
         maximum_optional = self.compatibility.retention.maximum_variants_per_screen
         if any(
             sum(
-                variant.observation_id not in referenced_observations
-                for variant in screen.variants
+                variant.observation_id not in referenced_observations for variant in screen.variants
             )
             > maximum_optional
             for screen in self.screens
@@ -413,7 +463,6 @@ class AppMemory(BaseModel):
             raise ValueError("A logical screen exceeds the optional-variant retention limit.")
         if len(self.transitions) > self.compatibility.retention.maximum_transitions:
             raise ValueError("App memory exceeds a graph retention limit.")
-        return self
 
 
 def derived_memory_identifier(namespace: str, *parts: str) -> str:

@@ -16,7 +16,7 @@ from yewo.agent.memory.knowledge import (
     ControlKnowledge,
     GroundingAssessment,
     GroundingAssessmentStatus,
-    HazardKnowledge,
+    ActionRiskKnowledge,
     KnowledgeFinding,
     KnowledgeRule,
     MemoryWritebackReceipt,
@@ -37,7 +37,7 @@ class MemoryWritebackSkip(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    record_kind: Literal["hazard", "rule", "timing", "claim", "graph", "control", "outcome"]
+    record_kind: Literal["action_risk", "rule", "timing", "claim", "graph", "control", "outcome"]
     source_step_id: RecordIdentifier | None = None
     reason: str = Field(min_length=1, max_length=500)
 
@@ -49,7 +49,7 @@ class MemoryDelta(BaseModel):
 
     receipt: MemoryWritebackReceipt
     grounding_assessments: tuple[GroundingAssessment, ...] = Field(default=(), max_length=1_000)
-    hazards: tuple[HazardKnowledge, ...] = Field(default=(), max_length=1_000)
+    action_risks: tuple[ActionRiskKnowledge, ...] = Field(default=(), max_length=1_000)
     rules: tuple[KnowledgeRule, ...] = Field(default=(), max_length=1_000)
     findings: tuple[KnowledgeFinding, ...] = Field(default=(), max_length=1_000)
     timing: tuple[TransitionTimingKnowledge, ...] = Field(default=(), max_length=1_000)
@@ -114,8 +114,11 @@ def apply_memory_delta_result(
             lambda item: item.assessment_id,
             _merge_grounding,
         ),
-        hazards=_merge_by_id(
-            knowledge.hazards, delta.hazards, lambda item: item.hazard_id, _merge_hazard
+        action_risks=_merge_by_id(
+            knowledge.action_risks,
+            delta.action_risks,
+            lambda item: item.action_risk_id,
+            _merge_action_risk,
         ),
         rules=_merge_by_id(knowledge.rules, delta.rules, lambda item: item.rule_id, _merge_rule),
         findings=_merge_by_id(
@@ -249,8 +252,10 @@ def _merge_grounding(
     )
 
 
-def _merge_hazard(current: HazardKnowledge, update: HazardKnowledge) -> HazardKnowledge:
-    _require_same(current, update, {"seen_count", "recovered_count", "sources"}, "hazard")
+def _merge_action_risk(
+    current: ActionRiskKnowledge, update: ActionRiskKnowledge
+) -> ActionRiskKnowledge:
+    _require_same(current, update, {"seen_count", "recovered_count", "sources"}, "action risk")
     return current.model_copy(
         update={
             "seen_count": current.seen_count + update.seen_count,

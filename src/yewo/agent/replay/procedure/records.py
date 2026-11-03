@@ -176,7 +176,7 @@ class ProcedureReplayResult(BaseModel):
     evidence_id: RecordIdentifier
     source_run_id: RecordIdentifier
     execution_mode: Literal["replay"] = "replay"
-    visual_policy_version: Literal[1, 2] = 1
+    visual_policy_version: Literal[1] = 1
     setup_id: RecordIdentifier
     application: EvidenceApplicationIdentity
     terminal: ProcedureReplayTerminal
@@ -216,43 +216,68 @@ class ProcedureReplayResult(BaseModel):
 
     @model_validator(mode="after")
     def _validate_terminal_evidence(self) -> Self:
+        self._validate_current_history_records()
+        self._validate_completion_count()
+        self._validate_terminal_contract()
+        self._validate_repair_contract()
+        self._validate_milestone_conditions()
+        return self
+
+    def _validate_current_history_records(self) -> None:
         if self.divergence != (self.divergences[-1] if self.divergences else None):
             raise ValueError("The current divergence must equal the final divergence record.")
         if self.repair != (self.repairs[-1] if self.repairs else None):
             raise ValueError("The current repair must equal the final repair record.")
         if len(self.repairs) > len(self.divergences):
             raise ValueError("Procedure repair history exceeds divergence history.")
+
+    def _validate_completion_count(self) -> None:
         if self.completed_step_count > self.procedure_step_count:
             raise ValueError("Procedure completion exceeds the compiled step count.")
-        if self.terminal in {
+
+    def _validate_terminal_contract(self) -> None:
+        is_completed_replay = self.terminal in {
             ProcedureReplayTerminal.COMPLETED,
             ProcedureReplayTerminal.REPLAY_COMPLETE,
-        }:
-            if self.completed_step_count != self.procedure_step_count:
-                raise ValueError("Replay completion requires every procedure expectation to pass.")
-            if self.divergence is None and self.failed_procedure_index is not None:
-                raise ValueError("Clean replay completion cannot contain a failed procedure index.")
-            if self.divergence is not None and (
-                self.failed_procedure_index is None
-                or not self.repairs
-                or not all(repair.succeeded for repair in self.repairs)
-            ):
-                raise ValueError("Repaired replay completion requires successful repair history.")
-            if self.verification is None:
-                raise ValueError("Replay completion requires final goal verification.")
-            expected_satisfied = self.terminal is ProcedureReplayTerminal.COMPLETED
-            if self.verification.satisfied is not expected_satisfied:
-                raise ValueError("The replay terminal must match final goal verification.")
-        elif self.terminal is ProcedureReplayTerminal.DIVERGED:
-            if self.failed_procedure_index is None or self.divergence is None:
-                raise ValueError("Divergence requires the failed procedure guard evidence.")
-            if self.verification is not None:
-                raise ValueError("Divergence cannot contain final audit evidence.")
-        elif self.verification is not None:
+        }
+        if is_completed_replay:
+            self._validate_completed_replay()
+            return
+        if self.terminal is ProcedureReplayTerminal.DIVERGED:
+            self._validate_diverged_replay()
+            return
+        if self.verification is not None:
             raise ValueError("A stopped replay cannot contain final audit evidence.")
+
+    def _validate_completed_replay(self) -> None:
+        if self.completed_step_count != self.procedure_step_count:
+            raise ValueError("Replay completion requires every procedure expectation to pass.")
+        if self.divergence is None and self.failed_procedure_index is not None:
+            raise ValueError("Clean replay completion cannot contain a failed procedure index.")
+        has_complete_repair_history = (
+            self.failed_procedure_index is not None
+            and bool(self.repairs)
+            and all(repair.succeeded for repair in self.repairs)
+        )
+        if self.divergence is not None and not has_complete_repair_history:
+            raise ValueError("Repaired replay completion requires successful repair history.")
+        if self.verification is None:
+            raise ValueError("Replay completion requires final goal verification.")
+        expected_satisfied = self.terminal is ProcedureReplayTerminal.COMPLETED
+        if self.verification.satisfied is not expected_satisfied:
+            raise ValueError("The replay terminal must match final goal verification.")
+
+    def _validate_diverged_replay(self) -> None:
+        if self.failed_procedure_index is None or self.divergence is None:
+            raise ValueError("Divergence requires the failed procedure guard evidence.")
+        if self.verification is not None:
+            raise ValueError("Divergence cannot contain final audit evidence.")
+
+    def _validate_repair_contract(self) -> None:
         if self.repair is not None and self.divergence is None:
             raise ValueError("Procedure repair requires preserved divergence evidence.")
+
+    def _validate_milestone_conditions(self) -> None:
         milestone_conditions = [item.completion_condition_index for item in self.milestones]
         if len(milestone_conditions) != len(set(milestone_conditions)):
             raise ValueError("Milestone evidence must contain each completion condition once.")
-        return self

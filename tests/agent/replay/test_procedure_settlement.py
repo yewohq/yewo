@@ -62,7 +62,7 @@ def test_repeated_dispatch_timing_shortens_compiled_action_polling(
     tmp_path: Path,
 ) -> None:
     procedure = _procedure()
-    memory = _timed_memory(tmp_path, "dispatch_to_settled_v2")
+    memory = _timed_memory(tmp_path, "dispatch_to_settled_v1")
     source = ProcedureSettlementPolicySource(procedure, memory)
     default = ActionSettlementPolicy(
         maximum_observations=6,
@@ -117,7 +117,7 @@ def test_fast_replay_policy_preserves_the_configured_maximum_wait_window() -> No
 
 def test_timing_does_not_change_model_repair_settlement(tmp_path: Path) -> None:
     procedure = _procedure()
-    memory = _timed_memory(tmp_path, "dispatch_to_settled_v2")
+    memory = _timed_memory(tmp_path, "dispatch_to_settled_v1")
     source = ProcedureSettlementPolicySource(procedure, memory)
     default = ActionSettlementPolicy(
         maximum_observations=6,

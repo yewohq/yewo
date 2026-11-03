@@ -40,7 +40,7 @@ class AppMemoryStoreError(RuntimeError):
 class _MemoryEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = Field(default=3, ge=3, le=3)
+    schema_version: int = Field(default=1, ge=1, le=1)
     memory_sha256: Sha256Digest
     memory: AppMemory
 
@@ -186,7 +186,7 @@ def _validate_supported_schema(payload: object) -> None:
     envelope_version = payload.get("schema_version")
     memory = payload.get("memory")
     memory_version = memory.get("schema_version") if isinstance(memory, dict) else None
-    if envelope_version != 3 or memory_version != 3:
+    if envelope_version != 1 or memory_version != 1:
         raise AppMemoryStoreError(
             "The app-memory schema is unsupported. Rebuild memory with this Yewo version."
         )

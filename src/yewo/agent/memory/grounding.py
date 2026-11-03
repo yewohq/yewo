@@ -99,11 +99,7 @@ class AppMemoryGrounder:
         """Return zero only when exact memory can resolve the request."""
         validate_grounding_request(self._profile, request)
         lookup = self._lookup(request)
-        return (
-            0
-            if lookup.match is not None
-            else self._delegate.required_model_requests(request)
-        )
+        return 0 if lookup.match is not None else self._delegate.required_model_requests(request)
 
     def ground(self, request: GroundingRequest) -> GroundingResult:
         """Resolve from exact memory or use the configured visual grounder."""
@@ -132,17 +128,20 @@ class AppMemoryGrounder:
         self,
         request: GroundingRequest,
     ) -> GroundingMemoryLookup:
-        fingerprint = request.source_fingerprint
-        if fingerprint is None:
-            return GroundingMemoryLookup(
-                GroundingMemoryDisposition.MISS,
-                "source_fingerprint_unavailable",
-            )
-        if request.correction is not None:
-            return GroundingMemoryLookup(
-                GroundingMemoryDisposition.BYPASSED,
-                "correction_requires_fresh_grounding",
-            )
+        precondition = _lookup_precondition(request)
+        if precondition is not None:
+            return precondition
+        matches, invalidation_reasons, found_target_evidence = self._candidate_groundings(request)
+        return _resolve_grounding_lookup(matches, invalidation_reasons, found_target_evidence)
+
+    def _candidate_groundings(
+        self,
+        request: GroundingRequest,
+    ) -> tuple[
+        list[tuple[AcceptedTransition, AcceptedGrounding]],
+        set[str],
+        bool,
+    ]:
         matches: list[tuple[AcceptedTransition, AcceptedGrounding]] = []
         invalidation_reasons: set[str] = set()
         found_target_evidence = False
@@ -188,27 +187,49 @@ class AppMemoryGrounder:
                     matches.append((transition, grounding))
                 else:
                     invalidation_reasons.add(reason)
-        if not matches:
-            if not found_target_evidence:
-                return GroundingMemoryLookup(
-                    GroundingMemoryDisposition.MISS,
-                    "no_compatible_target_evidence",
-                )
+        return matches, invalidation_reasons, found_target_evidence
+
+
+def _lookup_precondition(request: GroundingRequest) -> GroundingMemoryLookup | None:
+    if request.source_fingerprint is None:
+        return GroundingMemoryLookup(
+            GroundingMemoryDisposition.MISS,
+            "source_fingerprint_unavailable",
+        )
+    if request.correction is not None:
+        return GroundingMemoryLookup(
+            GroundingMemoryDisposition.BYPASSED,
+            "correction_requires_fresh_grounding",
+        )
+    return None
+
+
+def _resolve_grounding_lookup(
+    matches: list[tuple[AcceptedTransition, AcceptedGrounding]],
+    invalidation_reasons: set[str],
+    found_target_evidence: bool,
+) -> GroundingMemoryLookup:
+    if not matches:
+        if not found_target_evidence:
             return GroundingMemoryLookup(
-                GroundingMemoryDisposition.INVALIDATED,
-                _primary_invalidation_reason(invalidation_reasons),
-            )
-        locations = {item[1].location.model_dump_json() for item in matches}
-        if len(locations) != 1:
-            return GroundingMemoryLookup(
-                GroundingMemoryDisposition.INVALIDATED,
-                "conflicting_cached_locations",
+                GroundingMemoryDisposition.MISS,
+                "no_compatible_target_evidence",
             )
         return GroundingMemoryLookup(
-            GroundingMemoryDisposition.HIT,
-            "exact_source_match",
-            matches[0],
+            GroundingMemoryDisposition.INVALIDATED,
+            _primary_invalidation_reason(invalidation_reasons),
         )
+    locations = {item[1].location.model_dump_json() for item in matches}
+    if len(locations) != 1:
+        return GroundingMemoryLookup(
+            GroundingMemoryDisposition.INVALIDATED,
+            "conflicting_cached_locations",
+        )
+    return GroundingMemoryLookup(
+        GroundingMemoryDisposition.HIT,
+        "exact_source_match",
+        matches[0],
+    )
 
 
 def _grounding_invalidation_reason(
@@ -218,11 +239,25 @@ def _grounding_invalidation_reason(
     profile: GroundingProfile,
     assessment: GroundingAssessment | None,
 ) -> str | None:
+    contract_reason = _grounding_contract_invalidation_reason(
+        grounding,
+        request,
+        profile,
+        assessment,
+    )
+    if contract_reason is not None:
+        return contract_reason
+    return _grounding_source_invalidation_reason(grounding, source_variant, request)
+
+
+def _grounding_contract_invalidation_reason(
+    grounding: AcceptedGrounding,
+    request: GroundingRequest,
+    profile: GroundingProfile,
+    assessment: GroundingAssessment | None,
+) -> str | None:
     if assessment is not None and assessment.status is GroundingAssessmentStatus.INVALIDATED:
         return "writeback_invalidated"
-    fingerprint = request.source_fingerprint
-    if fingerprint is None:
-        return "source_fingerprint_unavailable"
     if (
         grounding.profile_id != profile.profile_id
         or grounding.model_profile_id != profile.model_profile_id
@@ -230,6 +265,17 @@ def _grounding_invalidation_reason(
         return "grounding_profile_changed"
     if grounding.location.kind != request.output_shape.value:
         return "output_shape_changed"
+    return None
+
+
+def _grounding_source_invalidation_reason(
+    grounding: AcceptedGrounding,
+    source_variant: ObservationVariant,
+    request: GroundingRequest,
+) -> str | None:
+    fingerprint = request.source_fingerprint
+    if fingerprint is None:
+        return "source_fingerprint_unavailable"
     if (source_variant.width_px, source_variant.height_px) != (
         request.screenshot.width_px,
         request.screenshot.height_px,
@@ -241,10 +287,7 @@ def _grounding_invalidation_reason(
         return "keyboard_state_changed"
     if grounding.source_masked_pixels_sha256 != fingerprint.masked_pixels_sha256:
         return "source_pixels_changed"
-    if (
-        grounding.source_system_region_mask_sha256
-        != fingerprint.system_region_mask_sha256
-    ):
+    if grounding.source_system_region_mask_sha256 != fingerprint.system_region_mask_sha256:
         return "system_region_mask_changed"
     if _location_is_excluded(grounding.location, request):
         return "cached_location_excluded"
@@ -265,7 +308,9 @@ _INVALIDATION_REASON_PRIORITY = (
 
 
 def _primary_invalidation_reason(reasons: set[str]) -> str:
-    return next((reason for reason in _INVALIDATION_REASON_PRIORITY if reason in reasons), "unknown")
+    return next(
+        (reason for reason in _INVALIDATION_REASON_PRIORITY if reason in reasons), "unknown"
+    )
 
 
 def _narrate_grounding_lookup(

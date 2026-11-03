@@ -11,7 +11,7 @@ from yewo.agent.actuation import (
     ActionOutcomeSignal,
 )
 from yewo.agent.memory.records import AppMemory
-from yewo.agent.replay.procedure.hazards import known_hazard_reasons
+from yewo.agent.replay.procedure.action_risks import known_action_risk_reasons
 from yewo.agent.replay.reconciliation.evidence import is_commit_target
 from yewo.agent.replay.reconciliation.records import (
     CompilationOutcome,
@@ -78,7 +78,7 @@ def compile_replay_procedure(
         *_check_required_work(evidence, response, selected),
         *_check_reusable(evidence, selected),
         *_check_coverage(evidence, response),
-        *known_hazard_reasons(evidence, selected, memory),
+        *known_action_risk_reasons(evidence, selected, memory),
     )
     if reasons:
         return _refusal(evidence, response, reasons)
@@ -95,7 +95,7 @@ def compile_replay_procedure(
         for index, step in enumerate(selected)
     )
     return ReplayProcedure(
-        visual_policy_version=2,
+        visual_policy_version=1,
         procedure_id=identifier_factory(),
         request_id=response.request_id,
         evidence_id=evidence.evidence_id,
@@ -242,8 +242,7 @@ def _has_selected_correction(
                 and kept is not None
                 and kept.step > missing.step
                 and not any(
-                    missing.step < selected_index < kept.step
-                    for selected_index in selected_indexes
+                    missing.step < selected_index < kept.step for selected_index in selected_indexes
                 )
                 and kept.control.identity_key == identity
                 and kept.action == missing.action
@@ -257,65 +256,85 @@ def _check_reusable(
     evidence: EvidenceDocument,
     selected: tuple[EvidenceStep, ...],
 ) -> tuple[CompilerReason, ...]:
-    reasons: list[CompilerReason] = []
-    for step in selected:
-        if ACTION_DEFINITIONS[step.action].handling is not ActionHandling.EXECUTE:
-            reasons.append(
-                CompilerReason(
-                    check=CompilerCheck.RESULTS_REUSABLE,
-                    source_step=step.step,
-                    reason="A replay procedure can contain only executable device actions.",
-                )
-            )
-        if step.kind is EvidenceStepKind.ENVIRONMENT:
-            reasons.append(
-                CompilerReason(
-                    check=CompilerCheck.RESULTS_REUSABLE,
-                    source_step=step.step,
-                    reason="An environment step cannot be stored in a replay procedure.",
-                )
-            )
-        if step.result not in _REUSABLE_RESULTS:
-            reasons.append(
-                CompilerReason(
-                    check=CompilerCheck.RESULTS_REUSABLE,
-                    source_step=step.step,
-                    reason=f"Step {step.step} has non-reusable result '{step.result.value}'.",
-                )
-            )
-    if selected:
-        final = selected[-1]
-        if final.destination_state_id is None and not final.signals:
-            reasons.append(
-                CompilerReason(
-                    check=CompilerCheck.RESULTS_REUSABLE,
-                    source_step=final.step,
-                    reason="The final selected step has no deterministic replay expectation.",
-                )
-            )
+    reasons = [reason for step in selected for reason in _step_reuse_reasons(step)]
+    final_reason = _final_expectation_reason(selected)
+    if final_reason is not None:
+        reasons.append(final_reason)
     for previous, current in zip(selected, selected[1:], strict=False):
-        destination_state_id = previous.destination_state_id
-        if destination_state_id in {None, current.source_state_id}:
-            continue
-        if destination_state_id is None:
-            continue
-        before = evidence.states[destination_state_id]
-        after = evidence.states[current.source_state_id]
-        if (
-            before.foreground_application_id != after.foreground_application_id
-            or before.platform_context != after.platform_context
-        ):
-            reasons.append(
-                CompilerReason(
-                    check=CompilerCheck.RESULTS_REUSABLE,
-                    source_step=current.step,
-                    reason=(
-                        "Selected steps cross disconnected application contexts between "
-                        f"steps {previous.step} and {current.step}."
-                    ),
-                )
-            )
+        context_reason = _disconnected_context_reason(evidence, previous, current)
+        if context_reason is not None:
+            reasons.append(context_reason)
     return tuple(reasons)
+
+
+def _step_reuse_reasons(step: EvidenceStep) -> tuple[CompilerReason, ...]:
+    reasons: list[CompilerReason] = []
+    if ACTION_DEFINITIONS[step.action].handling is not ActionHandling.EXECUTE:
+        reasons.append(
+            CompilerReason(
+                check=CompilerCheck.RESULTS_REUSABLE,
+                source_step=step.step,
+                reason="A replay procedure can contain only executable device actions.",
+            )
+        )
+    if step.kind is EvidenceStepKind.ENVIRONMENT:
+        reasons.append(
+            CompilerReason(
+                check=CompilerCheck.RESULTS_REUSABLE,
+                source_step=step.step,
+                reason="An environment step cannot be stored in a replay procedure.",
+            )
+        )
+    if step.result not in _REUSABLE_RESULTS:
+        reasons.append(
+            CompilerReason(
+                check=CompilerCheck.RESULTS_REUSABLE,
+                source_step=step.step,
+                reason=f"Step {step.step} has non-reusable result '{step.result.value}'.",
+            )
+        )
+    return tuple(reasons)
+
+
+def _final_expectation_reason(
+    selected: tuple[EvidenceStep, ...],
+) -> CompilerReason | None:
+    if not selected:
+        return None
+    final_step = selected[-1]
+    if final_step.destination_state_id is not None or final_step.signals:
+        return None
+    return CompilerReason(
+        check=CompilerCheck.RESULTS_REUSABLE,
+        source_step=final_step.step,
+        reason="The final selected step has no deterministic replay expectation.",
+    )
+
+
+def _disconnected_context_reason(
+    evidence: EvidenceDocument,
+    previous: EvidenceStep,
+    current: EvidenceStep,
+) -> CompilerReason | None:
+    destination_state_id = previous.destination_state_id
+    if destination_state_id is None or destination_state_id == current.source_state_id:
+        return None
+    destination = evidence.states[destination_state_id]
+    source = evidence.states[current.source_state_id]
+    shares_application_context = (
+        destination.foreground_application_id == source.foreground_application_id
+        and destination.platform_context == source.platform_context
+    )
+    if shares_application_context:
+        return None
+    return CompilerReason(
+        check=CompilerCheck.RESULTS_REUSABLE,
+        source_step=current.step,
+        reason=(
+            "Selected steps cross disconnected application contexts between "
+            f"steps {previous.step} and {current.step}."
+        ),
+    )
 
 
 def _check_coverage(

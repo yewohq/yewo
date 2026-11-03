@@ -329,41 +329,66 @@ class EvidenceDocument(BaseModel):
 
     @model_validator(mode="after")
     def _validate_document_links(self) -> Self:
+        self._validate_step_sequence()
+        self._validate_state_index()
+        observation_ids = self._grouped_observation_ids()
+        self._validate_observation_index(observation_ids)
+        self._validate_timeline_links()
+        return self
+
+    def _validate_step_sequence(self) -> None:
         expected = tuple(range(1, len(self.steps) + 1))
         if tuple(step.step for step in self.steps) != expected:
             raise ValueError("Evidence step selectors must be unique and chronological.")
         if self.run.step_count != len(self.steps):
             raise ValueError("The evidence step count does not match the timeline.")
+
+    def _validate_state_index(self) -> None:
         if set(self.states) != {state.state_id for state in self.states.values()}:
             raise ValueError("Evidence state keys must match state identifiers.")
         if self.run.launch_state_id not in self.states:
             raise ValueError("The launch state must exist in the evidence document.")
-        if len(self.timeline) != len(self.steps):
-            raise ValueError("Every evidence step requires one timeline entry.")
-        observation_ids = tuple(
+
+    def _grouped_observation_ids(self) -> tuple[RecordIdentifier, ...]:
+        return tuple(
             observation_id
             for state in self.states.values()
             for observation_id in state.observation_ids
         )
+
+    def _validate_observation_index(
+        self,
+        observation_ids: tuple[RecordIdentifier, ...],
+    ) -> None:
         if len(observation_ids) != len(set(observation_ids)):
             raise ValueError("An observation cannot belong to more than one evidence state.")
         if self.run.observation_count != len(observation_ids):
             raise ValueError("The evidence observation count does not match grouped states.")
+
+    def _validate_timeline_links(self) -> None:
+        if len(self.timeline) != len(self.steps):
+            raise ValueError("Every evidence step requires one timeline entry.")
         for step, timeline in zip(self.steps, self.timeline, strict=True):
-            if step.source_state_id not in self.states:
-                raise ValueError("A step source state is missing from the evidence document.")
-            if (
-                step.destination_state_id is not None
-                and step.destination_state_id not in self.states
-            ):
-                raise ValueError("A step destination state is missing from the evidence document.")
-            if (
-                timeline.step != step.step
-                or timeline.source_state_id != step.source_state_id
-                or timeline.destination_state_id != step.destination_state_id
-            ):
-                raise ValueError("Timeline entries must match evidence steps.")
-        return self
+            self._validate_timeline_entry(step, timeline)
+
+    def _validate_timeline_entry(
+        self,
+        step: EvidenceStep,
+        timeline: TimelineEntry,
+    ) -> None:
+        if step.source_state_id not in self.states:
+            raise ValueError("A step source state is missing from the evidence document.")
+        destination_state_id = step.destination_state_id
+        if destination_state_id is not None and destination_state_id not in self.states:
+            raise ValueError("A step destination state is missing from the evidence document.")
+        timeline_link = (
+            timeline.step,
+            timeline.source_state_id,
+            timeline.destination_state_id,
+        )
+        step_link = (step.step, step.source_state_id, destination_state_id)
+        if timeline_link != step_link:
+            raise ValueError("Timeline entries must match evidence steps.")
 
 
 from yewo.agent.replay.reconciliation.compilation_records import (  # noqa: E402, F401

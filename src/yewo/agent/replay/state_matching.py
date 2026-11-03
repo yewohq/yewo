@@ -40,9 +40,7 @@ def match_evidence_state(
         return EvidenceStateMatch(False, None, None, None, "source_metadata_changed")
     expected_distance = _minimum_distance(observation, expected)
     if expected_distance is None:
-        return EvidenceStateMatch(
-            False, None, None, None, "source_fingerprint_incompatible"
-        )
+        return EvidenceStateMatch(False, None, None, None, "source_fingerprint_incompatible")
     if (
         expected.visual_signature is None
         and expected_distance > evidence.state_grouping_maximum_phash_distance
@@ -61,8 +59,7 @@ def match_evidence_state(
     )
     if (
         competing_distance is not None
-        and competing_distance - expected_distance
-        < evidence.state_matching_minimum_phash_margin
+        and competing_distance - expected_distance < evidence.state_matching_minimum_phash_margin
     ):
         return EvidenceStateMatch(
             False,

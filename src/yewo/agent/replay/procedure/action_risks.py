@@ -1,8 +1,8 @@
-"""Deterministic compiler gates for platform-observed application hazards."""
+"""Deterministic compiler gates for platform-observed application action risks."""
 
 from __future__ import annotations
 
-from yewo.agent.memory.knowledge import HazardKnowledge
+from yewo.agent.memory.knowledge import ActionRiskKnowledge
 from yewo.agent.memory.records import AppMemory, LogicalScreen, ObservationVariant
 from yewo.agent.replay.reconciliation.records import (
     CompilerCheck,
@@ -15,22 +15,22 @@ from yewo.agent.replay.reconciliation.records import (
 from yewo.observations import fingerprint_distance
 
 
-def known_hazard_reasons(
+def known_action_risk_reasons(
     evidence: EvidenceDocument,
     selected_steps: tuple[EvidenceStep, ...],
     memory: AppMemory | None,
 ) -> tuple[CompilerReason, ...]:
-    """Reject selected actions that match compatible platform-observed hazards."""
-    if memory is None or not memory.app_knowledge.hazards:
+    """Reject selected actions that match compatible platform-observed action risks."""
+    if memory is None or not memory.app_knowledge.action_risks:
         return ()
     if memory.compatibility.application != evidence.run.application:
         return (
             CompilerReason(
-                check=CompilerCheck.AVOIDS_KNOWN_HAZARDS,
-                reason="Known-hazard checks require memory for the same application build.",
+                check=CompilerCheck.AVOIDS_KNOWN_ACTION_RISKS,
+                reason="Known-action-risk checks require memory for the same application build.",
             ),
         )
-    hazards_by_screen = _hazards_by_screen(memory)
+    action_risks_by_screen = _action_risks_by_screen(memory)
     reasons: list[CompilerReason] = []
     for step in selected_steps:
         state = evidence.states[step.source_state_id]
@@ -38,72 +38,72 @@ def known_hazard_reasons(
             if not _state_matches_screen(state, screen, memory):
                 continue
             reasons.extend(
-                _step_hazard_reasons(step, hazards_by_screen.get(screen.screen_id, ()))
+                _step_action_risk_reasons(step, action_risks_by_screen.get(screen.screen_id, ()))
             )
     return tuple(reasons)
 
 
-def compiled_procedure_hazard_reasons(
+def compiled_procedure_action_risk_reasons(
     evidence: EvidenceDocument,
     procedure: ReplayProcedure,
     memory: AppMemory | None,
 ) -> tuple[CompilerReason, ...]:
-    """Recheck a stored procedure against hazards learned after compilation."""
+    """Recheck a stored procedure against action risks learned after compilation."""
     evidence_by_step = {step.step: step for step in evidence.steps}
     selected_steps = tuple(
         evidence_by_step[procedure_step.source_step] for procedure_step in procedure.steps
     )
-    return known_hazard_reasons(evidence, selected_steps, memory)
+    return known_action_risk_reasons(evidence, selected_steps, memory)
 
 
-def compiled_procedure_has_known_hazard(
+def compiled_procedure_has_known_action_risk(
     evidence: EvidenceDocument,
     procedure: ReplayProcedure,
     memory: AppMemory | None,
 ) -> bool:
     """Return whether current memory blocks a stored procedure."""
-    return bool(compiled_procedure_hazard_reasons(evidence, procedure, memory))
+    return bool(compiled_procedure_action_risk_reasons(evidence, procedure, memory))
 
 
-def _hazards_by_screen(memory: AppMemory) -> dict[str, tuple[HazardKnowledge, ...]]:
-    grouped: dict[str, list[HazardKnowledge]] = {}
-    for hazard in memory.app_knowledge.hazards:
-        grouped.setdefault(hazard.screen_id, []).append(hazard)
+def _action_risks_by_screen(memory: AppMemory) -> dict[str, tuple[ActionRiskKnowledge, ...]]:
+    grouped: dict[str, list[ActionRiskKnowledge]] = {}
+    for action_risk in memory.app_knowledge.action_risks:
+        grouped.setdefault(action_risk.screen_id, []).append(action_risk)
     return {
-        screen_id: tuple(sorted(hazards, key=lambda item: item.hazard_id))
-        for screen_id, hazards in grouped.items()
+        screen_id: tuple(sorted(action_risks, key=lambda item: item.action_risk_id))
+        for screen_id, action_risks in grouped.items()
     }
 
 
-def _step_hazard_reasons(
+def _step_action_risk_reasons(
     step: EvidenceStep,
-    hazards: tuple[HazardKnowledge, ...],
+    action_risks: tuple[ActionRiskKnowledge, ...],
 ) -> tuple[CompilerReason, ...]:
     reasons: list[CompilerReason] = []
-    for hazard in hazards:
-        if hazard.action is not step.action or not _target_matches(hazard, step):
+    for action_risk in action_risks:
+        if action_risk.action is not step.action or not _target_matches(action_risk, step):
             continue
         reasons.append(
             CompilerReason(
-                check=CompilerCheck.AVOIDS_KNOWN_HAZARDS,
+                check=CompilerCheck.AVOIDS_KNOWN_ACTION_RISKS,
                 source_step=step.step,
                 reason=(
-                    f"Step {step.step} matches platform-observed {hazard.kind.value} hazard "
-                    f"'{hazard.hazard_id}'. No deterministic safe precondition is recorded."
+                    f"Step {step.step} matches platform-observed {action_risk.kind.value} action risk "
+                    f"'{action_risk.action_risk_id}'. No deterministic safe precondition is recorded."
                 ),
-                hazard_id=hazard.hazard_id,
-                hazard_sources=hazard.sources,
+                action_risk_id=action_risk.action_risk_id,
+                action_risk_sources=action_risk.sources,
             )
         )
     return tuple(reasons)
 
 
-def _target_matches(hazard: HazardKnowledge, step: EvidenceStep) -> bool:
-    if hazard.target_description is None:
+def _target_matches(action_risk: ActionRiskKnowledge, step: EvidenceStep) -> bool:
+    if action_risk.target_description is None:
         return True
     target = step.proposal.target_expression
     return target is not None and _normalize_target(target) == _normalize_target(
-        hazard.target_description
+        action_risk.target_description
     )
 
 
@@ -120,8 +120,7 @@ def _state_matches_screen(
         return True
     maximum_distance = memory.compatibility.screen_comparison.maximum_phash_distance
     return any(
-        _state_matches_variant(state, variant, maximum_distance)
-        for variant in screen.variants
+        _state_matches_variant(state, variant, maximum_distance) for variant in screen.variants
     )
 
 

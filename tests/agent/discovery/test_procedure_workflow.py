@@ -40,7 +40,7 @@ from agent.discovery.test_workflow import (
     _mode_policy,
     _workflow,
 )
-from agent.replay.test_hazard_gating import memory_with_hazard
+from agent.replay.test_action_risk_gating import memory_with_action_risk
 from agent.replay.test_procedure_compiler import _evidence, _response
 
 
@@ -118,7 +118,7 @@ def test_compiled_procedure_never_runs_without_a_fresh_install() -> None:
     assert replay is None
 
 
-def test_compiled_procedure_does_not_run_after_memory_learns_a_hazard(
+def test_compiled_procedure_does_not_run_after_memory_learns_an_action_risk(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,7 +129,7 @@ def test_compiled_procedure_does_not_run_after_memory_learns_a_hazard(
         identifier_factory=lambda: "procedure_1",
     )
     assert isinstance(procedure, ReplayProcedure)
-    memory = memory_with_hazard(
+    memory = memory_with_action_risk(
         tmp_path,
         target=evidence.steps[0].proposal.target_expression,
     )
@@ -141,14 +141,12 @@ def test_compiled_procedure_does_not_run_after_memory_learns_a_hazard(
 
     monkeypatch.setattr(
         "yewo.agent.discovery.procedure_handoff.execute_compiled_procedure",
-        lambda *args, **kwargs: pytest.fail("known-hazard procedure must not execute"),
+        lambda *args, **kwargs: pytest.fail("known-action-risk procedure must not execute"),
     )
     context = cast(
         RunExecutionContext,
         SimpleNamespace(
-            session=SimpleNamespace(
-                installation_change=ApplicationInstallationChange.REINSTALLED
-            )
+            session=SimpleNamespace(installation_change=ApplicationInstallationChange.REINSTALLED)
         ),
     )
 

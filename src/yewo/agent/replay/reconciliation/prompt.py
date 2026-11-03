@@ -26,9 +26,7 @@ def build_reconciler_evidence_projection(evidence: EvidenceDocument) -> dict[str
             "launch_state_id": evidence.run.launch_state_id,
         },
         "task": evidence.task.model_dump(mode="json"),
-        "states": {
-            state_id: _project_state(state) for state_id, state in evidence.states.items()
-        },
+        "states": {state_id: _project_state(state) for state_id, state in evidence.states.items()},
         "steps": tuple(_project_step(step) for step in evidence.steps),
         "diagnostics": evidence.diagnostics.model_dump(mode="json"),
     }
@@ -69,9 +67,7 @@ def _project_step(step: EvidenceStep) -> dict[str, Any]:
             "expected_outcome": proposal.expected_outcome,
             "reason": proposal.reason,
             "screen_summary": proposal.screen_summary,
-            "grounding_correction_for_proposal_id": (
-                proposal.grounding_correction_for_proposal_id
-            ),
+            "grounding_correction_for_proposal_id": (proposal.grounding_correction_for_proposal_id),
             "interaction_refinement_for_proposal_id": (
                 proposal.interaction_refinement_for_proposal_id
             ),

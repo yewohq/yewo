@@ -82,9 +82,7 @@ def execute_compiled_procedure(
     _validate_execution(context, procedure, evidence, setup, mode_policy, memory)
     audit_task = verification_task or evidence.task
     if len(audit_task.completion_conditions) != len(evidence.task.completion_conditions):
-        raise ValueError(
-            "A replay objective match must preserve the completion-condition mapping."
-        )
+        raise ValueError("A replay objective match must preserve the completion-condition mapping.")
     required_values = tuple(
         dict.fromkeys(
             step.proposal.text.value_name
@@ -298,34 +296,43 @@ def _procedure_terminal(
     repair: ProcedureRepairEvidence | None,
     verification: GoalVerification | None,
 ) -> ProcedureReplayTerminal:
-    if terminal in {
-        AgentTerminalReason.APPLICATION_EXITED,
-        AgentTerminalReason.APPLICATION_INACTIVE,
-    }:
-        return ProcedureReplayTerminal.APPLICATION_FAILURE
-    if terminal is AgentTerminalReason.DEVICE_REFUSED:
-        return ProcedureReplayTerminal.DEVICE_REFUSED
-    if terminal is AgentTerminalReason.BUDGET_EXHAUSTED:
-        return ProcedureReplayTerminal.BUDGET_EXHAUSTED
+    direct_terminal = {
+        AgentTerminalReason.APPLICATION_EXITED: ProcedureReplayTerminal.APPLICATION_FAILURE,
+        AgentTerminalReason.APPLICATION_INACTIVE: ProcedureReplayTerminal.APPLICATION_FAILURE,
+        AgentTerminalReason.DEVICE_REFUSED: ProcedureReplayTerminal.DEVICE_REFUSED,
+        AgentTerminalReason.BUDGET_EXHAUSTED: ProcedureReplayTerminal.BUDGET_EXHAUSTED,
+    }.get(terminal)
+    if direct_terminal is not None:
+        return direct_terminal
     if terminal is AgentTerminalReason.DONE_REQUESTED:
-        if divergence is not None and (repair is None or not repair.succeeded):
-            return ProcedureReplayTerminal.DIVERGED
-        if not source.replay_complete:
-            raise ValueError("Replay completion was requested before all expectations passed.")
-        if verification is None:
-            raise ValueError("Replay completion requires final goal verification.")
-        return (
-            ProcedureReplayTerminal.COMPLETED
-            if verification.satisfied
-            else ProcedureReplayTerminal.REPLAY_COMPLETE
+        return _completed_replay_terminal(
+            source,
+            divergence,
+            repair,
+            verification,
         )
     if divergence is not None:
         return ProcedureReplayTerminal.DIVERGED
     if terminal is AgentTerminalReason.CANNOT_PROGRESS:
-        if divergence is None:
-            raise ValueError("Procedure divergence requires guard evidence.")
-        return ProcedureReplayTerminal.DIVERGED
+        raise ValueError("Procedure divergence requires guard evidence.")
     raise ValueError(f"Unsupported procedure terminal: {terminal.value}.")
+
+
+def _completed_replay_terminal(
+    source: CompiledProcedureActionSource | BoundedProcedureRepairActionSource,
+    divergence: ProcedureDivergence | None,
+    repair: ProcedureRepairEvidence | None,
+    verification: GoalVerification | None,
+) -> ProcedureReplayTerminal:
+    if divergence is not None and (repair is None or not repair.succeeded):
+        return ProcedureReplayTerminal.DIVERGED
+    if not source.replay_complete:
+        raise ValueError("Replay completion was requested before all expectations passed.")
+    if verification is None:
+        raise ValueError("Replay completion requires final goal verification.")
+    if verification.satisfied:
+        return ProcedureReplayTerminal.COMPLETED
+    return ProcedureReplayTerminal.REPLAY_COMPLETE
 
 
 def _can_audit_replay(

@@ -26,12 +26,12 @@ from yewo.agent.replay import (
     PROCEDURE_COMPILATION_REPORT_PATH,
     ProcedureCompilationStatus,
 )
-from yewo.agent.replay.procedure.preparation import compile_completed_run
+from yewo.agent.replay.reconciliation.compilation import compile_completed_discovery_run
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.memory.knowledge import (
     AppKnowledge,
-    HazardKind,
-    HazardKnowledge,
+    ActionRiskKind,
+    ActionRiskKnowledge,
     KnowledgeEvidenceReference,
     KnowledgeRule,
 )
@@ -182,10 +182,10 @@ def test_completed_result_builds_calls_compiles_and_measures(
     compatibility = MemoryCompatibility(application=before.application)
     procedure_store = CompiledProcedureStore(tmp_path / "durable")
 
-    report = compile_completed_run(
+    report = compile_completed_discovery_run(
         root=tmp_path,
         run_id="run_1",
-        result=result,
+        discovery_result=result,
         model_client=model,
         model_profile_id="reconciler_primary",
         comparison=ScreenComparisonPolicy(),
@@ -233,18 +233,18 @@ def test_completed_result_builds_calls_compiles_and_measures(
     assert stored.procedure.procedure_id == "procedure_1"
 
 
-def test_reconciler_receives_hazard_facts_and_advisory_claims(
+def test_reconciler_receives_action_risk_facts_and_advisory_claims(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result, before, after = _result()
     unused_compatibility, memory = _memory(tmp_path / "memory-source")
     source = KnowledgeEvidenceReference(run_id="run_1", observation_id="obs_1")
-    hazard = HazardKnowledge(
-        hazard_id="hazard_1",
+    action_risk = ActionRiskKnowledge(
+        action_risk_id="action_risk_1",
         screen_id=memory.screens[0].screen_id,
         action=ActionKind.BACK,
-        kind=HazardKind.CRASH,
+        kind=ActionRiskKind.CRASH,
         seen_count=1,
         sources=(source,),
     )
@@ -254,7 +254,7 @@ def test_reconciler_receives_hazard_facts_and_advisory_claims(
         sources=(source,),
     )
     memory = memory.model_copy(
-        update={"app_knowledge": AppKnowledge(hazards=(hazard,), rules=(rule,))}
+        update={"app_knowledge": AppKnowledge(action_risks=(action_risk,), rules=(rule,))}
     )
     model = StubPlannerModel(
         {
@@ -271,10 +271,10 @@ def test_reconciler_receives_hazard_facts_and_advisory_claims(
         lambda unused, observation_ids: (before, after),
     )
 
-    report = compile_completed_run(
+    report = compile_completed_discovery_run(
         root=tmp_path,
         run_id="run_1",
-        result=result,
+        discovery_result=result,
         model_client=model,
         model_profile_id="reconciler_primary",
         comparison=ScreenComparisonPolicy(),
@@ -285,8 +285,8 @@ def test_reconciler_receives_hazard_facts_and_advisory_claims(
     assert report.status is ProcedureCompilationStatus.COMPILED
     content = model.requests[0].messages[1].content[0]
     assert isinstance(content, TextModelContent)
-    assert '"memory_hazards"' in content.text
-    assert '"hazard_id":"hazard_1"' in content.text
+    assert '"memory_action_risks"' in content.text
+    assert '"action_risk_id":"action_risk_1"' in content.text
     assert '"memory_claims"' in content.text
     assert '"claim_id":"rule_1"' in content.text
 
@@ -311,10 +311,10 @@ def test_compiler_refusal_stores_no_procedure(
         lambda unused, observation_ids: (before, after),
     )
 
-    report = compile_completed_run(
+    report = compile_completed_discovery_run(
         root=tmp_path,
         run_id="run_1",
-        result=result,
+        discovery_result=result,
         model_client=model,
         model_profile_id="reconciler_primary",
         comparison=ScreenComparisonPolicy(),
@@ -343,10 +343,10 @@ def test_compiler_feedback_fallback_can_repair_a_refusal(
         lambda unused, observation_ids: (before, after),
     )
 
-    report = compile_completed_run(
+    report = compile_completed_discovery_run(
         root=tmp_path,
         run_id="run_1",
-        result=result,
+        discovery_result=result,
         model_client=model,
         model_profile_id="reconciler_primary",
         comparison=ScreenComparisonPolicy(),
@@ -377,10 +377,10 @@ def test_model_failure_stores_report_without_compilation(
         lambda unused, observation_ids: (before, after),
     )
 
-    report = compile_completed_run(
+    report = compile_completed_discovery_run(
         root=tmp_path,
         run_id="run_1",
-        result=result,
+        discovery_result=result,
         model_client=model,
         model_profile_id="reconciler_primary",
         comparison=ScreenComparisonPolicy(),

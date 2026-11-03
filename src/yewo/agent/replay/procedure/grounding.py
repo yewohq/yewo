@@ -241,19 +241,13 @@ class ProcedureGrounder:
                 screenshot_sha256=request.screenshot.sha256,
                 decision=resolution.decision,
                 expected_phash_distance=(
-                    authorization.expected_phash_distance
-                    if authorization is not None
-                    else None
+                    authorization.expected_phash_distance if authorization is not None else None
                 ),
                 competing_phash_distance=(
-                    authorization.competing_phash_distance
-                    if authorization is not None
-                    else None
+                    authorization.competing_phash_distance if authorization is not None else None
                 ),
                 source_visual_match_ratio=(
-                    authorization.source_visual_match_ratio
-                    if authorization is not None
-                    else None
+                    authorization.source_visual_match_ratio if authorization is not None else None
                 ),
                 target_hash_distance=(
                     resolution.target_match.hash_distance
@@ -296,11 +290,10 @@ def build_keyboard_repair_grounding_match(
         return None
     expected_state = evidence.states[target.expected_state_id]
     screenshot = observation.redacted_screenshot
-    if (
-        (screenshot.width_px, screenshot.height_px)
-        != (expected_state.width_px, expected_state.height_px)
-        or (evidence.run.device is not None and observation.device != evidence.run.device)
-    ):
+    if (screenshot.width_px, screenshot.height_px) != (
+        expected_state.width_px,
+        expected_state.height_px,
+    ) or (evidence.run.device is not None and observation.device != evidence.run.device):
         return None
     authorization = ProcedureGroundingAuthorization(
         source_step_id=step.source_step_id,
@@ -364,12 +357,8 @@ def build_keyboard_reflow_step(
     if reset_visible_point is None or grounding is None:
         return None
     screenshot = grounding.request.screenshot
-    translated_x = (
-        required_point.pixel.x + reset_hidden_point.pixel.x - reset_visible_point.pixel.x
-    )
-    translated_y = (
-        required_point.pixel.y + reset_hidden_point.pixel.y - reset_visible_point.pixel.y
-    )
+    translated_x = required_point.pixel.x + reset_hidden_point.pixel.x - reset_visible_point.pixel.x
+    translated_y = required_point.pixel.y + reset_hidden_point.pixel.y - reset_visible_point.pixel.y
     if not (0 <= translated_x < screenshot.width_px and 0 <= translated_y < screenshot.height_px):
         return None
     translated = PixelPoint(x=translated_x, y=translated_y)
@@ -405,7 +394,10 @@ def _reuse_rejection(
     stored_result = match.evidence.result
     current_fingerprint = request.source_fingerprint
     authorization = match.authorization
-    if stored_result.disposition is not GroundingDisposition.ACCEPTED or stored_result.location is None:
+    if (
+        stored_result.disposition is not GroundingDisposition.ACCEPTED
+        or stored_result.location is None
+    ):
         return ProcedureGroundingDecisionCode.STORED_GROUNDING_INVALID
     if (
         stored_request.expression != request.expression
@@ -424,17 +416,12 @@ def _reuse_rejection(
     ):
         return ProcedureGroundingDecisionCode.AUTHORIZED_OBSERVATION_CHANGED
     if (
-        (
-            request.screenshot.width_px,
-            request.screenshot.height_px,
-        )
-        != (authorization.width_px, authorization.height_px)
-        or (
-            stored_request.screenshot.width_px,
-            stored_request.screenshot.height_px,
-        )
-        != (authorization.width_px, authorization.height_px)
-    ):
+        request.screenshot.width_px,
+        request.screenshot.height_px,
+    ) != (authorization.width_px, authorization.height_px) or (
+        stored_request.screenshot.width_px,
+        stored_request.screenshot.height_px,
+    ) != (authorization.width_px, authorization.height_px):
         return ProcedureGroundingDecisionCode.GEOMETRY_CHANGED
     if _location_is_excluded(stored_result.location, request):
         return ProcedureGroundingDecisionCode.LOCATION_EXCLUDED
