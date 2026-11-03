@@ -1,5 +1,6 @@
 """Single-dispatch executor tests."""
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -21,7 +22,12 @@ from yewo.agent.actuation import (
 )
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.devices.errors import DeviceActionRejectedError, DeviceInputRejectedError
-from yewo.devices.focus import FocusedFieldReading
+from yewo.devices.focus import (
+    FocusedFieldReading,
+    TextFieldContext,
+    TextFieldContextSource,
+    TextFieldType,
+)
 from yewo.devices.interaction import ScrollDirection
 from yewo.grounding import PixelPoint
 from yewo.observations import PixelRegion
@@ -31,6 +37,11 @@ class RecordingDevice:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.rejection: str | None = None
+        self.field_context = TextFieldContext(
+            is_secure=False,
+            field_type=TextFieldType.TEXT,
+            source=TextFieldContextSource.PLATFORM_METADATA,
+        )
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if self.rejection is not None:
@@ -104,6 +115,7 @@ class RecordingDevice:
             is_focused=True,
             driver_bounds=(0, 0, 100, 100),
             keyboard_visible=True,
+            field_context=self.field_context,
         )
 
 
@@ -201,6 +213,18 @@ def test_dispatches_exactly_one_mapped_device_operation(
     assert [call[0] for call in device.calls] == [method]
 
 
+def test_dispatch_receipt_records_when_device_work_finished() -> None:
+    dispatched_at = datetime(2026, 11, 3, tzinfo=timezone.utc)
+
+    receipt = ActionExecutor(
+        RecordingDevice(),
+        lambda: "receipt-1",
+        clock=lambda: dispatched_at,
+    ).dispatch(authorization(ActionKind.TAP, target=PixelPoint(x=10, y=20)))
+
+    assert receipt.dispatched_at == dispatched_at
+
+
 def test_scroll_maps_region_and_distance() -> None:
     device = RecordingDevice()
     action = authorization(
@@ -268,9 +292,31 @@ def test_text_delivery_comparison_returns_only_secret_free_status() -> None:
     executor.dispatch(action)
     delivery = executor.verify_text_delivery(action)
 
-    assert delivery is TextDeliveryStatus.MATCHED
-    assert secret not in delivery.value
-    assert executor.verify_text_delivery(action) is TextDeliveryStatus.UNAVAILABLE
+    assert delivery is not None
+    assert delivery.status is TextDeliveryStatus.MATCHED
+    assert secret not in delivery.model_dump_json()
+    second_delivery = executor.verify_text_delivery(action)
+    assert second_delivery is not None
+    assert second_delivery.status is TextDeliveryStatus.UNAVAILABLE
+
+
+def test_secure_text_delivery_is_unverifiable_instead_of_not_landed() -> None:
+    device = RecordingDevice()
+    device.field_context = TextFieldContext(
+        is_secure=True,
+        field_type=TextFieldType.PASSWORD,
+        source=TextFieldContextSource.PLATFORM_METADATA,
+    )
+    action = authorization(ActionKind.TYPE, text=LiteralText(value="private value"))
+    executor = ActionExecutor(device)
+
+    executor.dispatch(action)
+    delivery = executor.verify_text_delivery(action)
+
+    assert delivery is not None
+    assert delivery.status is TextDeliveryStatus.UNVERIFIABLE
+    assert delivery.reason.value == "secure_field"
+    assert "private value" not in delivery.model_dump_json()
 
 
 def test_pending_text_can_be_discarded_without_device_comparison() -> None:
@@ -284,7 +330,9 @@ def test_pending_text_can_be_discarded_without_device_comparison() -> None:
     executor.dispatch(action)
     executor.discard_text_delivery(action)
 
-    assert executor.verify_text_delivery(action) is TextDeliveryStatus.UNAVAILABLE
+    delivery = executor.verify_text_delivery(action)
+    assert delivery is not None
+    assert delivery.status is TextDeliveryStatus.UNAVAILABLE
     assert [call[0] for call in device.calls] == ["type_focused_text"]
 
 

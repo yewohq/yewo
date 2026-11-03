@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from yewo.artifacts import new_record_identifier
-from yewo.devices.application_lifecycle import ApplicationState
+from yewo.devices.application_lifecycle import ApplicationState, trusted_system_surface
 from yewo.devices.interaction import (
     MINIMUM_ANDROID_DRAG_SECONDS,
     MINIMUM_IOS_DRAG_SECONDS,
@@ -218,14 +218,25 @@ class ActionPolicy:
                 ActionRefusalCode.ACTION_BUDGET_EXHAUSTED,
                 "The action budget is exhausted.",
             )
-        if observation.application_state is not ApplicationState.FOREGROUND:
+        system_surface = trusted_system_surface(
+            observation.device.platform,
+            observation.foreground_application_id,
+        )
+        if (
+            system_surface is None
+            and observation.application_state is not ApplicationState.FOREGROUND
+        ):
             return self._refuse(
                 proposal,
                 ActionRefusalCode.APPLICATION_SCOPE,
                 "The application is not in the foreground.",
             )
         foreground = observation.foreground_application_id
-        if foreground is not None and foreground != observation.application.application_id:
+        if (
+            system_surface is None
+            and foreground is not None
+            and foreground != observation.application.application_id
+        ):
             return self._refuse(
                 proposal,
                 ActionRefusalCode.APPLICATION_SCOPE,

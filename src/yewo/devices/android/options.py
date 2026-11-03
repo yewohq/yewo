@@ -9,7 +9,10 @@ from yewo.applications.records import (
     ApplicationInstallMode,
     ApplicationRequest,
 )
-from yewo.automation.driver_options import validate_driver_inputs
+from yewo.automation.driver_options import (
+    DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS,
+    validate_driver_inputs,
+)
 from yewo.automation.errors import DriverOptionsError
 from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
 
@@ -17,7 +20,11 @@ from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
 class AndroidDriverOptionsBuilder:
     """Translate validated records into UiAutomator2 capabilities."""
 
-    def __init__(self, *, new_command_timeout_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        *,
+        new_command_timeout_seconds: int = DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS,
+    ) -> None:
         if new_command_timeout_seconds <= 0:
             raise ValueError("The new-command timeout must be greater than zero.")
         self._new_command_timeout_seconds = new_command_timeout_seconds

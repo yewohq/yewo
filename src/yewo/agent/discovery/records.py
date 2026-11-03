@@ -7,9 +7,9 @@ from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from yewo.agent.runtime_records import AgentResult, AgentTerminalReason
-from yewo.agent.route_replay import RouteReplayResult
-from yewo.agent.goal_verifier import GoalVerification
+from yewo.agent.runtime.records import AgentResult, AgentTerminalReason
+from yewo.agent.replay.procedure_records import ProcedureReplayResult
+from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.artifacts import RecordIdentifier
 
 
@@ -66,26 +66,20 @@ class DiscoveryCoverageEntry(BaseModel):
 
     objective_id: RecordIdentifier
     state: DiscoveryObjectiveState
-    capability_id: RecordIdentifier | None = None
-    route_id: RecordIdentifier | None = None
+    procedure_id: RecordIdentifier | None = None
     evidence_observation_ids: tuple[RecordIdentifier, ...] = ()
     reason: DiscoveryText
 
     @model_validator(mode="after")
     def _validate_evidence_state(self) -> Self:
-        evidence_fields = (
-            self.capability_id,
-            self.route_id,
-            *self.evidence_observation_ids,
-        )
         if self.state is DiscoveryObjectiveState.SUPPORTED:
-            if self.capability_id is None or self.route_id is None:
+            if self.procedure_id is None:
                 raise ValueError(
-                    "Supported discovery coverage requires capability and route evidence."
+                    "Supported discovery coverage requires a reusable compiled procedure."
                 )
             if not self.evidence_observation_ids:
                 raise ValueError("Supported discovery coverage requires observations.")
-        elif any(value is not None for value in evidence_fields[:2]):
+        elif self.procedure_id is not None:
             raise ValueError("Unresolved discovery coverage cannot claim reusable evidence.")
         return self
 
@@ -114,8 +108,10 @@ class DiscoveryResult(BaseModel):
     terminal_reason: AgentTerminalReason
     coverage: DiscoveryCoverage
     agent_result: AgentResult
-    replay: RouteReplayResult | None = None
+    procedure_replay: ProcedureReplayResult | None = None
     verification: GoalVerification | None = None
+    compiled_procedure_id: RecordIdentifier | None = None
+    compiled_procedure_step_count: int | None = Field(default=None, gt=0)
     memory_id: RecordIdentifier | None = None
     memory_persistence_error: DiscoveryText | None = None
 
@@ -127,14 +123,18 @@ class DiscoveryResult(BaseModel):
             raise ValueError("Discovery coverage must account for every requested objective.")
         if self.terminal_reason is not self.agent_result.terminal_reason:
             raise ValueError("Discovery and Device Agent terminals must match.")
-        has_supported = any(
-            entry.state is DiscoveryObjectiveState.SUPPORTED for entry in self.coverage.entries
-        )
-        if has_supported and self.memory_id is None:
-            raise ValueError("Supported discovery coverage must identify promoted memory.")
+        supported_procedure_ids = {
+            entry.procedure_id
+            for entry in self.coverage.entries
+            if entry.state is DiscoveryObjectiveState.SUPPORTED
+        }
+        if supported_procedure_ids and supported_procedure_ids != {self.compiled_procedure_id}:
+            raise ValueError("Supported discovery coverage must name the compiled procedure.")
         if self.verification is not None and (
             self.verification.objective_id not in requested
             or self.verification.final_observation_id != self.agent_result.final_observation_id
         ):
             raise ValueError("Discovery verification does not match the result evidence.")
+        if (self.compiled_procedure_id is None) != (self.compiled_procedure_step_count is None):
+            raise ValueError("Compiled procedure identity and step count must appear together.")
         return self

@@ -1,7 +1,7 @@
 """YewoAgent journey-directed discovery workflow tests."""
 
 from datetime import datetime, timezone
-from hashlib import sha256
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -11,38 +11,57 @@ import pytest
 from yewo.agent import (
     AgentModePolicy,
     AgentResult,
-    AgentStep,
     AgentTask,
     AgentTerminalReason,
     AgentUsage,
     AppMemory,
     AppMemoryStore,
-    MemoryCompatibility,
-    ReplayPathKind,
-    RouteReplayResult, RouteReplayTerminal,
 )
+from yewo.agent.replay.procedure_store import CompiledProcedureStore
 from yewo.agent.actuation import (
     ActionKind,
     ActionPolicyLimits,
     SideEffectClass,
 )
-from yewo.applications import ApplicationDescriptor, ApplicationInstallMode
+from yewo.applications import (
+    ApplicationDescriptor,
+    ApplicationInstallationChange,
+    ApplicationInstallMode,
+)
 from yewo.devices.inventory import DevicePlatform
 from yewo.agent.discovery import (
-    AppMemoryBuilder,
     DiscoveryObjective,
     DiscoveryRequest,
-    DiscoveryWorkflow,
     GoalVerification,
     GoalVerifier,
 )
+from yewo.agent.planning.goal_verifier import GoalVerificationMilestone
 from yewo.observations import Observation
 from yewo.grounding import GroundingProfile
-from yewo.models import ModelClient, ModelProfileRegistry
-from yewo.runs import NeverInterrupted, RunExecutionContext, RunTerminalCategory
+from yewo.models import (
+    ModelCallDisposition,
+    ModelClient,
+    ModelImageConstraints,
+    ModelProfileRegistry,
+    ModelRole,
+)
+from yewo.runs import (
+    NeverInterrupted,
+    RunExecutionContext,
+    RunTerminalCategory,
+)
+
+from yewo.agent.discovery.compilation_milestones import DiscoveryCompilationMilestones
+from yewo.agent.discovery.workflow import DiscoveryWorkflow
+from yewo.agent.replay.reconciliation_records import (
+    ReplayProcedure,
+    ProcedureCompilationReport,
+    ProcedureCompilationStatus,
+)
 
 from agent.discovery.support import agent_result, observation
-from agent.actuation.support import proposal
+from agent.replay.test_procedure_budget import _procedure as compiled_procedure_fixture
+from models.support import build_model_profile
 
 
 class StubAgent:
@@ -74,6 +93,7 @@ class StubMemoryStore:
 class StubGoalVerifier:
     def __init__(self, satisfied: bool) -> None:
         self._satisfied = satisfied
+        self.milestone_evidence: tuple[GoalVerificationMilestone, ...] = ()
 
     def verify(
         self,
@@ -81,8 +101,11 @@ class StubGoalVerifier:
         objective: str,
         completion_conditions: tuple[str, ...],
         observation: Observation,
+        *,
+        milestone_evidence: tuple[GoalVerificationMilestone, ...] = (),
     ) -> GoalVerification:
         del objective, completion_conditions
+        self.milestone_evidence = milestone_evidence
         return GoalVerification(
             verification_id="verification_1",
             objective_id=objective_id,
@@ -146,6 +169,7 @@ def _context(tmp_path: Path) -> RunExecutionContext:
                 ),
             ),
             session=SimpleNamespace(
+                installation_change=ApplicationInstallationChange.NONE,
                 application=ApplicationDescriptor(
                     platform=DevicePlatform.ANDROID,
                     application_id="com.example.app",
@@ -164,64 +188,61 @@ def _workflow(
     goal_verifier: GoalVerifier | None = None,
     *,
     require_reusable_evidence: bool = True,
+    procedure_store: CompiledProcedureStore | None = None,
 ) -> DiscoveryWorkflow:
+    auditor_profile = build_model_profile(
+        profile_id="auditor-primary",
+        role=ModelRole.AUDITOR,
+    ).model_copy(
+        update={
+            "images": ModelImageConstraints(
+                max_images=4,
+                max_image_bytes=4_000_000,
+                max_width_px=2_048,
+                max_height_px=4_096,
+            )
+        }
+    )
     return DiscoveryWorkflow(
         _discovery_request(),
         _mode_policy(),
-        cast(ModelProfileRegistry, object()),
+        ModelProfileRegistry(profiles=(auditor_profile,)),
         cast(GroundingProfile, object()),
-        "planner-primary", "auditor-primary", "recovery-primary", "action-verifier-primary",
+        "planner-primary",
+        "auditor-primary",
+        "recovery-primary",
+        "action-verifier-primary",
+        "reconciler-primary",
         tmp_path / "memory",
         lambda text: text,
         memory_store=cast(AppMemoryStore, memory_store),
+        procedure_store=(
+            procedure_store
+            if procedure_store is not None
+            else CompiledProcedureStore(tmp_path / "memory")
+        ),
         goal_verifier=goal_verifier or StubGoalVerifier(True),
         require_reusable_evidence=require_reusable_evidence,
     )
 
 
-def _existing_memory(before, after) -> AppMemory:
-    promotion = AppMemoryBuilder().promote(
-        _discovery_request(),
-        agent_result(before, after),
-        {before.observation_id: before, after.observation_id: after},
-        MemoryCompatibility(
-            application=before.application,
-            setup_contract_sha256=sha256(
-                b'{"install_mode":"reuse","retain_installation":false}'
-            ).hexdigest(),
-        ),
-        verified_objective_ids=frozenset({"account_form"}),
-        source_run_id="cold_run",
-        updated_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
-    )
-    assert promotion.memory is not None
-    return promotion.memory
+def _stub_procedure() -> ReplayProcedure:
+    return compiled_procedure_fixture()
 
 
-def _diverged_agent_result(current) -> AgentResult:
-    terminal_proposal = proposal(
-        ActionKind.CANNOT_PROGRESS,
-        proposal_id="replay_terminal",
-        source_observation_id=current.observation_id,
-    )
-    return AgentResult(
-        terminal_reason=AgentTerminalReason.CANNOT_PROGRESS,
-        reason="The route source guard diverged.",
-        final_observation_id=current.observation_id,
-        usage=AgentUsage(
-            planning_requests=1,
-            grounding_requests=0,
-            dispatched_actions=0,
+def _stub_compilation() -> DiscoveryCompilationMilestones:
+    procedure = _stub_procedure()
+    return DiscoveryCompilationMilestones(
+        report=ProcedureCompilationReport(
+            source_run_id="stub_run",
+            evidence_id="stub_evidence",
+            request_id="stub_request",
+            status=ProcedureCompilationStatus.COMPILED,
+            model_disposition=ModelCallDisposition.COMPLETED,
+            procedure_id=procedure.procedure_id,
+            reason="A stub compilation produced a reusable procedure.",
         ),
-        steps=(
-            AgentStep(
-                step_id="replay_step",
-                step_index=1,
-                source_observation_id=current.observation_id,
-                proposal=terminal_proposal,
-                terminal_reason=AgentTerminalReason.CANNOT_PROGRESS,
-            ),
-        ),
+        procedure=procedure,
     )
 
 
@@ -248,6 +269,10 @@ def test_workflow_uses_shared_agent_and_promotes_supported_memory(
         lambda *args, **kwargs: agent,
     )
     monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: _stub_compilation(),
+    )
+    monkeypatch.setattr(
         "yewo.agent.discovery.workflow.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
@@ -259,8 +284,10 @@ def test_workflow_uses_shared_agent_and_promotes_supported_memory(
     assert agent.task.open_work[:-1] == _discovery_request().priorities
     assert "visible default does not prove coverage" in agent.task.open_work[-1]
     assert memory_store.saved is not None
-    assert len(memory_store.saved.routes) == 1
-    assert (tmp_path / "run/assets/agent/discovery/result.json").is_file()
+    assert memory_store.saved.transitions
+    result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
+    assert result["coverage"]["entries"][0]["state"] == "supported"
+    assert result["coverage"]["entries"][0]["procedure_id"] == result["compiled_procedure_id"]
 
 
 @pytest.mark.parametrize("require_reusable_evidence", [True, False])
@@ -294,14 +321,19 @@ def test_unsatisfied_verification_never_reports_success(
         lambda *args, **kwargs: agent,
     )
     monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: _stub_compilation(),
+    )
+    monkeypatch.setattr(
         "yewo.agent.discovery.workflow.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
     outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
     assert outcome.category is RunTerminalCategory.INCOMPLETE
     assert memory_store.saved is not None
-    assert len(memory_store.saved.routes) == 1
-    assert memory_store.saved.capabilities == ()
+    assert memory_store.saved.transitions
+    result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
+    assert result["coverage"]["entries"][0]["state"] == "unresolved"
 
 
 def test_satisfied_verification_completes_without_reusable_evidence(
@@ -334,6 +366,10 @@ def test_satisfied_verification_completes_without_reusable_evidence(
     monkeypatch.setattr(
         "yewo.agent.discovery.workflow.build_device_agent",
         lambda *args, **kwargs: agent,
+    )
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: _stub_compilation(),
     )
     monkeypatch.setattr(
         "yewo.agent.discovery.workflow.ObservationStore.load_selected",
@@ -378,6 +414,10 @@ def test_workflow_preserves_each_non_success_terminal(
         lambda *args, **kwargs: agent,
     )
     monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: _stub_compilation(),
+    )
+    monkeypatch.setattr(
         "yewo.agent.discovery.workflow.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
@@ -386,164 +426,3 @@ def test_workflow_preserves_each_non_success_terminal(
 
     assert outcome.category is expected_category
     assert (tmp_path / "run/assets/agent/discovery/result.json").is_file()
-
-
-def test_completed_replay_branch_skips_task_planner(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    before = observation("obs_1", "0000000000000000")
-    after = observation(
-        "obs_2",
-        "1111111111111111",
-        predecessor_observation_id=before.observation_id,
-        offset_seconds=1,
-    )
-    memory = _existing_memory(before, after)
-    replay_agent_result = agent_result(before, after)
-    replay = RouteReplayResult(
-        path_id=memory.routes[0].route_id, path_kind=ReplayPathKind.VERIFIED_ROUTE,
-        terminal=RouteReplayTerminal.COMPLETED,
-        completed_segment_count=1,
-        reason="The route completed.",
-        agent_result=replay_agent_result,
-    )
-    memory_store = StubMemoryStore(memory)
-    workflow = _workflow(tmp_path, memory_store)
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.build_model_client",
-        lambda *args, **kwargs: cast(ModelClient, object()),
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.replay_route",
-        lambda *args, **kwargs: replay,
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.build_device_agent",
-        lambda *args, **kwargs: pytest.fail("task planner should not run"),
-    )
-    outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
-    assert outcome.category is RunTerminalCategory.COMPLETED
-    assert memory_store.saved is None
-    assert (tmp_path / "run/assets/agent/replay/evidence.json").is_file()
-    assert (tmp_path / "run/assets/agent/replay/report.json").is_file()
-
-
-def test_diverged_replay_runs_bounded_discovery_and_keeps_old_route(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    old_start = observation("old_start", "0000000000000000")
-    destination = observation(
-        "destination",
-        "1111111111111111",
-        predecessor_observation_id=old_start.observation_id,
-        offset_seconds=1,
-    )
-    memory = _existing_memory(old_start, destination)
-    changed_start = observation("changed_start", "2222222222222222")
-    repaired_destination = observation(
-        "repaired_destination",
-        "1111111111111111",
-        predecessor_observation_id=changed_start.observation_id,
-        offset_seconds=1,
-    )
-    replay_agent_result = _diverged_agent_result(changed_start)
-    replay = RouteReplayResult(
-        path_id=memory.routes[0].route_id, path_kind=ReplayPathKind.VERIFIED_ROUTE,
-        terminal=RouteReplayTerminal.DIVERGED,
-        completed_segment_count=0,
-        failed_segment_index=0,
-        reason="The route source guard diverged.",
-        agent_result=replay_agent_result,
-    )
-    repair_result = agent_result(changed_start, repaired_destination)
-    repair_action = repair_result.steps[0]
-    assert repair_action.outcome is not None
-    repair_result = repair_result.model_copy(
-        update={
-            "steps": (
-                repair_action.model_copy(
-                    update={
-                        "step_id": "repair_step",
-                        "outcome": repair_action.outcome.model_copy(
-                            update={"outcome_id": "repair_outcome"}
-                        ),
-                    }
-                ),
-                repair_result.steps[1].model_copy(update={"step_id": "repair_terminal"}),
-            )
-        }
-    )
-    repair_agent = StubAgent(repair_result)
-    memory_store = StubMemoryStore(memory)
-    workflow = _workflow(tmp_path, memory_store)
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.build_model_client",
-        lambda *args, **kwargs: cast(ModelClient, object()),
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.replay_route",
-        lambda *args, **kwargs: replay,
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.build_device_agent",
-        lambda *args, **kwargs: repair_agent,
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.ObservationStore.load_selected",
-        lambda unused, observation_ids: (changed_start, repaired_destination),
-    )
-
-    outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
-
-    assert outcome.category is RunTerminalCategory.COMPLETED
-    assert repair_agent.task is not None
-    assert "diverged at segment 0" in repair_agent.task.known_facts[-1]
-    assert memory_store.saved is not None
-    assert len(memory_store.saved.routes) == 2
-    assert memory_store.saved.routes[0] == memory.routes[0]
-
-
-def test_replay_and_repair_share_one_step_budget(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    before = observation("obs_1", "0000000000000000")
-    after = observation(
-        "obs_2",
-        "1111111111111111",
-        predecessor_observation_id=before.observation_id,
-        offset_seconds=1,
-    )
-    memory = _existing_memory(before, after)
-    replay_usage = AgentUsage(
-        steps=_mode_policy().maximum_steps,
-        planning_requests=_mode_policy().maximum_steps,
-        grounding_requests=0,
-        dispatched_actions=0,
-    )
-    replay_result = _diverged_agent_result(before).model_copy(update={"usage": replay_usage})
-    replay = RouteReplayResult(
-        path_id=memory.routes[0].route_id, path_kind=ReplayPathKind.VERIFIED_ROUTE,
-        terminal=RouteReplayTerminal.DIVERGED,
-        completed_segment_count=0,
-        failed_segment_index=0,
-        reason="The route diverged after consuming the step budget.",
-        agent_result=replay_result,
-    )
-    workflow = _workflow(tmp_path, StubMemoryStore(memory))
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.build_model_client",
-        lambda *args, **kwargs: cast(ModelClient, object()),
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.replay_route",
-        lambda *args, **kwargs: replay,
-    )
-    monkeypatch.setattr(
-        "yewo.agent.discovery.workflow.build_device_agent",
-        lambda *args, **kwargs: pytest.fail("repair must not receive a second budget"),
-    )
-    outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
-    assert outcome.category is RunTerminalCategory.BUDGET_EXHAUSTED

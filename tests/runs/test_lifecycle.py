@@ -32,7 +32,7 @@ from .coordinator_support import (
         ),
         (
             "application.resolve",
-            RunStage.APPIUM_STARTUP,
+            RunStage.WORKFLOW_PREPARATION,
             ["inventory", "device.prepare", "application.resolve", "device.close"],
         ),
         (
@@ -42,6 +42,7 @@ from .coordinator_support import (
                 "inventory",
                 "device.prepare",
                 "application.resolve",
+                "workflow.prepare",
                 "appium.acquire",
                 "appium.close",
                 "device.close",
@@ -54,6 +55,7 @@ from .coordinator_support import (
                 "inventory",
                 "device.prepare",
                 "application.resolve",
+                "workflow.prepare",
                 "appium.acquire",
                 "session.open",
                 "session.close",
@@ -88,6 +90,24 @@ FailureFactory = Callable[[list[str], WorkflowStub], RunCoordinator]
 @pytest.mark.parametrize(
     ("factory", "expected_category", "expected_stage", "expected_events"),
     [
+        (
+            lambda events, workflow: build_coordinator(
+                events,
+                WorkflowStub(
+                    events,
+                    preparation_failure=RuntimeError("preparation failed"),
+                ),
+            ),
+            RunTerminalCategory.INFRASTRUCTURE_FAILURE,
+            RunStage.WORKFLOW_PREPARATION,
+            [
+                "inventory",
+                "device.prepare",
+                "application.resolve",
+                "workflow.prepare",
+                "device.close",
+            ],
+        ),
         (
             lambda events, workflow: build_coordinator(
                 events,
@@ -130,6 +150,7 @@ FailureFactory = Callable[[list[str], WorkflowStub], RunCoordinator]
                 "inventory",
                 "device.prepare",
                 "application.resolve",
+                "workflow.prepare",
                 "appium.acquire",
                 "device.close",
             ],
@@ -146,6 +167,7 @@ FailureFactory = Callable[[list[str], WorkflowStub], RunCoordinator]
                 "inventory",
                 "device.prepare",
                 "application.resolve",
+                "workflow.prepare",
                 "appium.acquire",
                 "session.open",
                 "appium.close",

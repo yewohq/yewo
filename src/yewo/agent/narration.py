@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from yewo.agent.action_diagnostics import ActionApplicationFailure
+from yewo.agent.actuation.diagnostics import ActionApplicationFailure
 from yewo.agent.actuation import (
     ActionOutcome,
     ActionProposal,
@@ -15,15 +15,15 @@ from yewo.agent.actuation import (
 from yewo.grounding import GroundedPoint, GroundedRegion, GroundingEvidence
 from yewo.observations import Observation
 from yewo.run_narration import current_narrator
-from yewo.agent.planner import ActionProposalSource
-from yewo.agent.planning_evidence import (
+from yewo.agent.planning.planner import ActionProposalSource
+from yewo.agent.planning.evidence import (
     guard_planner_decision,
     PlannerDecisionMetadata,
     PlannerDecisionMetadataSource,
     PlannerDecisionSource,
 )
-from yewo.agent.recovery_advisor import RecoveryAssessment
-from yewo.agent.recovery_records import RecoveryBudgetCredit
+from yewo.agent.recovery.advisor import RecoveryAssessment
+from yewo.agent.recovery.records import RecoveryBudgetCredit
 
 
 _SOURCE = "device-agent"

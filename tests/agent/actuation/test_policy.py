@@ -216,6 +216,20 @@ def test_enforces_application_scope() -> None:
     assert app_result.code is ActionRefusalCode.APPLICATION_SCOPE
 
 
+def test_authorizes_a_grounded_action_on_android_permission_controller() -> None:
+    result = ActionPolicy(limits()).authorize(
+        proposal(),
+        build_observation(
+            application_state=ApplicationState.BACKGROUND,
+            foreground_application_id="com.google.android.permissioncontroller",
+        ),
+        budget(),
+        target_grounding=point_grounding(),
+    )
+
+    assert isinstance(result, AuthorizedAction)
+
+
 def test_back_requires_a_destination_guard_unless_mode_allows_exploration() -> None:
     guarded = ActionPolicy(limits()).authorize(
         proposal(ActionKind.BACK),

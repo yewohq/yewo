@@ -10,7 +10,10 @@ from yewo.applications.records import (
     ApplicationInstallMode,
     ApplicationRequest,
 )
-from yewo.automation.driver_options import validate_driver_inputs
+from yewo.automation.driver_options import (
+    DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS,
+    validate_driver_inputs,
+)
 from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
 
 
@@ -31,7 +34,7 @@ class IosDriverOptionsBuilder:
     def __init__(
         self,
         *,
-        new_command_timeout_seconds: int = 300,
+        new_command_timeout_seconds: int = DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS,
         use_new_wda: bool = True,
         wda_signing: IosWebDriverAgentSigning | None = None,
         show_xcode_log: bool = False,

@@ -22,3 +22,14 @@ def test_other_roles_keep_the_single_image_default() -> None:
     profile = build_model_profile(role=ModelRole.GROUNDER)
 
     assert profile.images.max_images == 1
+
+
+def test_a_replay_preparer_profile_keeps_the_single_image_default() -> None:
+    profile = build_model_profile(
+        profile_id="replay-preparer-primary",
+        role=ModelRole.REPLAY_PREPARER,
+        provider="anthropic",
+        model="anthropic/claude-sonnet-5",
+    )
+
+    assert profile.images.max_images == 1

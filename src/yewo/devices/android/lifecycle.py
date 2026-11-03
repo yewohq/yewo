@@ -45,17 +45,15 @@ class _AndroidControl(Protocol):
 
     def boot_completed(self, connection_id: str) -> bool: ...
 
+    def system_services_ready(self, connection_id: str) -> bool: ...
+
     def read_show_ime_with_hard_keyboard(self, connection_id: str) -> bool | None: ...
 
-    def set_show_ime_with_hard_keyboard(
-        self, connection_id: str, enabled: bool | None
-    ) -> None: ...
+    def set_show_ime_with_hard_keyboard(self, connection_id: str, enabled: bool | None) -> None: ...
 
     def read_stylus_handwriting_enabled(self, connection_id: str) -> bool | None: ...
 
-    def set_stylus_handwriting_enabled(
-        self, connection_id: str, enabled: bool | None
-    ) -> None: ...
+    def set_stylus_handwriting_enabled(self, connection_id: str, enabled: bool | None) -> None: ...
 
     def kill_emulator(self, connection_id: str) -> None: ...
 
@@ -191,6 +189,7 @@ class AndroidDeviceLifecycle:
                 observed.readiness is DeviceReadiness.READY
                 and connection_id is not None
                 and self._adb.boot_completed(connection_id)
+                and self._adb.system_services_ready(connection_id)
             ):
                 return observed, connection_id
             if process is not None and process.poll() is not None:

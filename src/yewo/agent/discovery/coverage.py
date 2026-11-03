@@ -1,18 +1,20 @@
-"""Truthful discovery coverage from verified route evidence."""
+"""Truthful discovery coverage from compiled-procedure evidence."""
 
 from __future__ import annotations
 
-from yewo.agent.app_memory import (
-    CapabilityEvidence,
-    VerifiedRoute,
-    derived_memory_identifier,
-)
-from yewo.agent.runtime_records import AgentResult, AgentTerminalReason
 from yewo.agent.discovery.records import (
+    DiscoveryCoverage,
     DiscoveryCoverageEntry,
     DiscoveryObjective,
     DiscoveryObjectiveState,
+    DiscoveryRequest,
 )
+from yewo.agent.replay.procedure_records import (
+    ProcedureReplayResult,
+    ProcedureReplayTerminal,
+)
+from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.runtime.records import AgentResult, AgentTerminalReason
 
 
 DISCOVERY_CONTROL_COVERAGE = (
@@ -30,45 +32,27 @@ DISCOVERY_CONTROL_COVERAGE = (
 def build_objective_evidence(
     objective: DiscoveryObjective,
     agent_result: AgentResult,
-    shared_route: VerifiedRoute | None,
+    procedure: ReplayProcedure | None,
+    evidence_observation_ids: tuple[str, ...],
     independently_verified: bool,
-) -> tuple[DiscoveryCoverageEntry, VerifiedRoute | None, CapabilityEvidence | None]:
+) -> DiscoveryCoverageEntry:
     """Build one coverage entry without upgrading incomplete evidence."""
-    if shared_route is not None and independently_verified:
-        route = _objective_route(objective, shared_route)
-        capability = CapabilityEvidence(
-            capability_id=derived_memory_identifier(
-                "capability", objective.objective_id, route.route_id
-            ),
+    if procedure is not None and independently_verified and evidence_observation_ids:
+        return DiscoveryCoverageEntry(
             objective_id=objective.objective_id,
-            statement=f"The application can reach: {objective.statement}",
-            route_id=route.route_id,
-            evidence_observation_ids=route.evidence_observation_ids,
+            state=DiscoveryObjectiveState.SUPPORTED,
+            procedure_id=procedure.procedure_id,
+            evidence_observation_ids=evidence_observation_ids,
+            reason="A compiled replay procedure reached the audited requested state.",
         )
-        return (
-            DiscoveryCoverageEntry(
-                objective_id=objective.objective_id,
-                state=DiscoveryObjectiveState.SUPPORTED,
-                capability_id=capability.capability_id,
-                route_id=route.route_id,
-                evidence_observation_ids=route.evidence_observation_ids,
-                reason="A contiguous accepted route reached the requested state.",
+    if procedure is not None:
+        return DiscoveryCoverageEntry(
+            objective_id=objective.objective_id,
+            state=DiscoveryObjectiveState.UNRESOLVED,
+            reason=(
+                "A reusable procedure was compiled, but independent final-state verification "
+                "did not support the objective."
             ),
-            route,
-            capability,
-        )
-    if shared_route is not None:
-        return (
-            DiscoveryCoverageEntry(
-                objective_id=objective.objective_id,
-                state=DiscoveryObjectiveState.UNRESOLVED,
-                reason=(
-                    "A reusable route was observed, but independent final-state verification "
-                    "did not support the objective."
-                ),
-            ),
-            _objective_route(objective, shared_route),
-            None,
         )
     state = (
         DiscoveryObjectiveState.BLOCKED
@@ -80,36 +64,17 @@ def build_objective_evidence(
         }
         else DiscoveryObjectiveState.UNRESOLVED
     )
-    return (
-        DiscoveryCoverageEntry(
-            objective_id=objective.objective_id,
-            state=state,
-            reason=_coverage_reason(agent_result),
-        ),
-        None,
-        None,
-    )
-
-
-def _objective_route(
-    objective: DiscoveryObjective,
-    shared_route: VerifiedRoute,
-) -> VerifiedRoute:
-    return shared_route.model_copy(
-        update={
-            "route_id": derived_memory_identifier(
-                "route", objective.objective_id, shared_route.route_id
-            ),
-            "objective_id": objective.objective_id,
-            "objective": objective.statement,
-        }
+    return DiscoveryCoverageEntry(
+        objective_id=objective.objective_id,
+        state=state,
+        reason=_coverage_reason(agent_result),
     )
 
 
 def _coverage_reason(agent_result: AgentResult) -> str:
     return {
         AgentTerminalReason.DONE_REQUESTED: (
-            "The planner requested completion without a contiguous reusable route."
+            "The planner requested completion without a reusable compiled procedure."
         ),
         AgentTerminalReason.CANNOT_PROGRESS: (
             "The agent found no further permitted useful action. The objective remains unresolved."
@@ -121,3 +86,47 @@ def _coverage_reason(agent_result: AgentResult) -> str:
         AgentTerminalReason.APPLICATION_INACTIVE: "The application became inactive during discovery.",
         AgentTerminalReason.DEVICE_REFUSED: "The device refused a discovery action.",
     }[agent_result.terminal_reason]
+
+
+def budget_coverage(request: DiscoveryRequest) -> DiscoveryCoverage:
+    """Report unresolved coverage after the shared run budget is consumed."""
+    objective = request.objectives[0]
+    return DiscoveryCoverage(
+        entries=(
+            DiscoveryCoverageEntry(
+                objective_id=objective.objective_id,
+                state=DiscoveryObjectiveState.UNRESOLVED,
+                reason="The run exhausted the shared replay-and-repair discovery budget.",
+            ),
+        )
+    )
+
+
+def procedure_replay_coverage(
+    request: DiscoveryRequest,
+    replay: ProcedureReplayResult,
+) -> DiscoveryCoverage:
+    """Report task proof separately from reusable discovery coverage."""
+    state = (
+        DiscoveryObjectiveState.BLOCKED
+        if replay.terminal
+        in {
+            ProcedureReplayTerminal.APPLICATION_FAILURE,
+            ProcedureReplayTerminal.DEVICE_REFUSED,
+        }
+        else DiscoveryObjectiveState.UNRESOLVED
+    )
+    return DiscoveryCoverage(
+        entries=(
+            DiscoveryCoverageEntry(
+                objective_id=request.objectives[0].objective_id,
+                state=state,
+                reason=(
+                    "Compiled procedure replay completed the task, but it did not compile "
+                    "a new reusable procedure."
+                    if replay.terminal is ProcedureReplayTerminal.COMPLETED
+                    else f"Compiled procedure replay stopped: {replay.reason}"
+                ),
+            ),
+        )
+    )

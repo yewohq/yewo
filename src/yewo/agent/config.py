@@ -15,7 +15,7 @@ from pydantic import (
 )
 
 from yewo.agent.actuation import ACTION_DEFINITIONS
-from yewo.agent.runtime_records import AgentModePolicy, AgentTask
+from yewo.agent.runtime.records import AgentModePolicy, AgentTask
 from yewo.artifacts import RecordIdentifier
 from yewo.grounding import (
     GroundingOutputShape,
@@ -45,6 +45,7 @@ class YewoRunConfiguration(BaseModel):
     auditor_profile_id: RecordIdentifier
     recovery_profile_id: RecordIdentifier
     action_verifier_profile_id: RecordIdentifier
+    replay_preparation_profile_id: RecordIdentifier
     memory_root: Path | None = None
     redaction_regions: tuple[RedactionRegion, ...] = ()
 
@@ -69,6 +70,7 @@ class YewoRunConfiguration(BaseModel):
             self.auditor_profile_id,
             self.recovery_profile_id,
             self.action_verifier_profile_id,
+            self.replay_preparation_profile_id,
         )
         return self
 
@@ -81,6 +83,7 @@ def validate_agent_configuration(
     auditor_profile_id: RecordIdentifier,
     recovery_profile_id: RecordIdentifier,
     action_verifier_profile_id: RecordIdentifier,
+    replay_preparation_profile_id: RecordIdentifier,
 ) -> None:
     """Validate model roles and grounding coverage shared by agent workflows."""
     try:
@@ -90,6 +93,7 @@ def validate_agent_configuration(
             recovery_profile_id, ModelRole.RECOVERY_ADVISOR
         )
         model_profiles.resolve(action_verifier_profile_id, ModelRole.ACTION_VERIFIER)
+        model_profiles.resolve(replay_preparation_profile_id, ModelRole.REPLAY_PREPARER)
         model_profiles.resolve(grounding_profile.model_profile_id, ModelRole.GROUNDER)
     except LookupError as error:
         raise ValueError("The run references an incompatible model profile.") from error

@@ -12,6 +12,7 @@ from yewo.runs import (
     RunStore,
     RunTerminal,
     RunTerminalCategory,
+    RunWorkflowOutcome,
 )
 from yewo.runs.errors import (
     RunCoordinationError,
@@ -40,6 +41,7 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
         "inventory",
         "device.prepare",
         "application.resolve",
+        "workflow.prepare",
         "appium.acquire",
         "session.open",
         "workflow.execute",
@@ -79,6 +81,22 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
     assert "terminal_artifact=run/terminal.json" in trace
 
 
+def test_long_workflow_reason_is_bounded_without_losing_its_terminal(tmp_path: Path) -> None:
+    events: list[str] = []
+    workflow = WorkflowStub(
+        events,
+        outcome=RunWorkflowOutcome(RunTerminalCategory.INCOMPLETE, "reason " * 300),
+    )
+
+    terminal = build_coordinator(events, workflow).run(run_request(tmp_path))
+
+    assert terminal.category is RunTerminalCategory.INCOMPLETE
+    assert terminal.stage is RunStage.EXECUTION
+    assert len(terminal.reason) == 1024
+    assert terminal.reason.endswith("...")
+    assert (tmp_path / "runs/run_1/run/terminal.json").is_file()
+
+
 def test_session_policy_is_applied_before_workflow_execution(tmp_path: Path) -> None:
     events: list[str] = []
     region = RedactionRegion(left=1, top=2, right=3, bottom=4)
@@ -87,6 +105,7 @@ def test_session_policy_is_applied_before_workflow_execution(tmp_path: Path) -> 
     build_coordinator(events, workflow).run(run_request(tmp_path))
 
     assert events.index("session.redaction:1") < events.index("session.open")
+    assert events.index("workflow.prepare") < events.index("session.open")
     assert events.index("session.open") < events.index("workflow.execute")
 
 

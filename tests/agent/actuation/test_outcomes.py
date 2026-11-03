@@ -18,11 +18,13 @@ from yewo.agent.actuation import (
     DispatchDisposition,
     DispatchReceipt,
     LiteralText,
+    TextDeliveryEvidence,
+    TextDeliveryReason,
     TextDeliveryStatus,
 )
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.devices.application_lifecycle import ApplicationState
-from yewo.devices.focus import FocusedFieldReading
+from yewo.devices.focus import TextFieldContextSource, TextFieldType, FocusedFieldReading
 from yewo.devices.screen import SystemRegionKind
 from yewo.grounding import PixelPoint
 from yewo.observations import Observation, ScreenFingerprint, ScreenRegion
@@ -80,6 +82,26 @@ def _receipt(
     )
 
 
+def _delivery(status: TextDeliveryStatus) -> TextDeliveryEvidence:
+    reasons = {
+        TextDeliveryStatus.MATCHED: TextDeliveryReason.VALUE_MATCHED,
+        TextDeliveryStatus.NOT_LANDED: TextDeliveryReason.VALUE_MISMATCH,
+        TextDeliveryStatus.UNVERIFIABLE: TextDeliveryReason.SECURE_FIELD,
+        TextDeliveryStatus.UNAVAILABLE: TextDeliveryReason.PLATFORM_EVIDENCE_UNAVAILABLE,
+    }
+    return TextDeliveryEvidence(
+        status=status,
+        reason=reasons[status],
+        is_secure=status is TextDeliveryStatus.UNVERIFIABLE,
+        field_type=(
+            TextFieldType.PASSWORD
+            if status is TextDeliveryStatus.UNVERIFIABLE
+            else TextFieldType.TEXT
+        ),
+        context_source=TextFieldContextSource.PLATFORM_METADATA,
+    )
+
+
 def _settled_observation(
     **updates: object,
 ) -> Observation:
@@ -130,12 +152,12 @@ def test_records_multiple_observed_signals_for_one_text_action() -> None:
             driver_bounds=(10, 20, 80, 60),
             keyboard_visible=True,
         ),
-        text_delivery=TextDeliveryStatus.MATCHED,
+        text_delivery=_delivery(TextDeliveryStatus.MATCHED),
     )
 
     assert outcome.disposition is ActionOutcomeDisposition.OBSERVED
     assert outcome.signals == {
-        ActionOutcomeSignal.SCREEN_CHANGED,
+        ActionOutcomeSignal.PIXELS_CHANGED,
         ActionOutcomeSignal.KEYBOARD_OPENED,
         ActionOutcomeSignal.FOCUS_CHANGED,
         ActionOutcomeSignal.TEXT_LANDED,
@@ -153,7 +175,27 @@ def test_exact_pixel_digest_detects_change_when_phash_is_unchanged() -> None:
     )
 
     assert outcome.disposition is ActionOutcomeDisposition.OBSERVED
-    assert outcome.signals == {ActionOutcomeSignal.SCREEN_CHANGED}
+    assert outcome.signals == {ActionOutcomeSignal.PIXELS_CHANGED}
+
+
+def test_legacy_screen_changed_signal_parses_as_pixels_changed() -> None:
+    assert ActionOutcomeSignal("screen_changed") is ActionOutcomeSignal.PIXELS_CHANGED
+
+
+def test_permission_controller_is_a_system_surface_not_app_backgrounding() -> None:
+    action = _authorization(ActionKind.TAP)
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(
+            application_state=ApplicationState.BACKGROUND,
+            foreground_application_id="com.google.android.permissioncontroller",
+        ),
+    )
+
+    assert ActionOutcomeSignal.SYSTEM_SURFACE_OPENED in outcome.signals
+    assert ActionOutcomeSignal.APP_BACKGROUNDED not in outcome.signals
 
 
 @pytest.mark.parametrize(
@@ -173,16 +215,16 @@ def test_distinguishes_failed_text_delivery(
         _receipt(action),
         build_observation(),
         _settled_observation(),
-        text_delivery=delivery,
+        text_delivery=_delivery(delivery),
     )
 
     assert outcome.disposition is ActionOutcomeDisposition.OBSERVED
     assert outcome.signals == {expected_signal}
 
 
-@pytest.mark.parametrize("delivery", [None, TextDeliveryStatus.UNAVAILABLE])
+@pytest.mark.parametrize("delivery", [None, _delivery(TextDeliveryStatus.UNAVAILABLE)])
 def test_unresolved_text_delivery_is_ambiguous_even_when_the_screen_changes(
-    delivery: TextDeliveryStatus | None,
+    delivery: TextDeliveryEvidence | None,
 ) -> None:
     action = _authorization(ActionKind.TYPE)
 
@@ -195,7 +237,7 @@ def test_unresolved_text_delivery_is_ambiguous_even_when_the_screen_changes(
     )
 
     assert outcome.disposition is ActionOutcomeDisposition.AMBIGUOUS
-    assert outcome.signals == {ActionOutcomeSignal.SCREEN_CHANGED}
+    assert outcome.signals == {ActionOutcomeSignal.PIXELS_CHANGED}
 
 
 @pytest.mark.parametrize(
@@ -369,7 +411,7 @@ def test_refuses_text_evidence_for_a_non_text_action() -> None:
             _receipt(action),
             build_observation(),
             _settled_observation(),
-            text_delivery=TextDeliveryStatus.MATCHED,
+            text_delivery=_delivery(TextDeliveryStatus.MATCHED),
         )
 
 
@@ -382,7 +424,7 @@ def test_outcome_serialization_never_contains_a_declared_value() -> None:
         _receipt(action),
         build_observation(),
         _settled_observation(),
-        text_delivery=TextDeliveryStatus.MATCHED,
+        text_delivery=_delivery(TextDeliveryStatus.MATCHED),
     )
     encoded = outcome.model_dump_json()
 

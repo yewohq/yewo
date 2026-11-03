@@ -24,6 +24,7 @@ class ElementStub:
         self.cleared = False
         self.clicked = False
         self.focused = True
+        self.password = False
         self.rect: dict[str, object] = {"x": 0, "y": 0, "width": 50, "height": 100}
         self.requested_attributes: list[str] = []
 
@@ -41,6 +42,10 @@ class ElementStub:
         self.requested_attributes.append(name)
         if name == "focused":
             return str(self.focused).lower()
+        if name == "password":
+            return str(self.password).lower()
+        if name == "className":
+            return "android.widget.EditText"
         return self.value if name in {"value", "text"} else None
 
 
@@ -73,12 +78,14 @@ class DriverStub:
         self.scripts: list[tuple[str, dict[str, Any]]] = []
         self.keycodes: list[int] = []
         self.back_calls = 0
+        self.hide_keyboard_calls = 0
+        self.back_closes_keyboard = True
         self.keyboard = False
         self.installed = True
         self.state = 4
         self.lifecycle: list[str] = []
         self.current_package: str | None = "com.example.app"
-        self.current_activity = "com.example.MainActivity"
+        self.current_activity: str | None = "com.example.MainActivity"
         self.orientation = "PORTRAIT"
         self.system_bars: dict[str, object] = {
             "statusBar": {
@@ -128,12 +135,15 @@ class DriverStub:
         return self.keyboard
 
     def hide_keyboard(self) -> object:
+        self.hide_keyboard_calls += 1
         self.keyboard = False
         return self
 
     def press_keycode(self, keycode: int, metastate: int | None = None) -> object:
         del metastate
         self.keycodes.append(keycode)
+        if keycode == 4 and self.back_closes_keyboard:
+            self.keyboard = False
         return self
 
     def back(self) -> None:

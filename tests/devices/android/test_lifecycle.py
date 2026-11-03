@@ -48,15 +48,18 @@ class _AdbStub:
         self,
         *,
         booted: bool = True,
+        services_ready: bool = True,
         executable: str | None = "emulator",
         keyboard_setting: bool | None = False,
         handwriting_setting: bool | None = True,
     ) -> None:
         self.booted = booted
+        self.services_ready = services_ready
         self.executable = executable
         self.keyboard_setting = keyboard_setting
         self.handwriting_setting = handwriting_setting
         self.boot_checks: list[str] = []
+        self.service_checks: list[str] = []
         self.killed: list[str] = []
         self.keyboard_changes: list[tuple[str, bool | None]] = []
         self.handwriting_changes: list[tuple[str, bool | None]] = []
@@ -68,22 +71,22 @@ class _AdbStub:
         self.boot_checks.append(connection_id)
         return self.booted
 
+    def system_services_ready(self, connection_id: str) -> bool:
+        self.service_checks.append(connection_id)
+        return self.services_ready
+
     def read_show_ime_with_hard_keyboard(self, connection_id: str) -> bool | None:
         del connection_id
         return self.keyboard_setting
 
-    def set_show_ime_with_hard_keyboard(
-        self, connection_id: str, enabled: bool | None
-    ) -> None:
+    def set_show_ime_with_hard_keyboard(self, connection_id: str, enabled: bool | None) -> None:
         self.keyboard_changes.append((connection_id, enabled))
 
     def read_stylus_handwriting_enabled(self, connection_id: str) -> bool | None:
         del connection_id
         return self.handwriting_setting
 
-    def set_stylus_handwriting_enabled(
-        self, connection_id: str, enabled: bool | None
-    ) -> None:
+    def set_stylus_handwriting_enabled(self, connection_id: str, enabled: bool | None) -> None:
         self.handwriting_changes.append((connection_id, enabled))
 
     def kill_emulator(self, connection_id: str) -> None:
@@ -185,6 +188,31 @@ def test_stopped_avd_is_started_waited_for_and_stopped_once() -> None:
         ("emulator-5554", True),
     ]
     assert adb.killed == ["emulator-5554"]
+
+
+def test_boot_completed_waits_for_required_android_services() -> None:
+    stopped = _android_device(readiness=DeviceReadiness.STARTABLE)
+    ready = _android_device(
+        readiness=DeviceReadiness.READY,
+        connection_id="emulator-5554",
+        native_state="device",
+    )
+    adb = _AdbStub(services_ready=False)
+    process = _ProcessStub()
+
+    with pytest.raises(DeviceStartupTimeoutError):
+        AndroidDeviceLifecycle(
+            _InventoryStub((ready,)),
+            adb,
+            timeout_seconds=1,
+            poll_interval_seconds=1,
+            process_starter=_ProcessStarterStub(process),
+            clock=_ClockStub(),
+        ).prepare(stopped)
+
+    assert adb.boot_checks == ["emulator-5554"]
+    assert adb.service_checks == ["emulator-5554"]
+    assert process.terminated
 
 
 def test_owned_avd_restores_an_absent_soft_keyboard_setting() -> None:

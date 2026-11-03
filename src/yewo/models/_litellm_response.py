@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from email.utils import parsedate_to_datetime
+import math
 from typing import cast
 
 from litellm import exceptions
@@ -84,6 +87,18 @@ def normalize_litellm_completion(
             **identity,
         )
     if finish_reason in {"length", "max_tokens"}:
+        if _is_blank(message.get("content")):
+            return NormalizedModelCompletion(
+                disposition=ModelCallDisposition.REASONING_EXHAUSTED,
+                text=None,
+                structured_output=None,
+                reason=(
+                    "Private reasoning used the whole completion budget before the answer "
+                    "started. Raise the completion budget or disable reasoning for this role."
+                ),
+                finish_reason=finish_reason,
+                **identity,
+            )
         return NormalizedModelCompletion(
             disposition=ModelCallDisposition.TRUNCATED,
             text=None,
@@ -93,7 +108,7 @@ def normalize_litellm_completion(
             **identity,
         )
     content = message.get("content")
-    if content is None or (isinstance(content, str) and not content.strip()):
+    if _is_blank(content):
         return NormalizedModelCompletion(
             disposition=ModelCallDisposition.EMPTY,
             text=None,
@@ -160,6 +175,51 @@ def describe_provider_error(error: BaseException) -> str:
     return f"{error_name} (HTTP {status})" if status is not None else error_name
 
 
+def provider_retry_after_seconds(
+    error: BaseException,
+    *,
+    now: datetime,
+) -> float | None:
+    """Read a standard provider retry delay without retaining response content."""
+    value = getattr(error, "retry_after", None)
+    if value is None:
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        value = _header_value(headers, "retry-after")
+    if value is None:
+        value = _header_value(getattr(error, "headers", None), "retry-after")
+    return _parse_retry_after(value, now)
+
+
+def _header_value(headers: object, name: str) -> object | None:
+    if not isinstance(headers, Mapping):
+        return None
+    return next(
+        (value for key, value in headers.items() if str(key).lower() == name),
+        None,
+    )
+
+
+def _parse_retry_after(value: object, now: datetime) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        seconds = float(value)
+    elif isinstance(value, str):
+        try:
+            seconds = float(value.strip())
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            reference = now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)
+            seconds = (retry_at - reference).total_seconds()
+    else:
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+
+
 def _mapping(value: object) -> dict[str, object]:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
@@ -207,19 +267,74 @@ def _validate_structured_output(
 ) -> tuple[dict[str, object] | None, tuple[dict[str, object], ...]]:
     if response_model is None:
         return None, ()
+    errors: tuple[dict[str, object], ...] = ()
+    for candidate in _json_candidates(content):
+        try:
+            validated = response_model.model_validate_json(
+                candidate,
+                context=validation_context,
+            )
+        except ValidationError as error:
+            reported = error.errors(include_url=False, include_input=False)
+            candidate_errors = tuple(cast(dict[str, object], item) for item in reported)
+            if _has_more_specific_validation_error(candidate_errors, errors):
+                errors = candidate_errors
+            continue
+        return cast(dict[str, object], validated.model_dump(mode="json")), ()
+    return None, errors
+
+
+def _has_more_specific_validation_error(
+    candidate_errors: tuple[dict[str, object], ...],
+    retained_errors: tuple[dict[str, object], ...],
+) -> bool:
+    """Prefer schema errors from extracted JSON over wrapper-text parse errors."""
+    if not retained_errors:
+        return True
+    retained_only_reports_invalid_json = all(
+        error.get("type") == "json_invalid" for error in retained_errors
+    )
+    candidate_reports_schema_error = any(
+        error.get("type") != "json_invalid" for error in candidate_errors
+    )
+    return retained_only_reports_invalid_json and candidate_reports_schema_error
+
+
+def _is_blank(content: object) -> bool:
+    """Report whether a provider returned no usable message content."""
+    return content is None or (isinstance(content, str) and not content.strip())
+
+
+def _json_candidates(content: str) -> tuple[str, ...]:
+    """Return the payloads that may carry one JSON answer, most literal first.
+
+    A model without a private reasoning channel often writes that reasoning
+    into the answer and fences the JSON after it. This function therefore also
+    offers the fenced block and the outermost braces.
+    """
     stripped = content.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        stripped = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    try:
-        validated = response_model.model_validate_json(
-            stripped,
-            context=validation_context,
-        )
-    except ValidationError as error:
-        errors = error.errors(include_url=False, include_input=False)
-        return None, tuple(cast(dict[str, object], item) for item in errors)
-    return cast(dict[str, object], validated.model_dump(mode="json")), ()
+    candidates = [stripped]
+    fenced = _fenced_block(stripped)
+    if fenced is not None:
+        candidates.append(fenced)
+    opening = stripped.find("{")
+    closing = stripped.rfind("}")
+    if 0 <= opening < closing:
+        candidates.append(stripped[opening : closing + 1])
+    return tuple(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
+def _fenced_block(stripped: str) -> str | None:
+    opening = stripped.find("```")
+    if opening < 0:
+        return None
+    body = stripped[opening + 3 :]
+    newline = body.find("\n")
+    if newline < 0:
+        return None
+    body = body[newline + 1 :]
+    closing = body.find("```")
+    return body[:closing] if closing >= 0 else body
 
 
 def _normalize_usage(

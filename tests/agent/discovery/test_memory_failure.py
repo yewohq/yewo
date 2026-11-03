@@ -11,7 +11,13 @@ from yewo.models import ModelClient
 from yewo.runs import NeverInterrupted
 
 from agent.discovery.support import agent_result, observation
-from agent.discovery.test_workflow import StubAgent, StubMemoryStore, _context, _workflow
+from agent.discovery.test_workflow import (
+    StubAgent,
+    StubMemoryStore,
+    _context,
+    _stub_compilation,
+    _workflow,
+)
 
 
 class FailingMemoryStore(StubMemoryStore):
@@ -40,6 +46,10 @@ def test_memory_write_failure_persists_unresolved_discovery_evidence(
     monkeypatch.setattr(
         "yewo.agent.discovery.workflow.build_device_agent",
         lambda *args, **kwargs: agent,
+    )
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: _stub_compilation(),
     )
     monkeypatch.setattr(
         "yewo.agent.discovery.workflow.ObservationStore.load_selected",

@@ -17,6 +17,12 @@ from yewo.devices.screen import (
 class IosInteractionBackend:
     """Dispatch iOS interactions and read platform context."""
 
+    def dismiss_keyboard(self, driver: InteractionDriver) -> bool:
+        if not driver.is_keyboard_shown():
+            return True
+        driver.hide_keyboard()
+        return not driver.is_keyboard_shown()
+
     def tap(self, driver: InteractionDriver, x: int, y: int) -> None:
         driver.execute_script("mobile: tap", {"x": x, "y": y})
 

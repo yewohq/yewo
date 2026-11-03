@@ -109,21 +109,16 @@ class ObservationService:
         *,
         predecessor_observation_id: str | None = None,
     ) -> Observation:
-        """Return evidence captured while the foreground identity stayed stable."""
+        """Return screenshot evidence with one platform foreground reading."""
         observation_id, predecessor_id = self._validated_identifiers(predecessor_observation_id)
-        foreground_before = self._source.active_application_id()
         png = self._source.screenshot()
+        foreground_application_id = self._source.active_application_id()
         calibration = self._source.screen_calibration()
         application_state = self._source.application_state()
         platform_context = self._source.application_context()
         keyboard_visible = self._source.keyboard_visible()
         orientation = _normalize_orientation(self._source.device_orientation())
         driver_regions = self._source.system_regions()
-        foreground_after = self._source.active_application_id()
-        if foreground_before != foreground_after:
-            raise ObservationCaptureError(
-                "The foreground application changed during screenshot capture."
-            )
         dimensions = _validated_dimensions(png, calibration)
         try:
             system_regions = _screenshot_regions(driver_regions, calibration)
@@ -155,7 +150,7 @@ class ObservationService:
                 observation_id=observation_id,
                 device=_device_identity(self._device),
                 application=_application_identity(self._application),
-                foreground_application_id=foreground_after,
+                foreground_application_id=foreground_application_id,
                 application_state=application_state,
                 platform_context=platform_context,
                 keyboard_visible=keyboard_visible,

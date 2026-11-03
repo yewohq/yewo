@@ -10,6 +10,7 @@ from yewo.applications import (
     ApplicationRequest,
 )
 from yewo.automation import DriverOptionsError
+from yewo.automation.driver_options import DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS
 from yewo.devices import (
     DeviceDescriptor,
     DeviceKind,
@@ -93,6 +94,7 @@ def test_ios_install_if_needed_does_not_force_reinstallation() -> None:
 
     assert capabilities["appium:enforceAppInstall"] is False
     assert capabilities["appium:useNewWDA"] is False
+    assert capabilities["appium:newCommandTimeout"] == DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS
 
 
 def test_ios_physical_options_include_platform_version_and_injected_wda_signing() -> None:

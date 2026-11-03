@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Protocol
 
 from yewo.artifacts import new_record_identifier
@@ -11,10 +12,19 @@ from yewo.devices.errors import (
     DeviceInputRejectedError,
     DeviceTargetRejectedError,
 )
-from yewo.devices.focus import FocusedFieldReading
+from yewo.devices.focus import (
+    FocusedFieldReading,
+    TextFieldContext,
+    TextFieldContextSource,
+    TextFieldType,
+)
 from yewo.devices.interaction import ScrollDirection
 
-from yewo.agent.actuation.outcomes import TextDeliveryStatus
+from yewo.agent.actuation.outcomes import (
+    TextDeliveryEvidence,
+    TextDeliveryReason,
+    TextDeliveryStatus,
+)
 from yewo.agent.actuation.records import (
     ActionKind,
     AuthorizedAction,
@@ -90,12 +100,14 @@ class ActionExecutor:
         device: ActionDevice,
         identifier_factory: Callable[[], str] = new_record_identifier,
         declared_value_resolver: Callable[[str], str] | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._device = device
         self._identifier_factory = identifier_factory
         self._declared_value_resolver = declared_value_resolver
+        self._clock = clock
         self._consumed_authorizations: set[str] = set()
-        self._text_delivery_by_authorization: dict[str, TextDeliveryStatus] = {}
+        self._text_delivery_by_authorization: dict[str, TextDeliveryEvidence] = {}
 
     def dispatch(self, action: AuthorizedAction) -> DispatchReceipt:
         if not isinstance(action, AuthorizedAction):
@@ -112,6 +124,7 @@ class ActionExecutor:
                 proposal_id=action.proposal_id,
                 action=action.action,
                 disposition=DispatchDisposition.DISPATCH_UNVERIFIED,
+                dispatched_at=self._clock(),
                 reason=str(error),
                 sensitivity=action.sensitivity,
                 retention=action.retention,
@@ -123,6 +136,7 @@ class ActionExecutor:
                 proposal_id=action.proposal_id,
                 action=action.action,
                 disposition=DispatchDisposition.INPUT_REJECTED,
+                dispatched_at=self._clock(),
                 reason=str(error),
                 sensitivity=action.sensitivity,
                 retention=action.retention,
@@ -134,6 +148,7 @@ class ActionExecutor:
                 proposal_id=action.proposal_id,
                 action=action.action,
                 disposition=DispatchDisposition.DEVICE_REFUSED,
+                dispatched_at=self._clock(),
                 reason="The device rejected the authorized action.",
                 sensitivity=action.sensitivity,
                 retention=action.retention,
@@ -146,6 +161,7 @@ class ActionExecutor:
             proposal_id=action.proposal_id,
             action=action.action,
             disposition=DispatchDisposition.DISPATCHED,
+            dispatched_at=self._clock(),
             sensitivity=action.sensitivity,
             retention=action.retention,
         )
@@ -154,20 +170,20 @@ class ActionExecutor:
         """Read focus evidence without exposing active-field text."""
         return self._device.focused_field_reading()
 
-    def verify_text_delivery(self, action: AuthorizedAction) -> TextDeliveryStatus | None:
+    def verify_text_delivery(self, action: AuthorizedAction) -> TextDeliveryEvidence | None:
         """Compare entered text inside the device boundary and discard the value."""
         if action.action not in {ActionKind.TYPE, ActionKind.CLEAR}:
             return None
         return self._text_delivery_by_authorization.pop(
             action.authorization_id,
-            TextDeliveryStatus.UNAVAILABLE,
+            _unavailable_text_delivery(),
         )
 
     def discard_text_delivery(self, action: AuthorizedAction) -> None:
         """Discard a pending comparison value when post-action evidence is unavailable."""
         self._text_delivery_by_authorization.pop(action.authorization_id, None)
 
-    def _dispatch(self, action: AuthorizedAction) -> TextDeliveryStatus | None:
+    def _dispatch(self, action: AuthorizedAction) -> TextDeliveryEvidence | None:
         target = action.target
         if action.action is ActionKind.TAP and target is not None:
             self._device.tap(
@@ -182,9 +198,12 @@ class ActionExecutor:
             if target is not None:
                 self._device.focus(target.x, target.y)
             expected_text = self._resolve_text(action.text)
-            return _delivery_status(self._device.type_focused_text(expected_text))
+            context = self._device.focused_field_reading().field_context
+            matched = self._device.type_focused_text(expected_text)
+            return _delivery_evidence(matched, context)
         elif action.action is ActionKind.CLEAR:
-            return _delivery_status(self._device.clear_focused_text())
+            context = self._device.focused_field_reading().field_context
+            return _clear_delivery_evidence(self._device.clear_focused_text(), context)
         elif action.action is ActionKind.DOUBLE_TAP and target is not None:
             self._device.double_tap(target.x, target.y)
         elif (
@@ -244,7 +263,59 @@ class ActionExecutor:
         return value
 
 
-def _delivery_status(matched: bool | None) -> TextDeliveryStatus:
+def _delivery_evidence(
+    matched: bool | None,
+    context: TextFieldContext | None,
+) -> TextDeliveryEvidence:
+    context = context or _unknown_text_field_context()
+    if context.is_secure is True:
+        return TextDeliveryEvidence(
+            status=TextDeliveryStatus.UNVERIFIABLE,
+            reason=TextDeliveryReason.SECURE_FIELD,
+            is_secure=True,
+            field_type=context.field_type,
+            context_source=context.source,
+        )
+    return _matched_delivery_evidence(matched, context)
+
+
+def _clear_delivery_evidence(
+    matched: bool | None,
+    context: TextFieldContext | None,
+) -> TextDeliveryEvidence:
+    return _matched_delivery_evidence(matched, context or _unknown_text_field_context())
+
+
+def _matched_delivery_evidence(
+    matched: bool | None,
+    context: TextFieldContext,
+) -> TextDeliveryEvidence:
     if matched is None:
-        return TextDeliveryStatus.UNAVAILABLE
-    return TextDeliveryStatus.MATCHED if matched else TextDeliveryStatus.NOT_LANDED
+        return TextDeliveryEvidence(
+            status=TextDeliveryStatus.UNAVAILABLE,
+            reason=TextDeliveryReason.PLATFORM_EVIDENCE_UNAVAILABLE,
+            is_secure=context.is_secure,
+            field_type=context.field_type,
+            context_source=context.source,
+        )
+    return TextDeliveryEvidence(
+        status=TextDeliveryStatus.MATCHED if matched else TextDeliveryStatus.NOT_LANDED,
+        reason=(
+            TextDeliveryReason.VALUE_MATCHED if matched else TextDeliveryReason.VALUE_MISMATCH
+        ),
+        is_secure=context.is_secure,
+        field_type=context.field_type,
+        context_source=context.source,
+    )
+
+
+def _unavailable_text_delivery() -> TextDeliveryEvidence:
+    return _matched_delivery_evidence(None, _unknown_text_field_context())
+
+
+def _unknown_text_field_context() -> TextFieldContext:
+    return TextFieldContext(
+        is_secure=None,
+        field_type=TextFieldType.UNKNOWN,
+        source=TextFieldContextSource.UNAVAILABLE,
+    )

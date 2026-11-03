@@ -4,15 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from yewo.agent.app_memory import AppMemory
-from yewo.agent.memory_store import AppMemoryStore, AppMemoryStoreError
-from yewo.agent.runtime_records import AgentResult, AgentTerminalReason, agent_terminal_category
-from yewo.agent.replay_evidence import (
-    ReplayEvidenceSnapshot,
-    persist_initial_replay_evidence,
-    persist_replay_evidence,
-)
-from yewo.agent.route_replay import RouteReplayResult
+from yewo.agent.memory.records import AppMemory
+from yewo.agent.memory.store import AppMemoryStore, AppMemoryStoreError
+from yewo.agent.runtime.records import AgentResult, AgentTerminalReason, agent_terminal_category
+from yewo.agent.replay.procedure_records import ProcedureReplayResult
+from yewo.agent.replay.reconciliation_records import ReplayProcedure
 from yewo.artifacts import ARTIFACTS_DIRECTORY, AtomicArtifactWriter, ArtifactWriteError
 from yewo.runs import RunTerminalCategory, RunWorkflowOutcome, RunWorkspace
 from yewo.agent.discovery.narration import narrate_discovery_result
@@ -22,40 +18,44 @@ from yewo.agent.discovery.records import (
     DiscoveryRequest,
     DiscoveryResult,
 )
-from yewo.agent.goal_verifier import GoalVerification
+from yewo.agent.planning.goal_verifier import GoalVerification
 
 
 class DiscoveryEvidenceError(RuntimeError):
     """The discovery workflow could not persist its canonical conclusion."""
 
 
-def persist_discovery_replay_attempt(
-    workspace: RunWorkspace,
-    replay: RouteReplayResult,
-) -> None:
-    """Persist replay proof before repair or interruption can end the run."""
-    try:
-        persist_initial_replay_evidence(workspace.root, workspace.start.run_id, replay)
-    except ArtifactWriteError as error:
-        raise DiscoveryEvidenceError("Could not persist the replay attempt.") from error
+def build_discovery_result(
+    request: DiscoveryRequest,
+    agent_result: AgentResult,
+    coverage: DiscoveryCoverage,
+    procedure_replay: ProcedureReplayResult | None,
+    verification: GoalVerification | None,
+    compiled_procedure: ReplayProcedure | None,
+    memory: AppMemory | None,
+) -> DiscoveryResult:
+    """Build the canonical successful workflow result."""
+    return DiscoveryResult(
+        request=request,
+        terminal_reason=agent_result.terminal_reason,
+        coverage=coverage,
+        agent_result=agent_result,
+        procedure_replay=procedure_replay,
+        verification=verification,
+        compiled_procedure_id=compiled_procedure.procedure_id if compiled_procedure else None,
+        compiled_procedure_step_count=(
+            len(compiled_procedure.steps) if compiled_procedure else None
+        ),
+        memory_id=memory.memory_id if memory is not None else None,
+    )
 
 
-def persist_discovery_result(
-    workspace: RunWorkspace,
-    result: DiscoveryResult,
-    replay_evidence_snapshot: ReplayEvidenceSnapshot | None = None,
-) -> None:
+def persist_discovery_result(workspace: RunWorkspace, result: DiscoveryResult) -> None:
     """Persist and narrate one canonical discovery result."""
     relative_path = ARTIFACTS_DIRECTORY / "agent" / "discovery" / "result.json"
     content = result.model_dump_json(indent=2).encode("utf-8") + b"\n"
     try:
         AtomicArtifactWriter(workspace.root).write(relative_path, content)
-        persist_replay_evidence(
-            workspace.root,
-            workspace.start.run_id,
-            result,
-            replay_evidence_snapshot,
-        )
         narrate_discovery_result(result)
     except ArtifactWriteError as error:
         raise DiscoveryEvidenceError("Could not persist the discovery result.") from error
@@ -66,10 +66,9 @@ def persist_discovery_memory_failure(
     request: DiscoveryRequest,
     agent_result: AgentResult,
     coverage: DiscoveryCoverage,
-    replay: RouteReplayResult | None,
     verification: GoalVerification | None,
     durable_memory_id: str | None,
-    replay_evidence_snapshot: ReplayEvidenceSnapshot | None = None,
+    procedure_replay: ProcedureReplayResult | None = None,
 ) -> None:
     """Retain the run conclusion before propagating a memory-store failure."""
     unresolved = DiscoveryCoverage(
@@ -77,8 +76,7 @@ def persist_discovery_memory_failure(
             entry.model_copy(
                 update={
                     "state": DiscoveryObjectiveState.UNRESOLVED,
-                    "capability_id": None,
-                    "route_id": None,
+                    "procedure_id": None,
                     "evidence_observation_ids": (),
                     "reason": "The run produced evidence, but Yewo could not update app memory.",
                 }
@@ -93,12 +91,11 @@ def persist_discovery_memory_failure(
             terminal_reason=agent_result.terminal_reason,
             coverage=unresolved,
             agent_result=agent_result,
-            replay=replay,
+            procedure_replay=procedure_replay,
             verification=verification,
             memory_id=durable_memory_id,
             memory_persistence_error="Yewo could not update app memory.",
         ),
-        replay_evidence_snapshot,
     )
 
 
@@ -110,10 +107,9 @@ def save_discovery_memory(
     request: DiscoveryRequest,
     agent_result: AgentResult,
     coverage: DiscoveryCoverage,
-    replay: RouteReplayResult | None,
     verification: GoalVerification | None,
     durable_memory_id: str | None,
-    replay_evidence_snapshot: ReplayEvidenceSnapshot | None = None,
+    procedure_replay: ProcedureReplayResult | None = None,
 ) -> AppMemory:
     """Save memory or persist a partial conclusion before propagating failure."""
     try:
@@ -124,10 +120,9 @@ def save_discovery_memory(
             request,
             agent_result,
             coverage,
-            replay,
             verification,
             durable_memory_id,
-            replay_evidence_snapshot,
+            procedure_replay,
         )
         raise
 
@@ -136,10 +131,9 @@ def persist_discovery_outcome(
     workspace: RunWorkspace,
     result: DiscoveryResult,
     require_reusable_evidence: bool,
-    replay_evidence_snapshot: ReplayEvidenceSnapshot | None = None,
 ) -> RunWorkflowOutcome:
     """Persist and classify one ordinary discovery conclusion."""
-    persist_discovery_result(workspace, result, replay_evidence_snapshot)
+    persist_discovery_result(workspace, result)
     return RunWorkflowOutcome(
         classify_discovery_result(result, require_reusable_evidence),
         discovery_result_reason(result),
@@ -175,11 +169,49 @@ def classify_discovery_result(
 
 
 def discovery_result_reason(result: DiscoveryResult) -> str:
-    """Summarize supported objectives and the underlying agent terminal."""
+    """Report task verification separately from reusable artifact coverage."""
+    if (
+        result.procedure_replay is not None
+        and result.verification is not None
+        and result.agent_result == result.procedure_replay.agent_result
+    ):
+        return (
+            f"Compiled procedure replay ended as "
+            f"{result.procedure_replay.terminal.value}. {result.verification.reason}"
+        )
+    task_summary = _task_verification_summary(result)
+    procedure_summary = _compiled_procedure_summary(result)
+    coverage_summary = _objective_coverage_summary(result)
+    return " ".join((task_summary, procedure_summary, coverage_summary, result.agent_result.reason))
+
+
+def _task_verification_summary(result: DiscoveryResult) -> str:
+    if result.verification is None:
+        return "Task verification was not available."
+    condition_count = len(result.request.objectives[0].completion_conditions)
+    if result.verification.satisfied:
+        return f"Task completed: {condition_count} of {condition_count} conditions verified."
+    return f"Task verification failed: {result.verification.reason}"
+
+
+def _compiled_procedure_summary(result: DiscoveryResult) -> str:
+    if result.procedure_replay is not None:
+        replay = result.procedure_replay
+        return (
+            f"Stored procedure replay ended as {replay.terminal.value} after "
+            f"{replay.completed_step_count} of {replay.procedure_step_count} steps."
+        )
+    if result.compiled_procedure_id is None:
+        return "No compiled procedure was promoted."
+    return f"Reusable procedure compiled with {result.compiled_procedure_step_count} steps."
+
+
+def _objective_coverage_summary(result: DiscoveryResult) -> str:
     supported_count = sum(
         entry.state is DiscoveryObjectiveState.SUPPORTED for entry in result.coverage.entries
     )
+    total_count = len(result.coverage.entries)
     return (
-        f"Discovery supported {supported_count} of {len(result.coverage.entries)} "
-        f"requested objectives. {result.agent_result.reason}"
+        "Reusable objective coverage is a separate metric: "
+        f"{supported_count} of {total_count} objectives supported."
     )

@@ -108,7 +108,7 @@ def agent_result(
         raise AssertionError(authorized.reason)
     receipt = _receipt(authorized)
     signals = (
-        frozenset({ActionOutcomeSignal.SCREEN_CHANGED})
+        frozenset({ActionOutcomeSignal.PIXELS_CHANGED})
         if disposition is ActionOutcomeDisposition.OBSERVED
         else frozenset()
     )

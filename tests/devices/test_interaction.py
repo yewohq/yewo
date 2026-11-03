@@ -163,6 +163,26 @@ def test_text_operations_use_the_focused_element() -> None:
     assert interaction.focused_field_state() is True
 
 
+def test_secure_field_reports_context_without_comparing_obscured_text() -> None:
+    driver = _DriverStub()
+    driver.element.password = True
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    matched = interaction.type_text(20, 30, "private value")
+    reading = interaction.focused_field_reading()
+
+    assert matched is None
+    assert driver.element.value == "private value"
+    assert reading.field_context is not None
+    assert reading.field_context.is_secure is True
+    assert reading.field_context.field_type.value == "password"
+
+
 class _NumericInputReader:
     def ask(self, connection_id: str, *args: str, timeout_seconds: float = 20) -> str:
         del connection_id, args, timeout_seconds
@@ -198,6 +218,21 @@ def test_text_operation_uses_the_in_bounds_appium_element_without_active_focus()
 
     assert interaction.type_text(20, 30, "hello") is True
     assert driver.scripts == []
+    assert driver.element.clicked
+
+
+def test_focus_clicks_an_already_focused_field_when_keyboard_is_hidden() -> None:
+    driver = _DriverStub()
+    driver.keyboard = False
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    interaction.focus(20, 30)
+
     assert driver.element.clicked
 
 
@@ -347,20 +382,6 @@ def test_ios_type_text_reads_the_value_attribute() -> None:
 
     assert value is True
     assert "value" in driver.element.requested_attributes
-
-
-def test_keyboard_dismissal_is_verified_without_back_navigation() -> None:
-    driver = _DriverStub()
-    driver.keyboard = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    assert interaction.dismiss_keyboard()
-    assert driver.back_calls == 0
 
 
 @pytest.mark.parametrize("duration_seconds", [0, 0.05, 30.1])

@@ -207,6 +207,7 @@ class WorkflowStub:
         *,
         outcome: RunWorkflowOutcome | None = None,
         failure: Exception | None = None,
+        preparation_failure: Exception | None = None,
         write_evidence: bool = False,
         recording_redaction_regions: tuple[RedactionRegion, ...] = (),
     ) -> None:
@@ -216,6 +217,7 @@ class WorkflowStub:
             "The workflow completed.",
         )
         self.failure = failure
+        self.preparation_failure = preparation_failure
         self.write_evidence = write_evidence
         self.recording_redaction_regions = recording_redaction_regions
 
@@ -224,8 +226,22 @@ class WorkflowStub:
             recording_redaction_regions=self.recording_redaction_regions,
         )
 
-    def execute(self, context: RunExecutionContext, interruption) -> RunWorkflowOutcome:
+    def prepare(self, context, interruption):
+        del context
         assert not interruption.is_set()
+        self.events.append("workflow.prepare")
+        if self.preparation_failure is not None:
+            raise self.preparation_failure
+        return "prepared"
+
+    def execute(
+        self,
+        context: RunExecutionContext,
+        interruption,
+        preparation=None,
+    ) -> RunWorkflowOutcome:
+        assert not interruption.is_set()
+        assert preparation == "prepared"
         self.events.append("workflow.execute")
         if self.write_evidence:
             evidence = context.workspace.root / "assets/evidence.txt"

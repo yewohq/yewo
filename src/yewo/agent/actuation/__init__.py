@@ -10,9 +10,12 @@ from yewo.agent.actuation.outcomes import (
     ActionOutcomeDisposition,
     ActionOutcomeSignal,
     ActionOutcomeVerifier,
+    TextDeliveryEvidence,
+    TextDeliveryReason,
     TextDeliveryStatus,
 )
 from yewo.agent.actuation.policy import ActionPolicy
+from yewo.agent.actuation.control_records import VisibleControl, VisibleControlKind
 from yewo.agent.actuation.records import (
     ACTION_DEFINITIONS,
     ActionBudget,
@@ -63,5 +66,9 @@ __all__ = [
     "SideEffectClass",
     "TapRepetition",
     "TextDeliveryStatus",
+    "TextDeliveryEvidence",
+    "TextDeliveryReason",
     "TextInput",
+    "VisibleControl",
+    "VisibleControlKind",
 ]

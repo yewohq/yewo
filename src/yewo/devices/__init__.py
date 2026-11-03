@@ -1,6 +1,11 @@
 """Device discovery and lifecycle boundaries."""
 
-from yewo.devices.focus import FocusedFieldReading
+from yewo.devices.focus import (
+    FocusedFieldReading,
+    TextFieldContext,
+    TextFieldContextSource,
+    TextFieldType,
+)
 from yewo.devices.inventory import (
     DeviceDescriptor,
     DeviceInventory,
@@ -29,6 +34,9 @@ __all__ = [
     "DeviceQuery",
     "DeviceReadiness",
     "FocusedFieldReading",
+    "TextFieldContext",
+    "TextFieldContextSource",
+    "TextFieldType",
     "ResourceOwnership",
     "ScreenCalibration",
     "ScreenCoordinateSpace",

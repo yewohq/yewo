@@ -167,6 +167,13 @@ class AdbClient:
         """Return whether Android finished booting."""
         return self.ask(connection_id, "getprop", "sys.boot_completed") == "1"
 
+    def system_services_ready(self, connection_id: str) -> bool:
+        """Return whether Appium's required Android services are available."""
+        outputs = (self.ask(connection_id, "service", "check", item) for item in ("activity", "settings"))
+        return all(
+            output is not None and output.strip().lower().endswith(": found") for output in outputs
+        )
+
     def read_show_ime_with_hard_keyboard(self, connection_id: str) -> bool | None:
         """Read whether Android renders its soft keyboard with a hardware keyboard."""
         result = self.shell(

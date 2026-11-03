@@ -51,6 +51,7 @@ def _png(
 class _SourceStub:
     def __init__(self) -> None:
         self.foreground_ids: list[str | None] = ["com.example.app"]
+        self.foreground_read_count = 0
         self.screenshot_calls = 0
         self.png = _png()
         self.calibration = ScreenCalibration(200, 400, 100, 200)
@@ -64,6 +65,7 @@ class _SourceStub:
         return self.calibration
 
     def active_application_id(self) -> str | None:
+        self.foreground_read_count += 1
         if len(self.foreground_ids) > 1:
             return self.foreground_ids.pop(0)
         return self.foreground_ids[0]
@@ -157,6 +159,7 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
     assert observation.device.operating_system_version == "16"
     assert observation.application.build == "42"
     assert observation.foreground_application_id == "com.example.app"
+    assert source.foreground_read_count == 1
     assert observation.orientation is DeviceOrientation.PORTRAIT
     assert observation.screenshot_to_driver_scale.x == 0.5
     assert observation.screenshot_to_driver_scale.y == 0.5
@@ -174,19 +177,8 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
     observation_path = tmp_path / "assets/observations.jsonl"
     assert observation_path.is_file()
     assert (
-        observation.model_validate_json(observation_path.read_text().splitlines()[0])
-        == observation
+        observation.model_validate_json(observation_path.read_text().splitlines()[0]) == observation
     )
-
-
-def test_service_rejects_foreground_change_without_writing(tmp_path: Path) -> None:
-    source = _SourceStub()
-    source.foreground_ids = ["com.example.app", "com.example.launcher"]
-
-    with pytest.raises(ObservationCaptureError, match="changed"):
-        _service(source, tmp_path).capture()
-
-    assert not (tmp_path / "assets").exists()
 
 
 def test_service_rejects_calibration_mismatch_without_writing(tmp_path: Path) -> None:

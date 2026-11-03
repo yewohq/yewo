@@ -27,6 +27,7 @@ from yewo.models._litellm_response import (
     describe_provider_error,
     is_retryable_provider_error,
     normalize_litellm_completion,
+    provider_retry_after_seconds,
 )
 from yewo.models.profiles import (
     MINIMUM_COMPLETION_TOKENS,
@@ -186,7 +187,8 @@ class LiteLLMModelClient:
                             tuple(calls),
                             reason=reason,
                         )
-                    self._wait(profile.retry.backoff_seconds[provider_attempt - 1])
+                    provider_delay = provider_retry_after_seconds(error, now=started_at) or 0
+                    self._wait(min(max(profile.retry.backoff_seconds[provider_attempt - 1], provider_delay), profile.retry.maximum_retry_delay_seconds))
                     continue
                 latency_ms = max(0, (self._monotonic() - started) * 1000)
                 normalized = normalize_litellm_completion(
@@ -217,8 +219,7 @@ class LiteLLMModelClient:
                 calls.append(self._persist_call(call, response_evidence))
                 if (
                     response_model is not None
-                    and normalized.disposition
-                    in _RETRYABLE_RESPONSE_DISPOSITIONS
+                    and normalized.disposition in _RETRYABLE_RESPONSE_DISPOSITIONS
                     and validation_attempt < validation_attempts
                 ):
                     corrections = self._correction_messages(normalized)
@@ -369,6 +370,8 @@ class LiteLLMModelClient:
             "top_p": profile.generation.top_p,
             "seed": profile.generation.seed,
         }
+        if profile.provider != "openrouter":
+            optional_generation_settings["reasoning_effort"] = request.reasoning_effort
         for field_name, value in optional_generation_settings.items():
             if value is not None:
                 arguments[field_name] = value
@@ -380,12 +383,17 @@ class LiteLLMModelClient:
             arguments["cache_control_injection_points"] = [
                 {"location": "message", "role": profile.cache_control_role.value}
             ]
-        disabled = profile.generation.reasoning is ModelReasoningMode.DISABLED
+        disabled = (
+            profile.generation.reasoning is ModelReasoningMode.DISABLED
+            and request.reasoning_effort is None
+        )
         if disabled and profile.provider != "openrouter":
             arguments["thinking"] = {"type": "disabled"}
         router_options: dict[str, object] = {}
         if disabled and profile.provider == "openrouter":
             router_options["reasoning"] = {"enabled": False}
+        elif request.reasoning_effort is not None and profile.provider == "openrouter":
+            router_options["reasoning"] = {"effort": request.reasoning_effort.value}
         if profile.router_response_healing:
             router_options["plugins"] = [{"id": "response-healing"}]
         if profile.router_cache_affinity and self._cache_affinity is not None:

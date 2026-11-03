@@ -89,6 +89,30 @@ class ScreenshotStore:
                 f"Could not remove incomplete screenshot: {reference.artifact_id}"
             ) from error
 
+    def load(self, reference: ScreenshotReference) -> bytes:
+        """Load screenshot bytes after verifying path, digest, and dimensions."""
+        path = self.root / reference.path
+        try:
+            path.resolve().relative_to(self.root.resolve())
+            if path.is_symlink() or not path.is_file():
+                raise ObservationCaptureError("A screenshot must be a regular file.")
+            content = path.read_bytes()
+        except ObservationCaptureError:
+            raise
+        except (OSError, ValueError) as error:
+            raise ObservationCaptureError(
+                f"Could not load screenshot: {reference.artifact_id}"
+            ) from error
+        if sha256(content).hexdigest() != reference.sha256:
+            raise ObservationCaptureError(
+                f"Screenshot digest mismatch: {reference.artifact_id}"
+            )
+        if png_size(content) != (reference.width_px, reference.height_px):
+            raise ObservationCaptureError(
+                f"Screenshot dimensions mismatch: {reference.artifact_id}"
+            )
+        return content
+
     def _persist(
         self,
         png: bytes,

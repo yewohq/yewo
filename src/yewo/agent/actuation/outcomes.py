@@ -14,8 +14,8 @@ from yewo.artifacts import (
     RecordIdentifier,
     new_record_identifier,
 )
-from yewo.devices.application_lifecycle import ApplicationState
-from yewo.devices.focus import FocusedFieldReading
+from yewo.devices.application_lifecycle import ApplicationState, trusted_system_surface
+from yewo.devices.focus import FocusedFieldReading, TextFieldContextSource, TextFieldType
 from yewo.observations import Observation
 
 from yewo.agent.actuation.records import (
@@ -38,7 +38,7 @@ class ActionOutcomeDisposition(StrEnum):
 class ActionOutcomeSignal(StrEnum):
     """One observed change associated with a dispatched action."""
 
-    SCREEN_CHANGED = "screen_changed"
+    PIXELS_CHANGED = "pixels_changed"
     CONTEXT_CHANGED = "context_changed"
     KEYBOARD_OPENED = "keyboard_opened"
     KEYBOARD_CLOSED = "keyboard_closed"
@@ -46,7 +46,14 @@ class ActionOutcomeSignal(StrEnum):
     TEXT_LANDED = "text_landed"
     TEXT_NOT_LANDED = "text_not_landed"
     APP_BACKGROUNDED = "app_backgrounded"
+    SYSTEM_SURFACE_OPENED = "system_surface_opened"
     APP_EXITED = "app_exited"
+
+    @classmethod
+    def _missing_(cls, value: object) -> ActionOutcomeSignal | None:
+        if value == "screen_changed":
+            return cls.PIXELS_CHANGED
+        return None
 
 
 class TextDeliveryStatus(StrEnum):
@@ -54,7 +61,29 @@ class TextDeliveryStatus(StrEnum):
 
     MATCHED = "matched"
     NOT_LANDED = "not_landed"
+    UNVERIFIABLE = "unverifiable"
     UNAVAILABLE = "unavailable"
+
+
+class TextDeliveryReason(StrEnum):
+    """Reason for one secret-free text-delivery result."""
+
+    VALUE_MATCHED = "value_matched"
+    VALUE_MISMATCH = "value_mismatch"
+    SECURE_FIELD = "secure_field"
+    PLATFORM_EVIDENCE_UNAVAILABLE = "platform_evidence_unavailable"
+
+
+class TextDeliveryEvidence(BaseModel):
+    """Secret-free field context and delivery conclusion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: TextDeliveryStatus
+    reason: TextDeliveryReason
+    is_secure: bool | None
+    field_type: TextFieldType
+    context_source: TextFieldContextSource
 
 
 class ActionOutcome(BaseModel):
@@ -71,6 +100,7 @@ class ActionOutcome(BaseModel):
     settled_observation_id: RecordIdentifier | None
     disposition: ActionOutcomeDisposition
     signals: frozenset[ActionOutcomeSignal]
+    text_delivery: TextDeliveryEvidence | None = None
     reason: str = Field(min_length=1)
     sensitivity: ArtifactSensitivity
     retention: Literal[ArtifactRetention.RUN]
@@ -114,7 +144,7 @@ class ActionOutcomeVerifier:
         *,
         before_focus: FocusedFieldReading | None = None,
         after_focus: FocusedFieldReading | None = None,
-        text_delivery: TextDeliveryStatus | None = None,
+        text_delivery: TextDeliveryEvidence | None = None,
     ) -> ActionOutcome:
         self._validate_dispatch_evidence(action, receipt, before)
         self._validate_optional_evidence(action, after, before_focus, after_focus, text_delivery)
@@ -127,6 +157,7 @@ class ActionOutcomeVerifier:
                 ActionOutcomeDisposition.UNAVAILABLE,
                 frozenset(),
                 "No settled observation was available after dispatch.",
+                text_delivery,
             )
         self._validate_observation_pair(before, after)
         signals = self._observed_signals(
@@ -139,9 +170,9 @@ class ActionOutcomeVerifier:
         )
         fingerprint_change = _fingerprint_changed(before, after)
         if fingerprint_change is True:
-            signals.add(ActionOutcomeSignal.SCREEN_CHANGED)
+            signals.add(ActionOutcomeSignal.PIXELS_CHANGED)
         text_unresolved = action.action in {ActionKind.TYPE, ActionKind.CLEAR} and (
-            text_delivery is None or text_delivery is TextDeliveryStatus.UNAVAILABLE
+            text_delivery is None or text_delivery.status is TextDeliveryStatus.UNAVAILABLE
         )
         if text_unresolved:
             return self._outcome(
@@ -152,6 +183,7 @@ class ActionOutcomeVerifier:
                 ActionOutcomeDisposition.AMBIGUOUS,
                 frozenset(signals),
                 "The settled observation did not prove text delivery to the target field.",
+                text_delivery,
             )
         if receipt.disposition is DispatchDisposition.DISPATCH_UNVERIFIED:
             return self._outcome(
@@ -163,6 +195,7 @@ class ActionOutcomeVerifier:
                 frozenset(signals),
                 "The device attempted the interaction, but target verification did not "
                 "establish its intended effect. Use the fresh observation as current state.",
+                text_delivery,
             )
         if signals:
             return self._outcome(
@@ -173,6 +206,7 @@ class ActionOutcomeVerifier:
                 ActionOutcomeDisposition.OBSERVED,
                 frozenset(signals),
                 "The settled observation contains action-outcome signals.",
+                text_delivery,
             )
         if fingerprint_change is False:
             return self._outcome(
@@ -183,6 +217,7 @@ class ActionOutcomeVerifier:
                 ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
                 frozenset(),
                 "Comparable before-and-after evidence did not change.",
+                text_delivery,
             )
         return self._outcome(
             action,
@@ -192,6 +227,7 @@ class ActionOutcomeVerifier:
             ActionOutcomeDisposition.UNAVAILABLE,
             frozenset(),
             "The screen fingerprints were not comparable.",
+            text_delivery,
         )
 
     @staticmethod
@@ -229,7 +265,7 @@ class ActionOutcomeVerifier:
         after: Observation | None,
         before_focus: FocusedFieldReading | None,
         after_focus: FocusedFieldReading | None,
-        text_delivery: TextDeliveryStatus | None,
+        text_delivery: TextDeliveryEvidence | None,
     ) -> None:
         if after is None and any(
             item is not None for item in (before_focus, after_focus, text_delivery)
@@ -256,7 +292,7 @@ class ActionOutcomeVerifier:
         after: Observation,
         before_focus: FocusedFieldReading | None,
         after_focus: FocusedFieldReading | None,
-        text_delivery: TextDeliveryStatus | None,
+        text_delivery: TextDeliveryEvidence | None,
     ) -> set[ActionOutcomeSignal]:
         signals = _application_signals(before, after)
         signals.update(_keyboard_signals(before, after))
@@ -276,6 +312,7 @@ class ActionOutcomeVerifier:
         disposition: ActionOutcomeDisposition,
         signals: frozenset[ActionOutcomeSignal],
         reason: str,
+        text_delivery: TextDeliveryEvidence | None,
     ) -> ActionOutcome:
         return ActionOutcome(
             outcome_id=self._identifier_factory(),
@@ -286,6 +323,7 @@ class ActionOutcomeVerifier:
             settled_observation_id=after.observation_id if after is not None else None,
             disposition=disposition,
             signals=signals,
+            text_delivery=text_delivery,
             reason=reason,
             sensitivity=action.sensitivity,
             retention=action.retention,
@@ -299,7 +337,13 @@ def _application_signals(
     if after.application_state in {ApplicationState.NOT_INSTALLED, ApplicationState.NOT_RUNNING}:
         return {ActionOutcomeSignal.APP_EXITED}
     signals: set[ActionOutcomeSignal] = set()
-    if after.application_state is not ApplicationState.FOREGROUND or (
+    system_surface = trusted_system_surface(
+        after.device.platform,
+        after.foreground_application_id,
+    )
+    if system_surface is not None:
+        signals.add(ActionOutcomeSignal.SYSTEM_SURFACE_OPENED)
+    elif after.application_state is not ApplicationState.FOREGROUND or (
         after.foreground_application_id is not None
         and after.foreground_application_id != after.application.application_id
     ):
@@ -341,15 +385,16 @@ def _focus_changed(
 
 def _text_signal(
     action: ActionKind,
-    delivery: TextDeliveryStatus | None,
+    delivery: TextDeliveryEvidence | None,
 ) -> ActionOutcomeSignal | None:
     if action not in {ActionKind.TYPE, ActionKind.CLEAR} or delivery is None:
         return None
     return {
         TextDeliveryStatus.MATCHED: ActionOutcomeSignal.TEXT_LANDED,
         TextDeliveryStatus.NOT_LANDED: ActionOutcomeSignal.TEXT_NOT_LANDED,
+        TextDeliveryStatus.UNVERIFIABLE: None,
         TextDeliveryStatus.UNAVAILABLE: None,
-    }[delivery]
+    }[delivery.status]
 
 
 def _fingerprint_changed(before: Observation, after: Observation) -> bool | None:

@@ -7,22 +7,23 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
-from yewo.agent.app_memory import derived_memory_identifier
+from yewo.agent.memory.records import derived_memory_identifier
 from yewo.agent.composition import build_device_agent, build_model_client
-from yewo.agent.goal_verifier import (
+from yewo.agent.planning.goal_verifier import (
     GoalVerification,
     ModelGoalVerifier,
     persist_goal_verification,
 )
-from yewo.agent.memory_store import AppMemoryStore
+from yewo.agent.memory.store import AppMemoryStore
+from yewo.agent.replay.procedure_store import CompiledProcedureStore
 from yewo.agent.narration import narrate_verification
-from yewo.agent.runtime_records import (
+from yewo.agent.runtime.records import (
     AgentModePolicy,
     AgentTask,
     AgentTerminalReason,
     agent_terminal_category,
-    goal_verification_budget_reason,
 )
+from yewo.agent.runtime.verification import goal_verification_budget_reason
 from yewo.grounding import GroundingProfile
 from yewo.models import (
     ModelProfileRegistry,
@@ -31,13 +32,15 @@ from yewo.observations import ObservationStore, RedactionRegion
 from yewo.runs import (
     InterruptionSignal,
     RunExecutionContext,
+    RunPreparationContext,
     RunSessionPolicy,
     RunTerminalCategory,
     RunWorkflowOutcome,
 )
 
 if TYPE_CHECKING:
-    from yewo.agent.discovery import DiscoveryRequest, DiscoveryWorkflow
+    from yewo.agent.discovery import DiscoveryRequest
+    from yewo.agent.discovery.workflow import DiscoveryWorkflow
 
 
 class YewoAgent:
@@ -53,10 +56,12 @@ class YewoAgent:
         auditor_profile_id: str,
         recovery_profile_id: str,
         action_verifier_profile_id: str,
+        replay_preparation_profile_id: str,
         scrub_text: Callable[[str], str],
         *,
         memory_root: Path | None = None,
         memory_store: AppMemoryStore | None = None,
+        procedure_store: CompiledProcedureStore | None = None,
         redaction_regions: Sequence[RedactionRegion] = (),
         declared_value_resolver: Callable[[str], str] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
@@ -71,6 +76,7 @@ class YewoAgent:
         self._auditor_profile_id = auditor_profile_id
         self._recovery_profile_id = recovery_profile_id
         self._action_verifier_profile_id = action_verifier_profile_id
+        self._replay_preparation_profile_id = replay_preparation_profile_id
         self._scrub_text = scrub_text
         if memory_root is not None and memory_store is not None:
             raise ValueError("Configure a Yewo memory root or memory store, not both.")
@@ -81,6 +87,8 @@ class YewoAgent:
             if memory_root is not None
             else None
         )
+        self._memory_root = memory_root
+        self._procedure_store = procedure_store
         self._redaction_regions = tuple(redaction_regions)
         self._declared_value_resolver = declared_value_resolver
         self._monotonic = monotonic
@@ -89,15 +97,30 @@ class YewoAgent:
         """Apply the same declared regions to recordings before session startup."""
         return RunSessionPolicy(recording_redaction_regions=self._redaction_regions)
 
+    def prepare(
+        self,
+        context: RunPreparationContext,
+        interruption: InterruptionSignal,
+    ) -> object | None:
+        """Prepare memory-backed work before Appium can launch the application."""
+        if self._memory_store is None:
+            return None
+        return self._build_discovery_workflow().prepare(context, interruption)
+
     def execute(
         self,
         context: RunExecutionContext,
         interruption: InterruptionSignal,
+        preparation: object | None = None,
     ) -> RunWorkflowOutcome:
         """Run the shared agent and translate its terminal for the coordinator."""
         started_at = self._monotonic()
         if self._memory_store is not None:
-            return self._build_discovery_workflow().execute(context, interruption)
+            return self._build_discovery_workflow().execute(
+                context,
+                interruption,
+                preparation,
+            )
         model_client = build_model_client(
             context.workspace.root,
             context.workspace.start.run_id,
@@ -164,7 +187,7 @@ class YewoAgent:
         )
 
     def _build_discovery_workflow(self) -> DiscoveryWorkflow:
-        from yewo.agent.discovery import DiscoveryWorkflow
+        from yewo.agent.discovery.workflow import DiscoveryWorkflow
 
         return DiscoveryWorkflow(
             _discovery_request(self._task),
@@ -175,11 +198,13 @@ class YewoAgent:
             self._auditor_profile_id,
             self._recovery_profile_id,
             self._action_verifier_profile_id,
-            None,
+            self._replay_preparation_profile_id,
+            self._memory_root,
             self._scrub_text,
             redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
             memory_store=self._memory_store,
+            procedure_store=self._procedure_store,
             require_reusable_evidence=False,
         )
 

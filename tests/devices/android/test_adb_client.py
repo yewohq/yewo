@@ -416,6 +416,28 @@ def test_android_capability_read_is_bound_to_one_device(
     assert runner.calls[0][0][3:] == expected_command
 
 
+def test_android_system_services_must_both_be_available() -> None:
+    runner = CommandRunnerStub(
+        responses=(("Service activity: found\n", "", 0), ("Service settings: found\n", "", 0))
+    )
+
+    ready = AdbClient(runner).system_services_ready("emulator-5554")
+
+    assert ready
+    assert [call[0][3:] for call in runner.calls] == [
+        ("shell", "service", "check", "activity"),
+        ("shell", "service", "check", "settings"),
+    ]
+
+
+def test_android_system_services_reject_a_missing_service() -> None:
+    runner = CommandRunnerStub(
+        responses=(("Service activity: found\n", "", 0), ("Service settings: not found\n", "", 0))
+    )
+
+    assert not AdbClient(runner).system_services_ready("emulator-5554")
+
+
 def test_shell_quotes_values_for_the_remote_android_shell() -> None:
     runner = CommandRunnerStub()
     client = AdbClient(runner)

@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from yewo.models import MINIMUM_COMPLETION_TOKENS, ModelCallDisposition, ModelReasoningMode
+from yewo.models import (
+    MINIMUM_COMPLETION_TOKENS,
+    ModelCallDisposition,
+    ModelReasoningEffort,
+    ModelReasoningMode,
+)
 from yewo.models.client import _RETRYABLE_RESPONSE_DISPOSITIONS
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.models.profiles import ModelGenerationSettings
@@ -35,6 +40,70 @@ def test_an_empty_reply_is_retried_like_a_malformed_one() -> None:
     assert ModelCallDisposition.MALFORMED in _RETRYABLE_RESPONSE_DISPOSITIONS
     assert ModelCallDisposition.TRUNCATED in _RETRYABLE_RESPONSE_DISPOSITIONS
 
+
+def test_openrouter_reasoning_effort_uses_the_router_body(tmp_path: Path) -> None:
+    sent: list[dict[str, object]] = []
+
+    def complete(**kwargs: object) -> object:
+        sent.append(kwargs)
+        raise RuntimeError("Stop after recording the request.")
+
+    profile = build_model_profile()
+    request = ModelRequest(
+        request_id="request-1",
+        profile_id=profile.profile_id,
+        role=profile.role,
+        reasoning_effort=ModelReasoningEffort.MEDIUM,
+        messages=(
+            ModelMessage(
+                role=ModelMessageRole.USER,
+                content=(TextModelContent(text="hi"),),
+            ),
+        ),
+        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
+        retention=ArtifactRetention.RUN,
+    )
+
+    build_test_client(tmp_path, complete, profile).complete(request)
+
+    assert "reasoning_effort" not in sent[0]
+    extra_body = sent[0]["extra_body"]
+    assert isinstance(extra_body, dict)
+    assert extra_body["reasoning"] == {"effort": "medium"}
+
+
+def test_direct_provider_reasoning_effort_reaches_the_shared_transport(
+    tmp_path: Path,
+) -> None:
+    sent: list[dict[str, object]] = []
+
+    def complete(**kwargs: object) -> object:
+        sent.append(kwargs)
+        raise RuntimeError("Stop after recording the request.")
+
+    profile = build_model_profile(
+        provider="anthropic",
+        model="anthropic/claude-sonnet-5",
+    )
+    request = ModelRequest(
+        request_id="request-1",
+        profile_id=profile.profile_id,
+        role=profile.role,
+        reasoning_effort=ModelReasoningEffort.MEDIUM,
+        messages=(
+            ModelMessage(
+                role=ModelMessageRole.USER,
+                content=(TextModelContent(text="hi"),),
+            ),
+        ),
+        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
+        retention=ArtifactRetention.RUN,
+    )
+
+    build_test_client(tmp_path, complete, profile).complete(request)
+
+    assert sent[0]["reasoning_effort"] == "medium"
+    assert "extra_body" not in sent[0]
 
 
 def test_disabled_reasoning_reaches_each_provider_in_its_own_shape(tmp_path: Path) -> None:

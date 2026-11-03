@@ -113,6 +113,7 @@ def _workflow(
         "auditor-primary",
         "recovery-primary",
         "action-verifier-primary",
+        "reconciler-primary",
         lambda text: text,
         memory_store=cast(AppMemoryStore, memory_store) if memory_store else None,
         declared_value_resolver=declared_value_resolver,
@@ -268,7 +269,8 @@ def test_yewo_agent_routes_memory_backed_tasks_through_discovery(
             captured["request"] = request
             captured["memory_store"] = kwargs["memory_store"]
 
-        def execute(self, context, interruption):
+        def execute(self, context, interruption, preparation=None):
+            del preparation
             captured["context"] = context
             captured["interruption"] = interruption
             return SimpleNamespace(
@@ -277,7 +279,7 @@ def test_yewo_agent_routes_memory_backed_tasks_through_discovery(
             )
 
     monkeypatch.setattr(
-        "yewo.agent.discovery.DiscoveryWorkflow",
+        "yewo.agent.discovery.workflow.DiscoveryWorkflow",
         StubDiscoveryWorkflow,
     )
 
@@ -303,14 +305,14 @@ def test_declared_value_task_enters_discovery_by_name_without_exposing_value(
             captured["request"] = request
             captured["resolver"] = kwargs["declared_value_resolver"]
 
-        def execute(self, context, interruption):
-            del context, interruption
+        def execute(self, context, interruption, preparation=None):
+            del context, interruption, preparation
             return SimpleNamespace(
                 category=RunTerminalCategory.COMPLETED,
                 reason="The declared-value task completed.",
             )
 
-    monkeypatch.setattr("yewo.agent.discovery.DiscoveryWorkflow", StubDiscoveryWorkflow)
+    monkeypatch.setattr("yewo.agent.discovery.workflow.DiscoveryWorkflow", StubDiscoveryWorkflow)
     task = AgentTask(
         objective="Enter the disposable account value.",
         completion_conditions=("The value is accepted.",),

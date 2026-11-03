@@ -29,6 +29,7 @@ class ModelRole(StrEnum):
     AUDITOR = "auditor"
     RECOVERY_ADVISOR = "recovery_advisor"
     ACTION_VERIFIER = "action_verifier"
+    REPLAY_PREPARER = "replay_preparer"
 
 
 class ModelMessageRole(StrEnum):
@@ -46,8 +47,20 @@ class ModelCallDisposition(StrEnum):
     EMPTY = "empty"
     REFUSED = "refused"
     TRUNCATED = "truncated"
+    REASONING_EXHAUSTED = "reasoning_exhausted"
     MALFORMED = "malformed"
     PROVIDER_ERROR = "provider_error"
+
+
+class ModelReasoningEffort(StrEnum):
+    """Provider-neutral reasoning effort for one model request."""
+
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    DEFAULT = "default"
 
 
 class ModelArtifactKind(StrEnum):
@@ -162,6 +175,7 @@ class ModelRequest(BaseModel):
     profile_id: RecordIdentifier
     role: ModelRole
     max_completion_tokens: int | None = Field(default=None, gt=0)
+    reasoning_effort: ModelReasoningEffort | None = None
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     response_contract: ModelResponseContract | None = None
     sensitivity: ArtifactSensitivity

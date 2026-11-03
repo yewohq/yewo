@@ -18,6 +18,10 @@ from yewo.devices.inventory import DeviceDescriptor, DevicePlatform, DeviceReadi
 
 OptionsT_co = TypeVar("OptionsT_co", bound=AppiumOptions, covariant=True)
 
+# Keep Appium alive across the model layer's longest permitted provider-directed
+# retry wait (900 seconds), plus request and scheduling overhead.
+DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS = 1_200
+
 
 class DriverOptionsBuilder(Protocol[OptionsT_co]):
     """Build platform options without opening a driver session."""

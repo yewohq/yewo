@@ -27,6 +27,7 @@ from yewo.devices.focus import (
     FocusService,
     FocusedFieldReading,
     TextElement,
+    text_field_context,
 )
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.interaction_records import AndroidKey, TextInputConstraint
@@ -91,6 +92,8 @@ class InteractionDriver(ApplicationLifecycleDriver, Protocol):
 
 class PlatformInteractionBackend(Protocol):
     """Dispatch platform-specific interaction and context operations."""
+
+    def dismiss_keyboard(self, driver: InteractionDriver) -> bool: ...
 
     def tap(self, driver: InteractionDriver, x: int, y: int) -> None: ...
 
@@ -335,8 +338,11 @@ class DeviceInteraction:
             raise DeviceInputRejectedError(
                 "The focused field accepts numeric input. Choose a compatible numeric value."
             )
-        before = self._text_value(field)
+        field_context = text_field_context(field)
+        before = None if field_context.is_secure is True else self._text_value(field)
         field.send_keys(text)
+        if field_context.is_secure is True:
+            return None
         after = self._text_value(field)
         if after is None:
             return None
@@ -414,13 +420,10 @@ class DeviceInteraction:
             return None
 
     def dismiss_keyboard(self) -> bool:
-        if self.keyboard_visible() is False:
-            return True
         try:
-            self._driver.hide_keyboard()
+            return self._backend.dismiss_keyboard(self._driver)
         except Exception:  # noqa: BLE001 - verification determines the result
             return False
-        return self.keyboard_visible() is False
 
     def wait(self, duration_seconds: float) -> None:
         if duration_seconds < MINIMUM_WAIT_SECONDS or duration_seconds > self._maximum_wait_seconds:

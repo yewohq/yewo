@@ -58,6 +58,7 @@ def _run_yewo(configuration: YewoRunConfiguration) -> int:
         configuration.auditor_profile_id,
         configuration.recovery_profile_id,
         configuration.action_verifier_profile_id,
+        configuration.replay_preparation_profile_id,
         scrub_text,
         memory_root=configuration.memory_root,
         redaction_regions=configuration.redaction_regions,

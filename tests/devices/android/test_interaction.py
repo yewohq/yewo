@@ -21,6 +21,10 @@ class _SystemBarDriver:
         }
 
 
+class _PackageDriver:
+    current_package = "com.example.testing_app"
+
+
 def test_backend_reads_system_regions_from_the_driver() -> None:
     driver = cast(ApplicationLifecycleDriver, cast(Any, _SystemBarDriver()))
 
@@ -167,3 +171,35 @@ def test_backend_preserves_unknown_when_android_does_not_report_current_editor()
     backend = AndroidInteractionBackend(_InputReader("mInputShown=true"), "emulator-5554")
 
     assert backend.focused_text_constraint(cast(Any, object())) is None
+
+
+def test_backend_prefers_android_focused_window_package() -> None:
+    reader = _InputReader(
+        "mCurrentFocus=Window{8127b5a u0 com.android.systemui/com.android.systemui.statusbar."
+        "phone.CentralSurfaces}"
+    )
+    backend = AndroidInteractionBackend(reader, "emulator-5554")
+
+    application_id = backend.active_application_id(cast(Any, _PackageDriver()))
+
+    assert application_id == "com.android.systemui"
+    assert reader.calls == [
+        ("emulator-5554", ("dumpsys", "window"), 3),
+    ]
+
+
+def test_backend_maps_bare_notification_shade_window_to_system_ui() -> None:
+    reader = _InputReader("mCurrentFocus=Window{8127b5a u0 NotificationShade}")
+    backend = AndroidInteractionBackend(reader, "emulator-5554")
+
+    application_id = backend.active_application_id(cast(Any, _PackageDriver()))
+
+    assert application_id == "com.android.systemui"
+
+
+def test_backend_falls_back_to_appium_package_without_focused_window() -> None:
+    backend = AndroidInteractionBackend(_InputReader("WINDOW MANAGER WINDOWS"), "emulator-5554")
+
+    application_id = backend.active_application_id(cast(Any, _PackageDriver()))
+
+    assert application_id == "com.example.testing_app"

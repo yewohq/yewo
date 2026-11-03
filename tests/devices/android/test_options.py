@@ -10,6 +10,7 @@ from yewo.applications import (
     ApplicationRequest,
 )
 from yewo.automation import DriverOptionsBuilder, DriverOptionsError
+from yewo.automation.driver_options import DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS
 from yewo.devices import (
     DeviceDescriptor,
     DeviceKind,
@@ -88,6 +89,7 @@ def test_android_install_if_needed_does_not_force_reinstallation() -> None:
     )
 
     assert capabilities["appium:enforceAppInstall"] is False
+    assert capabilities["appium:newCommandTimeout"] == DEFAULT_DRIVER_IDLE_TIMEOUT_SECONDS
 
 
 def test_android_reuse_targets_the_observed_installed_application() -> None:

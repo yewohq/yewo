@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
@@ -209,6 +210,7 @@ class ActionProposal(BaseModel):
         ),
     )
     reason: str | None = Field(default=None, min_length=1, max_length=2_000)
+    screen_summary: str | None = Field(default=None, min_length=1, max_length=120)
     sensitivity: Literal[ArtifactSensitivity.DEVICE_CONTENT] = ArtifactSensitivity.DEVICE_CONTENT
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
 
@@ -393,7 +395,9 @@ class ActionRefusalCode(StrEnum):
     NON_DISPATCH_ACTION = "non_dispatch_action"
     REPEATED_NO_PROGRESS = "repeated_no_progress"
     DISCOVERY_INCOMPLETE = "discovery_incomplete"
+    COMPLETED_WORK_REGRESSION = "completed_work_regression"
     VERIFICATION_UNAVAILABLE = "verification_unavailable"
+    EXCLUDED_MEMORY_TRANSITION = "excluded_memory_transition"
 
 
 class ActionRefusal(BaseModel):
@@ -512,12 +516,15 @@ class DispatchReceipt(BaseModel):
     proposal_id: RecordIdentifier
     action: ActionKind
     disposition: DispatchDisposition
+    dispatched_at: datetime | None = None
     reason: str | None = Field(default=None, min_length=1)
     sensitivity: ArtifactSensitivity
     retention: Literal[ArtifactRetention.RUN]
 
     @model_validator(mode="after")
     def _validate_disposition(self) -> Self:
+        if self.dispatched_at is not None and self.dispatched_at.utcoffset() is None:
+            raise ValueError("A dispatch timestamp must include a timezone.")
         if self.disposition is not DispatchDisposition.DISPATCHED and self.reason is None:
             raise ValueError("A non-accepted dispatch must contain a reason.")
         if self.disposition is DispatchDisposition.DISPATCHED and self.reason is not None:

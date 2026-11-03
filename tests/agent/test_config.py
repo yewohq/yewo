@@ -85,6 +85,13 @@ def _configuration() -> dict[str, object]:
                     "role": "action_verifier",
                     "model": "openrouter/configured/action-verifier",
                 },
+                {
+                    **profile,
+                    "profile_id": "reconciler-primary",
+                    "role": "replay_preparer",
+                    "model": "openrouter/configured/reconciler",
+                    "images": {**profile["images"], "max_images": 4},
+                },
             ]
         },
         "grounding_profile": {
@@ -98,6 +105,7 @@ def _configuration() -> dict[str, object]:
         "auditor_profile_id": "auditor-primary",
         "recovery_profile_id": "recovery-primary",
         "action_verifier_profile_id": "action-verifier-primary",
+        "replay_preparation_profile_id": "reconciler-primary",
     }
 
 
@@ -113,12 +121,14 @@ def test_loads_explicit_profiles_without_a_default_model(tmp_path: Path) -> None
     assert configuration.planner_profile_id == "planner-primary"
     assert configuration.recovery_profile_id == "recovery-primary"
     assert configuration.action_verifier_profile_id == "action-verifier-primary"
+    assert configuration.replay_preparation_profile_id == "reconciler-primary"
     assert [profile.model for profile in configuration.model_profiles.profiles] == [
         "openrouter/configured/planner",
         "openrouter/configured/grounder",
         "openrouter/configured/auditor",
         "openrouter/configured/recovery",
         "openrouter/configured/action-verifier",
+        "openrouter/configured/reconciler",
     ]
 
 
@@ -127,6 +137,15 @@ def test_loads_an_optional_reusable_memory_root(tmp_path: Path) -> None:
     payload["memory_root"] = "shared-app-memory"
 
     configuration = load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+
+    assert configuration.memory_root == Path("shared-app-memory")
+
+
+def test_configuration_accepts_an_optional_memory_root(tmp_path: Path) -> None:
+    configured = _configuration()
+    configured["memory_root"] = "shared-app-memory"
+
+    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, configured))
 
     assert configuration.memory_root == Path("shared-app-memory")
 
@@ -157,7 +176,11 @@ def test_loads_the_recommended_discovery_budgets(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (("maximum_steps", 101), ("maximum_model_requests", 202)),
+    (
+        ("maximum_steps", 501),
+        ("maximum_model_requests", 2_002),
+        ("maximum_duration_seconds", 14_401),
+    ),
 )
 def test_rejects_agent_budgets_above_the_supported_ceiling(
     tmp_path: Path,

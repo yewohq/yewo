@@ -1,7 +1,6 @@
 """Bounded learning that builds reusable YewoAgent memory."""
 
 from yewo.agent.discovery.promotion import AppMemoryBuilder, DiscoveryPromotion
-from yewo.agent.screen_memory import merge_replay_variants
 from yewo.agent.discovery.records import (
     DiscoveryCoverage,
     DiscoveryCoverageEntry,
@@ -10,13 +9,18 @@ from yewo.agent.discovery.records import (
     DiscoveryRequest,
     DiscoveryResult,
 )
-from yewo.agent.goal_verifier import (
+from yewo.agent.planning.goal_verifier import (
     GoalVerification,
     GoalVerifier,
     ModelGoalVerifier,
 )
 from yewo.agent.discovery.conclusion import DiscoveryEvidenceError
-from yewo.agent.discovery.workflow import DiscoveryWorkflow
+
+# DiscoveryWorkflow stays out of this package surface on purpose. It reaches
+# yewo.agent.replay.preparation, which imports discovery record types back, so
+# exporting it here would make any import of yewo.agent.discovery.records load a
+# partially initialised yewo.agent.replay.procedure_compilation. Import it from
+# yewo.agent.discovery.workflow instead.
 
 __all__ = [
     "AppMemoryBuilder",
@@ -28,9 +32,7 @@ __all__ = [
     "DiscoveryPromotion",
     "DiscoveryRequest",
     "DiscoveryResult",
-    "DiscoveryWorkflow",
     "GoalVerification",
     "GoalVerifier",
     "ModelGoalVerifier",
-    "merge_replay_variants",
 ]

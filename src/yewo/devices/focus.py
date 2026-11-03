@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from yewo.devices.errors import DeviceTargetRejectedError
@@ -35,6 +36,30 @@ class TextElement(Protocol):
     def get_attribute(self, name: str) -> str | None: ...
 
 
+class TextFieldType(StrEnum):
+    """Semantic type exposed by trusted platform field metadata."""
+
+    TEXT = "text"
+    PASSWORD = "password"
+    UNKNOWN = "unknown"
+
+
+class TextFieldContextSource(StrEnum):
+    """Boundary that classified one focused text field."""
+
+    PLATFORM_METADATA = "platform_metadata"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class TextFieldContext:
+    """Secret-free traits of one focused text field."""
+
+    is_secure: bool | None
+    field_type: TextFieldType
+    source: TextFieldContextSource
+
+
 class _SwitchTo(Protocol):
     @property
     def active_element(self) -> TextElement: ...
@@ -60,6 +85,7 @@ class FocusedFieldReading:
     is_focused: bool | None
     driver_bounds: tuple[int, int, int, int] | None
     keyboard_visible: bool | None
+    field_context: TextFieldContext | None = None
 
 
 class FocusService:
@@ -94,6 +120,11 @@ class FocusService:
             if _boolean_attribute(before.get_attribute("focused")) is True and _is_target_field(
                 before_bounds, driver_point, calibration
             ):
+                if self._keyboard_visible() is False:
+                    try:
+                        before.click()
+                    except Exception:  # noqa: BLE001 - coordinate focus remains available
+                        self._tap(x, y)
                 return before
         target_element = _target_text_element(self._driver, driver_point, calibration)
         if target_element is not None:
@@ -130,6 +161,11 @@ class FocusService:
                 if focused is not False and (
                     _is_target_field(bounds, driver_point, calibration)
                     or (focused is True and bounds is None)
+                    or (
+                        focused is True
+                        and target_element is not None
+                        and _is_same_element(field, target_element)
+                    )
                 ):
                     return field
             remaining_seconds = deadline - self._clock.monotonic()
@@ -156,6 +192,7 @@ class FocusService:
             is_focused=_boolean_attribute(element.get_attribute("focused")),
             driver_bounds=_element_bounds(element),
             keyboard_visible=self._keyboard_visible(),
+            field_context=text_field_context(element),
         )
 
     def focused_field(self) -> TextElement:
@@ -183,11 +220,62 @@ class FocusService:
             return None
 
 
+def text_field_context(element: TextElement) -> TextFieldContext:
+    """Classify a field without reading its current value."""
+    password = _safe_boolean_attribute(element, "password")
+    type_name = _safe_attribute(element, "type") or _safe_attribute(element, "className")
+    is_ios_secure = type_name == "XCUIElementTypeSecureTextField"
+    if password is True or is_ios_secure:
+        return TextFieldContext(
+            is_secure=True,
+            field_type=TextFieldType.PASSWORD,
+            source=TextFieldContextSource.PLATFORM_METADATA,
+        )
+    if password is False or type_name in {
+        "android.widget.EditText",
+        "XCUIElementTypeTextField",
+        "XCUIElementTypeSearchField",
+        "XCUIElementTypeTextView",
+    }:
+        return TextFieldContext(
+            is_secure=False,
+            field_type=TextFieldType.TEXT,
+            source=TextFieldContextSource.PLATFORM_METADATA,
+        )
+    return TextFieldContext(
+        is_secure=None,
+        field_type=TextFieldType.UNKNOWN,
+        source=TextFieldContextSource.UNAVAILABLE,
+    )
+
+
+def _safe_attribute(element: TextElement, name: str) -> str | None:
+    try:
+        value = element.get_attribute(name)
+    except Exception:  # noqa: BLE001 - normalize an external driver read
+        return None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _safe_boolean_attribute(element: TextElement, name: str) -> bool | None:
+    return _boolean_attribute(_safe_attribute(element, name))
+
+
 def _active_element(driver: FocusDriver) -> TextElement | None:
     try:
         return driver.switch_to.active_element
     except Exception:  # noqa: BLE001 - Appium reports no element before first focus
         return None
+
+
+def _is_same_element(first: TextElement, second: TextElement) -> bool:
+    """Match the clicked Appium element after keyboard reflow changes its bounds."""
+    if first is second:
+        return True
+    try:
+        return first == second
+    except Exception:  # noqa: BLE001 - WebElement equality is an external driver boundary
+        return False
 
 
 def _focused_elements(driver: FocusDriver) -> tuple[TextElement, ...]:

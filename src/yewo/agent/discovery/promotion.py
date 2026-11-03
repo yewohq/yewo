@@ -4,18 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import re
 from typing import Mapping
 
 from pydantic import ValidationError
 
-from yewo.agent.runtime_records import AgentResult, AgentStep, AgentTerminalReason
-from yewo.agent.grounding_memory import AcceptedGrounding
-from yewo.agent.discovery_checkpoint import (
-    MAXIMUM_DISCOVERY_CHECKPOINTS,
-    build_discovery_checkpoint,
-    retain_discovery_graph,
-)
+from yewo.agent.runtime.records import AgentResult, AgentStep
+from yewo.agent.memory.grounding import AcceptedGrounding
+from yewo.agent.memory.knowledge import AppKnowledge
+from yewo.agent.memory.input_contracts import build_literal_input_contract
+from yewo.agent.memory.retention import retain_transitions
 from yewo.agent.actuation import (
     ActionKind,
     ActionOutcomeDisposition,
@@ -26,21 +23,17 @@ from yewo.agent.actuation import (
 from yewo.artifacts import RecordIdentifier
 from yewo.grounding import GroundedPoint, GroundingEvidence
 from yewo.observations import Observation
-from yewo.agent.app_memory import (
+from yewo.agent.memory.records import (
     AcceptedTransition,
     AppMemory,
-    InputContract,
-    InputValueShape,
     LogicalScreen,
     MemoryCompatibility,
-    RouteSegment,
     SemanticRouteAction,
     UnsuccessfulAttempt,
     UnsuccessfulAttemptDisposition,
-    VerifiedRoute,
     derived_memory_identifier,
 )
-from yewo.agent.screen_memory import (
+from yewo.agent.memory.screens import (
     add_observation_screen,
     retain_observation_variants,
     validate_memory_observations,
@@ -52,6 +45,7 @@ from yewo.agent.discovery.records import (
     DiscoveryRequest,
 )
 from yewo.agent.discovery.coverage import build_objective_evidence
+from yewo.agent.replay.reconciliation_records import ReplayProcedure
 
 
 @dataclass(frozen=True)
@@ -72,22 +66,25 @@ class AppMemoryBuilder:
         observations: Mapping[str, Observation],
         compatibility: MemoryCompatibility,
         *,
-        verified_objective_ids: frozenset[RecordIdentifier],
+        verified_objective_ids: frozenset[RecordIdentifier] | None,
         source_run_id: RecordIdentifier,
         updated_at: datetime,
         existing: AppMemory | None = None,
+        compiled_procedure: ReplayProcedure | None = None,
+        evidence_observation_ids: tuple[RecordIdentifier, ...] = (),
     ) -> DiscoveryPromotion:
         """Return accepted memory and coverage without upgrading ambiguous evidence."""
         if existing is not None and existing.compatibility != compatibility:
             raise ValueError("Existing app memory is incompatible with this discovery run.")
         requested_objective_ids = {objective.objective_id for objective in request.objectives}
-        if not verified_objective_ids.issubset(requested_objective_ids):
+        if verified_objective_ids is not None and not verified_objective_ids.issubset(
+            requested_objective_ids
+        ):
             raise ValueError("Verification names an objective outside this discovery request.")
         validate_memory_observations(observations, compatibility)
         screens = list(existing.screens if existing is not None else ())
         transitions = list(existing.transitions if existing is not None else ())
         unsuccessful_attempts = list(existing.unsuccessful_attempts if existing is not None else ())
-        checkpoints = list(existing.checkpoints if existing is not None else ())
         run_transitions: list[AcceptedTransition] = []
         new_unsuccessful_attempts: list[UnsuccessfulAttempt] = []
 
@@ -138,87 +135,43 @@ class AppMemoryBuilder:
                 transitions[equivalent_index] = transition
             run_transitions.append(transition)
 
-        routes = list(existing.routes if existing is not None else ())
-        capabilities = list(existing.capabilities if existing is not None else ())
         coverage_entries: list[DiscoveryCoverageEntry] = []
-        route = _verified_route(request, agent_result, run_transitions)
-        for objective in request.objectives:
-            entry, objective_route, capability = build_objective_evidence(
-                objective,
-                agent_result,
-                route,
-                objective.objective_id in verified_objective_ids,
+        if verified_objective_ids is not None:
+            coverage_entries.extend(
+                build_objective_evidence(
+                    objective,
+                    agent_result,
+                    compiled_procedure,
+                    evidence_observation_ids,
+                    objective.objective_id in verified_objective_ids,
+                )
+                for objective in request.objectives
             )
-            coverage_entries.append(entry)
-            if objective_route is not None and objective_route.route_id not in {
-                item.route_id for item in routes
-            }:
-                routes.append(objective_route)
-            if capability is not None and capability.capability_id not in {
-                item.capability_id for item in capabilities
-            }:
-                capabilities.append(capability)
-
+        else:
+            coverage_entries.extend(
+                DiscoveryCoverageEntry(
+                    objective_id=objective.objective_id,
+                    state=DiscoveryObjectiveState.UNRESOLVED,
+                    reason="The run did not independently verify objective coverage.",
+                )
+                for objective in request.objectives
+            )
         coverage = DiscoveryCoverage(entries=tuple(coverage_entries))
-        verified_ids = {
-            entry.objective_id
-            for entry in coverage.entries
-            if entry.state is DiscoveryObjectiveState.SUPPORTED
-        }
-        checkpoints = [item for item in checkpoints if item.objective_id not in verified_ids]
-        if request.objectives[0].objective_id not in verified_ids:
-            checkpoint = build_discovery_checkpoint(
-                request.objectives[0].objective_id,
-                request.objectives[0].statement,
-                run_transitions,
-                source_run_id,
-                updated_at,
-            )
-            if checkpoint is not None:
-                checkpoints = [
-                    item for item in checkpoints if item.objective_id != checkpoint.objective_id
-                ]
-                checkpoints.append(checkpoint)
         if not run_transitions and not new_unsuccessful_attempts:
             return DiscoveryPromotion(memory=existing, coverage=coverage)
         source_run_ids = tuple(
             dict.fromkeys((*(existing.source_run_ids if existing else ()), source_run_id))
         )
-        checkpoints = checkpoints[-MAXIMUM_DISCOVERY_CHECKPOINTS:]
-        retained_graph = retain_discovery_graph(
+        retained_transitions = retain_transitions(
             transitions,
-            routes,
-            checkpoints,
-            capabilities,
             compatibility.retention.maximum_transitions,
-        )
-        retained_capability_ids = {
-            capability.capability_id for capability in retained_graph.capabilities
-        }
-        coverage = DiscoveryCoverage(
-            entries=tuple(
-                entry
-                if entry.capability_id is None or entry.capability_id in retained_capability_ids
-                else entry.model_copy(
-                    update={
-                        "state": DiscoveryObjectiveState.UNRESOLVED,
-                        "capability_id": None,
-                        "route_id": None,
-                        "evidence_observation_ids": (),
-                        "reason": "Memory retention could not retain the verified route.",
-                    }
-                )
-                for entry in coverage.entries
-            )
         )
         maximum_attempts = compatibility.retention.maximum_unsuccessful_attempts
         retained_attempts = tuple(unsuccessful_attempts[-maximum_attempts:])
         retained_screens = retain_observation_variants(
             screens,
-            retained_graph.transitions,
+            retained_transitions,
             retained_attempts,
-            retained_graph.routes,
-            retained_graph.capabilities,
             compatibility.retention.maximum_variants_per_screen,
         )
         memory = AppMemory(
@@ -230,11 +183,9 @@ class AppMemoryBuilder:
             compatibility=compatibility,
             source_run_ids=source_run_ids,
             screens=retained_screens,
-            transitions=retained_graph.transitions,
+            transitions=retained_transitions,
             unsuccessful_attempts=retained_attempts,
-            checkpoints=retained_graph.checkpoints,
-            routes=retained_graph.routes,
-            capabilities=retained_graph.capabilities,
+            app_knowledge=existing.app_knowledge if existing is not None else AppKnowledge(),
             updated_at=updated_at,
         )
         return DiscoveryPromotion(memory=memory, coverage=coverage)
@@ -403,11 +354,14 @@ def _semantic_action(step: AgentStep) -> SemanticRouteAction:
     proposal = step.proposal
     declared_value_name = None
     disposable_text = None
+    input_contract = None
     if proposal.text is not None:
         if isinstance(proposal.text, DeclaredValueReference):
             declared_value_name = proposal.text.value_name
         else:
             disposable_text = proposal.text.value
+    if proposal.action is ActionKind.TYPE and disposable_text is not None:
+        input_contract = build_literal_input_contract(disposable_text)
     if proposal.expected_outcome is None:
         raise ValueError("Reusable route actions require an expected outcome.")
     return SemanticRouteAction(
@@ -419,7 +373,7 @@ def _semantic_action(step: AgentStep) -> SemanticRouteAction:
         distance=proposal.distance,
         duration_seconds=proposal.duration_seconds,
         declared_value_name=declared_value_name,
-        disposable_text=disposable_text,
+        input_contract=input_contract,
     )
 
 
@@ -431,36 +385,21 @@ def _add_input_contract(
     if (
         previous.action.action is not ActionKind.FOCUS
         or action.action is not ActionKind.TYPE
-        or action.disposable_text is None
+        or action.input_contract is None
         or previous.destination_screen_id != current.source_screen_id
         or previous.action.target_description is None
     ):
         return current
-    value_shape, format_pattern = _input_shape(action.disposable_text)
     return current.model_copy(
         update={
             "action": action.model_copy(
                 update={
                     "target_description": previous.action.target_description,
-                    "input_contract": InputContract(
-                        value_shape=value_shape,
-                        format_pattern=format_pattern,
-                    ),
+                    "input_contract": action.input_contract,
                 }
             )
         }
     )
-
-
-def _input_shape(value: str) -> tuple[InputValueShape, str | None]:
-    if re.fullmatch(r"[+-]?\d+", value):
-        return InputValueShape.INTEGER, None
-    if re.fullmatch(r"[+-]?(?:\d+\.\d*|\d*\.\d+)", value):
-        return InputValueShape.DECIMAL, None
-    if re.fullmatch(r"\d+(?:[^\w\s]+\d+)+", value):
-        pattern = re.sub(r"\d", "#", value)
-        return InputValueShape.FORMATTED, pattern
-    return InputValueShape.TEXT, None
 
 
 def _transition_has_independent_signal(
@@ -468,7 +407,7 @@ def _transition_has_independent_signal(
     source_screen_id: str,
     destination_screen_id: str,
 ) -> bool:
-    meaningful = signals - {ActionOutcomeSignal.SCREEN_CHANGED}
+    meaningful = signals - {ActionOutcomeSignal.PIXELS_CHANGED}
     return bool(meaningful) or source_screen_id != destination_screen_id
 
 
@@ -481,58 +420,4 @@ def _same_semantic_transition(
         and first.destination_screen_id == second.destination_screen_id
         and first.action == second.action
         and first.outcome_signals == second.outcome_signals
-    )
-
-
-def _verified_route(
-    request: DiscoveryRequest,
-    agent_result: AgentResult,
-    transitions: list[AcceptedTransition],
-) -> VerifiedRoute | None:
-    if agent_result.terminal_reason is not AgentTerminalReason.DONE_REQUESTED or not transitions:
-        return None
-    represented_step_ids = {transition.source_step_id for transition in transitions}
-    for step in agent_result.steps:
-        if (
-            step.receipt is not None
-            and step.receipt.disposition is DispatchDisposition.DISPATCH_UNVERIFIED
-        ):
-            return None
-        if step.receipt is None or step.receipt.disposition is not DispatchDisposition.DISPATCHED:
-            continue
-        if step.step_id in represented_step_ids:
-            continue
-        if (
-            step.outcome is not None
-            and step.outcome.disposition is ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE
-        ):
-            continue
-        return None
-    if any(
-        previous.destination_screen_id != current.source_screen_id
-        for previous, current in zip(transitions, transitions[1:], strict=False)
-    ):
-        return None
-    objective_text = " ".join(objective.statement for objective in request.objectives)
-    transition_ids = tuple(transition.transition_id for transition in transitions)
-    observations = (
-        transitions[0].source_observation_id,
-        *(transition.destination_observation_id for transition in transitions),
-    )
-    return VerifiedRoute(
-        route_id=derived_memory_identifier("route", request.request_id, *transition_ids),
-        objective_id=request.objectives[0].objective_id,
-        objective=objective_text,
-        start_screen_id=transitions[0].source_screen_id,
-        destination_screen_id=transitions[-1].destination_screen_id,
-        segments=tuple(
-            RouteSegment(
-                transition_id=transition.transition_id,
-                source_screen_id=transition.source_screen_id,
-                destination_screen_id=transition.destination_screen_id,
-                action=transition.action,
-            )
-            for transition in transitions
-        ),
-        evidence_observation_ids=tuple(dict.fromkeys(observations)),
     )

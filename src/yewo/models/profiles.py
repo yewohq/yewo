@@ -83,9 +83,10 @@ class ModelRetryPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     timeout_seconds: float = Field(gt=0)
-    max_attempts: int = Field(default=1, ge=1, le=5)
-    backoff_seconds: tuple[float, ...] = ()
-    max_validation_attempts: int = Field(default=2, ge=1, le=3)
+    max_attempts: int = Field(default=4, ge=1, le=5)
+    backoff_seconds: tuple[float, ...] = (1, 2, 4)
+    max_validation_attempts: int = Field(default=4, ge=1, le=4)
+    maximum_retry_delay_seconds: float = Field(default=300, gt=0, le=900)
 
     @model_validator(mode="after")
     def _validate_backoff(self) -> Self:
@@ -96,7 +97,9 @@ class ModelRetryPolicy(BaseModel):
         return self
 
 
-_MINIMUM_ROLE_IMAGES = {ModelRole.RECOVERY_ADVISOR: 2}
+_MINIMUM_ROLE_IMAGES = {
+    ModelRole.RECOVERY_ADVISOR: 2,
+}
 
 
 class ModelImageConstraints(BaseModel):

@@ -8,6 +8,7 @@ from enum import IntEnum, StrEnum
 from typing import Any, Protocol
 
 from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
+from yewo.devices.inventory import DevicePlatform
 
 
 class ApplicationState(IntEnum):
@@ -29,6 +30,41 @@ class ApplicationActivityStatus(StrEnum):
     VERIFIED_ACTIVE = "verified_active"
     STATE_ONLY_ACTIVE = "state_only_active"
     INACTIVE = "inactive"
+
+
+class TrustedSystemSurface(StrEnum):
+    """A platform-owned surface that can participate in an app journey."""
+
+    RUNTIME_PERMISSION = "runtime_permission"
+    SYSTEM_UI = "system_ui"
+
+
+_ANDROID_PERMISSION_CONTROLLER_IDS = frozenset(
+    {
+        "com.android.permissioncontroller",
+        "com.google.android.permissioncontroller",
+    }
+)
+
+_ANDROID_SYSTEM_UI_IDS = frozenset({"com.android.systemui"})
+
+
+def trusted_system_surface(
+    platform: DevicePlatform,
+    foreground_application_id: str | None,
+) -> TrustedSystemSurface | None:
+    """Classify a narrowly approved platform-owned foreground surface."""
+    if (
+        platform is DevicePlatform.ANDROID
+        and foreground_application_id in _ANDROID_PERMISSION_CONTROLLER_IDS
+    ):
+        return TrustedSystemSurface.RUNTIME_PERMISSION
+    if (
+        platform is DevicePlatform.ANDROID
+        and foreground_application_id in _ANDROID_SYSTEM_UI_IDS
+    ):
+        return TrustedSystemSurface.SYSTEM_UI
+    return None
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from yewo.agent import (
-    AgentResult, AgentTerminalReason,
+    AgentResult,
+    AgentTerminalReason,
     AgentUsage,
     InputValueShape,
     MemoryCompatibility,
@@ -25,10 +26,10 @@ from yewo.agent.discovery import (
     DiscoveryObjective,
     DiscoveryObjectiveState,
     DiscoveryRequest,
-    merge_replay_variants,
 )
 
 from agent.discovery.support import agent_result, observation
+from agent.replay.test_procedure_budget import _procedure as compiled_procedure_fixture
 
 
 def _request() -> DiscoveryRequest:
@@ -55,7 +56,14 @@ def _compatibility() -> MemoryCompatibility:
     )
 
 
-def _promote(*, disposition=ActionOutcomeDisposition.OBSERVED, terminal=None, action=None):
+def _promote(
+    *,
+    disposition=ActionOutcomeDisposition.OBSERVED,
+    terminal=None,
+    action=None,
+    compiled_procedure=None,
+    evidence_observation_ids=(),
+):
     before = observation("obs_1", "0000000000000000")
     after = observation(
         "obs_2",
@@ -78,6 +86,8 @@ def _promote(*, disposition=ActionOutcomeDisposition.OBSERVED, terminal=None, ac
         verified_objective_ids=frozenset({"account_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
+        compiled_procedure=compiled_procedure,
+        evidence_observation_ids=evidence_observation_ids,
     )
 
 
@@ -91,13 +101,14 @@ def test_memory_requires_a_versioned_application_build() -> None:
         )
 
 
-def test_done_promotes_one_route_capability_and_exact_source_grounding() -> None:
-    promotion = _promote()
+def test_done_promotes_one_transition_and_exact_source_grounding() -> None:
+    promotion = _promote(
+        compiled_procedure=compiled_procedure_fixture(),
+        evidence_observation_ids=("obs_1", "obs_2"),
+    )
 
     assert promotion.memory is not None
     assert len(promotion.memory.transitions) == 1
-    assert len(promotion.memory.routes) == 1
-    assert len(promotion.memory.capabilities) == 1
     assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.SUPPORTED
     serialized = promotion.memory.model_dump_json()
     assert '"target_description":"the add button"' in serialized
@@ -275,13 +286,11 @@ def test_application_exit_cannot_become_a_reusable_transition() -> None:
     assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.UNRESOLVED
 
 
-def test_budget_terminal_preserves_transition_without_claiming_capability() -> None:
+def test_budget_terminal_preserves_transition_without_claiming_coverage() -> None:
     promotion = _promote(terminal=AgentTerminalReason.BUDGET_EXHAUSTED)
 
     assert promotion.memory is not None
     assert len(promotion.memory.transitions) == 1
-    assert promotion.memory.routes == ()
-    assert promotion.memory.capabilities == ()
     assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.UNRESOLVED
 
 
@@ -305,7 +314,7 @@ def test_nearby_fingerprints_become_variants_of_one_logical_screen() -> None:
                             update={
                                 "signals": frozenset(
                                     {
-                                        ActionOutcomeSignal.SCREEN_CHANGED,
+                                        ActionOutcomeSignal.PIXELS_CHANGED,
                                         ActionOutcomeSignal.FOCUS_CHANGED,
                                     }
                                 )
@@ -359,15 +368,16 @@ def test_incompatible_masks_cannot_be_grouped() -> None:
         )
 
 
-def test_disposable_literal_text_actions_become_shared_route_mechanics() -> None:
+def test_disposable_literal_text_retains_only_its_non_secret_input_shape() -> None:
     promotion = _promote(action=ActionKind.TYPE)
 
     assert promotion.memory is not None
-    assert len(promotion.memory.routes) == 1
-    action = promotion.memory.routes[0].segments[0].action
-    assert action.disposable_text == "hello"
+    action = promotion.memory.transitions[0].action
     assert action.declared_value_name is None
-    assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.SUPPORTED
+    assert action.input_contract is not None
+    assert action.input_contract.value_shape is InputValueShape.TEXT
+    assert "hello" not in promotion.memory.model_dump_json()
+    assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.UNRESOLVED
 
 
 def test_focus_then_literal_type_learns_a_targeted_input_contract() -> None:
@@ -417,7 +427,7 @@ def test_focus_then_literal_type_learns_a_targeted_input_contract() -> None:
     )
 
     assert promotion.memory is not None
-    type_action = promotion.memory.routes[0].segments[1].action
+    type_action = promotion.memory.transitions[1].action
     assert type_action.target_description == "the name field"
     assert type_action.input_contract is not None
     assert type_action.input_contract.value_shape is InputValueShape.TEXT
@@ -452,14 +462,14 @@ def test_declared_type_and_clear_actions_can_be_reused_without_a_value(
     )
 
     assert promotion.memory is not None
-    assert len(promotion.memory.routes) == 1
+    assert len(promotion.memory.transitions) == 1
     serialized = promotion.memory.model_dump_json()
     assert "hello" not in serialized
     if action is ActionKind.TYPE:
         assert "account_name" in serialized
 
 
-def test_route_remains_contiguous_across_disposable_text_input() -> None:
+def test_literal_text_transition_retains_only_its_input_shape() -> None:
     first = observation("obs_1", "0000000000000000")
     typed = observation(
         "obs_2",
@@ -516,33 +526,8 @@ def test_route_remains_contiguous_across_disposable_text_input() -> None:
 
     assert promotion.memory is not None
     assert len(promotion.memory.transitions) == 2
-    assert len(promotion.memory.routes) == 1
-    assert len(promotion.memory.capabilities) == 1
-    assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.SUPPORTED
-
-
-def test_successful_replay_can_learn_fresh_screen_variants_without_changing_route() -> None:
-    promotion = _promote()
-    assert promotion.memory is not None
-    fresh_source = observation("fresh_source", "0000000000000000")
-    fresh_destination = observation(
-        "fresh_destination",
-        "1111111111111111",
-        predecessor_observation_id=fresh_source.observation_id,
-        offset_seconds=1,
+    assert all(
+        transition.action.declared_value_name is None
+        for transition in promotion.memory.transitions
     )
-
-    updated = merge_replay_variants(
-        promotion.memory,
-        {
-            fresh_source.observation_id: fresh_source,
-            fresh_destination.observation_id: fresh_destination,
-        },
-        source_run_id="replay_run",
-        updated_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
-    )
-
-    assert updated.routes == promotion.memory.routes
-    assert updated.capabilities == promotion.memory.capabilities
-    assert {len(screen.variants) for screen in updated.screens} == {2}
-    assert updated.source_run_ids[-1] == "replay_run"
+    assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.UNRESOLVED

@@ -59,6 +59,7 @@ class GroundingResolutionSource(StrEnum):
 
     MODEL = "model"
     MEMORY = "memory"
+    PROCEDURE = "procedure"
 
 
 class GroundingCoordinateConvention(StrEnum):
@@ -239,6 +240,7 @@ class GroundingResult(BaseModel):
     transport_disposition: ModelCallDisposition | None = None
     raw_response_artifact: ModelArtifactReference | None = None
     cached_transition_id: RecordIdentifier | None = None
+    cached_procedure_step_id: RecordIdentifier | None = None
     latency_ms: float | None = Field(default=None, ge=0)
     usage: ModelCallUsage
     confidence: float | None = Field(default=None, ge=0, le=1)
@@ -252,14 +254,31 @@ class GroundingResult(BaseModel):
                 raise ValueError("A grounding response artifact must contain a model call.")
             if self.cached_transition_id is not None:
                 raise ValueError("Model grounding cannot reference a cached transition.")
+            if self.cached_procedure_step_id is not None:
+                raise ValueError("Model grounding cannot reference a procedure step.")
+        elif self.resolution_source is GroundingResolutionSource.MEMORY:
+            if (
+                self.cached_transition_id is None
+                or self.cached_procedure_step_id is not None
+                or self.transport_disposition is not None
+                or self.raw_response_artifact is not None
+                or self.disposition is not GroundingDisposition.ACCEPTED
+                or self.usage != ModelCallUsage()
+            ):
+                raise ValueError(
+                    "Memory grounding requires accepted zero-usage transition evidence."
+                )
         elif (
-            self.cached_transition_id is None
+            self.cached_procedure_step_id is None
+            or self.cached_transition_id is not None
             or self.transport_disposition is not None
             or self.raw_response_artifact is not None
             or self.disposition is not GroundingDisposition.ACCEPTED
             or self.usage != ModelCallUsage()
         ):
-            raise ValueError("Memory grounding requires accepted zero-usage transition evidence.")
+            raise ValueError(
+                "Procedure grounding requires accepted zero-usage procedure evidence."
+            )
         if self.disposition is GroundingDisposition.ACCEPTED:
             if self.location is None or self.reason is not None:
                 raise ValueError("An accepted grounding must contain one location and no reason.")

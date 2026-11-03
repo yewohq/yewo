@@ -10,7 +10,11 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from yewo.applications import ApplicationInspectionError, ApplicationResolver
+from yewo.applications import (
+    ApplicationDescriptor,
+    ApplicationInspectionError,
+    ApplicationResolver,
+)
 from yewo.automation import (
     AppiumServerError,
     AppiumServerConfig,
@@ -36,6 +40,7 @@ from yewo.runs.errors import (
     RunWorkflowInterrupted,
 )
 from yewo.runs.records import (
+    RUN_TERMINAL_REASON_MAX_LENGTH,
     RunMode,
     RunRequest,
     RunStage,
@@ -96,6 +101,14 @@ class RunExecutionContext:
 
 
 @dataclass(frozen=True)
+class RunPreparationContext:
+    """Resolved inputs available before Appium or application startup."""
+
+    workspace: RunWorkspace
+    application: ApplicationDescriptor
+
+
+@dataclass(frozen=True)
 class RunSessionPolicy:
     """Workflow requirements that must exist before an automation session starts."""
 
@@ -109,10 +122,19 @@ class RunWorkflow(Protocol):
         """Return safety requirements applied before the driver-owned work starts."""
         ...
 
+    def prepare(
+        self,
+        context: RunPreparationContext,
+        interruption: InterruptionSignal,
+    ) -> object | None:
+        """Prepare workflow evidence before the automation session starts."""
+        ...
+
     def execute(
         self,
         context: RunExecutionContext,
         interruption: InterruptionSignal,
+        preparation: object | None = None,
     ) -> RunWorkflowOutcome:
         """Return a typed conclusion without closing coordinator resources."""
         ...
@@ -256,6 +278,12 @@ class RunCoordinator:
                     _NARRATION_SOURCE,
                     f"Application resolved: {application.application_id}{version}.",
                 )
+                stage = RunStage.WORKFLOW_PREPARATION
+                self._require_continuation(signal)
+                preparation = workflow.prepare(
+                    RunPreparationContext(workspace=workspace, application=application),
+                    signal,
+                )
                 stage = RunStage.APPIUM_STARTUP
                 self._require_continuation(signal)
                 narrator.record(_NARRATION_SOURCE, "Starting the Appium server...")
@@ -297,6 +325,7 @@ class RunCoordinator:
                 outcome = workflow.execute(
                     RunExecutionContext(workspace=workspace, session=session),
                     signal,
+                    preparation,
                 )
                 category = outcome.category
                 reason = outcome.reason
@@ -402,7 +431,7 @@ class RunCoordinator:
                 run_id=workspace.start.run_id,
                 category=category,
                 stage=stage,
-                reason=reason,
+                reason=_bounded_terminal_reason(reason),
                 completed_at=self._time_factory(),
                 partial_evidence_available=_has_partial_evidence(workspace.root),
                 preceding_category=preceding_category,
@@ -422,6 +451,13 @@ class _RunInterrupted(Exception):
 
 class _SetupBlock(Exception):
     pass
+
+
+def _bounded_terminal_reason(reason: str) -> str:
+    if len(reason) <= RUN_TERMINAL_REASON_MAX_LENGTH:
+        return reason
+    content_length = RUN_TERMINAL_REASON_MAX_LENGTH - 3
+    return f"{reason[:content_length].rstrip()}..."
 
 
 def _platform_query(query: DeviceQuery, platform: DevicePlatform) -> DeviceQuery:

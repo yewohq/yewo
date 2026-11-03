@@ -15,6 +15,9 @@ from yewo.artifacts import RecordIdentifier
 from yewo.devices import DeviceQuery
 
 
+RUN_TERMINAL_REASON_MAX_LENGTH = 1024
+
+
 class RunMode(StrEnum):
     """A product workflow that the coordinator can start."""
 
@@ -42,6 +45,7 @@ class RunStage(StrEnum):
     DEVICE_SELECTION = "device_selection"
     DEVICE_PREPARATION = "device_preparation"
     APPLICATION_INSPECTION = "application_inspection"
+    WORKFLOW_PREPARATION = "workflow_preparation"
     APPIUM_STARTUP = "appium_startup"
     AUTOMATION_STARTUP = "automation_startup"
     EXECUTION = "execution"
@@ -137,7 +141,7 @@ class RunTerminal(BaseModel):
     run_id: RecordIdentifier
     category: RunTerminalCategory
     stage: RunStage
-    reason: str = Field(min_length=1, max_length=1024)
+    reason: str = Field(min_length=1, max_length=RUN_TERMINAL_REASON_MAX_LENGTH)
     completed_at: datetime
     partial_evidence_available: bool
     preceding_category: RunTerminalCategory | None = None
