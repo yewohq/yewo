@@ -12,16 +12,16 @@ from yewo.agent.planning.goal_verifier import (
     GoalVerificationMilestone,
     build_goal_transition_evidence,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     EvidenceStep,
     ReplayProcedure,
     ProcedureCompilationReport,
     ProcedureCompilationStatus,
 )
-from yewo.agent.replay.preparation import compile_completed_run
-from yewo.agent.replay.reconciliation_store import (
+from yewo.agent.replay.procedure.preparation import compile_completed_run
+from yewo.agent.replay.reconciliation.store import (
     EVIDENCE_DOCUMENT_PATH,
     REPLAY_PROCEDURE_PATH,
 )

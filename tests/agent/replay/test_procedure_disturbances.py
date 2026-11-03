@@ -8,15 +8,15 @@ from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.actuation.diagnostics import ActionApplicationFailure
 from yewo.agent.planning.history import PlanningHistoryEntry
 from yewo.agent.planning.planner import PlanningRequest
-from yewo.agent.replay.procedure_execution import _procedure_terminal
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.execution import _procedure_terminal
+from yewo.agent.replay.procedure.records import (
     ProcedureReplayResult,
     ProcedureReplayTerminal,
 )
-from yewo.agent.replay.procedure_source import CompiledProcedureActionSource
-from yewo.agent.replay.procedure_store import ProcedureReplayStore
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+from yewo.agent.replay.procedure.store import ProcedureReplayStore
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.diagnostics import (
     ApplicationDiagnosticClassification,

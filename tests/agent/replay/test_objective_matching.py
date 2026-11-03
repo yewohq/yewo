@@ -4,15 +4,15 @@ from typing import cast
 
 from yewo.agent.discovery import DiscoveryObjective
 from yewo.agent.memory.records import MemoryCompatibility
-from yewo.agent.replay.objective_matching import (
+from yewo.agent.replay.procedure.objective_matching import (
     OBJECTIVE_MATCHING_SYSTEM_PROMPT,
     ObjectiveMatcher,
 )
-from yewo.agent.replay.procedure_store import StoredProcedureBundle
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.preparation import prepare_replay_procedure
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
+from yewo.agent.replay.procedure.store import StoredProcedureBundle
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.preparation import prepare_replay_procedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.models import ModelRole, TextModelContent
 
 from agent.planning.support import StubPlannerModel

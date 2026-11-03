@@ -5,14 +5,14 @@ from dataclasses import dataclass
 
 from yewo.agent.discovery.records import DiscoveryObjective
 from yewo.agent.memory.records import AppMemory, MemoryCompatibility
-from yewo.agent.replay.hazard_gating import compiled_procedure_has_known_hazard
-from yewo.agent.replay.objective_matching import (
+from yewo.agent.replay.procedure.hazards import compiled_procedure_has_known_hazard
+from yewo.agent.replay.procedure.objective_matching import (
     ObjectiveMatcher,
     ReplayProcedureSelection,
     exact_procedure_selection,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.procedure_compilation import compile_completed_run
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.reconciliation.compilation import compile_completed_run
 from yewo.models import ModelClient
 
 

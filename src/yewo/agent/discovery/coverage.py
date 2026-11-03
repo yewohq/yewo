@@ -9,11 +9,11 @@ from yewo.agent.discovery.records import (
     DiscoveryObjectiveState,
     DiscoveryRequest,
 )
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.records import (
     ProcedureReplayResult,
     ProcedureReplayTerminal,
 )
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.runtime.records import AgentResult, AgentTerminalReason
 
 

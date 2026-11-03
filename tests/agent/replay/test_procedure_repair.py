@@ -8,15 +8,15 @@ from yewo.agent.planning.history import PlanningHistoryEntry
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.planning.planner import PlanningRequest
-from yewo.agent.replay.procedure_execution import _can_audit_replay, _procedure_terminal
-from yewo.agent.replay.procedure_records import ProcedureReplayTerminal
-from yewo.agent.replay.procedure_records import ProcedureDivergence, ProcedureRepairEvidence
-from yewo.agent.replay.procedure_repair import BoundedProcedureRepairActionSource
-from yewo.agent.replay.procedure_repair import _target_facts
-from yewo.agent.replay.procedure_records import ProcedureRepairTarget
-from yewo.agent.replay.procedure_source import CompiledProcedureActionSource
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.procedure.execution import _can_audit_replay, _procedure_terminal
+from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
+from yewo.agent.replay.procedure.records import ProcedureDivergence, ProcedureRepairEvidence
+from yewo.agent.replay.procedure.repair import BoundedProcedureRepairActionSource
+from yewo.agent.replay.procedure.repair import _target_facts
+from yewo.agent.replay.procedure.records import ProcedureRepairTarget
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.runtime.records import AgentStep
 from yewo.grounding import GroundingRequest
 from yewo.observations import Observation

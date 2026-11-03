@@ -15,7 +15,7 @@ from yewo.agent.planning.goal_verifier import (
     persist_goal_verification,
 )
 from yewo.agent.memory.store import AppMemoryStore
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.narration import narrate_verification
 from yewo.agent.runtime.records import (
     AgentModePolicy,

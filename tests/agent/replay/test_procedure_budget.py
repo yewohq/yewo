@@ -2,12 +2,12 @@
 
 from yewo.agent import AgentModePolicy
 from yewo.agent.discovery.procedure_handoff import _policy_can_execute
-from yewo.agent.replay.procedure_budget import (
+from yewo.agent.replay.procedure.budget import (
     build_procedure_budget_requirement,
     procedure_budget_refusal_reason,
 )
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 
 from agent.actuation.support import limits
 from agent.replay.test_procedure_compiler import _evidence, _response

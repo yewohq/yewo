@@ -26,8 +26,8 @@ from yewo.agent.replay import (
     PROCEDURE_COMPILATION_REPORT_PATH,
     ProcedureCompilationStatus,
 )
-from yewo.agent.replay.preparation import compile_completed_run
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
+from yewo.agent.replay.procedure.preparation import compile_completed_run
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.memory.knowledge import (
     AppKnowledge,
     HazardKind,
@@ -176,7 +176,7 @@ def test_completed_result_builds_calls_compiles_and_measures(
         }
     )
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_compilation.ObservationStore.load_selected",
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
     compatibility = MemoryCompatibility(application=before.application)
@@ -267,7 +267,7 @@ def test_reconciler_receives_hazard_facts_and_advisory_claims(
         }
     )
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_compilation.ObservationStore.load_selected",
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
 
@@ -307,7 +307,7 @@ def test_compiler_refusal_stores_no_procedure(
         }
     )
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_compilation.ObservationStore.load_selected",
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
 
@@ -339,7 +339,7 @@ def test_compiler_feedback_fallback_can_repair_a_refusal(
     result, before, after = _result()
     model = SequentialReconciler(([], [1]))
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_compilation.ObservationStore.load_selected",
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
 
@@ -373,7 +373,7 @@ def test_model_failure_stores_report_without_compilation(
     result, before, after = _result()
     model = StubPlannerModel(None, disposition=ModelCallDisposition.PROVIDER_ERROR)
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_compilation.ObservationStore.load_selected",
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
 

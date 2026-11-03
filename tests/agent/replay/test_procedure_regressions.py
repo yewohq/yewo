@@ -10,7 +10,7 @@ from yewo.agent.replay import (
     build_evidence_document,
     compile_replay_procedure,
 )
-from yewo.agent.replay.reconciliation_compiler import procedure_effect
+from yewo.agent.replay.reconciliation.compiler import procedure_effect
 
 from agent.discovery.support import agent_result, observation
 from agent.replay.test_procedure_compiler import _evidence, _response

@@ -14,7 +14,7 @@ from yewo.agent.discovery.procedure_handoff import (
 )
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.replay import ReplayProcedure, compile_replay_procedure
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.records import (
     MilestoneEvidence,
     ProcedureDivergence,
     ProcedureRepairEvidence,
@@ -22,7 +22,7 @@ from yewo.agent.replay.procedure_records import (
     ProcedureReplayResult,
     ProcedureReplayTerminal,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.applications import ApplicationInstallationChange, ApplicationInstallMode
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelClient

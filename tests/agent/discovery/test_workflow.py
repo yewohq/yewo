@@ -17,7 +17,7 @@ from yewo.agent import (
     AppMemory,
     AppMemoryStore,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.actuation import (
     ActionKind,
     ActionPolicyLimits,
@@ -53,7 +53,7 @@ from yewo.runs import (
 
 from yewo.agent.discovery.compilation_milestones import DiscoveryCompilationMilestones
 from yewo.agent.discovery.workflow import DiscoveryWorkflow
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.reconciliation.records import (
     ReplayProcedure,
     ProcedureCompilationReport,
     ProcedureCompilationStatus,

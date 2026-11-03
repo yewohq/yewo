@@ -8,22 +8,22 @@ from typing import Literal
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.planning.planner import PlanningRequest
-from yewo.agent.replay.procedure_grounding import (
+from yewo.agent.replay.procedure.grounding import (
     ProcedureGroundingAuthorization,
     ProcedureGroundingMatch,
     build_keyboard_repair_grounding_match,
 )
-from yewo.agent.replay.procedure_records import MilestoneEvidence, ProcedureDivergence
-from yewo.agent.replay.procedure_records import ProcedureRepairTarget
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.records import MilestoneEvidence, ProcedureDivergence
+from yewo.agent.replay.procedure.records import ProcedureRepairTarget
+from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     ReplayProcedure,
     ReplayProcedureStep,
 )
-from yewo.agent.replay.procedure_repair_targets import (
+from yewo.agent.replay.procedure.repair_targets import (
     build_procedure_repair_preparation,
 )
-from yewo.agent.replay.procedure_entry import select_procedure_entry_index
+from yewo.agent.replay.procedure.entry import select_procedure_entry_index
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingRequest
 from yewo.agent.replay.state_matching import match_evidence_state, state_matches_observation

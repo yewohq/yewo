@@ -10,13 +10,13 @@ from yewo.agent import MemoryCompatibility
 from yewo.agent.discovery.preparation import DiscoveryPreparation
 from yewo.agent.discovery.procedure_handoff import replay_compiled_procedure_if_available
 from yewo.agent.replay import ReplayProcedure, compile_replay_procedure
-from yewo.agent.replay.objective_matching import (
+from yewo.agent.replay.procedure.objective_matching import (
     ProcedureSelectionMethod,
     ReplayProcedureSelection,
 )
-from yewo.agent.replay.procedure_records import ProcedureReplayResult
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.reconciliation_records import EvidenceTask
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.reconciliation.records import EvidenceTask
 from yewo.applications import ApplicationInstallationChange, ApplicationInstallMode
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelClient

@@ -26,8 +26,8 @@ from yewo.agent.memory.screens import observation_matches_screen
 from yewo.agent.memory.writeback import MemoryDelta, MemoryWritebackSkip
 from yewo.agent.memory.control_capture import capture_controls
 from yewo.agent.recovery.advisor import RecoveryAssessment
-from yewo.agent.replay.reconciliation_records import ReconcilerResponse
-from yewo.agent.replay.procedure_records import ProcedureReplayResult
+from yewo.agent.replay.reconciliation.records import ReconcilerResponse
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.runtime.records import AgentResult, AgentStep
 from yewo.artifacts import RecordIdentifier

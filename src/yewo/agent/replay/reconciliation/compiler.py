@@ -11,9 +11,9 @@ from yewo.agent.actuation import (
     ActionOutcomeSignal,
 )
 from yewo.agent.memory.records import AppMemory
-from yewo.agent.replay.hazard_gating import known_hazard_reasons
-from yewo.agent.replay.reconciliation_evidence import is_commit_target
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.hazards import known_hazard_reasons
+from yewo.agent.replay.reconciliation.evidence import is_commit_target
+from yewo.agent.replay.reconciliation.records import (
     CompilationOutcome,
     CompilationWarning,
     CompilerCheck,

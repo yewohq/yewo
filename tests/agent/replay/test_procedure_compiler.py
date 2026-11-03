@@ -12,11 +12,11 @@ from yewo.agent.actuation import ActionKind
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.planning.history import PlanningHistoryEntry
 from yewo.agent.planning.planner import PlanningRequest
-from yewo.agent.replay.procedure_source import CompiledProcedureActionSource
-from yewo.agent.replay.procedure_grounding import ProcedureGrounder
-from yewo.agent.replay.procedure_execution import _procedure_terminal
-from yewo.agent.replay.procedure_records import ProcedureReplayTerminal
-from yewo.agent.replay.procedure_store import (
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+from yewo.agent.replay.procedure.grounding import ProcedureGrounder
+from yewo.agent.replay.procedure.execution import _procedure_terminal
+from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
+from yewo.agent.replay.procedure.store import (
     CompiledProcedureStore,
     CompiledProcedureStoreError,
 )

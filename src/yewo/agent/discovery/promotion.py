@@ -45,7 +45,7 @@ from yewo.agent.discovery.records import (
     DiscoveryRequest,
 )
 from yewo.agent.discovery.coverage import build_objective_evidence
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 
 
 @dataclass(frozen=True)

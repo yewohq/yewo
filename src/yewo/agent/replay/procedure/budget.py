@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from yewo.agent.replay.procedure_repair import PROCEDURE_REPAIR_MAXIMUM_TOTAL_ACTIONS
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.procedure.repair import PROCEDURE_REPAIR_MAXIMUM_TOTAL_ACTIONS
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.runtime.observation_settlement import (
     default_action_settlement_policy,
     maximum_settlement_window_seconds,

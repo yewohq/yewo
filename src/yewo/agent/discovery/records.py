@@ -8,7 +8,7 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.agent.runtime.records import AgentResult, AgentTerminalReason
-from yewo.agent.replay.procedure_records import ProcedureReplayResult
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.artifacts import RecordIdentifier
 

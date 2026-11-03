@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from yewo.agent.actuation import ActionKind, ActionProposal
-from yewo.agent.replay.procedure_grounding import build_keyboard_reflow_step
-from yewo.agent.replay.procedure_records import ProcedureRepairTarget
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.grounding import build_keyboard_reflow_step
+from yewo.agent.replay.procedure.records import ProcedureRepairTarget
+from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     ProcedureEffect,
     ReplayProcedure,

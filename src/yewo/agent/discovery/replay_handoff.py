@@ -14,7 +14,7 @@ from yewo.agent.planning.goal_verifier import (
 from yewo.agent.memory.records import derived_memory_identifier
 from yewo.agent.discovery.coverage import budget_coverage
 from yewo.agent.discovery.records import DiscoveryObjective, DiscoveryRequest, DiscoveryResult
-from yewo.agent.replay.procedure_records import ProcedureReplayResult
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
 from yewo.agent.runtime.records import (
     AgentModePolicy,
     AgentResult,

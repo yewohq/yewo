@@ -21,7 +21,7 @@ from yewo.agent.memory.runtime_writeback import (
     write_back_discovery_knowledge,
 )
 from yewo.agent.memory.store import AppMemoryStore, AppMemoryStoreError
-from yewo.agent.replay.procedure_records import ProcedureReplayResult, ProcedureReplayTerminal
+from yewo.agent.replay.procedure.records import ProcedureReplayResult, ProcedureReplayTerminal
 from yewo.artifacts import EvidenceApplicationIdentity
 from yewo.observations import ObservationStore
 

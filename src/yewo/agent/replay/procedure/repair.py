@@ -9,13 +9,13 @@ from yewo.agent.planning.evidence import (
     resolve_planner_decision_metadata,
 )
 from yewo.agent.planning.planner import ActionProposalSource, PlanningRequest
-from yewo.agent.replay.procedure_grounding import ProcedureGroundingMatch
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.grounding import ProcedureGroundingMatch
+from yewo.agent.replay.procedure.records import (
     ProcedureEnvironmentEvent,
     ProcedureRepairEvidence,
     ProcedureRepairTarget,
 )
-from yewo.agent.replay.procedure_source import CompiledProcedureActionSource
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
 from yewo.agent.runtime.observation_settlement import (
     ActionSettlementPolicy,
     ActionSettlementPolicySource,

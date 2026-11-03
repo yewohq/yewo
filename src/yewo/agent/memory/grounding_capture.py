@@ -9,12 +9,12 @@ from yewo.agent.memory.knowledge import (
     KnowledgeEvidenceReference,
 )
 from yewo.agent.memory.records import AppMemory, derived_memory_identifier
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.records import (
     ProcedureGroundingDecision,
     ProcedureGroundingDecisionCode,
     ProcedureReplayResult,
 )
-from yewo.agent.replay.reconciliation_records import ReplayProcedure, ReplayProcedureStep
+from yewo.agent.replay.reconciliation.records import ReplayProcedure, ReplayProcedureStep
 
 
 def build_grounding_assessments(

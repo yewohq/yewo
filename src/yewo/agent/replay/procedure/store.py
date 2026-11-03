@@ -11,8 +11,8 @@ from typing import Generator, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-from yewo.agent.replay.procedure_records import ProcedureReplayResult
-from yewo.agent.replay.reconciliation_records import EvidenceDocument, ReplayProcedure
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
+from yewo.agent.replay.reconciliation.records import EvidenceDocument, ReplayProcedure
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,

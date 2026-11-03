@@ -19,10 +19,10 @@ from yewo.agent.planning.goal_verifier import (
     persist_goal_verification,
 )
 from yewo.agent.planning.evidence import PlannerDecisionSource
-from yewo.agent.replay.procedure_audit import audit_completed_replay
-from yewo.agent.replay.procedure_budget import procedure_budget_refusal_reason
-from yewo.agent.replay.procedure_grounding import ProcedureGrounder
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.audit import audit_completed_replay
+from yewo.agent.replay.procedure.budget import procedure_budget_refusal_reason
+from yewo.agent.replay.procedure.grounding import ProcedureGrounder
+from yewo.agent.replay.procedure.records import (
     ProcedureDivergence,
     ProcedureRepairEvidence,
     ProcedureReplayResult,
@@ -30,11 +30,11 @@ from yewo.agent.replay.procedure_records import (
     ProcedureReplayTerminal,
     ProcedureResetMethod,
 )
-from yewo.agent.replay.procedure_settlement import ProcedureSettlementPolicySource
-from yewo.agent.replay.procedure_repair import BoundedProcedureRepairActionSource
-from yewo.agent.replay.procedure_source import CompiledProcedureActionSource
-from yewo.agent.replay.procedure_store import ProcedureReplayStore
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.settlement import ProcedureSettlementPolicySource
+from yewo.agent.replay.procedure.repair import BoundedProcedureRepairActionSource
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+from yewo.agent.replay.procedure.store import ProcedureReplayStore
+from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     EvidenceTask,
     ReplayProcedure,
@@ -340,5 +340,3 @@ def _can_audit_replay(
         and source.replay_complete
         and (divergence is None or (repair is not None and repair.succeeded))
     )
-
-

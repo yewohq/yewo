@@ -5,7 +5,7 @@ from pathlib import Path
 
 from yewo.agent.memory.knowledge_capture import build_memory_delta
 from yewo.agent.planning.goal_verifier import GoalVerification
-from yewo.agent.replay.procedure_records import ProcedureReplayResult, ProcedureReplayTerminal
+from yewo.agent.replay.procedure.records import ProcedureReplayResult, ProcedureReplayTerminal
 
 from agent.discovery.support import agent_result, observation
 from agent.memory.test_store import _memory

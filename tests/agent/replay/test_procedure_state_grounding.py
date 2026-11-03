@@ -7,13 +7,13 @@ from PIL import Image, ImageDraw
 
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.planning.planner import PlanningRequest
-from yewo.agent.replay.procedure_grounding import (
+from yewo.agent.replay.procedure.grounding import (
     ProcedureGrounder,
     build_keyboard_reflow_step,
 )
-from yewo.agent.replay.procedure_source import CompiledProcedureActionSource
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.replay.state_matching import match_evidence_state
 from yewo.agent.replay.visual_matching import (
     build_state_visual_signature,

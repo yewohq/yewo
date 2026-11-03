@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from yewo.agent.discovery.records import DiscoveryRequest, DiscoveryResult
-from yewo.agent.replay.procedure_records import ProcedureReplayTerminal
+from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
 from yewo.run_narration import current_narrator
 
 

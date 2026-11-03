@@ -8,8 +8,8 @@ from yewo.agent.planning.goal_verifier import (
     ModelGoalVerifier,
     build_goal_transition_evidence,
 )
-from yewo.agent.replay.procedure_records import MilestoneEvidence
-from yewo.agent.replay.reconciliation_records import EvidenceTask
+from yewo.agent.replay.procedure.records import MilestoneEvidence
+from yewo.agent.replay.reconciliation.records import EvidenceTask
 from yewo.agent.runtime.records import AgentModePolicy, AgentStep
 from yewo.agent.runtime.verification import goal_verification_budget_reason
 from yewo.artifacts import new_record_identifier

@@ -8,10 +8,10 @@ from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.memory.runtime_writeback import write_back_discovery_knowledge
 from yewo.agent.memory.store import AppMemoryStore
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.procedure_records import ProcedureReplayTerminal
-from yewo.agent.replay.preparation import compile_completed_run
-from yewo.agent.replay.reconciliation_records import ProcedureCompilationReport
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
+from yewo.agent.replay.procedure.preparation import compile_completed_run
+from yewo.agent.replay.reconciliation.records import ProcedureCompilationReport
 from yewo.models import ModelClient
 from yewo.run_narration import current_narrator
 from yewo.runs import RunExecutionContext, RunTerminalCategory, RunWorkflowOutcome

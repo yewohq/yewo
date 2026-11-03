@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from yewo.agent.replay.reconciliation_records import EvidenceDocument, ReplayProcedure
+from yewo.agent.replay.reconciliation.records import EvidenceDocument, ReplayProcedure
 from yewo.agent.replay.state_matching import match_evidence_state
 from yewo.observations import Observation, ScreenshotReference
 

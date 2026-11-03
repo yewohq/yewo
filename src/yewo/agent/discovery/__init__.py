@@ -17,9 +17,9 @@ from yewo.agent.planning.goal_verifier import (
 from yewo.agent.discovery.conclusion import DiscoveryEvidenceError
 
 # DiscoveryWorkflow stays out of this package surface on purpose. It reaches
-# yewo.agent.replay.preparation, which imports discovery record types back, so
+# yewo.agent.replay.procedure.preparation, which imports discovery record types back, so
 # exporting it here would make any import of yewo.agent.discovery.records load a
-# partially initialised yewo.agent.replay.procedure_compilation. Import it from
+# partially initialised yewo.agent.replay.reconciliation.compilation. Import it from
 # yewo.agent.discovery.workflow instead.
 
 __all__ = [

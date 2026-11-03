@@ -13,18 +13,18 @@ from pydantic import ValidationError
 from yewo.agent.discovery.records import DiscoveryResult
 from yewo.agent.memory.knowledge import AppKnowledge
 from yewo.agent.memory.records import AppMemory, MemoryCompatibility, ScreenComparisonPolicy
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
-from yewo.agent.replay.reconciliation_evidence import build_evidence_document
-from yewo.agent.replay.reconciliation_prompt import build_reconciler_evidence_projection
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
+from yewo.agent.replay.reconciliation.evidence import build_evidence_document
+from yewo.agent.replay.reconciliation.prompt import build_reconciler_evidence_projection
+from yewo.agent.replay.reconciliation.records import (
     CompilerRefusal,
     ReconcilerResponse,
     ReplayProcedure,
     ProcedureCompilationReport,
     ProcedureCompilationStatus,
 )
-from yewo.agent.replay.reconciliation_store import ReconciliationArtifactStore
+from yewo.agent.replay.reconciliation.store import ReconciliationArtifactStore
 from yewo.agent.runtime.records import AgentStep, AgentTask
 from yewo.artifacts import (
     ArtifactRetention,

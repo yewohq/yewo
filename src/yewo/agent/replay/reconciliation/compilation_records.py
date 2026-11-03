@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.agent.actuation import ActionOutcomeDisposition, ActionOutcomeSignal, ActionProposal
 from yewo.agent.memory.knowledge import KnowledgeEvidenceReference
-from yewo.agent.replay.reconciliation_records import TargetVisualDescriptor
+from yewo.agent.replay.reconciliation.records import TargetVisualDescriptor
 from yewo.artifacts import EvidenceApplicationIdentity, RecordIdentifier
 from yewo.grounding import GroundingEvidence
 
@@ -180,7 +180,7 @@ class ReplayProcedure(BaseModel):
 CompilationOutcome = ReplayProcedure | CompilerRefusal
 
 
-from yewo.agent.replay.reconciliation_report import (  # noqa: E402, F401
+from yewo.agent.replay.reconciliation.report import (  # noqa: E402, F401
     ProcedureCompilationReport,
     ProcedureCompilationStatus,
 )

@@ -21,7 +21,7 @@ def test_importing_agent_does_not_import_discovery_workflow() -> None:
 
 
 def test_replay_procedure_compilation_imports_before_discovery() -> None:
-    command = "import yewo.agent.replay.procedure_compilation"
+    command = "import yewo.agent.replay.reconciliation.compilation"
 
     completed = subprocess.run(  # noqa: S603 - fixed interpreter and source
         [sys.executable, "-c", command],

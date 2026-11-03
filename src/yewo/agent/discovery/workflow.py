@@ -21,7 +21,7 @@ from yewo.agent.memory.records import build_memory_compatibility
 from yewo.agent.composition import build_device_agent, build_model_client
 from yewo.agent.memory.store import AppMemoryStore
 from yewo.applications import ApplicationInstallMode
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.runtime.records import AgentModePolicy
 from yewo.agent.discovery.promotion import AppMemoryBuilder
 from yewo.agent.discovery import conclusion, narration

@@ -366,7 +366,7 @@ class EvidenceDocument(BaseModel):
         return self
 
 
-from yewo.agent.replay.reconciliation_compilation_records import (  # noqa: E402, F401
+from yewo.agent.replay.reconciliation.compilation_records import (  # noqa: E402, F401
     CompilationOutcome,
     CompilationWarning,
     CompilerCheck,
@@ -382,5 +382,3 @@ from yewo.agent.replay.reconciliation_compilation_records import (  # noqa: E402
     ReplayProcedure,
     ReplayProcedureStep,
 )
-
-

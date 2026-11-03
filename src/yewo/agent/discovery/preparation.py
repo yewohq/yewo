@@ -10,11 +10,11 @@ from yewo.agent.composition import build_model_client
 from yewo.agent.discovery.records import DiscoveryRequest
 from yewo.agent.memory.store import AppMemoryStore
 from yewo.agent.planning.planner import TaskProgressContext
-from yewo.agent.replay.preparation import (
+from yewo.agent.replay.procedure.preparation import (
     ReplayProcedureSelection,
     prepare_replay_procedure,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.models import ModelProfileRegistry
 from yewo.observations import RedactionRegion
 from yewo.runs import RunPreparationContext

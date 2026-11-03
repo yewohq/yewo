@@ -11,17 +11,17 @@ from yewo.agent.discovery.narration import (
 from yewo.agent.discovery.coverage import procedure_replay_coverage
 from yewo.agent.discovery.records import DiscoveryRequest, DiscoveryResult
 from yewo.agent.discovery.preparation import DiscoveryPreparation
-from yewo.agent.replay.procedure_budget import procedure_budget_refusal_reason
-from yewo.agent.replay.procedure_execution import execute_compiled_procedure
-from yewo.agent.replay.hazard_gating import compiled_procedure_hazard_reasons
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.budget import procedure_budget_refusal_reason
+from yewo.agent.replay.procedure.execution import execute_compiled_procedure
+from yewo.agent.replay.procedure.hazards import compiled_procedure_hazard_reasons
+from yewo.agent.replay.procedure.records import (
     ProcedureReplayResult,
     ProcedureReplaySetup,
     ProcedureResetMethod,
     ProcedureReplayTerminal,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.reconciliation.records import (
     CompilerReason,
     EvidenceTask,
     ReplayProcedure,

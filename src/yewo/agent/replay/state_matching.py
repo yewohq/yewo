@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from collections.abc import Callable
 
-from yewo.agent.replay.reconciliation_records import EvidenceDocument, EvidenceState
+from yewo.agent.replay.reconciliation.records import EvidenceDocument, EvidenceState
 from yewo.agent.replay.visual_matching import state_visual_match_ratio
 from yewo.observations import (
     Observation,

@@ -13,7 +13,7 @@ from yewo.agent.discovery.outcome import (
 from yewo.agent.memory.records import MemoryCompatibility, ScreenComparisonPolicy
 from yewo.agent.memory.store import AppMemoryStore
 from yewo.models import ModelClient
-from yewo.agent.replay.procedure_records import ProcedureReplayTerminal
+from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
 from yewo.runs import RunExecutionContext, RunTerminalCategory, RunWorkflowOutcome
 
 

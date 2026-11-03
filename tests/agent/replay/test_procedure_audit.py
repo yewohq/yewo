@@ -10,8 +10,8 @@ from yewo.agent import AgentModePolicy
 from yewo.agent.actuation import ActionKind
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.planning.goal_verifier import GoalVerification
-from yewo.agent.replay.procedure_audit import audit_completed_replay
-from yewo.agent.replay.procedure_records import MilestoneEvidence
+from yewo.agent.replay.procedure.audit import audit_completed_replay
+from yewo.agent.replay.procedure.records import MilestoneEvidence
 from yewo.models import ModelClient
 from yewo.runs import RunExecutionContext
 
@@ -51,11 +51,11 @@ def test_completed_procedure_auditor_receives_transition_evidence(
             )
 
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_audit.ObservationStore.load_selected",
+        "yewo.agent.replay.procedure.audit.ObservationStore.load_selected",
         lambda unused, observation_ids: (source_observation, live_observation),
     )
     monkeypatch.setattr(
-        "yewo.agent.replay.procedure_audit.ModelGoalVerifier",
+        "yewo.agent.replay.procedure.audit.ModelGoalVerifier",
         lambda *args, **kwargs: StubVerifier(),
     )
     context = cast(

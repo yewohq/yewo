@@ -23,13 +23,13 @@ from yewo.grounding import (
 from yewo.models import ModelCallUsage
 from yewo.observations import DeviceOrientation, ScreenFingerprint
 from yewo.observations import ObservationCaptureError, ScreenshotReference
-from yewo.agent.replay.procedure_records import (
+from yewo.agent.replay.procedure.records import (
     ProcedureGroundingDecision,
     ProcedureGroundingDecisionCode,
     ProcedureRepairTarget,
 )
 from yewo.run_narration import current_narrator
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     ReplayProcedure,
     ReplayProcedureStep,

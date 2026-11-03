@@ -5,7 +5,7 @@ from __future__ import annotations
 from yewo.agent.memory.knowledge import TransitionTimingSample
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.runtime.observation_settlement import ActionSettlementPolicy
 from yewo.agent.runtime.observation_settlement import maximum_settlement_window_seconds
 

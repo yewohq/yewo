@@ -7,8 +7,8 @@ from pathlib import Path
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.memory.store import AppMemoryStore, AppMemoryStoreError
 from yewo.agent.runtime.records import AgentResult, AgentTerminalReason, agent_terminal_category
-from yewo.agent.replay.procedure_records import ProcedureReplayResult
-from yewo.agent.replay.reconciliation_records import ReplayProcedure
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
+from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.artifacts import ARTIFACTS_DIRECTORY, AtomicArtifactWriter, ArtifactWriteError
 from yewo.runs import RunTerminalCategory, RunWorkflowOutcome, RunWorkspace
 from yewo.agent.discovery.narration import narrate_discovery_result

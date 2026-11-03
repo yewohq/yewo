@@ -9,7 +9,7 @@ from yewo import observations as observation_records
 from yewo.agent.actuation import ActionKind, ActionOutcomeDisposition
 from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.runtime.records import AgentStep, AgentTask
-from yewo.agent.replay.reconciliation_records import (
+from yewo.agent.replay.reconciliation.records import (
     ControlInference,
     ControlInputTraits,
     ControlInferenceInput,
@@ -25,7 +25,7 @@ from yewo.agent.replay.reconciliation_records import (
     EvidenceTask,
     TimelineEntry,
 )
-from yewo.agent.replay.reconciliation_diagnostics import build_evidence_diagnostics
+from yewo.agent.replay.reconciliation.diagnostics import build_evidence_diagnostics
 from yewo.agent.replay.visual_matching import (
     build_observation_visual_signature,
     build_target_visual_descriptor,

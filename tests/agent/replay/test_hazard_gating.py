@@ -12,8 +12,8 @@ from yewo.agent.memory.knowledge import (
 )
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.replay import CompilerCheck, CompilerRefusal, ReplayProcedure
-from yewo.agent.replay.hazard_gating import compiled_procedure_hazard_reasons
-from yewo.agent.replay.reconciliation_compiler import compile_replay_procedure
+from yewo.agent.replay.procedure.hazards import compiled_procedure_hazard_reasons
+from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 
 from agent.memory.test_store import _memory
 from agent.replay.test_procedure_compiler import _evidence, _response

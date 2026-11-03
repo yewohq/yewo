@@ -9,7 +9,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from yewo.agent.discovery.records import DiscoveryObjective
-from yewo.agent.replay.procedure_store import StoredProcedureBundle
+from yewo.agent.replay.procedure.store import StoredProcedureBundle
 from yewo.artifacts import (
     ArtifactRetention,
     ArtifactSensitivity,

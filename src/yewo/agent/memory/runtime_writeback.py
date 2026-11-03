@@ -28,9 +28,9 @@ from yewo.agent.recovery.advisor import (
     RECOVERY_ASSESSMENTS_PATH,
     RecoveryAssessment,
 )
-from yewo.agent.replay.procedure_store import CompiledProcedureStore
-from yewo.agent.replay.reconciliation_records import ReconcilerResponse
-from yewo.agent.replay.reconciliation_store import RECONCILER_RESPONSE_PATH
+from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.reconciliation.records import ReconcilerResponse
+from yewo.agent.replay.reconciliation.store import RECONCILER_RESPONSE_PATH
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
     ArtifactWriteError,
