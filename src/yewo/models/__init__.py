@@ -17,6 +17,7 @@ from yewo.models.profiles import (
     ModelProfileRegistry,
     ModelRetryPolicy,
     StructuredOutputMode,
+    build_model_selections,
     validate_model_credentials,
 )
 from yewo.models.records import (
@@ -69,5 +70,6 @@ __all__ = [
     "StructuredOutputMode",
     "TextModelContent",
     "build_model_response_contract",
+    "build_model_selections",
     "validate_model_credentials",
 ]

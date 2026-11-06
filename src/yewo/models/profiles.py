@@ -146,9 +146,7 @@ class ModelProfile(BaseModel):
     def _validate_role_image_capacity(self) -> Self:
         required = _MINIMUM_ROLE_IMAGES.get(self.role)
         if required is not None and self.images.max_images < required:
-            raise ValueError(
-                f"A {self.role.value} profile must accept at least {required} images."
-            )
+            raise ValueError(f"A {self.role.value} profile must accept at least {required} images.")
         return self
 
 
@@ -175,6 +173,18 @@ class ModelProfileRegistry(BaseModel):
         if profile.role is not role:
             raise LookupError(f"The model profile {profile_id} cannot serve the {role.value} role.")
         return profile
+
+
+def build_model_selections(profiles: ModelProfileRegistry) -> dict[str, str]:
+    """Return the model identifier configured for each role.
+
+    A role with several configured profiles lists each model once.
+    """
+    models_by_role: dict[str, set[str]] = {}
+    for profile in profiles.profiles:
+        role_models = models_by_role.setdefault(profile.role.value, set())
+        role_models.add(profile.model)
+    return {role: ", ".join(sorted(models)) for role, models in models_by_role.items()}
 
 
 def missing_model_credentials(profile: ModelProfile) -> tuple[str, ...]:

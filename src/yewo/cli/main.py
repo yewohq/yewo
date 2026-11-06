@@ -14,8 +14,9 @@ from yewo.agent import (
     load_yewo_run_configuration,
 )
 from yewo.devices.logs import DeclaredValueDeviceLogScrubber
-from yewo.models import ModelInputError, validate_model_credentials
+from yewo.models import ModelInputError, build_model_selections, validate_model_credentials
 from yewo.runs import RunMode, RunTerminalCategory, build_default_run_coordinator
+from yewo.telemetry import TelemetryEvent, record_event, record_new_installation
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Validate and dispatch one explicit product command."""
     parser = _parser()
     arguments = parser.parse_args(argv)
+    record_new_installation()
     try:
         configuration = load_yewo_run_configuration(arguments.configuration)
         validate_model_credentials(configuration.model_profiles)
@@ -44,6 +46,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_yewo(configuration: YewoRunConfiguration) -> int:
+    record_event(
+        TelemetryEvent.RUN_STARTED,
+        {
+            "run_mode": configuration.run.mode.value,
+            "device_platform": configuration.run.application.platform.value,
+            "is_memory_enabled": configuration.memory_root is not None,
+        },
+    )
     scrubber = DeclaredValueDeviceLogScrubber(())
 
     def scrub_text(text: str) -> str:
@@ -69,6 +79,18 @@ def _run_yewo(configuration: YewoRunConfiguration) -> int:
         scrubber,
     )
     terminal = coordinator.run(configuration.run)
+    record_event(
+        TelemetryEvent.RUN_FINISHED,
+        {
+            "terminal_category": terminal.category.value,
+            "terminal_stage": terminal.stage.value,
+            "is_partial_evidence_available": terminal.partial_evidence_available,
+            **{
+                f"model_{role}": selection
+                for role, selection in build_model_selections(configuration.model_profiles).items()
+            },
+        },
+    )
     print(f"terminal: {terminal.category.value} — {terminal.reason}")
     return 0 if terminal.category is RunTerminalCategory.COMPLETED else 1
 
