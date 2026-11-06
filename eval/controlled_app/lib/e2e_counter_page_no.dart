@@ -28,7 +28,7 @@ class E2eCounterPageNo extends StatefulWidget {
 
 class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
   // Navigation State
-  AppScreen _currentScreen = AppScreen.requestLocation;
+  AppScreen _currentScreen = AppScreen.login;
 
   // Location State
   bool _locationPermissionGranted = false;
