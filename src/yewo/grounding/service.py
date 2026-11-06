@@ -8,6 +8,7 @@ from decimal import Decimal
 from yewo.artifacts import new_record_identifier
 from yewo.grounding.codecs import CoordinateTextCodec, DecodedGrounding
 from yewo.grounding.records import (
+    GroundingCandidate,
     GroundedPoint,
     GroundingCoordinateConvention,
     GroundingDisposition,
@@ -52,6 +53,14 @@ If no visible target matches, return: refused: target not found
 If more than one visible target matches, return: ambiguous: target is not unique"""
 
 
+def _coordinate_instruction(convention: GroundingCoordinateConvention) -> str:
+    if convention is GroundingCoordinateConvention.SOURCE_PIXELS:
+        return "source screenshot pixels"
+    if convention is GroundingCoordinateConvention.NORMALIZED_1000:
+        return "integers from 0 to 1000 relative to the screenshot width and height"
+    return "normalized numbers from 0 to 1"
+
+
 class GroundingEvidenceError(RuntimeError):
     """Raised when a model response lacks its required call evidence."""
 
@@ -72,26 +81,41 @@ class GroundingService:
         self._identifier_factory = identifier_factory
 
     def required_model_requests(self, request: GroundingRequest) -> int:
-        """Return the provider calls required to resolve one request."""
+        """Return the maximum logical model calls needed to resolve one request."""
         validate_grounding_request(self._profile, request)
-        return 1
+        return len(self._profile.candidates)
 
     def ground(self, request: GroundingRequest) -> GroundingResult:
-        """Resolve and validate one referring expression."""
+        """Resolve one target with bounded, observation-corroborated recovery."""
         validate_grounding_request(self._profile, request)
-        model_request = self._build_model_request(request)
+        attempts: list[GroundingResult] = []
+        for candidate in self._profile.candidates:
+            result = self._ground_with_candidate(request, candidate)
+            attempts.append(result)
+            if result.disposition is not GroundingDisposition.PROVIDER_UNAVAILABLE:
+                return _aggregate_results(attempts)
+        if not attempts:
+            raise GroundingEvidenceError("A grounding profile declares no candidate grounder.")
+        return _aggregate_results(attempts)
+
+    def _ground_with_candidate(
+        self,
+        request: GroundingRequest,
+        candidate: GroundingCandidate,
+    ) -> GroundingResult:
+        model_request = self._build_model_request(request, candidate)
         response = self._model_client.complete(model_request)
-        decoded = self._decode_response(response, request)
+        decoded = self._decode_response(response, request, candidate)
         validated = self._validate_correction_distance(decoded, request)
         validated = self._validate_excluded_regions(validated, request)
-        return self._build_result(request, response, validated)
+        return self._build_result(request, response, validated, candidate)
 
-    def _build_model_request(self, request: GroundingRequest) -> ModelRequest:
-        coordinate_instruction = (
-            "source screenshot pixels"
-            if self._profile.coordinate_convention is GroundingCoordinateConvention.SOURCE_PIXELS
-            else "normalized numbers from 0 to 1"
-        )
+    def _build_model_request(
+        self,
+        request: GroundingRequest,
+        candidate: GroundingCandidate,
+    ) -> ModelRequest:
+        coordinate_instruction = _coordinate_instruction(candidate.coordinate_convention)
         response_instruction = (
             "one coordinate as (x,y)"
             if request.output_shape is GroundingOutputShape.POINT
@@ -114,7 +138,7 @@ class GroundingService:
         )
         return ModelRequest(
             request_id=self._identifier_factory(),
-            profile_id=self._profile.model_profile_id,
+            profile_id=candidate.model_profile_id,
             role=ModelRole.GROUNDER,
             messages=(
                 ModelMessage(
@@ -133,19 +157,22 @@ class GroundingService:
         self,
         response: ModelResponse,
         request: GroundingRequest,
+        candidate: GroundingCandidate,
     ) -> DecodedGrounding:
         if response.disposition is ModelCallDisposition.COMPLETED:
             if response.text is None:
                 raise GroundingEvidenceError("A completed model response contains no text.")
             return self._codec.decode(
                 response.text,
-                self._profile.coordinate_convention,
+                candidate.coordinate_convention,
                 request.screenshot.width_px,
                 request.screenshot.height_px,
                 request.output_shape,
             )
         if response.disposition is ModelCallDisposition.REFUSED:
             disposition = GroundingDisposition.REFUSED
+        elif response.disposition is ModelCallDisposition.PROVIDER_ERROR:
+            disposition = GroundingDisposition.PROVIDER_UNAVAILABLE
         else:
             disposition = GroundingDisposition.MALFORMED
         return DecodedGrounding(
@@ -201,12 +228,13 @@ class GroundingService:
         request: GroundingRequest,
         response: ModelResponse,
         decoded: DecodedGrounding,
+        candidate: GroundingCandidate,
     ) -> GroundingResult:
         final_call = response.calls[-1]
         return GroundingResult(
             grounding_id=request.grounding_id,
             profile_id=self._profile.profile_id,
-            model_profile_id=self._profile.model_profile_id,
+            model_profile_id=candidate.model_profile_id,
             source_screenshot_sha256=request.screenshot.sha256,
             output_shape=request.output_shape,
             disposition=decoded.disposition,
@@ -221,6 +249,7 @@ class GroundingService:
             raw_response_artifact=_require_call_artifact(final_call),
             latency_ms=_total_latency(response.calls),
             usage=_total_usage(response.calls),
+            model_request_count=len(response.calls),
         )
 
 
@@ -233,6 +262,23 @@ def _correction_instruction(request: GroundingRequest) -> str:
         "Use the refined target description. "
         f"Choose a point at least {request.correction.minimum_distance_px} source screenshot "
         "pixels away from the previous point."
+    )
+
+
+def _aggregate_results(results: list[GroundingResult]) -> GroundingResult:
+    final = results[-1]
+    latencies = tuple(result.latency_ms for result in results)
+    latency = (
+        None
+        if any(value is None for value in latencies)
+        else sum(value for value in latencies if value is not None)
+    )
+    return final.model_copy(
+        update={
+            "latency_ms": latency,
+            "usage": _sum_usages(tuple(result.usage for result in results)),
+            "model_request_count": len(results),
+        }
     )
 
 
@@ -259,7 +305,10 @@ def _total_latency(calls: tuple[ModelCallRecord, ...]) -> float | None:
 
 
 def _total_usage(calls: tuple[ModelCallRecord, ...]) -> ModelCallUsage:
-    usage_records = tuple(call.usage for call in calls)
+    return _sum_usages(tuple(call.usage for call in calls))
+
+
+def _sum_usages(usage_records: tuple[ModelCallUsage, ...]) -> ModelCallUsage:
     return ModelCallUsage(
         prompt_tokens=_sum_optional_values(tuple(usage.prompt_tokens for usage in usage_records)),
         completion_tokens=_sum_optional_values(

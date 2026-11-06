@@ -48,7 +48,7 @@ def build_grounding_request(**updates: object) -> GroundingRequest:
     values: dict[str, object] = {
         "grounding_id": "grounding-1",
         "screenshot": build_screenshot(),
-        "expression": "the pink add button in the lower-right corner",
+        "expression": "the visible create control in the lower-right corner",
         "operation": GroundingTargetOperation.TAP,
         "output_shape": GroundingOutputShape.POINT,
     }
@@ -170,6 +170,7 @@ class DeterministicGrounder:
             raw_response_artifact=build_call_artifact("offline-call-artifact"),
             latency_ms=0,
             usage=ModelCallUsage(),
+            model_request_count=1,
         )
 
 

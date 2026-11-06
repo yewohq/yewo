@@ -79,6 +79,29 @@ def test_normalized_codec_distinguishes_invalid_format_from_out_of_bounds() -> N
 
 
 @pytest.mark.parametrize(
+    ("text", "output_shape"),
+    [
+        ("(0.5,0.7)", GroundingOutputShape.POINT),
+        ("(0.5,0.7,500,700)", GroundingOutputShape.REGION),
+    ],
+)
+def test_normalized_1000_requires_integer_coordinates(
+    text: str,
+    output_shape: GroundingOutputShape,
+) -> None:
+    decoded = CoordinateTextCodec().decode(
+        text,
+        GroundingCoordinateConvention.NORMALIZED_1000,
+        1080,
+        1920,
+        output_shape,
+    )
+
+    assert decoded.disposition is GroundingDisposition.MALFORMED
+    assert decoded.location is None
+
+
+@pytest.mark.parametrize(
     ("convention", "text", "expected_pixel"),
     [
         (

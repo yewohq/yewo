@@ -124,6 +124,8 @@ def point_grounding(
     x: int = 100,
     y: int = 200,
     disposition: GroundingDisposition = GroundingDisposition.ACCEPTED,
+    transport_disposition: ModelCallDisposition = ModelCallDisposition.COMPLETED,
+    reason: str = "No target found.",
 ) -> GroundingEvidence:
     request = build_grounding_request(
         grounding_id=grounding_id,
@@ -153,6 +155,8 @@ def point_grounding(
             GroundingOutputShape.POINT,
             disposition,
             location,
+            transport_disposition,
+            reason,
         ),
     )
 
@@ -189,6 +193,8 @@ def _grounding(
     output_shape: GroundingOutputShape,
     disposition: GroundingDisposition,
     location: GroundedPoint | GroundedRegion | None,
+    transport_disposition: ModelCallDisposition = ModelCallDisposition.COMPLETED,
+    reason: str = "No target found.",
 ) -> GroundingResult:
     return GroundingResult(
         grounding_id=grounding_id,
@@ -198,10 +204,11 @@ def _grounding(
         output_shape=output_shape,
         disposition=disposition,
         location=location,
-        reason=None if disposition is GroundingDisposition.ACCEPTED else "No target found.",
+        reason=None if disposition is GroundingDisposition.ACCEPTED else reason,
         requested_provider="offline",
         requested_model="test-grounder",
-        transport_disposition=ModelCallDisposition.COMPLETED,
+        transport_disposition=transport_disposition,
         raw_response_artifact=build_call_artifact(),
         usage=ModelCallUsage(),
+        model_request_count=1,
     )

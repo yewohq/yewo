@@ -47,6 +47,7 @@ class GroundingDisposition(StrEnum):
     """The deterministic interpretation of one grounding attempt."""
 
     ACCEPTED = "accepted"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
     REFUSED = "refused"
     MALFORMED = "malformed"
     OUT_OF_BOUNDS = "out_of_bounds"
@@ -67,6 +68,7 @@ class GroundingCoordinateConvention(StrEnum):
 
     SOURCE_PIXELS = "source_pixels"
     NORMALIZED = "normalized"
+    NORMALIZED_1000 = "normalized_1000"
 
 
 class NormalizedPoint(BaseModel):
@@ -187,6 +189,15 @@ class GroundingRequest(BaseModel):
         return self
 
 
+class GroundingCandidate(BaseModel):
+    """One grounding model and the coordinate space that model answers in."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model_profile_id: RecordIdentifier
+    coordinate_convention: GroundingCoordinateConvention
+
+
 class GroundingProfile(BaseModel):
     """Select a model profile and its grounding wire protocol."""
 
@@ -195,8 +206,25 @@ class GroundingProfile(BaseModel):
     profile_id: RecordIdentifier
     model_profile_id: RecordIdentifier
     coordinate_convention: GroundingCoordinateConvention
+    fallbacks: tuple[GroundingCandidate, ...] = ()
     supported_operations: frozenset[GroundingTargetOperation] = Field(min_length=1)
     supported_shapes: frozenset[GroundingOutputShape] = Field(min_length=1)
+
+    @property
+    def candidates(self) -> tuple[GroundingCandidate, ...]:
+        """Return the primary grounder followed by each declared fallback."""
+        primary = GroundingCandidate(
+            model_profile_id=self.model_profile_id,
+            coordinate_convention=self.coordinate_convention,
+        )
+        return (primary, *self.fallbacks)
+
+    @model_validator(mode="after")
+    def _validate_distinct_fallbacks(self) -> Self:
+        identifiers = [candidate.model_profile_id for candidate in self.candidates]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("Each grounding fallback must name a different model profile.")
+        return self
 
 
 class GroundingInputError(ValueError):
@@ -243,15 +271,24 @@ class GroundingResult(BaseModel):
     cached_procedure_step_id: RecordIdentifier | None = None
     latency_ms: float | None = Field(default=None, ge=0)
     usage: ModelCallUsage
+    model_request_count: int = Field(default=0, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def _validate_result(self) -> Self:
         if self.resolution_source is GroundingResolutionSource.MODEL:
+            if self.model_request_count < 1:
+                raise ValueError("Model grounding requires at least one model request.")
             if self.transport_disposition is None or self.raw_response_artifact is None:
                 raise ValueError("Model grounding requires transport and call evidence.")
             if self.raw_response_artifact.kind is not ModelArtifactKind.CALL:
                 raise ValueError("A grounding response artifact must contain a model call.")
+            if (self.disposition is GroundingDisposition.PROVIDER_UNAVAILABLE) != (
+                self.transport_disposition is ModelCallDisposition.PROVIDER_ERROR
+            ):
+                raise ValueError(
+                    "Provider-unavailable grounding requires provider-error transport evidence."
+                )
             if self.cached_transition_id is not None:
                 raise ValueError("Model grounding cannot reference a cached transition.")
             if self.cached_procedure_step_id is not None:
@@ -264,6 +301,7 @@ class GroundingResult(BaseModel):
                 or self.raw_response_artifact is not None
                 or self.disposition is not GroundingDisposition.ACCEPTED
                 or self.usage != ModelCallUsage()
+                or self.model_request_count != 0
             ):
                 raise ValueError(
                     "Memory grounding requires accepted zero-usage transition evidence."
@@ -275,10 +313,9 @@ class GroundingResult(BaseModel):
             or self.raw_response_artifact is not None
             or self.disposition is not GroundingDisposition.ACCEPTED
             or self.usage != ModelCallUsage()
+            or self.model_request_count != 0
         ):
-            raise ValueError(
-                "Procedure grounding requires accepted zero-usage procedure evidence."
-            )
+            raise ValueError("Procedure grounding requires accepted zero-usage procedure evidence.")
         if self.disposition is GroundingDisposition.ACCEPTED:
             if self.location is None or self.reason is not None:
                 raise ValueError("An accepted grounding must contain one location and no reason.")

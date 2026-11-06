@@ -73,10 +73,22 @@ class CoordinateTextCodec:
         if output_shape is GroundingOutputShape.REGION:
             if convention is GroundingCoordinateConvention.SOURCE_PIXELS:
                 return self._decode_source_region(text.strip(), width_px, height_px)
-            return self._decode_normalized_region(text.strip(), width_px, height_px)
+            return self._decode_normalized_region(
+                text.strip(),
+                width_px,
+                height_px,
+                _normalized_scale(convention),
+                require_integers=convention is GroundingCoordinateConvention.NORMALIZED_1000,
+            )
         if convention is GroundingCoordinateConvention.SOURCE_PIXELS:
             return self._decode_source_pixels(text.strip(), width_px, height_px)
-        return self._decode_normalized(text.strip(), width_px, height_px)
+        return self._decode_normalized(
+            text.strip(),
+            width_px,
+            height_px,
+            _normalized_scale(convention),
+            require_integers=convention is GroundingCoordinateConvention.NORMALIZED_1000,
+        )
 
     @staticmethod
     def _decode_source_pixels(text: str, width_px: int, height_px: int) -> DecodedGrounding:
@@ -99,11 +111,20 @@ class CoordinateTextCodec:
         )
 
     @staticmethod
-    def _decode_normalized(text: str, width_px: int, height_px: int) -> DecodedGrounding:
-        match = _NORMALIZED_POINT_PATTERN.fullmatch(text)
+    def _decode_normalized(
+        text: str,
+        width_px: int,
+        height_px: int,
+        scale: float = 1.0,
+        *,
+        require_integers: bool = False,
+    ) -> DecodedGrounding:
+        pattern = _PIXEL_POINT_PATTERN if require_integers else _NORMALIZED_POINT_PATTERN
+        match = pattern.fullmatch(text)
         if match is None:
             return _malformed_point()
-        x_normalized, y_normalized = (float(value) for value in match.groups())
+        x_scaled, y_scaled = (float(value) for value in match.groups())
+        x_normalized, y_normalized = x_scaled / scale, y_scaled / scale
         if not 0 <= x_normalized <= 1 or not 0 <= y_normalized <= 1:
             return DecodedGrounding(
                 GroundingDisposition.OUT_OF_BOUNDS,
@@ -146,11 +167,15 @@ class CoordinateTextCodec:
         text: str,
         width_px: int,
         height_px: int,
+        scale: float = 1.0,
+        *,
+        require_integers: bool = False,
     ) -> DecodedGrounding:
-        match = _NORMALIZED_REGION_PATTERN.fullmatch(text)
+        pattern = _PIXEL_REGION_PATTERN if require_integers else _NORMALIZED_REGION_PATTERN
+        match = pattern.fullmatch(text)
         if match is None:
             return _malformed_region()
-        left, top, right, bottom = (float(value) for value in match.groups())
+        left, top, right, bottom = (float(value) / scale for value in match.groups())
         if any(value < 0 or value > 1 for value in (left, top, right, bottom)):
             return _out_of_bounds_region()
         if left >= right or top >= bottom:
@@ -172,6 +197,12 @@ class CoordinateTextCodec:
             GroundingDisposition.ACCEPTED,
             GroundedRegion(normalized=normalized, pixel=pixel),
         )
+
+
+def _normalized_scale(convention: GroundingCoordinateConvention) -> float:
+    if convention is GroundingCoordinateConvention.NORMALIZED_1000:
+        return 1000.0
+    return 1.0
 
 
 def _normalize_pixel(coordinate: int, dimension: int) -> float:

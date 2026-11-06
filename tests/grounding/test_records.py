@@ -72,6 +72,7 @@ def test_rejected_result_cannot_contain_a_location() -> None:
                 retention=ArtifactRetention.RUN,
             ),
             usage=ModelCallUsage(),
+            model_request_count=1,
         )
 
 

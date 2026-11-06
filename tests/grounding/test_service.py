@@ -52,10 +52,11 @@ def test_service_sends_only_target_context_and_preserves_call_evidence() -> None
     assert request.response_contract is None
     text_content, image_content = request.messages[0].content
     assert isinstance(text_content, TextModelContent)
-    assert "pink add button" in text_content.text
+    assert "visible create control" in text_content.text
     assert "Screenshot size: 200 by 400 pixels" in text_content.text
     assert "Locate the named target itself" in text_content.text
     assert "Do not explain the answer" in text_content.text
+    assert "region" not in text_content.text.lower()
     assert "goal" not in text_content.text.lower()
     assert isinstance(image_content, ImageModelContent)
     assert image_content.screenshot.sha256 == "a" * 64
@@ -112,7 +113,10 @@ def test_service_tells_grounder_about_failed_point_and_rejects_an_equivalent_ret
         (ModelCallDisposition.EMPTY, GroundingDisposition.MALFORMED),
         (ModelCallDisposition.TRUNCATED, GroundingDisposition.MALFORMED),
         (ModelCallDisposition.MALFORMED, GroundingDisposition.MALFORMED),
-        (ModelCallDisposition.PROVIDER_ERROR, GroundingDisposition.MALFORMED),
+        (
+            ModelCallDisposition.PROVIDER_ERROR,
+            GroundingDisposition.PROVIDER_UNAVAILABLE,
+        ),
     ],
 )
 def test_service_preserves_transport_failure_while_refusing_a_location(
