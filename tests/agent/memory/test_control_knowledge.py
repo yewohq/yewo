@@ -27,11 +27,9 @@ def _analysis(
     return CurrentScreenAnalysis(
         analysis_id=analysis_id,
         observation_id=observed.observation_id,
-        screen_fingerprint=observed.screen_fingerprint.value,
         screenshot_sha256=observed.redacted_screenshot.sha256,
-        platform_context=observed.platform_context,
-        keyboard_visible=observed.keyboard_visible,
-        orientation=observed.orientation,
+        presentation=observed.presentation_key,
+        screen_summary="Visible application controls.",
         elements=elements,
     )
 
@@ -94,11 +92,13 @@ def test_analyzed_elements_are_retained_as_screen_knowledge(tmp_path: Path) -> N
     later_analysis = _analysis(
         before,
         "analysis-2",
-        (_element("primary-field-later", "Primary field", ScreenSemanticRole.TEXT_FIELD, "filled"),),
+        (
+            _element(
+                "primary-field-later", "Primary field", ScreenSemanticRole.TEXT_FIELD, "filled"
+            ),
+        ),
     )
-    result = result.model_copy(
-        update={"steps": (exercised_step,), "screen_analyses": (first_analysis, later_analysis)}
-    )
+    result = result.model_copy(update={"steps": (exercised_step,)})
 
     delta = build_memory_delta(
         memory,
@@ -106,9 +106,13 @@ def test_analyzed_elements_are_retained_as_screen_knowledge(tmp_path: Path) -> N
         result,
         {before.observation_id: before, after.observation_id: after},
         datetime(2026, 11, 3, tzinfo=timezone.utc),
+        screen_analyses=(first_analysis, later_analysis),
     )
     updated = apply_memory_delta(memory, delta)
 
+    assert len(delta.screen_summaries) == 1
+    assert delta.screen_summaries[0].text == "Visible application controls."
+    assert delta.screen_summaries[0].sources[0].observation_id == before.observation_id
     controls = {control.name: control for control in updated.app_knowledge.controls}
     assert controls["Primary field"].exercised is True
     assert controls["Primary field"].state == "filled"
@@ -136,7 +140,6 @@ def test_missing_optional_analysis_records_a_control_capture_skip(tmp_path: Path
     )
 
     assert any(
-        skipped.record_kind == "control"
-        and "No screen-analysis evidence" in skipped.reason
+        skipped.record_kind == "control" and "No screen-analysis evidence" in skipped.reason
         for skipped in delta.skipped_records
     )

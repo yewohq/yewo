@@ -106,10 +106,10 @@ class ScreenElementHypothesis(BaseModel):
     )
     region_hint: NormalizedRegion = Field(
         description=(
-            "Approximate bounds of this exact visible element on the supplied screenshot. "
+            "Bounds of this exact visible element on the supplied screenshot. "
             "Use normalized zero-to-one coordinates with the origin at the top-left. Exclude "
-            "unrelated neighboring elements. This is analyzer evidence, not a grounding "
-            "constraint."
+            "unrelated neighboring elements. For an interactive element, place the region "
+            "center inside the actionable surface. This is observation-bound location evidence."
         ),
     )
 
@@ -117,9 +117,9 @@ class ScreenElementHypothesis(BaseModel):
     def _normalize_optional_model_bookkeeping(self) -> Self:
         """Keep safe visible evidence when optional bookkeeping is malformed."""
         updates: dict[str, object] = {}
-        requires_input_key = screen_element_catalog().visual_definition(
-            self.kind.visual
-        ).requires_unique_surface
+        requires_input_key = (
+            screen_element_catalog().visual_definition(self.kind.visual).requires_unique_surface
+        )
         if requires_input_key and self.input_surface_key is None:
             updates["input_surface_key"] = self.analysis_key
         elif not requires_input_key and self.input_surface_key is not None:
@@ -143,6 +143,7 @@ class ScreenAnalysisHypothesis(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    screen_summary: str = Field(min_length=1, max_length=120)
     elements: tuple[ScreenElementHypothesis, ...] = Field(default=(), max_length=200)
 
     @model_validator(mode="after")
@@ -286,20 +287,16 @@ class ModelScreenAnalyzer:
                     parent_ref=(
                         element_refs[element.parent_key] if element.parent_key is not None else None
                     ),
-                    **element.model_dump(
-                        exclude={"analysis_key", "name", "state", "parent_key"}
-                    ),
+                    **element.model_dump(exclude={"analysis_key", "name", "state", "parent_key"}),
                 )
                 for element in hypothesis.elements
             )
             analysis = CurrentScreenAnalysis(
                 analysis_id=self._identifier_factory(),
                 observation_id=observation.observation_id,
-                screen_fingerprint=observation.screen_fingerprint.value,
                 screenshot_sha256=observation.redacted_screenshot.sha256,
-                platform_context=observation.platform_context,
-                keyboard_visible=observation.keyboard_visible,
-                orientation=observation.orientation,
+                presentation=observation.presentation_key,
+                screen_summary=hypothesis.screen_summary,
                 elements=elements,
             )
         except ValidationError as error:

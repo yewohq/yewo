@@ -13,7 +13,7 @@ from yewo.agent.actuation import (
     ActionRefusal,
     ActionRefusalCode,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.planner import TERMINAL_ACTIONS
 from yewo.agent.planning.records import (
     MAXIMUM_PROHIBITED_INTENTS,

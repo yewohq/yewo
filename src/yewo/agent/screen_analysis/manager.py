@@ -16,10 +16,11 @@ from yewo.artifacts import new_record_identifier
 from yewo.agent.screen_analysis.catalog import ScreenSemanticRole, ScreenWorkflowRole
 from yewo.agent.screen_analysis.records import CurrentScreenAnalysis, ScreenElement
 from yewo.agent.screen_analysis.service import ScreenAnalysisError, ScreenAnalysisSource
+from yewo.agent.screen_analysis.store import ScreenAnalysisStore
 from yewo.models import ModelInputError
-from yewo.observations import Observation
+from yewo.observations import Observation, ScreenMatcher
 
-ScreenSignature = tuple[str, str | None, bool | None, str | None]
+ScreenSignature = tuple[object, ...]
 
 
 @dataclass(frozen=True)
@@ -29,13 +30,7 @@ class _AnalysisCacheEntry:
 
 
 def _signature(observation: Observation) -> ScreenSignature:
-    orientation = observation.orientation.value if observation.orientation is not None else None
-    return (
-        observation.screen_fingerprint.value,
-        observation.platform_context,
-        observation.keyboard_visible,
-        orientation,
-    )
+    return ScreenMatcher.analysis_cache_key(observation.presentation_key)
 
 
 class CurrentScreenAnalysisManager:
@@ -48,6 +43,7 @@ class CurrentScreenAnalysisManager:
         maximum_variants: int = 8,
         maximum_attempts_per_variant: int = 1,
         identifier_factory: Callable[[], str] = new_record_identifier,
+        store: ScreenAnalysisStore | None = None,
     ) -> None:
         if maximum_variants < 1 or maximum_attempts_per_variant < 1:
             raise ValueError("Screen analysis bounds must be positive.")
@@ -55,6 +51,7 @@ class CurrentScreenAnalysisManager:
         self._maximum_variants = maximum_variants
         self._maximum_attempts_per_variant = maximum_attempts_per_variant
         self._identifier_factory = identifier_factory
+        self._store = store
         self._entries: OrderedDict[ScreenSignature, _AnalysisCacheEntry] = OrderedDict()
         self._request_reasons: OrderedDict[ScreenSignature, str] = OrderedDict()
 
@@ -87,6 +84,7 @@ class CurrentScreenAnalysisManager:
                 entry = _AnalysisCacheEntry(failed_attempts=entry.failed_attempts + 1)
             else:
                 entry = _AnalysisCacheEntry(analysis=analysis)
+                self._persist(analysis)
             self._entries[signature] = entry
             self._request_reasons.pop(signature, None)
             while len(self._entries) > self._maximum_variants:
@@ -99,7 +97,9 @@ class CurrentScreenAnalysisManager:
             return None
         if cached.observation_id == observation.observation_id:
             return cached
-        return self._bind(cached, observation)
+        rebound = self._bind(cached, observation)
+        self._persist(rebound)
+        return rebound
 
     def observe_outcome(
         self,
@@ -134,6 +134,7 @@ class CurrentScreenAnalysisManager:
         if analysis is not None:
             analysis = self._clear_dynamic_state(analysis, proposal)
             analysis = self._bind(analysis, after)
+            self._persist(analysis)
         if after_signature != before_signature:
             self._entries.pop(before_signature, None)
         self._entries[after_signature] = _AnalysisCacheEntry(
@@ -163,12 +164,9 @@ class CurrentScreenAnalysisManager:
             return False
         if analysis is None:
             return False
-        if (
-            before.platform_context != after.platform_context
-            or before.keyboard_visible != after.keyboard_visible
-            or before.orientation != after.orientation
-            or before.redacted_screenshot.width_px != after.redacted_screenshot.width_px
-            or before.redacted_screenshot.height_px != after.redacted_screenshot.height_px
+        if not ScreenMatcher.metadata_matches(
+            before.presentation_key,
+            after.presentation_key,
         ):
             return False
         if proposal.action is not ActionKind.TAP:
@@ -217,13 +215,14 @@ class CurrentScreenAnalysisManager:
             update={
                 "analysis_id": self._identifier_factory(),
                 "observation_id": observation.observation_id,
-                "screen_fingerprint": observation.screen_fingerprint.value,
                 "screenshot_sha256": observation.redacted_screenshot.sha256,
-                "platform_context": observation.platform_context,
-                "keyboard_visible": observation.keyboard_visible,
-                "orientation": observation.orientation,
+                "presentation": observation.presentation_key,
             }
         )
+
+    def _persist(self, analysis: CurrentScreenAnalysis) -> None:
+        if self._store is not None:
+            self._store.persist(analysis)
 
 
 def _target_element(

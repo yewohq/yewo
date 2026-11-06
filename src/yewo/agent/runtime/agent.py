@@ -17,7 +17,7 @@ from yewo.agent.actuation import (
     DispatchDisposition,
 )
 from yewo.agent.actuation.verifier import ActionVerifier
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.planning.planner import ActionProposalSource, PlanningHistoryEntry, plan_or_stop
 from yewo.agent.planning.records import TaskProgressContext
@@ -145,7 +145,7 @@ class DeviceAgent:
                 dispatched_actions,
                 steps,
                 recovery_credit,
-                screen_analyses=screen_analysis.records,
+                screen_analysis_ids=screen_analysis.record_ids,
             )
 
         while len(steps) - self._recovery.credited_steps(len(steps)) < mode_policy.maximum_steps:
@@ -310,9 +310,7 @@ class DeviceAgent:
                 credit = self._recovery.credit(len(steps), budget_time)
                 grounding_budget = grounding_budget_reason(
                     mode_policy,
-                    planning_requests
-                    - credit.planning_requests
-                    - credit.analysis_requests,
+                    planning_requests - credit.planning_requests - credit.analysis_requests,
                     grounding_requests - credit.grounding_requests,
                     0 if grounding_was_recovery else grounding_reservation,
                 )

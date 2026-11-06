@@ -9,13 +9,13 @@ from yewo.agent.memory.records import (
     MemoryCompatibility,
     MemoryRetentionPolicy,
     ObservationVariant,
-    ScreenComparisonPolicy,
     SemanticRouteAction,
     UnsuccessfulAttempt,
     UnsuccessfulAttemptDisposition,
     build_memory_compatibility,
     derived_memory_identifier,
 )
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.screens import observation_matches_screen
 from yewo.agent.memory.grounding import AcceptedGrounding
 from yewo.agent.runtime.agent import DeviceAgent

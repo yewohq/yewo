@@ -105,20 +105,16 @@ class ActionProposalDecision(BaseModel):
         ),
     )
     reason: str | None = Field(default=None, min_length=1, max_length=2_000)
-    screen_summary: str | None = Field(default=None, min_length=1, max_length=120)
     sensitivity: Literal[ArtifactSensitivity.DEVICE_CONTENT] = ArtifactSensitivity.DEVICE_CONTENT
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
 
     @model_validator(mode="after")
     def _validate_action_fields(self) -> Self:
         definition = ACTION_DEFINITIONS[self.action]
-        if (
-            self.grounding_correction_for_proposal_id is not None
-            and (
-                definition.target_operation is None
-                or definition.target_operation is GroundingTargetOperation.SCROLL_REGION
-                or definition.destination_operation is not None
-            )
+        if self.grounding_correction_for_proposal_id is not None and (
+            definition.target_operation is None
+            or definition.target_operation is GroundingTargetOperation.SCROLL_REGION
+            or definition.destination_operation is not None
         ):
             raise ValueError("A grounding correction requires one visual point target.")
         if self.interaction_refinement_for_proposal_id is not None and (
@@ -163,7 +159,11 @@ class ActionProposalDecision(BaseModel):
         )
         if target_required and self.target_expression is None and self.target_element_ref is None:
             raise ValueError(f"{self.action.value} requires a target.")
-        if definition.destination_operation is not None and self.destination_expression is None and self.destination_element_ref is None:
+        if (
+            definition.destination_operation is not None
+            and self.destination_expression is None
+            and self.destination_element_ref is None
+        ):
             raise ValueError(f"{self.action.value} requires a destination.")
         return self
 
@@ -194,7 +194,9 @@ class ActionProposalDecision(BaseModel):
             allowed_refs = set(available_element_refs)
             for reference in (self.target_element_ref, self.destination_element_ref):
                 if reference is not None and reference not in allowed_refs:
-                    raise ValueError("Use only an interactive element_ref from current_screen_analysis.")
+                    raise ValueError(
+                        "Use only an interactive element_ref from current_screen_analysis."
+                    )
         if self.target_element_ref is not None and self.target_expression is not None:
             raise ValueError("Choose target_element_ref or target_expression, not both.")
         if self.destination_element_ref is not None and self.destination_expression is not None:

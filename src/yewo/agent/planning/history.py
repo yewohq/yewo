@@ -50,9 +50,9 @@ class PlanningScreenReference(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     observation_id: RecordIdentifier
-    screen_fingerprint: str = Field(min_length=16, max_length=16)
-    platform_context: str | None = None
+    platform_context: str | None = Field(default=None, max_length=200)
     keyboard_visible: bool | None = None
+    screen_fingerprint: str = Field(pattern=r"^[0-9a-f]{16}$")
 
 
 class PlanningScreenFact(BaseModel):
@@ -172,9 +172,9 @@ def planning_screen_reference(observation: Observation) -> PlanningScreenReferen
     """Build the screen identity used to scope planner history and facts."""
     return PlanningScreenReference(
         observation_id=observation.observation_id,
-        screen_fingerprint=observation.screen_fingerprint.value,
         platform_context=observation.platform_context,
         keyboard_visible=observation.keyboard_visible,
+        screen_fingerprint=observation.screen_fingerprint.value,
     )
 
 

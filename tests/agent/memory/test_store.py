@@ -267,11 +267,8 @@ def test_store_invalidates_legacy_target_rejection_evidence_on_load(tmp_path: Pa
         disposition=UnsuccessfulAttemptDisposition.TARGET_REJECTED,
         reason="The grounded point selected a label.",
         grounded_point=PixelPoint(x=100, y=200),
-        screenshot_width_px=source_variant.width_px,
-        screenshot_height_px=source_variant.height_px,
-        grounding_profile_id=transition.grounding_profile_ids[0],
-        grounder_model_profile_id=transition.grounder_model_profile_ids[0],
-        requested_grounder_model=transition.requested_grounder_models[0],
+        screenshot_width_px=source_variant.presentation.width_px,
+        screenshot_height_px=source_variant.presentation.height_px,
         source_step_id="step_1",
         source_run_id="run_1",
     )

@@ -321,21 +321,17 @@ def test_mid_procedure_divergence_is_persisted_and_never_a_completion(
         procedure_step_count=len(procedure.steps),
         completed_step_count=source.completed_step_count,
         failed_procedure_index=source.failed_procedure_index,
-        divergence=divergence,
+        divergences=(divergence,),
         reason=divergence.reason,
         agent_result=stopped,
     )
 
     paths = ProcedureReplayStore(tmp_path).persist(result)
 
-    assert tuple(path.name for path in paths) == (
-        "attempt.json",
-        "divergence.json",
-        "divergences.json",
-    )
+    assert tuple(path.name for path in paths) == ("attempt.json", "divergences.json")
     attempt = json.loads((tmp_path / paths[0]).read_text())
     persisted_divergence = json.loads((tmp_path / paths[1]).read_text())
     assert attempt["terminal"] == "diverged"
     assert attempt["verification"] is None
-    assert persisted_divergence["procedure_index"] == 1
-    assert persisted_divergence["guard"] == "expectation"
+    assert persisted_divergence[0]["procedure_index"] == 1
+    assert persisted_divergence[0]["guard"] == "expectation"

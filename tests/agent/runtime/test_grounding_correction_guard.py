@@ -14,7 +14,7 @@ from yewo.agent.actuation.verifier import (
     ActionReadinessAssessment,
     ActionReadinessDisposition,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.planning.records import PlanningRequest
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker

@@ -13,7 +13,7 @@ from yewo.agent.replay.reconciliation.records import (
     EvidenceStep,
     ReplayProcedure,
 )
-from yewo.observations import fingerprint_distance
+from yewo.observations import ScreenComparisonPolicy, ScreenMatcher
 
 
 def known_action_risk_reasons(
@@ -82,7 +82,7 @@ def _step_action_risk_reasons(
 ) -> tuple[CompilerReason, ...]:
     reasons: list[CompilerReason] = []
     for action_risk in action_risks:
-        if action_risk.action is not step.action or not _target_matches(action_risk, step):
+        if action_risk.action is not step.proposal.action or not _target_matches(action_risk, step):
             continue
         reasons.append(
             CompilerReason(
@@ -119,29 +119,19 @@ def _state_matches_screen(
 ) -> bool:
     if set(state.observation_ids) & {variant.observation_id for variant in screen.variants}:
         return True
-    maximum_distance = memory.compatibility.screen_comparison.maximum_phash_distance
     return any(
-        _state_matches_variant(state, variant, maximum_distance) for variant in screen.variants
+        _state_matches_variant(state, variant, memory.compatibility.screen_comparison)
+        for variant in screen.variants
     )
 
 
 def _state_matches_variant(
     state: EvidenceState,
     variant: ObservationVariant,
-    maximum_distance: int,
+    policy: ScreenComparisonPolicy,
 ) -> bool:
-    if (
-        state.foreground_application_id != variant.foreground_application_id
-        or state.platform_context != variant.platform_context
-        or state.keyboard_visible is not variant.keyboard_visible
-        or state.orientation is not variant.orientation
-        or (state.width_px, state.height_px) != (variant.width_px, variant.height_px)
-    ):
-        return False
-    for fingerprint in state.comparison_fingerprints():
-        try:
-            if fingerprint_distance(fingerprint, variant.fingerprint) <= maximum_distance:
-                return True
-        except ValueError:
-            continue
-    return False
+    matcher = ScreenMatcher(policy)
+    return any(
+        matcher.replay_equivalent(presentation, variant.presentation)
+        for presentation in state.presentations
+    )

@@ -8,7 +8,7 @@ from typing import Annotated, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.artifacts import RecordIdentifier
-from yewo.observations import Observation
+from yewo.observations import Observation, ScreenshotReference
 from yewo.agent.planning.history import PlanningHistoryEntry, PlanningScreenFact
 from yewo.agent.screen_analysis import CurrentScreenAnalysis
 from yewo.agent.actuation import ActionKind
@@ -26,7 +26,6 @@ MAXIMUM_PROHIBITED_INTENTS = MAXIMUM_DEFAULT_RUN_STEPS
 # One observed step can report both a repeated transition and a revisited screen.
 MAXIMUM_SCREEN_FACTS = MAXIMUM_DEFAULT_RUN_STEPS * 2
 MAXIMUM_RECOVERY_GUIDANCE = 20
-
 
 
 class PlanningFocusCause(StrEnum):
@@ -88,7 +87,6 @@ class TaskProgressContext(BaseModel):
     remaining_work: tuple[PlanningText, ...] = Field(default=(), max_length=100)
     route_attempts: tuple[ProgressRouteAttempt, ...] = Field(default=(), max_length=100)
     historical_memory_facts: tuple[PlanningText, ...] = Field(default=(), max_length=20)
-    exhausted_branches: tuple[PlanningText, ...] = Field(default=(), max_length=20)
     recovery_guidance: tuple[PlanningText, ...] = Field(
         default=(),
         max_length=MAXIMUM_RECOVERY_GUIDANCE,
@@ -102,6 +100,7 @@ class PlanningRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     observation: Observation
+    reference_screenshot: ScreenshotReference | None = None
     current_screen_analysis: CurrentScreenAnalysis | None = None
     objective: PlanningText
     known_facts: tuple[PlanningText, ...] = Field(default=(), max_length=100)

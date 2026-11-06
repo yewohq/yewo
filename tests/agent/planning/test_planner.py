@@ -47,6 +47,7 @@ from yewo.agent.screen_analysis import (
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.grounding import PixelPoint
 from yewo.models import (
+    ImageModelContent,
     ModelCallDisposition,
     ModelMessageRole,
     ModelRequest,
@@ -174,7 +175,7 @@ def test_reconciled_progress_preserves_completion_conditions() -> None:
             current_progress=("The record is visibly saved.",),
             remaining_work=("Add one item.",),
             historical_memory_facts=("The Add control previously opened the item editor.",),
-            exhausted_branches=("The overflow menu showed no relevant command.",),
+            recovery_guidance=("The overflow menu showed no relevant command.",),
         ),
     )
 
@@ -196,10 +197,9 @@ def test_reconciled_progress_preserves_completion_conditions() -> None:
     assert context["progress_context"] == {
         "completed_work_items": [],
         "current_progress": ["The record is visibly saved."],
-        "exhausted_branches": ["The overflow menu showed no relevant command."],
         "historical_memory_facts": ["The Add control previously opened the item editor."],
         "known_procedures": [],
-        "recovery_guidance": [],
+        "recovery_guidance": ["The overflow menu showed no relevant command."],
         "route_attempts": [],
     }
 
@@ -210,11 +210,9 @@ def test_planner_receives_one_compact_current_screen_analysis() -> None:
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=observation.observation_id,
-        screen_fingerprint=observation.screen_fingerprint.value,
         screenshot_sha256=observation.redacted_screenshot.sha256,
-        platform_context=observation.platform_context,
-        keyboard_visible=observation.keyboard_visible,
-        orientation=observation.orientation,
+        presentation=observation.presentation_key,
+        screen_summary="Visible application form.",
         elements=(
             ScreenElement(
                 element_ref="primary-field",
@@ -239,6 +237,7 @@ def test_planner_receives_one_compact_current_screen_analysis() -> None:
     assert context["current_screen_analysis"] == {
         "analysis_id": "analysis-1",
         "observation_id": "obs_1",
+        "screen_summary": "Visible application form.",
         "elements": [
             {
                 "element_ref": "primary-field",
@@ -253,17 +252,31 @@ def test_planner_receives_one_compact_current_screen_analysis() -> None:
     }
 
 
+def test_repair_reference_screenshot_is_a_second_planner_image() -> None:
+    model = StubPlannerModel(_proposal_output())
+    request = _planning_request()
+    request = request.model_copy(
+        update={"reference_screenshot": request.observation.redacted_screenshot}
+    )
+
+    _planner(model).plan(request)
+
+    content = model.requests[0].messages[-1].content
+    images = tuple(item for item in content if isinstance(item, ImageModelContent))
+    text = tuple(item.text for item in content if isinstance(item, TextModelContent))
+    assert len(images) == 2
+    assert any("Compiled target screenshot" in item for item in text)
+
+
 def test_planning_rejects_analysis_for_another_observation() -> None:
     request = _planning_request()
     observation = request.observation
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id="obs-old",
-        screen_fingerprint=observation.screen_fingerprint.value,
         screenshot_sha256=observation.redacted_screenshot.sha256,
-        platform_context=observation.platform_context,
-        keyboard_visible=observation.keyboard_visible,
-        orientation=observation.orientation,
+        presentation=observation.presentation_key,
+        screen_summary="Visible application form.",
     )
 
     with pytest.raises(ValidationError, match="must match the planning observation"):

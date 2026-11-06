@@ -14,15 +14,17 @@ from yewo.grounding import (
     GroundingDisposition,
     GroundingEvidence,
     GroundingRequest,
-    GroundingResolutionSource,
     GroundingResult,
     NormalizedPoint,
     PixelPoint,
+    ProcedureGroundingResolution,
     VisualGrounder,
 )
-from yewo.models import ModelCallUsage
-from yewo.observations import DeviceOrientation, ScreenFingerprint
-from yewo.observations import ObservationCaptureError, ScreenshotReference
+from yewo.observations import (
+    ObservationCaptureError,
+    PresentationKey,
+    ScreenshotReference,
+)
 from yewo.agent.replay.procedure.records import (
     ProcedureGroundingDecision,
     ProcedureGroundingDecisionCode,
@@ -49,11 +51,7 @@ class ProcedureGroundingAuthorization:
     observation_id: RecordIdentifier
     screenshot_artifact_id: RecordIdentifier
     screenshot_sha256: str
-    source_fingerprint: ScreenFingerprint
-    source_orientation: DeviceOrientation | None
-    source_keyboard_visible: bool | None
-    width_px: int
-    height_px: int
+    presentation: PresentationKey
     expected_phash_distance: int | None
     competing_phash_distance: int | None
     source_visual_match_ratio: float | None
@@ -128,21 +126,11 @@ class ProcedureGrounder:
         _narrate_lookup(request, reused=True)
         result = GroundingResult(
             grounding_id=request.grounding_id,
-            profile_id=stored.profile_id,
-            model_profile_id=stored.model_profile_id,
             source_screenshot_sha256=request.screenshot.sha256,
             output_shape=request.output_shape,
             disposition=GroundingDisposition.ACCEPTED,
-            resolution_source=GroundingResolutionSource.PROCEDURE,
+            resolution=ProcedureGroundingResolution(source_step_id=match.source_step_id),
             location=resolution.location,
-            requested_provider="procedure",
-            requested_model=stored.requested_model,
-            requested_revision=stored.requested_revision,
-            served_model=stored.served_model,
-            upstream_provider=stored.upstream_provider,
-            cached_procedure_step_id=match.source_step_id,
-            usage=ModelCallUsage(),
-            model_request_count=0,
             confidence=stored.confidence,
         )
         self._record_decision(request, match, resolution, result)
@@ -278,11 +266,11 @@ def build_keyboard_repair_grounding_match(
     if (
         target is None
         or proposal_expression is None
-        or target.keyboard_visible is not True
+        or target.presentation.keyboard_visible is not True
         or observation.keyboard_visible is not False
-        or observation.foreground_application_id != target.foreground_application_id
-        or observation.platform_context != target.platform_context
-        or observation.orientation is not target.orientation
+        or observation.foreground_application_id != target.presentation.foreground_application_id
+        or observation.platform_context != target.presentation.platform_context
+        or observation.orientation is not target.presentation.orientation
         or step is None
         or step.proposal.target_expression != proposal_expression
         or step.target_grounding is None
@@ -290,10 +278,11 @@ def build_keyboard_repair_grounding_match(
     ):
         return None
     expected_state = evidence.states[target.expected_state_id]
+    expected_presentation = expected_state.representative_presentation
     screenshot = observation.redacted_screenshot
     if (screenshot.width_px, screenshot.height_px) != (
-        expected_state.width_px,
-        expected_state.height_px,
+        expected_presentation.width_px,
+        expected_presentation.height_px,
     ) or (evidence.run.device is not None and observation.device != evidence.run.device):
         return None
     authorization = ProcedureGroundingAuthorization(
@@ -303,11 +292,7 @@ def build_keyboard_repair_grounding_match(
         observation_id=observation.observation_id,
         screenshot_artifact_id=screenshot.artifact_id,
         screenshot_sha256=screenshot.sha256,
-        source_fingerprint=observation.screen_fingerprint,
-        source_orientation=observation.orientation,
-        source_keyboard_visible=observation.keyboard_visible,
-        width_px=screenshot.width_px,
-        height_px=screenshot.height_px,
+        presentation=observation.presentation_key,
         expected_phash_distance=None,
         competing_phash_distance=None,
         source_visual_match_ratio=None,
@@ -348,7 +333,10 @@ def build_keyboard_reflow_step(
             if step.source_step_id in evidence_steps
             and evidence_steps[step.source_step_id].control.identity_key
             == reset_evidence.control.identity_key
-            and evidence.states[step.source_state_id].keyboard_visible is True
+            and evidence.states[
+                step.source_state_id
+            ].representative_presentation.keyboard_visible
+            is True
             and _target_point(step) is not None
         ),
         None,
@@ -393,7 +381,6 @@ def _reuse_rejection(
         return ProcedureGroundingDecisionCode.CORRECTION_REQUESTED
     stored_request = match.evidence.request
     stored_result = match.evidence.result
-    current_fingerprint = request.source_fingerprint
     authorization = match.authorization
     if (
         stored_result.disposition is not GroundingDisposition.ACCEPTED
@@ -408,21 +395,25 @@ def _reuse_rejection(
     ):
         return ProcedureGroundingDecisionCode.TARGET_CONTRACT_CHANGED
     if (
-        current_fingerprint is None
+        request.source_presentation is None
         or request.screenshot.artifact_id != authorization.screenshot_artifact_id
         or request.screenshot.sha256 != authorization.screenshot_sha256
-        or current_fingerprint != authorization.source_fingerprint
-        or authorization.source_orientation is not request.source_orientation
-        or authorization.source_keyboard_visible is not request.source_keyboard_visible
+        or request.source_presentation != authorization.presentation
     ):
         return ProcedureGroundingDecisionCode.AUTHORIZED_OBSERVATION_CHANGED
     if (
         request.screenshot.width_px,
         request.screenshot.height_px,
-    ) != (authorization.width_px, authorization.height_px) or (
+    ) != (
+        authorization.presentation.width_px,
+        authorization.presentation.height_px,
+    ) or (
         stored_request.screenshot.width_px,
         stored_request.screenshot.height_px,
-    ) != (authorization.width_px, authorization.height_px):
+    ) != (
+        authorization.presentation.width_px,
+        authorization.presentation.height_px,
+    ):
         return ProcedureGroundingDecisionCode.GEOMETRY_CHANGED
     if _location_is_excluded(stored_result.location, request):
         return ProcedureGroundingDecisionCode.LOCATION_EXCLUDED

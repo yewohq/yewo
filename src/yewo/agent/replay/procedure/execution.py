@@ -10,8 +10,8 @@ from yewo.agent.composition import build_device_agent
 from yewo.agent.memory.grounding import AppMemoryGrounder
 from yewo.agent.memory.records import (
     AppMemory,
-    ScreenComparisonPolicy,
 )
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.screens import AppMemoryActionSource
 from yewo.agent.planning.planner import TaskPlanner
 from yewo.agent.planning.goal_verifier import (
@@ -105,7 +105,6 @@ def execute_compiled_procedure(
         repair_source = AppMemoryActionSource(
             repair_source,
             memory,
-            grounding_profile,
         )
     settlement_policy_source = ProcedureSettlementPolicySource(procedure, memory)
     source = BoundedProcedureRepairActionSource(
@@ -203,8 +202,6 @@ def execute_compiled_procedure(
         failed_procedure_index=(divergence.procedure_index if divergence is not None else None),
         milestones=source.milestones,
         grounding_decisions=grounder.decisions,
-        divergence=divergence,
-        repair=repair,
         divergences=divergences,
         repairs=repairs,
         environment_events=source.environment_events,

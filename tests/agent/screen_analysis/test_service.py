@@ -31,6 +31,7 @@ from yewo.observations import Observation
 
 def _output() -> dict[str, object]:
     return {
+        "screen_summary": "Visible application form.",
         "elements": [
             {
                 "analysis_key": "primary-field",
@@ -46,7 +47,7 @@ def _output() -> dict[str, object]:
                 "visual_cues": ["below Section heading", "above Secondary field"],
                 "region_hint": {"left": 0.4, "top": 0.4, "right": 0.6, "bottom": 0.6},
             }
-        ]
+        ],
     }
 
 
@@ -183,9 +184,9 @@ def test_model_analyzer_derives_a_missing_input_surface_key() -> None:
     assert isinstance(elements, list) and isinstance(elements[0], dict)
     elements[0]["input_surface_key"] = None
 
-    analysis = ModelScreenAnalyzer(
-        StubPlannerModel(output), "screen-analyzer-primary"
-    ).analyze(build_observation())
+    analysis = ModelScreenAnalyzer(StubPlannerModel(output), "screen-analyzer-primary").analyze(
+        build_observation()
+    )
 
     assert analysis.elements[0].input_surface_key == "primary-field"
 
@@ -201,9 +202,9 @@ def test_model_analyzer_discards_an_input_key_from_a_non_input_visual() -> None:
         }
     )
 
-    analysis = ModelScreenAnalyzer(
-        StubPlannerModel(output), "screen-analyzer-primary"
-    ).analyze(build_observation())
+    analysis = ModelScreenAnalyzer(StubPlannerModel(output), "screen-analyzer-primary").analyze(
+        build_observation()
+    )
 
     assert analysis.elements[0].input_surface_key is None
 
@@ -317,11 +318,9 @@ class _CountingAnalyzer:
         return CurrentScreenAnalysis(
             analysis_id=f"analysis-{self.calls}",
             observation_id=observation.observation_id,
-            screen_fingerprint=observation.screen_fingerprint.value,
             screenshot_sha256=observation.redacted_screenshot.sha256,
-            platform_context=observation.platform_context,
-            keyboard_visible=observation.keyboard_visible,
-            orientation=observation.orientation,
+            presentation=observation.presentation_key,
+            screen_summary="Visible application screen.",
             elements=(),
         )
 
@@ -368,11 +367,9 @@ class _FailingAnalyzer(_CountingAnalyzer):
         return CurrentScreenAnalysis(
             analysis_id=f"analysis-{self.calls}",
             observation_id=observation.observation_id,
-            screen_fingerprint=observation.screen_fingerprint.value,
             screenshot_sha256=observation.redacted_screenshot.sha256,
-            platform_context=observation.platform_context,
-            keyboard_visible=observation.keyboard_visible,
-            orientation=observation.orientation,
+            presentation=observation.presentation_key,
+            screen_summary="Visible application screen.",
             elements=(),
         )
 

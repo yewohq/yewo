@@ -29,22 +29,29 @@ def environment_step_refusal_reason(
         else None
     )
     surface = (
-        trusted_system_surface(device.platform, source.foreground_application_id)
+        trusted_system_surface(
+            device.platform,
+            source.representative_presentation.foreground_application_id,
+        )
         if device is not None
         else None
     )
     if surface is not TrustedSystemSurface.RUNTIME_PERMISSION:
         return "Only a recorded Android runtime-permission transition is reusable."
-    if step.action is not ActionKind.TAP or step.result is not EvidenceResult.OBSERVED:
+    if step.proposal.action is not ActionKind.TAP or step.result is not EvidenceResult.OBSERVED:
         return "A runtime-permission transition requires one observed tap action."
     if previous is None or previous.destination_state_id != step.source_state_id:
         return "A runtime-permission transition requires its selected application trigger."
     previous_source = evidence.states[previous.source_state_id]
-    if previous_source.foreground_application_id != evidence.run.application.application_id:
+    if (
+        previous_source.representative_presentation.foreground_application_id
+        != evidence.run.application.application_id
+    ):
         return "The permission trigger must originate in the recorded application."
     if (
         destination is None
-        or destination.foreground_application_id != evidence.run.application.application_id
+        or destination.representative_presentation.foreground_application_id
+        != evidence.run.application.application_id
     ):
         return "A runtime-permission transition must return to the recorded application."
     return None

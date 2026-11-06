@@ -11,7 +11,12 @@ from yewo.grounding import (
     GroundingInputError,
     GroundingOutputShape,
     GroundingService,
+    GroundingResolutionSource,
     GroundingTargetOperation,
+    ModelGroundingResolution,
+    NormalizedRegion,
+    ScreenAnalysisGroundingCandidate,
+    ScreenAnalysisGroundingResolution,
     VisualGrounder,
     PixelPoint,
 )
@@ -39,12 +44,10 @@ def test_service_sends_only_target_context_and_preserves_call_evidence() -> None
     assert isinstance(result.location, GroundedPoint)
     assert result.location.pixel.model_dump() == {"x": 150, "y": 300}
     assert result.source_screenshot_sha256 == "a" * 64
-    assert result.served_model == "example/grounder"
-    assert result.upstream_provider == "example-provider"
-    assert result.raw_response_artifact is not None
-    assert result.raw_response_artifact.path.as_posix() == "assets/models/calls.jsonl"
-    assert result.latency_ms == 25
-    assert result.usage.total_tokens == 105
+    assert result.resolution == ModelGroundingResolution(
+        grounding_profile_id="visual-grounder-primary",
+        model_request_ids=("model-request-1",),
+    )
 
     request = client.requests[0]
     assert request.profile_id == "grounder-primary"
@@ -62,7 +65,89 @@ def test_service_sends_only_target_context_and_preserves_call_evidence() -> None
     assert image_content.screenshot.sha256 == "a" * 64
 
 
-def test_service_rejects_platform_region_without_changing_transport_disposition() -> None:
+def test_service_uses_high_confidence_screen_analysis_without_a_model_call() -> None:
+    client = StubModelClient("(10,20)")
+    service = GroundingService(client, build_grounding_profile())
+    request = build_grounding_request(
+        screen_analysis_candidate=ScreenAnalysisGroundingCandidate(
+            analysis_id="analysis-1",
+            element_ref="element-1",
+            screenshot_sha256="a" * 64,
+            region=NormalizedRegion(left=0.25, top=0.25, right=0.75, bottom=0.75),
+        )
+    )
+
+    assert service.required_model_requests(request) == 0
+    result = service.ground(request)
+
+    assert result.resolution_source is GroundingResolutionSource.SCREEN_ANALYSIS
+    assert result.resolution == ScreenAnalysisGroundingResolution(
+        analysis_id="analysis-1",
+        element_ref="element-1",
+    )
+    assert isinstance(result.location, GroundedPoint)
+    assert result.location.pixel == PixelPoint(x=100, y=200)
+    assert result.model_request_count == 0
+    assert client.requests == []
+
+
+def test_service_falls_back_when_analysis_region_points_into_system_ui() -> None:
+    client = StubModelClient("(100,200)")
+    service = GroundingService(client, build_grounding_profile())
+    request = build_grounding_request(
+        excluded_regions=(
+            ScreenRegion(
+                kind=SystemRegionKind.STATUS_BAR,
+                left=0,
+                top=0,
+                right=200,
+                bottom=80,
+            ),
+        ),
+        screen_analysis_candidate=ScreenAnalysisGroundingCandidate(
+            analysis_id="analysis-1",
+            element_ref="element-1",
+            screenshot_sha256="a" * 64,
+            region=NormalizedRegion(left=0.25, top=0, right=0.75, bottom=0.1),
+        ),
+    )
+
+    assert service.required_model_requests(request) == 1
+    result = service.ground(request)
+
+    assert result.resolution_source is GroundingResolutionSource.MODEL
+    assert len(client.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "region",
+    [
+        NormalizedRegion(left=0, top=0, right=1, bottom=1),
+        NormalizedRegion(left=0.49, top=0, right=0.495, bottom=1),
+    ],
+)
+def test_service_falls_back_for_an_unlocalized_analysis_region(
+    region: NormalizedRegion,
+) -> None:
+    client = StubModelClient("(100,200)")
+    service = GroundingService(client, build_grounding_profile())
+    request = build_grounding_request(
+        screen_analysis_candidate=ScreenAnalysisGroundingCandidate(
+            analysis_id="analysis-1",
+            element_ref="element-1",
+            screenshot_sha256="a" * 64,
+            region=region,
+        )
+    )
+
+    assert service.required_model_requests(request) == 1
+    result = service.ground(request)
+
+    assert result.resolution_source is GroundingResolutionSource.MODEL
+    assert len(client.requests) == 1
+
+
+def test_service_rejects_a_model_point_inside_a_platform_region() -> None:
     client = StubModelClient("(10,20)")
     service = GroundingService(client, build_grounding_profile())
     request = build_grounding_request(
@@ -80,7 +165,9 @@ def test_service_rejects_platform_region_without_changing_transport_disposition(
     result = service.ground(request)
 
     assert result.disposition is GroundingDisposition.OUT_OF_BOUNDS
-    assert result.transport_disposition is ModelCallDisposition.COMPLETED
+    assert isinstance(result.resolution, ModelGroundingResolution)
+    assert result.resolution.grounding_profile_id == "visual-grounder-primary"
+    assert len(result.resolution.model_request_ids) == 1
     assert result.location is None
     assert result.reason == "The model target is inside an excluded platform region."
 
@@ -119,7 +206,7 @@ def test_service_tells_grounder_about_failed_point_and_rejects_an_equivalent_ret
         ),
     ],
 )
-def test_service_preserves_transport_failure_while_refusing_a_location(
+def test_service_maps_incomplete_model_calls_to_grounding_dispositions(
     transport: ModelCallDisposition,
     grounding: GroundingDisposition,
 ) -> None:
@@ -128,7 +215,7 @@ def test_service_preserves_transport_failure_while_refusing_a_location(
     result = GroundingService(client, build_grounding_profile()).ground(build_grounding_request())
 
     assert result.disposition is grounding
-    assert result.transport_disposition is transport
+    assert result.resolution_source is GroundingResolutionSource.MODEL
     assert result.location is None
 
 
@@ -156,7 +243,8 @@ def test_second_model_profile_uses_the_same_service_with_its_coordinate_conventi
     result = GroundingService(client, profile).ground(build_grounding_request())
 
     assert isinstance(result.location, GroundedPoint)
-    assert result.model_profile_id == "grounder-secondary"
+    assert isinstance(result.resolution, ModelGroundingResolution)
+    assert client.requests[0].profile_id == "grounder-secondary"
     assert result.location.pixel.model_dump() == {"x": 100, "y": 100}
     prompt = client.requests[0].messages[0].content[0]
     assert isinstance(prompt, TextModelContent)

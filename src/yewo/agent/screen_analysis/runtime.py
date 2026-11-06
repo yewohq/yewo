@@ -59,9 +59,9 @@ class ScreenAnalysisRunState:
     _retained: list[CurrentScreenAnalysis] = field(default_factory=list)
 
     @property
-    def records(self) -> tuple[CurrentScreenAnalysis, ...]:
-        """Return the unique analyses retained for the run result."""
-        return tuple(self._retained)
+    def record_ids(self) -> tuple[str, ...]:
+        """Return persisted analysis identities referenced by the run result."""
+        return tuple(item.analysis_id for item in self._retained)
 
     def analyze(
         self,

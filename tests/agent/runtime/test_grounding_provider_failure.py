@@ -6,7 +6,7 @@ import pytest
 
 from yewo.agent import AgentTerminalReason
 from yewo.agent.actuation import ActionKind, ActionRefusal, ActionRefusalCode
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import MAXIMUM_CONSECUTIVE_REFUSALS
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
 from yewo.agent.runtime.failure import AgentFailureSummary, ModelServiceUnavailableError
@@ -135,7 +135,6 @@ def test_repeated_invalid_grounding_concludes_as_application_deadlock(tmp_path: 
     assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS
     assert len(result.steps) == MAXIMUM_CONSECUTIVE_REFUSALS
     assert all(
-        step.refusal is not None
-        and step.refusal.code is ActionRefusalCode.INVALID_GROUNDING
+        step.refusal is not None and step.refusal.code is ActionRefusalCode.INVALID_GROUNDING
         for step in result.steps
     )

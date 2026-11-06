@@ -32,11 +32,9 @@ def _analysis(**updates: object) -> CurrentScreenAnalysis:
     values: dict[str, object] = {
         "analysis_id": "analysis-1",
         "observation_id": observation.observation_id,
-        "screen_fingerprint": observation.screen_fingerprint.value,
         "screenshot_sha256": observation.redacted_screenshot.sha256,
-        "platform_context": observation.platform_context,
-        "keyboard_visible": observation.keyboard_visible,
-        "orientation": observation.orientation,
+        "presentation": observation.presentation_key,
+        "screen_summary": "Visible application form.",
         "elements": (
             ScreenElement(
                 element_ref="primary-field",
@@ -82,12 +80,8 @@ def test_element_references_are_unique_per_analysis() -> None:
 
 def test_visual_cues_and_grounding_expression_are_bounded() -> None:
     element = _analysis().elements[0]
-    normalized = ScreenElement.model_validate(
-        {**element.model_dump(), "visual_cues": ("x" * 300,)}
-    )
-    crowded = normalized.model_copy(
-        update={"visual_cues": tuple("x" * 200 for _ in range(20))}
-    )
+    normalized = ScreenElement.model_validate({**element.model_dump(), "visual_cues": ("x" * 300,)})
+    crowded = normalized.model_copy(update={"visual_cues": tuple("x" * 200 for _ in range(20))})
 
     expression = resolve_element_expression(
         _analysis(elements=(crowded,)),
@@ -146,14 +140,13 @@ def test_noninteractive_element_reference_cannot_reach_grounding() -> None:
 
 
 def test_the_shared_inventory_carries_no_coordinates() -> None:
+    observation = build_observation()
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id="observation-1",
-        screen_fingerprint="1111111111111111",
         screenshot_sha256="a" * 64,
-        platform_context=".Editor",
-        keyboard_visible=False,
-        orientation=None,
+        presentation=observation.presentation_key,
+        screen_summary="Visible numeric form.",
         elements=(
             ScreenElement(
                 element_ref="element-1",

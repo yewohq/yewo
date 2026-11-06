@@ -16,6 +16,7 @@ from yewo.grounding import (
     GroundingRequest,
     GroundingResult,
     GroundingTargetOperation,
+    ModelGroundingResolution,
     NormalizedPoint,
     PixelPoint,
 )
@@ -73,6 +74,7 @@ def build_call_artifact(artifact_id: str = "call-artifact-1") -> ModelArtifactRe
 def build_call(
     request_id: str,
     *,
+    profile_id: str = "grounder-primary",
     attempt_number: int = 1,
     disposition: ModelCallDisposition = ModelCallDisposition.COMPLETED,
     latency_ms: float | None = 25,
@@ -80,7 +82,7 @@ def build_call(
 ) -> ModelCallRecord:
     return ModelCallRecord(
         request_id=request_id,
-        profile_id="grounder-primary",
+        profile_id=profile_id,
         role=ModelRole.GROUNDER,
         requested_provider="openrouter",
         requested_model="openrouter/example/grounder",
@@ -130,7 +132,13 @@ class StubModelClient:
             disposition=self.disposition,
             text=self.text,
             reason=self.reason,
-            calls=(build_call(request.request_id, disposition=self.disposition),),
+            calls=(
+                build_call(
+                    request.request_id,
+                    profile_id=request.profile_id,
+                    disposition=self.disposition,
+                ),
+            ),
             sensitivity=request.sensitivity,
             retention=request.retention,
         )
@@ -152,11 +160,13 @@ class DeterministicGrounder:
         height_px = request.screenshot.height_px
         return GroundingResult(
             grounding_id=request.grounding_id,
-            profile_id="deterministic-grounder",
-            model_profile_id="offline-grounder",
             source_screenshot_sha256=request.screenshot.sha256,
             output_shape=request.output_shape,
             disposition=GroundingDisposition.ACCEPTED,
+            resolution=ModelGroundingResolution(
+                grounding_profile_id="deterministic-grounder",
+                model_request_ids=(request.grounding_id,),
+            ),
             location=GroundedPoint(
                 normalized=NormalizedPoint(
                     x=self._x_px / (width_px - 1),
@@ -164,13 +174,6 @@ class DeterministicGrounder:
                 ),
                 pixel=PixelPoint(x=self._x_px, y=self._y_px),
             ),
-            requested_provider="offline",
-            requested_model="deterministic-grounder",
-            transport_disposition=ModelCallDisposition.COMPLETED,
-            raw_response_artifact=build_call_artifact("offline-call-artifact"),
-            latency_ms=0,
-            usage=ModelCallUsage(),
-            model_request_count=1,
         )
 
 

@@ -15,7 +15,8 @@ from yewo.agent.runtime.application_state import (
     ApplicationRecovery,
     restart_and_rebaseline_application,
 )
-from yewo.agent.memory.records import AppMemory, ScreenComparisonPolicy
+from yewo.agent.memory.records import AppMemory
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.grounding import AppMemoryGrounder
 from yewo.agent.planning.planner import (
     ActionProposalSource,
@@ -27,7 +28,11 @@ from yewo.agent.planning.records import (
 from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.recovery.advisor import ModelRecoveryAdvisor
 from yewo.agent.runtime.agent import DeviceAgent
-from yewo.agent.screen_analysis import CurrentScreenAnalysisManager, ModelScreenAnalyzer
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysisManager,
+    ModelScreenAnalyzer,
+    ScreenAnalysisStore,
+)
 from yewo.agent.runtime.records import AgentStepStore
 from yewo.agent.memory.screens import AppMemoryActionSource
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity, new_record_identifier
@@ -94,7 +99,6 @@ def build_device_agent(
         proposal_source = AppMemoryActionSource(
             proposal_source,
             planning_memory,
-            grounding_profile,
         )
     grounder = visual_grounder or GroundingService(model_client, grounding_profile)
     if visual_grounder is not None and grounding_memory is not None:
@@ -146,7 +150,8 @@ def build_device_agent(
         ),
         screen_analysis=(
             CurrentScreenAnalysisManager(
-                ModelScreenAnalyzer(model_client, screen_analyzer_profile_id)
+                ModelScreenAnalyzer(model_client, screen_analyzer_profile_id),
+                store=ScreenAnalysisStore(root),
             )
             if screen_analyzer_profile_id is not None
             else None

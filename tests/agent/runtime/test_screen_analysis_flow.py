@@ -3,9 +3,16 @@
 from pathlib import Path
 
 from yewo.agent.actuation import ActionKind
-from yewo.agent.runtime.records import AgentTerminalReason
+from yewo.agent.runtime.records import AgentTerminalReason, build_runtime_grounding_request
 from yewo.agent.screen_analysis import CurrentScreenAnalysisManager, ModelScreenAnalyzer
-from yewo.grounding import GroundingRequest, GroundingResult
+from yewo.grounding import (
+    GroundingOutputShape,
+    GroundingRequest,
+    GroundingResult,
+    GroundingTargetOperation,
+    NormalizedRegion,
+    ScreenAnalysisGroundingCandidate,
+)
 
 from agent.actuation.support import proposal
 from agent.planning.support import StubPlannerModel
@@ -35,9 +42,31 @@ class _RecordingGrounder:
         return self._delegate.ground(request)
 
 
+def test_scroll_request_ignores_a_point_only_analysis_candidate() -> None:
+    observation = _observation("obs_1", "0000000000000000")
+    request = build_runtime_grounding_request(
+        "grounding-1",
+        "the visible scroll region",
+        GroundingTargetOperation.SCROLL_REGION,
+        observation,
+        None,
+        ScreenAnalysisGroundingCandidate(
+            analysis_id="analysis-1",
+            element_ref="element-1",
+            screenshot_sha256=observation.redacted_screenshot.sha256,
+            region=NormalizedRegion(left=0.1, top=0.1, right=0.9, bottom=0.9),
+        ),
+    )
+
+    assert request is not None
+    assert request.output_shape is GroundingOutputShape.REGION
+    assert request.screen_analysis_candidate is None
+
+
 def test_offline_screen_analysis_flow_reaches_grounded_dispatch(tmp_path: Path) -> None:
     analyzer_model = StubPlannerModel(
         {
+            "screen_summary": "Visible application form.",
             "elements": [
                 {
                     "analysis_key": "primary-field",
@@ -58,7 +87,7 @@ def test_offline_screen_analysis_flow_reaches_grounded_dispatch(tmp_path: Path) 
                         "bottom": 0.6,
                     },
                 }
-            ]
+            ],
         }
     )
     analyzer_ids = iter(("analysis-request-1", "analysis-1", "analysis-request-2", "analysis-2"))
@@ -106,6 +135,10 @@ def test_offline_screen_analysis_flow_reaches_grounded_dispatch(tmp_path: Path) 
     assert first_proposal.target_element_ref == "element-1"
     assert "visible input surface for 'Primary field'" in (first_proposal.target_expression or "")
     assert "below Section heading" in grounder.requests[0].expression
+    candidate = grounder.requests[0].screen_analysis_candidate
+    assert candidate is not None
+    assert candidate.analysis_id == "analysis-1"
+    assert candidate.element_ref == "element-1"
     assert device.calls[0][0] == "focus"
     assert planner.requests[0].current_screen_analysis is not None
     assert len(analyzer_model.requests) == 2
@@ -114,7 +147,9 @@ def test_offline_screen_analysis_flow_reaches_grounded_dispatch(tmp_path: Path) 
 
 
 def test_screen_analysis_budget_stops_before_a_zero_cost_planner(tmp_path: Path) -> None:
-    analyzer_model = StubPlannerModel({"elements": []})
+    analyzer_model = StubPlannerModel(
+        {"screen_summary": "Visible application screen.", "elements": []}
+    )
     analyzer = ModelScreenAnalyzer(
         analyzer_model,
         "screen-analyzer-primary",

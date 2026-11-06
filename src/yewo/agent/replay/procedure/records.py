@@ -12,7 +12,7 @@ from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.runtime.records import AgentResult
 from yewo.artifacts import EvidenceApplicationIdentity, RecordIdentifier, Sha256Digest
 from yewo.devices.application_lifecycle import TrustedSystemSurface
-from yewo.observations import DeviceOrientation, ScreenFingerprint
+from yewo.observations import PresentationKey, ScreenFingerprint, ScreenshotReference
 from yewo.grounding import GroundedLocation, GroundingResolutionSource
 
 
@@ -46,7 +46,7 @@ class ProcedureReplayTerminal(StrEnum):
 
 
 class ProcedureGroundingDecisionCode(StrEnum):
-    """Why one compiled grounding was reused or delegated."""
+    """One compiled grounding reuse or delegation decision."""
 
     AUTHORIZED_COORDINATE_REUSED = "authorized_coordinate_reused"
     AUTHORIZED_COORDINATE_RELOCATED = "authorized_coordinate_relocated"
@@ -110,6 +110,25 @@ class ProcedureDivergence(BaseModel):
     reason: str = Field(min_length=1, max_length=2_000)
 
 
+class ProcedureRepairStepSummary(BaseModel):
+    """Compiler-approved work that remains after a successful repair."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    procedure_index: int = Field(ge=0)
+    action: ActionKind
+    target_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
+    expected_outcome: str | None = Field(default=None, min_length=1, max_length=2_000)
+    completion_condition_count: int = Field(default=0, ge=0)
+    completion_conditions: tuple[str, ...] = Field(default=(), max_length=5)
+
+    @model_validator(mode="after")
+    def _validate_completion_conditions(self) -> Self:
+        if len(self.completion_conditions) > self.completion_condition_count:
+            raise ValueError("Repair milestone summaries exceed the captured condition count.")
+        return self
+
+
 class ProcedureRepairTarget(BaseModel):
     """One compiled state that bounded repair may use to resume replay."""
 
@@ -117,10 +136,8 @@ class ProcedureRepairTarget(BaseModel):
 
     expected_state_id: RecordIdentifier
     resume_procedure_index: int = Field(ge=0)
-    foreground_application_id: str | None = Field(default=None, min_length=1)
-    platform_context: str | None = Field(default=None, min_length=1)
-    keyboard_visible: bool | None = None
-    orientation: DeviceOrientation | None = None
+    presentation: PresentationKey
+    reference_screenshot: ScreenshotReference | None = None
     established_by_action: ActionKind | None = None
     established_by_target_expression: str | None = Field(
         default=None, min_length=1, max_length=1_000
@@ -128,9 +145,22 @@ class ProcedureRepairTarget(BaseModel):
     keyboard_reset_target_expression: str | None = Field(
         default=None, min_length=1, max_length=1_000
     )
-    next_action: ActionKind | None = None
-    next_target_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
+    remaining_procedure_step_count: int = Field(default=0, ge=0)
+    remaining_step_summaries: tuple[ProcedureRepairStepSummary, ...] = Field(
+        default=(), max_length=5
+    )
     reason: str = Field(min_length=1, max_length=2_000)
+
+    @model_validator(mode="after")
+    def _validate_remaining_steps(self) -> Self:
+        if len(self.remaining_step_summaries) > self.remaining_procedure_step_count:
+            raise ValueError("Repair step summaries exceed the remaining procedure length.")
+        indexes = [item.procedure_index for item in self.remaining_step_summaries]
+        if indexes != sorted(set(indexes)):
+            raise ValueError("Repair step summaries must have unique ascending indexes.")
+        if indexes and indexes[0] != self.resume_procedure_index:
+            raise ValueError("Repair step summaries must start at the resume index.")
+        return self
 
 
 class ProcedureRepairEvidence(BaseModel):
@@ -170,7 +200,7 @@ class ProcedureReplayResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     procedure_id: RecordIdentifier
     evidence_id: RecordIdentifier
     source_run_id: RecordIdentifier
@@ -186,8 +216,6 @@ class ProcedureReplayResult(BaseModel):
     grounding_decisions: tuple[ProcedureGroundingDecision, ...] = Field(
         default=(), max_length=1_000
     )
-    divergence: ProcedureDivergence | None = None
-    repair: ProcedureRepairEvidence | None = None
     divergences: tuple[ProcedureDivergence, ...] = Field(default=(), max_length=100)
     repairs: tuple[ProcedureRepairEvidence, ...] = Field(default=(), max_length=100)
     environment_events: tuple[ProcedureEnvironmentEvent, ...] = Field(default=(), max_length=100)
@@ -198,37 +226,15 @@ class ProcedureReplayResult(BaseModel):
     total_elapsed_ms: float = Field(default=0, ge=0)
     agent_result: AgentResult
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_evidence_history(cls, value: object) -> object:
-        """Lift a single current record into its complete one-item history."""
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-        divergence = normalized.get("divergence")
-        repair = normalized.get("repair")
-        if divergence is not None and "divergences" not in normalized:
-            normalized["divergences"] = (divergence,)
-        if repair is not None and "repairs" not in normalized:
-            normalized["repairs"] = (repair,)
-        return normalized
-
     @model_validator(mode="after")
     def _validate_terminal_evidence(self) -> Self:
-        self._validate_current_history_records()
+        if len(self.repairs) > len(self.divergences):
+            raise ValueError("Procedure repair history exceeds divergence history.")
         self._validate_completion_count()
         self._validate_terminal_contract()
         self._validate_repair_contract()
         self._validate_milestone_conditions()
         return self
-
-    def _validate_current_history_records(self) -> None:
-        if self.divergence != (self.divergences[-1] if self.divergences else None):
-            raise ValueError("The current divergence must equal the final divergence record.")
-        if self.repair != (self.repairs[-1] if self.repairs else None):
-            raise ValueError("The current repair must equal the final repair record.")
-        if len(self.repairs) > len(self.divergences):
-            raise ValueError("Procedure repair history exceeds divergence history.")
 
     def _validate_completion_count(self) -> None:
         if self.completed_step_count > self.procedure_step_count:
@@ -251,14 +257,14 @@ class ProcedureReplayResult(BaseModel):
     def _validate_completed_replay(self) -> None:
         if self.completed_step_count != self.procedure_step_count:
             raise ValueError("Replay completion requires every procedure expectation to pass.")
-        if self.divergence is None and self.failed_procedure_index is not None:
+        if not self.divergences and self.failed_procedure_index is not None:
             raise ValueError("Clean replay completion cannot contain a failed procedure index.")
         has_complete_repair_history = (
             self.failed_procedure_index is not None
             and bool(self.repairs)
             and all(repair.succeeded for repair in self.repairs)
         )
-        if self.divergence is not None and not has_complete_repair_history:
+        if self.divergences and not has_complete_repair_history:
             raise ValueError("Repaired replay completion requires successful repair history.")
         if self.verification is None:
             raise ValueError("Replay completion requires final goal verification.")
@@ -267,13 +273,13 @@ class ProcedureReplayResult(BaseModel):
             raise ValueError("The replay terminal must match final goal verification.")
 
     def _validate_diverged_replay(self) -> None:
-        if self.failed_procedure_index is None or self.divergence is None:
+        if self.failed_procedure_index is None or not self.divergences:
             raise ValueError("Divergence requires the failed procedure guard evidence.")
         if self.verification is not None:
             raise ValueError("Divergence cannot contain final audit evidence.")
 
     def _validate_repair_contract(self) -> None:
-        if self.repair is not None and self.divergence is None:
+        if self.repairs and not self.divergences:
             raise ValueError("Procedure repair requires preserved divergence evidence.")
 
     def _validate_milestone_conditions(self) -> None:

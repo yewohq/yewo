@@ -12,7 +12,7 @@ from yewo.agent.actuation import (
     ActionRefusalCode,
     SideEffectClass,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import (
     MAXIMUM_CONSECUTIVE_REFUSALS,
     ActionNoProgressTracker,

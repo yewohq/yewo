@@ -31,11 +31,9 @@ class _ToggleAnalyzer:
         return CurrentScreenAnalysis(
             analysis_id="analysis-1",
             observation_id=observation.observation_id,
-            screen_fingerprint=observation.screen_fingerprint.value,
             screenshot_sha256=observation.redacted_screenshot.sha256,
-            platform_context=observation.platform_context,
-            keyboard_visible=observation.keyboard_visible,
-            orientation=observation.orientation,
+            presentation=observation.presentation_key,
+            screen_summary="Visible settings screen.",
             elements=(
                 ScreenElement(
                     element_ref="toggle-1",

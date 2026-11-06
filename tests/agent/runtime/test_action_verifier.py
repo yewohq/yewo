@@ -22,7 +22,7 @@ from yewo.agent.planning.records import (
     PlanningRequest,
 )
 from yewo.agent.planning.evidence import PlannerDecisionSource
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.recovery.runtime import RecoveryRunState
 from yewo.agent.runtime.verification import verify_discovery_action
 from yewo.agent.runtime.no_progress import MAXIMUM_CONSECUTIVE_REFUSALS

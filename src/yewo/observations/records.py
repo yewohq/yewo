@@ -152,6 +152,20 @@ class ScreenFingerprint(BaseModel):
     source_artifact_id: RecordIdentifier
 
 
+class PresentationKey(BaseModel):
+    """One complete observation-bound screen presentation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    foreground_application_id: str | None = Field(default=None, min_length=1)
+    platform_context: str | None = Field(default=None, min_length=1)
+    keyboard_visible: bool | None
+    orientation: DeviceOrientation | None
+    width_px: int = Field(gt=0)
+    height_px: int = Field(gt=0)
+    fingerprint: ScreenFingerprint
+
+
 class Observation(BaseModel):
     """Evidence captured from one stable device moment."""
 
@@ -173,6 +187,20 @@ class Observation(BaseModel):
     system_regions: tuple[ScreenRegion, ...] | None
     captured_at: datetime
     predecessor_observation_id: RecordIdentifier | None = None
+
+    @property
+    def presentation_key(self) -> PresentationKey:
+        """Return the canonical identity of this visible presentation."""
+        screenshot = self.redacted_screenshot
+        return PresentationKey(
+            foreground_application_id=self.foreground_application_id,
+            platform_context=self.platform_context,
+            keyboard_visible=self.keyboard_visible,
+            orientation=self.orientation,
+            width_px=screenshot.width_px,
+            height_px=screenshot.height_px,
+            fingerprint=self.screen_fingerprint,
+        )
 
     @model_validator(mode="after")
     def _validate_evidence(self) -> Self:

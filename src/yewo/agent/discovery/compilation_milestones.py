@@ -5,7 +5,8 @@ from pathlib import Path
 
 from yewo.agent.discovery.coverage import budget_coverage
 from yewo.agent.discovery.records import DiscoveryRequest, DiscoveryResult
-from yewo.agent.memory.records import AppMemory, MemoryCompatibility, ScreenComparisonPolicy
+from yewo.agent.memory.records import AppMemory, MemoryCompatibility
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.goal_verifier import (
     GoalVerification,
     GoalVerificationActionEvidence,
@@ -64,7 +65,7 @@ class DiscoveryCompilationMilestones:
                 source_observation=observations_by_id[source.source_observation_id],
                 observation=observations_by_id[source.destination_observation_id],
                 transition_evidence=build_goal_transition_evidence(
-                    source.action,
+                    source.proposal.action,
                     source.proposal.target_expression,
                     source.signals,
                 ),
@@ -147,13 +148,10 @@ class DiscoveryCompilationMilestones:
         selected_actions = tuple(
             (index, evidence_by_step[source_step])
             for index, source_step in enumerate(self.response.procedure)
-            if source_step in evidence_by_step
-            and source_step <= milestone_source.step
+            if source_step in evidence_by_step and source_step <= milestone_source.step
         )
         milestone_action = (
-            ()
-            if milestone_source.step in self.response.procedure
-            else ((None, milestone_source),)
+            () if milestone_source.step in self.response.procedure else ((None, milestone_source),)
         )
         return tuple(
             _compiled_action_evidence(step, index)
@@ -169,9 +167,9 @@ def _compiled_action_evidence(
     procedure_index: int | None,
 ) -> GoalVerificationActionEvidence:
     return GoalVerificationActionEvidence(
-        step_index=step.recorded_step_index,
+        step_index=step.step,
         procedure_index=procedure_index,
-        action=step.action,
+        action=step.proposal.action,
         target_expression=step.proposal.target_expression,
         outcome_disposition=step.outcome_disposition,
         outcome_signals=step.signals,

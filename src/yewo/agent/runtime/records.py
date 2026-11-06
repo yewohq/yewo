@@ -27,7 +27,6 @@ from yewo.agent.planning.evidence import (
     PlannerDecisionSource,
 )
 from yewo.agent.recovery.records import RecoveryBudgetCredit
-from yewo.agent.screen_analysis import CurrentScreenAnalysis
 from yewo.agent.runtime.limits import AgentModePolicy
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
@@ -43,6 +42,7 @@ from yewo.grounding import (
     GroundingOutputShape,
     GroundingRequest,
     GroundingTargetOperation,
+    ScreenAnalysisGroundingCandidate,
 )
 from yewo.observations import Observation
 from yewo.runs import RunTerminalCategory
@@ -228,10 +228,12 @@ class AgentResult(BaseModel):
     usage: AgentUsage
     recovery_budget_credit: RecoveryBudgetCredit = RecoveryBudgetCredit()
     steps: tuple[AgentStep, ...]
-    screen_analyses: tuple[CurrentScreenAnalysis, ...] = Field(default=(), max_length=1_000)
+    screen_analysis_ids: tuple[RecordIdentifier, ...] = Field(default=(), max_length=1_000)
 
     @model_validator(mode="after")
     def _validate_recovery_credit(self) -> Self:
+        if len(self.screen_analysis_ids) != len(set(self.screen_analysis_ids)):
+            raise ValueError("An agent result cannot repeat screen-analysis evidence.")
         credit = self.recovery_budget_credit
         usage = self.usage
         if (
@@ -467,6 +469,7 @@ def build_runtime_grounding_request(
     operation: GroundingTargetOperation | None,
     observation: Observation,
     correction: GroundingCorrection | None,
+    screen_analysis_candidate: ScreenAnalysisGroundingCandidate | None = None,
 ) -> GroundingRequest | None:
     """Build one visual-grounding request from the current observation."""
     if expression is None or operation is None:
@@ -479,14 +482,17 @@ def build_runtime_grounding_request(
     return GroundingRequest(
         grounding_id=grounding_id,
         screenshot=observation.redacted_screenshot,
-        source_fingerprint=observation.screen_fingerprint,
-        source_orientation=observation.orientation,
-        source_keyboard_visible=observation.keyboard_visible,
+        source_presentation=observation.presentation_key,
         expression=expression,
         operation=operation,
         output_shape=output_shape,
         excluded_regions=observation.system_regions,
         correction=correction,
+        screen_analysis_candidate=(
+            screen_analysis_candidate
+            if correction is None and output_shape is GroundingOutputShape.POINT
+            else None
+        ),
     )
 
 

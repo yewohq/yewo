@@ -10,7 +10,10 @@ from yewo.agent.planning.history import (
     grounding_correction_for_history,
 )
 from yewo.agent.runtime.records import build_runtime_grounding_request
-from yewo.agent.screen_analysis import CurrentScreenAnalysis
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    screen_analysis_grounding_candidate,
+)
 from yewo.artifacts import RecordIdentifier
 from yewo.grounding import (
     GroundingDisposition,
@@ -31,12 +34,18 @@ def build_proposal_grounding_requests(
 ) -> tuple[GroundingRequest | None, GroundingRequest | None]:
     """Build target and destination requests from one resolved proposal."""
     definition = ACTION_DEFINITIONS[proposal.action]
+    target_correction = grounding_correction_for_history(proposal, history)
     target = build_runtime_grounding_request(
         identifier_factory(),
         proposal.target_expression,
         definition.target_operation,
         observation,
-        grounding_correction_for_history(proposal, history),
+        target_correction,
+        screen_analysis_grounding_candidate(
+            screen_analysis,
+            observation,
+            proposal.target_element_ref,
+        ),
     )
     destination = build_runtime_grounding_request(
         identifier_factory(),
@@ -44,6 +53,11 @@ def build_proposal_grounding_requests(
         definition.destination_operation,
         observation,
         None,
+        screen_analysis_grounding_candidate(
+            screen_analysis,
+            observation,
+            proposal.destination_element_ref,
+        ),
     )
     return target, destination
 

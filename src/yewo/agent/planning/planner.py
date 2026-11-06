@@ -72,7 +72,6 @@ RECOVERABLE_PLANNING_DISPOSITIONS = frozenset(
 )
 
 
-
 class TaskPlanningError(RuntimeError):
     """A model call did not produce one usable action proposal."""
 
@@ -317,6 +316,18 @@ def _standard_messages(
                 *trusted_history_content(request.history),
                 TextModelContent(text=current_prompt),
                 ImageModelContent(screenshot=request.observation.redacted_screenshot),
+                *(
+                    (
+                        TextModelContent(
+                            text=(
+                                "Compiled target screenshot. Restore the application to this state."
+                            )
+                        ),
+                        ImageModelContent(screenshot=request.reference_screenshot),
+                    )
+                    if request.reference_screenshot is not None
+                    else ()
+                ),
             ),
         ),
     )

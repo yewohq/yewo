@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.narration import narrate_recovery_unavailable
 from yewo.agent.planning.records import (
     MAXIMUM_RECOVERY_GUIDANCE,
@@ -111,6 +111,7 @@ class RecoveryRunState:
         guidance = tuple(
             dict.fromkeys(
                 (
+                    failed_branch,
                     *context.recovery_guidance,
                     *assessment.remaining_work,
                     *assessment.planner_guidance,
@@ -120,9 +121,6 @@ class RecoveryRunState:
         )
         return context.model_copy(
             update={
-                "exhausted_branches": tuple(
-                    dict.fromkeys((*context.exhausted_branches, failed_branch))
-                ),
                 "recovery_guidance": guidance[:MAXIMUM_RECOVERY_GUIDANCE],
             }
         )

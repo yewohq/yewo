@@ -1,7 +1,7 @@
 """Screen-scoped deterministic planning facts."""
 
 from yewo.agent.actuation import ActionKind, ActionRefusal, ActionRefusalCode
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.history import MAXIMUM_SCREEN_FACT_CHARACTERS
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
 

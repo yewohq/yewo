@@ -38,7 +38,7 @@ def build_evidence_diagnostics(steps: tuple[EvidenceStep, ...]) -> EvidenceDiagn
                 uses_expression=True,
             )
             for step in steps
-            if step.action in {ActionKind.TYPE, ActionKind.CLEAR}
+            if step.proposal.action in {ActionKind.TYPE, ActionKind.CLEAR}
         ),
         crashes=tuple(
             _diagnostic(
@@ -48,7 +48,7 @@ def build_evidence_diagnostics(steps: tuple[EvidenceStep, ...]) -> EvidenceDiagn
                 ("recorded_outcome",),
             )
             for step in steps
-            if step.application_failed
+            if step.result is EvidenceResult.CRASHED
         ),
         unexpected_signals=tuple(
             _diagnostic(
@@ -96,7 +96,7 @@ def _no_effect_diagnostics(
     repeated: dict[tuple[ActionKind, str | None], list[int]] = defaultdict(list)
     for step in steps:
         if step.result is EvidenceResult.NO_EFFECT and step.control.identity_key is not None:
-            repeated[(step.action, step.control.identity_key)].append(step.step)
+            repeated[(step.proposal.action, step.control.identity_key)].append(step.step)
     return tuple(
         _diagnostic(
             tuple(indexes),

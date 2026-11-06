@@ -5,7 +5,10 @@ from typing import Literal
 
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.replay.procedure.grounding import build_keyboard_reflow_step
-from yewo.agent.replay.procedure.records import ProcedureRepairTarget
+from yewo.agent.replay.procedure.records import (
+    ProcedureRepairStepSummary,
+    ProcedureRepairTarget,
+)
 from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     ProcedureEffect,
@@ -55,16 +58,14 @@ def build_procedure_repair_preparation(
         for candidate in (keyboard_reflow_step or establishing_step, reset_step)
         if candidate is not None and candidate.proposal.target_expression is not None
     }
-    next_step = procedure.steps[resume_index] if resume_index < len(procedure.steps) else None
+    remaining_steps = procedure.steps[resume_index:]
     target_state = evidence.states[expected_state_id]
     return ProcedureRepairPreparation(
         target=ProcedureRepairTarget(
             expected_state_id=expected_state_id,
             resume_procedure_index=resume_index,
-            foreground_application_id=target_state.foreground_application_id,
-            platform_context=target_state.platform_context,
-            keyboard_visible=target_state.keyboard_visible,
-            orientation=target_state.orientation,
+            presentation=target_state.representative_presentation,
+            reference_screenshot=target_state.representative_screenshot,
             established_by_action=(
                 establishing_step.proposal.action if establishing_step is not None else None
             ),
@@ -76,9 +77,10 @@ def build_procedure_repair_preparation(
             keyboard_reset_target_expression=(
                 reset_step.proposal.target_expression if reset_step is not None else None
             ),
-            next_action=next_step.proposal.action if next_step is not None else None,
-            next_target_expression=(
-                next_step.proposal.target_expression if next_step is not None else None
+            remaining_procedure_step_count=len(remaining_steps),
+            remaining_step_summaries=tuple(
+                _build_repair_step_summary(remaining_step, evidence)
+                for remaining_step in remaining_steps[:5]
             ),
             reason=reason,
         ),
@@ -94,6 +96,23 @@ def build_procedure_repair_preparation(
         requires_exact_content_match=(
             establishing_step is not None
             and establishing_step.proposal.action in {ActionKind.TYPE, ActionKind.CLEAR}
+        ),
+    )
+
+
+def _build_repair_step_summary(
+    step: ReplayProcedureStep,
+    evidence: EvidenceDocument,
+) -> ProcedureRepairStepSummary:
+    condition_indexes = step.captures_completion_conditions
+    return ProcedureRepairStepSummary(
+        procedure_index=step.procedure_index,
+        action=step.proposal.action,
+        target_expression=step.proposal.target_expression,
+        expected_outcome=step.proposal.expected_outcome,
+        completion_condition_count=len(condition_indexes),
+        completion_conditions=tuple(
+            evidence.task.completion_conditions[index] for index in condition_indexes[:5]
         ),
     )
 

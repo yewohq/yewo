@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from yewo.agent.actuation import ActionProposal, ActionRefusal, ActionRefusalCode
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.interaction_intent import same_interaction_family
 from yewo.agent.memory.screens import observations_match
 from yewo.observations import Observation
@@ -90,7 +90,9 @@ class FailedAttemptCorrections:
             ),
             None,
         )
-        reason = _refinement_error(proposal, original, original_id, self._latest_feedback_proposal_id)
+        reason = _refinement_error(
+            proposal, original, original_id, self._latest_feedback_proposal_id
+        )
         if reason is None:
             return None
         return ActionRefusal(
@@ -107,7 +109,9 @@ def _refinement_error(
     latest_feedback_proposal_id: str | None,
 ) -> str | None:
     if original is None or original_id != latest_feedback_proposal_id:
-        return "An interaction refinement must reference the immediately preceding no-effect proposal."
+        return (
+            "An interaction refinement must reference the immediately preceding no-effect proposal."
+        )
     if original.interaction_refinement_for_proposal_id is not None:
         return "An interaction refinement cannot refine another interaction refinement."
     if original.grounding_correction_for_proposal_id is not None:

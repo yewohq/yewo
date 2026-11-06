@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from yewo.agent.discovery.records import DiscoveryResult
 from yewo.agent.memory.knowledge import AppKnowledge
-from yewo.agent.memory.records import AppMemory, MemoryCompatibility, ScreenComparisonPolicy
+from yewo.agent.memory.records import AppMemory, MemoryCompatibility
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.evidence import build_evidence_document
@@ -33,6 +33,7 @@ from yewo.agent.replay.reconciliation.records import (
 )
 from yewo.agent.replay.reconciliation.store import ReconciliationArtifactStore
 from yewo.agent.runtime.records import AgentStep, AgentTask
+from yewo.agent.screen_analysis import ScreenAnalysisStore
 from yewo.artifacts import (
     ArtifactRetention,
     ArtifactSensitivity,
@@ -51,7 +52,7 @@ from yewo.models import (
     TextModelContent,
     build_model_response_contract,
 )
-from yewo.observations import ObservationStore, ScreenshotStore
+from yewo.observations import ObservationStore, ScreenComparisonPolicy, ScreenshotStore
 
 
 REPLAY_RECONCILIATION_SYSTEM_PROMPT = """\
@@ -129,6 +130,9 @@ def compile_completed_discovery_run(
         task=task,
         steps=steps,
         observations=observations,
+        screen_analyses=ScreenAnalysisStore(root).load_selected(
+            _source_screen_analysis_ids(discovery_result)
+        ),
         comparison=comparison,
         screenshot_loader=ScreenshotStore(root).load,
         identifier_factory=identifier_factory,
@@ -401,6 +405,20 @@ def _source_steps(discovery_result: DiscoveryResult) -> tuple[AgentStep, ...]:
     for step in candidates:
         step_by_id.setdefault(step.step_id, step)
     return tuple(step_by_id.values())
+
+
+def _source_screen_analysis_ids(
+    discovery_result: DiscoveryResult,
+) -> tuple[RecordIdentifier, ...]:
+    replay = discovery_result.procedure_replay
+    return tuple(
+        dict.fromkeys(
+            (
+                *(replay.agent_result.screen_analysis_ids if replay is not None else ()),
+                *discovery_result.agent_result.screen_analysis_ids,
+            )
+        )
+    )
 
 
 def _action_risk_context(knowledge: AppKnowledge | None) -> tuple[dict[str, object], ...]:

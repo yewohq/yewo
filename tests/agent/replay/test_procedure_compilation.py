@@ -27,6 +27,8 @@ from yewo.agent.replay import (
     ProcedureCompilationStatus,
 )
 from yewo.agent.replay.reconciliation.compilation import compile_completed_discovery_run
+from yewo.agent.replay.reconciliation.prompt import build_reconciler_evidence_projection
+from yewo.agent.replay.reconciliation.records import EvidenceResult
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.memory.knowledge import (
     AppKnowledge,
@@ -161,6 +163,21 @@ def _identifiers(*values: str) -> Callable[[], str]:
     return lambda: next(identifiers)
 
 
+def test_reconciler_projection_excludes_non_reusable_results() -> None:
+    from agent.replay.support import evidence
+
+    source = evidence()
+    refused = source.steps[0].model_copy(update={"result": EvidenceResult.REFUSED})
+    source = source.model_copy(update={"steps": (refused, *source.steps[1:])})
+
+    projection = build_reconciler_evidence_projection(source)
+
+    projected_steps = projection["steps"]
+    assert isinstance(projected_steps, tuple)
+    assert tuple(step["step"] for step in projected_steps) == (2, 3)
+    assert projection["run"]["candidate_step_count"] == 2
+
+
 def test_completed_result_builds_calls_compiles_and_measures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -211,10 +228,8 @@ def test_completed_result_builds_calls_compiles_and_measures(
     assert isinstance(content, TextModelContent)
     payload = json.loads(content.text.split("Evidence JSON follows:\n", 1)[1])
     projected = payload["evidence"]
-    assert projected["projection_version"] == 2
-    assert projected["task"]["completion_condition_mode"] == (
-        "generate_from_discovery_evidence"
-    )
+    assert projected["projection_version"] == 3
+    assert projected["task"]["completion_condition_mode"] == ("generate_from_discovery_evidence")
     assert "timeline" not in projected
     assert "fingerprint" not in next(iter(projected["states"].values()))
     assert "target_grounding" not in projected["steps"][0]

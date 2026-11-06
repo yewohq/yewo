@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import cast
 
 from yewo.agent.actuation import ActionKind, ActionOutcome, DispatchDisposition
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.recovery.runtime import RecoveryRunState
 from yewo.agent.screen_analysis import CurrentScreenAnalysis, CurrentScreenAnalysisManager
 from yewo.agent.screen_analysis.runtime import ScreenAnalysisRunState
@@ -36,11 +36,9 @@ class _Analyzer:
         return CurrentScreenAnalysis(
             analysis_id=f"analysis-{self.calls}",
             observation_id=observation.observation_id,
-            screen_fingerprint=observation.screen_fingerprint.value,
             screenshot_sha256=observation.redacted_screenshot.sha256,
-            platform_context=observation.platform_context,
-            keyboard_visible=observation.keyboard_visible,
-            orientation=observation.orientation,
+            presentation=observation.presentation_key,
+            screen_summary="Visible application screen.",
             elements=(),
         )
 
@@ -78,7 +76,7 @@ def test_runtime_counts_and_retains_screen_analysis(tmp_path: Path) -> None:
 
     assert source.calls == 1
     assert result.usage.planning_requests == 2
-    assert tuple(item.observation_id for item in result.screen_analyses) == ("obs_1",)
+    assert result.screen_analysis_ids == ("analysis-1",)
 
 
 def test_runtime_skips_analysis_when_the_action_source_does_not_require_it(
@@ -96,7 +94,7 @@ def test_runtime_skips_analysis_when_the_action_source_does_not_require_it(
 
     assert source.calls == 0
     assert result.usage.planning_requests == 1
-    assert result.screen_analyses == ()
+    assert result.screen_analysis_ids == ()
 
 
 def test_optional_analysis_source_skips_manager_callbacks() -> None:

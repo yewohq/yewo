@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from yewo.agent import AgentTerminalReason
+from yewo.agent import AgentTask, AgentTerminalReason
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.actuation import ActionKind
 from yewo.agent.planning.goal_verifier import GoalVerification
@@ -32,9 +32,18 @@ from yewo.agent.replay import (
     ReconcilerResponse,
     ReconciliationArtifactStore,
     ReplayProcedure,
+    build_evidence_document,
     compile_replay_procedure,
 )
-from yewo.grounding import GroundingResolutionSource
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    ScreenElement,
+    ScreenElementConfidence,
+    ScreenElementKind,
+    ScreenSemanticRole,
+    ScreenVisualKind,
+)
+from yewo.grounding import GroundingResolutionSource, ProcedureGroundingResolution
 
 from agent.discovery.support import agent_result
 from agent.replay.support import checks as _checks
@@ -49,7 +58,8 @@ def test_evidence_is_lossless_groups_states_and_marks_inference() -> None:
     assert evidence.run.step_count == 3
     assert evidence.run.observation_count == 5
     assert evidence.states["state_001"].observation_ids == ("obs_1", "obs_same")
-    assert evidence.steps[1].control.role == "text_field"
+    assert evidence.steps[1].control.kind.semantic is ScreenSemanticRole.TEXT_FIELD
+    assert evidence.steps[1].control.kind_source == "recorded_action"
     assert evidence.steps[1].control.inference.input_sources == (
         "recorded_action",
         "recorded_input_contract",
@@ -59,6 +69,61 @@ def test_evidence_is_lossless_groups_states_and_marks_inference() -> None:
     assert "accessibility_id" not in encoded
     assert "resource_id" not in encoded
     assert "platform_class" not in encoded
+
+
+def test_evidence_uses_analyzed_element_kind_instead_of_reparsing_prose() -> None:
+    before, _, after, *_ = _observations()
+    source = agent_result(
+        before,
+        after,
+        action=ActionKind.TAP,
+        terminal=AgentTerminalReason.BUDGET_EXHAUSTED,
+    ).steps[0]
+    step = source.model_copy(
+        update={
+            "proposal": source.proposal.model_copy(
+                update={
+                    "target_element_ref": "element-1",
+                    "target_expression": "the visible button",
+                }
+            )
+        }
+    )
+    analysis = CurrentScreenAnalysis(
+        analysis_id="analysis-1",
+        observation_id=before.observation_id,
+        screenshot_sha256=before.redacted_screenshot.sha256,
+        presentation=before.presentation_key,
+        screen_summary="Visible records screen.",
+        elements=(
+            ScreenElement(
+                element_ref="element-1",
+                name="Orders",
+                kind=ScreenElementKind(
+                    visual=ScreenVisualKind.TEXT_AND_ICON,
+                    semantic=ScreenSemanticRole.NAVIGATION_ITEM,
+                ),
+                confidence=ScreenElementConfidence.HIGH,
+                evidence="A labelled navigation item is visible.",
+            ),
+        ),
+    )
+
+    evidence = build_evidence_document(
+        run_id="run-1",
+        objective_id="objective-1",
+        task=AgentTask(objective="Open orders.", discovery_mode=True),
+        steps=(step,),
+        observations=(before, after),
+        screen_analyses=(analysis,),
+        identifier_factory=lambda: "evidence-1",
+    )
+
+    control = evidence.steps[0].control
+    assert control.kind.semantic is ScreenSemanticRole.NAVIGATION_ITEM
+    assert control.kind_source == "screen_analysis"
+    assert control.label == "Orders"
+    assert control.inference.method == "screen-analysis-element-v1"
 
 
 def test_compiler_builds_zero_based_procedure_and_capture_point() -> None:
@@ -202,15 +267,14 @@ def test_procedure_grounder_reuses_exact_stored_pixels_before_fallback() -> None
     request = stored.request.model_copy(
         update={
             "grounding_id": "live_grounding",
-            "source_fingerprint": source_observation.screen_fingerprint,
-            "source_orientation": source_observation.orientation,
-            "source_keyboard_visible": source_observation.keyboard_visible,
+            "source_presentation": source_observation.presentation_key,
         }
     )
     result = ProcedureGrounder(RefusingFallback(), source).ground(request)
 
     assert result.resolution_source is GroundingResolutionSource.PROCEDURE
-    assert result.cached_procedure_step_id == procedure.steps[0].source_step_id
+    assert isinstance(result.resolution, ProcedureGroundingResolution)
+    assert result.resolution.source_step_id == procedure.steps[0].source_step_id
     assert result.location == stored.result.location
 
 
@@ -312,14 +376,13 @@ def test_selected_correction_can_replace_same_control() -> None:
     original = evidence.steps[1].model_copy(update={"control": named_control})
     corrected_proposal = evidence.steps[2].proposal.model_copy(
         update={
-            "action": evidence.steps[1].action,
+            "action": evidence.steps[1].proposal.action,
             "target_expression": evidence.steps[1].proposal.target_expression,
             "text": evidence.steps[1].proposal.text,
         }
     )
     corrected = evidence.steps[2].model_copy(
         update={
-            "action": evidence.steps[1].action,
             "proposal": corrected_proposal,
             "control": named_control,
         }
@@ -351,9 +414,11 @@ def test_correction_cannot_replace_work_after_dependent_selected_steps() -> None
     original = evidence.steps[1].model_copy(update={"control": named_control})
     corrected = evidence.steps[2].model_copy(
         update={
-            "action": original.action,
             "proposal": evidence.steps[2].proposal.model_copy(
-                update={"action": original.action, "text": original.proposal.text}
+                update={
+                    "action": original.proposal.action,
+                    "text": original.proposal.text,
+                }
             ),
             "control": named_control,
             "step": 4,

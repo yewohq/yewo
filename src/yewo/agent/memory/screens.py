@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from yewo.artifacts import RecordIdentifier
-from yewo.grounding import GroundingProfile
-from yewo.observations import Observation, fingerprint_distance
+from yewo.observations import Observation, ScreenComparisonPolicy, ScreenMatcher
 from yewo.run_narration import current_narrator
 
 from yewo.agent.memory.records import (
@@ -15,7 +14,6 @@ from yewo.agent.memory.records import (
     LogicalScreen,
     MemoryCompatibility,
     ObservationVariant,
-    ScreenComparisonPolicy,
     UnsuccessfulAttempt,
     derived_memory_identifier,
 )
@@ -36,17 +34,6 @@ from yewo.agent.planning.evidence import (
 
 
 MEMORY_FACT_LIMIT = 20
-ExactObservationStateKey = tuple[
-    str | None,
-    str | None,
-    bool | None,
-    str | None,
-    int,
-    int,
-    str,
-    str,
-    str | None,
-]
 
 
 class AppMemoryActionSource:
@@ -56,11 +43,9 @@ class AppMemoryActionSource:
         self,
         source: ActionProposalSource,
         memory: AppMemory,
-        grounding_profile: GroundingProfile,
     ) -> None:
         self._source = source
         self._memory = memory
-        self._grounding_profile = grounding_profile
 
     def plan(self, request: PlanningRequest) -> ActionProposal:
         """Delegate with bounded historical hints for the matching screen."""
@@ -68,7 +53,6 @@ class AppMemoryActionSource:
         memory_facts = memory_planning_facts(
             self._memory,
             request.observation,
-            self._grounding_profile,
         )
         _narrate_planner_memory(request.observation, len(memory_facts))
         historical_facts = tuple(dict.fromkeys((*progress.historical_memory_facts, *memory_facts)))[
@@ -125,7 +109,6 @@ def _narrate_planner_memory(observation: Observation, fact_count: int) -> None:
 def memory_planning_facts(
     memory: AppMemory,
     observation: Observation,
-    grounding_profile: GroundingProfile,
 ) -> tuple[str, ...]:
     """Describe prior attempts and proven expressions for the current screen."""
     screen_ids = {
@@ -144,28 +127,12 @@ def memory_planning_facts(
         _unsuccessful_attempt_fact(attempt)
         for attempt in memory.unsuccessful_attempts
         if attempt.screen_id in screen_ids
-        and (
-            attempt.grounding_profile_id is None
-            or (
-                attempt.grounding_profile_id == grounding_profile.profile_id
-                and attempt.grounder_model_profile_id == grounding_profile.model_profile_id
-            )
-        )
     )
     proven_expression_facts = tuple(
         _proven_expression_fact(transition.action.action, transition.action.target_description)
         for transition in memory.transitions
         if transition.source_screen_id in screen_ids
         and transition.action.target_description is not None
-        and any(
-            profile_id == grounding_profile.profile_id
-            and model_profile_id == grounding_profile.model_profile_id
-            for profile_id, model_profile_id in zip(
-                transition.grounding_profile_ids,
-                transition.grounder_model_profile_ids,
-                strict=True,
-            )
-        )
     )
     input_facts = tuple(
         _input_contract_fact(transition)
@@ -226,11 +193,7 @@ def observation_matches_screen(
 ) -> bool:
     """Return whether current evidence matches one stored logical screen."""
     return any(
-        _observation_matches_variant(
-            observation,
-            variant,
-            policy.maximum_phash_distance,
-        )
+        ScreenMatcher(policy).logical_screen(observation.presentation_key, variant.presentation)
         for variant in screen.variants
     )
 
@@ -240,7 +203,10 @@ def observation_matches_exact_variant(
     variant: ObservationVariant,
 ) -> bool:
     """Require identical application pixels and observation geometry."""
-    return exact_observation_state_key(observation) == exact_variant_state_key(variant)
+    return ScreenMatcher.exact(
+        observation.presentation_key,
+        variant.presentation,
+    )
 
 
 def observation_matches_replay_variant(
@@ -249,53 +215,9 @@ def observation_matches_replay_variant(
     policy: ScreenComparisonPolicy,
 ) -> bool:
     """Match stable replay state while tolerating small transient pixels."""
-    screenshot = observation.redacted_screenshot
-    if (
-        observation.foreground_application_id != variant.foreground_application_id
-        or observation.platform_context != variant.platform_context
-        or observation.keyboard_visible is not variant.keyboard_visible
-        or observation.orientation is not variant.orientation
-        or (screenshot.width_px, screenshot.height_px) != (variant.width_px, variant.height_px)
-    ):
-        return False
-    try:
-        return (
-            fingerprint_distance(observation.screen_fingerprint, variant.fingerprint)
-            <= policy.maximum_replay_phash_distance
-        )
-    except ValueError:
-        return False
-
-
-def exact_observation_state_key(observation: Observation) -> ExactObservationStateKey:
-    """Build the cross-run identity of one exact current application state."""
-    screenshot = observation.redacted_screenshot
-    fingerprint = observation.screen_fingerprint
-    return (
-        observation.foreground_application_id,
-        observation.platform_context,
-        observation.keyboard_visible,
-        observation.orientation,
-        screenshot.width_px,
-        screenshot.height_px,
-        fingerprint.algorithm,
-        fingerprint.masked_pixels_sha256,
-        fingerprint.system_region_mask_sha256,
-    )
-
-
-def exact_variant_state_key(variant: ObservationVariant) -> ExactObservationStateKey:
-    """Build the cross-run identity of one exact retained application state."""
-    return (
-        variant.foreground_application_id,
-        variant.platform_context,
-        variant.keyboard_visible,
-        variant.orientation,
-        variant.width_px,
-        variant.height_px,
-        variant.fingerprint.algorithm,
-        variant.fingerprint.masked_pixels_sha256,
-        variant.fingerprint.system_region_mask_sha256,
+    return ScreenMatcher(policy).replay_equivalent(
+        observation.presentation_key,
+        variant.presentation,
     )
 
 
@@ -305,23 +227,10 @@ def observations_match(
     policy: ScreenComparisonPolicy,
 ) -> bool:
     """Return whether two current observations represent one logical screen."""
-    first_screenshot = first.redacted_screenshot
-    second_screenshot = second.redacted_screenshot
-    if (
-        first.foreground_application_id != second.foreground_application_id
-        or first.platform_context != second.platform_context
-        or first.orientation is not second.orientation
-        or (first_screenshot.width_px, first_screenshot.height_px)
-        != (second_screenshot.width_px, second_screenshot.height_px)
-    ):
-        return False
-    try:
-        return (
-            fingerprint_distance(first.screen_fingerprint, second.screen_fingerprint)
-            <= policy.maximum_phash_distance
-        )
-    except ValueError:
-        return False
+    return ScreenMatcher(policy).logical_screen(
+        first.presentation_key,
+        second.presentation_key,
+    )
 
 
 def validate_memory_observations(
@@ -426,42 +335,13 @@ def retain_observation_variants(
     return tuple(retained_screens)
 
 
-def _observation_matches_variant(
-    observation: Observation,
-    variant: ObservationVariant,
-    maximum_distance: int,
-) -> bool:
-    screenshot = observation.redacted_screenshot
-    if (
-        observation.foreground_application_id != variant.foreground_application_id
-        or observation.platform_context != variant.platform_context
-        or observation.orientation is not variant.orientation
-        or (screenshot.width_px, screenshot.height_px) != (variant.width_px, variant.height_px)
-    ):
-        return False
-    try:
-        return (
-            fingerprint_distance(observation.screen_fingerprint, variant.fingerprint)
-            <= maximum_distance
-        )
-    except ValueError:
-        return False
-
-
 def _observation_variant(
     observation: Observation,
     source_run_id: str,
 ) -> ObservationVariant:
-    screenshot = observation.redacted_screenshot
     return ObservationVariant(
         observation_id=observation.observation_id,
         source_run_id=source_run_id,
-        foreground_application_id=observation.foreground_application_id,
-        platform_context=observation.platform_context,
-        keyboard_visible=observation.keyboard_visible,
-        orientation=observation.orientation,
-        width_px=screenshot.width_px,
-        height_px=screenshot.height_px,
-        fingerprint=observation.screen_fingerprint,
-        screenshot=screenshot,
+        presentation=observation.presentation_key,
+        screenshot=observation.redacted_screenshot,
     )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.screens import observations_match
 from yewo.observations import Observation
 

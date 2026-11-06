@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from decimal import Decimal
+from typing import cast
 
 from yewo.artifacts import new_record_identifier
 from yewo.grounding.codecs import CoordinateTextCodec, DecodedGrounding
@@ -16,14 +16,15 @@ from yewo.grounding.records import (
     GroundingProfile,
     GroundingRequest,
     GroundingResult,
+    ModelGroundingResolution,
+    NormalizedPoint,
+    PixelPoint,
+    ScreenAnalysisGroundingResolution,
     validate_grounding_request,
 )
 from yewo.models import (
     ImageModelContent,
-    ModelArtifactReference,
     ModelCallDisposition,
-    ModelCallRecord,
-    ModelCallUsage,
     ModelClient,
     ModelMessage,
     ModelMessageRole,
@@ -51,6 +52,10 @@ Localization rules:
 Output only {response_shape} in {coordinate_space}. Do not explain the answer.
 If no visible target matches, return: refused: target not found
 If more than one visible target matches, return: ambiguous: target is not unique"""
+
+
+MINIMUM_DIRECT_ANALYSIS_REGION_EDGE_PX = 8
+MAXIMUM_DIRECT_ANALYSIS_REGION_AREA_RATIO = 0.5
 
 
 def _coordinate_instruction(convention: GroundingCoordinateConvention) -> str:
@@ -83,11 +88,16 @@ class GroundingService:
     def required_model_requests(self, request: GroundingRequest) -> int:
         """Return the maximum logical model calls needed to resolve one request."""
         validate_grounding_request(self._profile, request)
+        if self._screen_analysis_result(request) is not None:
+            return 0
         return len(self._profile.candidates)
 
     def ground(self, request: GroundingRequest) -> GroundingResult:
         """Resolve one target with bounded, observation-corroborated recovery."""
         validate_grounding_request(self._profile, request)
+        analysis_result = self._screen_analysis_result(request)
+        if analysis_result is not None:
+            return analysis_result
         attempts: list[GroundingResult] = []
         for candidate in self._profile.candidates:
             result = self._ground_with_candidate(request, candidate)
@@ -97,6 +107,39 @@ class GroundingService:
         if not attempts:
             raise GroundingEvidenceError("A grounding profile declares no candidate grounder.")
         return _aggregate_results(attempts)
+
+    def _screen_analysis_result(self, request: GroundingRequest) -> GroundingResult | None:
+        candidate = request.screen_analysis_candidate
+        if candidate is None or not _is_direct_analysis_region_eligible(request):
+            return None
+        normalized = NormalizedPoint(
+            x=(candidate.region.left + candidate.region.right) / 2,
+            y=(candidate.region.top + candidate.region.bottom) / 2,
+        )
+        location = GroundedPoint(
+            normalized=normalized,
+            pixel=PixelPoint(
+                x=round(normalized.x * (request.screenshot.width_px - 1)),
+                y=round(normalized.y * (request.screenshot.height_px - 1)),
+            ),
+        )
+        validated = self._validate_excluded_regions(
+            DecodedGrounding(GroundingDisposition.ACCEPTED, location=location),
+            request,
+        )
+        if validated.disposition is not GroundingDisposition.ACCEPTED:
+            return None
+        return GroundingResult(
+            grounding_id=request.grounding_id,
+            source_screenshot_sha256=request.screenshot.sha256,
+            output_shape=request.output_shape,
+            disposition=GroundingDisposition.ACCEPTED,
+            resolution=ScreenAnalysisGroundingResolution(
+                analysis_id=candidate.analysis_id,
+                element_ref=candidate.element_ref,
+            ),
+            location=location,
+        )
 
     def _ground_with_candidate(
         self,
@@ -108,7 +151,7 @@ class GroundingService:
         decoded = self._decode_response(response, request, candidate)
         validated = self._validate_correction_distance(decoded, request)
         validated = self._validate_excluded_regions(validated, request)
-        return self._build_result(request, response, validated, candidate)
+        return self._build_result(request, response, validated)
 
     def _build_model_request(
         self,
@@ -228,28 +271,18 @@ class GroundingService:
         request: GroundingRequest,
         response: ModelResponse,
         decoded: DecodedGrounding,
-        candidate: GroundingCandidate,
     ) -> GroundingResult:
-        final_call = response.calls[-1]
         return GroundingResult(
             grounding_id=request.grounding_id,
-            profile_id=self._profile.profile_id,
-            model_profile_id=candidate.model_profile_id,
             source_screenshot_sha256=request.screenshot.sha256,
             output_shape=request.output_shape,
             disposition=decoded.disposition,
+            resolution=ModelGroundingResolution(
+                grounding_profile_id=self._profile.profile_id,
+                model_request_ids=(response.request_id,),
+            ),
             location=decoded.location,
             reason=decoded.reason,
-            requested_provider=final_call.requested_provider,
-            requested_model=final_call.requested_model,
-            requested_revision=final_call.requested_revision,
-            served_model=final_call.served_model,
-            upstream_provider=final_call.upstream_provider,
-            transport_disposition=response.disposition,
-            raw_response_artifact=_require_call_artifact(final_call),
-            latency_ms=_total_latency(response.calls),
-            usage=_total_usage(response.calls),
-            model_request_count=len(response.calls),
         )
 
 
@@ -267,18 +300,32 @@ def _correction_instruction(request: GroundingRequest) -> str:
 
 def _aggregate_results(results: list[GroundingResult]) -> GroundingResult:
     final = results[-1]
-    latencies = tuple(result.latency_ms for result in results)
-    latency = (
-        None
-        if any(value is None for value in latencies)
-        else sum(value for value in latencies if value is not None)
+    request_ids = tuple(
+        request_id
+        for result in results
+        if isinstance(result.resolution, ModelGroundingResolution)
+        for request_id in result.resolution.model_request_ids
     )
+    final_resolution = cast(ModelGroundingResolution, final.resolution)
     return final.model_copy(
         update={
-            "latency_ms": latency,
-            "usage": _sum_usages(tuple(result.usage for result in results)),
-            "model_request_count": len(results),
+            "resolution": final_resolution.model_copy(update={"model_request_ids": request_ids}),
         }
+    )
+
+
+def _is_direct_analysis_region_eligible(request: GroundingRequest) -> bool:
+    candidate = request.screen_analysis_candidate
+    if candidate is None:
+        return False
+    region = candidate.region
+    width_px = (region.right - region.left) * request.screenshot.width_px
+    height_px = (region.bottom - region.top) * request.screenshot.height_px
+    area_ratio = (region.right - region.left) * (region.bottom - region.top)
+    return (
+        width_px >= MINIMUM_DIRECT_ANALYSIS_REGION_EDGE_PX
+        and height_px >= MINIMUM_DIRECT_ANALYSIS_REGION_EDGE_PX
+        and area_ratio <= MAXIMUM_DIRECT_ANALYSIS_REGION_AREA_RATIO
     )
 
 
@@ -289,57 +336,3 @@ def _regions_overlap(first: PixelRegion, second: PixelRegion) -> bool:
         and first.top < second.bottom
         and second.top < first.bottom
     )
-
-
-def _require_call_artifact(call: ModelCallRecord) -> ModelArtifactReference:
-    if call.call_artifact is None:
-        raise GroundingEvidenceError("The model call has no persisted response artifact.")
-    return call.call_artifact
-
-
-def _total_latency(calls: tuple[ModelCallRecord, ...]) -> float | None:
-    latency_values = tuple(call.latency_ms for call in calls)
-    if any(value is None for value in latency_values):
-        return None
-    return sum(value for value in latency_values if value is not None)
-
-
-def _total_usage(calls: tuple[ModelCallRecord, ...]) -> ModelCallUsage:
-    return _sum_usages(tuple(call.usage for call in calls))
-
-
-def _sum_usages(usage_records: tuple[ModelCallUsage, ...]) -> ModelCallUsage:
-    return ModelCallUsage(
-        prompt_tokens=_sum_optional_values(tuple(usage.prompt_tokens for usage in usage_records)),
-        completion_tokens=_sum_optional_values(
-            tuple(usage.completion_tokens for usage in usage_records)
-        ),
-        total_tokens=_sum_optional_values(tuple(usage.total_tokens for usage in usage_records)),
-        cached_tokens=_sum_optional_values(tuple(usage.cached_tokens for usage in usage_records)),
-        cache_write_tokens=_sum_optional_values(
-            tuple(usage.cache_write_tokens for usage in usage_records)
-        ),
-        reasoning_tokens=_sum_optional_values(
-            tuple(usage.reasoning_tokens for usage in usage_records)
-        ),
-        prompt_image_tokens=_sum_optional_values(
-            tuple(usage.prompt_image_tokens for usage in usage_records)
-        ),
-        prompt_text_tokens=_sum_optional_values(
-            tuple(usage.prompt_text_tokens for usage in usage_records)
-        ),
-        cost_usd=_sum_cost(usage_records),
-    )
-
-
-def _sum_optional_values(values: tuple[int | None, ...]) -> int | None:
-    if any(value is None for value in values):
-        return None
-    return sum(value for value in values if value is not None)
-
-
-def _sum_cost(usage_records: tuple[ModelCallUsage, ...]) -> Decimal | None:
-    costs = tuple(usage.cost_usd for usage in usage_records)
-    if any(cost is None for cost in costs):
-        return None
-    return sum((cost for cost in costs if cost is not None), start=Decimal())

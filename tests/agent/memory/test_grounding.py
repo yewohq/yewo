@@ -24,6 +24,8 @@ from yewo.grounding import (
     GroundingRequest,
     GroundingResolutionSource,
     GroundingTargetOperation,
+    MemoryGroundingResolution,
+    ModelGroundingResolution,
 )
 from yewo.run_narration import RunNarrator, narration_scope
 
@@ -87,9 +89,7 @@ def _request(source, **updates):
     values = {
         "grounding_id": "grounding_replay",
         "screenshot": source.redacted_screenshot,
-        "source_fingerprint": source.screen_fingerprint,
-        "source_orientation": source.orientation,
-        "source_keyboard_visible": source.keyboard_visible,
+        "source_presentation": source.presentation_key,
         "expression": "the add button",
         "operation": GroundingTargetOperation.TAP,
         "output_shape": GroundingOutputShape.POINT,
@@ -113,7 +113,9 @@ def test_exact_source_pixels_reuse_accepted_grounding_without_a_model_call(
 
     assert delegate.calls == 0
     assert result.resolution_source is GroundingResolutionSource.MEMORY
-    assert result.cached_transition_id == memory.transitions[0].transition_id
+    assert result.resolution == MemoryGroundingResolution(
+        transition_id=memory.transitions[0].transition_id
+    )
     assert memory.transitions[0].target_grounding is not None
     assert result.location == memory.transitions[0].target_grounding.location
     narration = (tmp_path / "runtime/yewo-session.log").read_text()
@@ -127,7 +129,12 @@ def test_fallback_model_grounding_remains_reusable(tmp_path: Path) -> None:
     transition = memory.transitions[0]
     assert transition.target_grounding is not None
     fallback_grounding = transition.target_grounding.model_copy(
-        update={"model_profile_id": "grounder-fallback"}
+        update={
+            "resolution": ModelGroundingResolution(
+                grounding_profile_id="grounder-fallback",
+                model_request_ids=("fallback-request",),
+            )
+        }
     )
     memory = memory.model_copy(
         update={
@@ -163,7 +170,12 @@ def test_changed_exact_pixels_fall_back_to_the_visual_grounder(tmp_path: Path) -
     )
     delegate = CountingGrounder()
     grounder = AppMemoryGrounder(delegate, memory, _profile())
-    request = _request(source, source_fingerprint=changed_fingerprint)
+    request = _request(
+        source,
+        source_presentation=source.presentation_key.model_copy(
+            update={"fingerprint": changed_fingerprint}
+        ),
+    )
 
     assert grounder.required_model_requests(request) == 1
     with narration_scope(RunNarrator(tmp_path)):

@@ -100,6 +100,7 @@ class ModelRetryPolicy(BaseModel):
 _MINIMUM_ROLE_IMAGES = {
     ModelRole.RECOVERY_ADVISOR: 2,
     ModelRole.SCREEN_ANALYZER: 1,
+    ModelRole.TASK_PLANNER: 2,
 }
 
 

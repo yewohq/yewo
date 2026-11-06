@@ -10,7 +10,8 @@ from yewo.agent.discovery import DiscoveryResult
 from yewo.agent.discovery.outcome import (
     persist_discovery_outcome_and_compile,
 )
-from yewo.agent.memory.records import MemoryCompatibility, ScreenComparisonPolicy
+from yewo.agent.memory.records import MemoryCompatibility
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.store import AppMemoryStore
 from yewo.models import ModelClient
 from yewo.agent.replay.procedure.records import ProcedureReplayTerminal

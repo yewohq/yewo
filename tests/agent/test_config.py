@@ -59,6 +59,7 @@ def _configuration() -> dict[str, object]:
                     "profile_id": "planner-primary",
                     "role": "task_planner",
                     "model": "openrouter/configured/planner",
+                    "images": {**profile["images"], "max_images": 2},
                 },
                 {
                     **profile,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from yewo.agent.actuation import ActionProposal
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.screens import observations_match
 from yewo.observations import Observation
 
@@ -55,9 +55,7 @@ def interaction_intent_key(proposal: ActionProposal) -> str:
         normalize_target_expression(proposal.target_expression)
         if proposal.target_expression is not None
         else (
-            f"ref:{proposal.target_element_ref}"
-            if proposal.target_element_ref is not None
-            else ""
+            f"ref:{proposal.target_element_ref}" if proposal.target_element_ref is not None else ""
         )
     )
     destination = (

@@ -39,6 +39,7 @@ from yewo.artifacts import (
     RecordIdentifier,
 )
 from yewo.agent.runtime.records import AgentResult
+from yewo.agent.screen_analysis import CurrentScreenAnalysis, ScreenAnalysisStore
 from yewo.observations import Observation, ObservationStore
 from yewo.run_narration import current_narrator
 
@@ -139,7 +140,21 @@ def _apply_writeback(
             )
         }.values()
     )
-    combined_result = result.agent_result.model_copy(update={"steps": combined_steps})
+    combined_analysis_ids = tuple(
+        dict.fromkeys(
+            (
+                *(replay.agent_result.screen_analysis_ids if replay is not None else ()),
+                *result.agent_result.screen_analysis_ids,
+            )
+        )
+    )
+    combined_result = result.agent_result.model_copy(
+        update={
+            "steps": combined_steps,
+            "screen_analysis_ids": combined_analysis_ids,
+        }
+    )
+    screen_analyses = ScreenAnalysisStore(root).load_selected(combined_analysis_ids)
     recovery_assessments = _load_recovery_assessments(root)
     reconciler_response = _load_reconciler_response(root)
     applied_delta: list[MemoryDelta] = []
@@ -155,6 +170,7 @@ def _apply_writeback(
             compatibility=compatibility,
             observations_by_id=observations_by_id,
             combined_result=combined_result,
+            screen_analyses=screen_analyses,
             bundle=bundle,
             recovery_assessments=recovery_assessments,
             reconciler_response=reconciler_response,
@@ -255,6 +271,7 @@ def _update_memory(
     compatibility: MemoryCompatibility,
     observations_by_id: dict[str, Observation],
     combined_result: AgentResult,
+    screen_analyses: tuple[CurrentScreenAnalysis, ...],
     bundle: StoredProcedureBundle | None,
     recovery_assessments: tuple[RecoveryAssessment, ...],
     reconciler_response: ReconcilerResponse | None,
@@ -288,6 +305,7 @@ def _update_memory(
         combined_result,
         observations_by_id,
         applied_at,
+        screen_analyses=screen_analyses,
         procedure_attempt_id=replay.setup_id if replay is not None else None,
         grounding_assessments=grounding_assessments,
         recovery_assessments=recovery_assessments,

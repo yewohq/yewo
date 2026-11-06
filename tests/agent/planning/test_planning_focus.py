@@ -69,8 +69,8 @@ def test_focus_planning_uses_an_isolated_current_state_request() -> None:
 def test_focus_request_carries_the_evidence_its_rules_depend_on() -> None:
     from yewo.agent.planning.history import PlanningScreenFact, PlanningScreenReference
     from yewo.agent.planning.records import (
-    TaskProgressContext,
-)
+        TaskProgressContext,
+    )
 
     model = StubPlannerModel(proposal_output())
     base = planning_request()
@@ -78,6 +78,8 @@ def test_focus_request_carries_the_evidence_its_rules_depend_on() -> None:
         fact="The application exited after this action.",
         screen=PlanningScreenReference(
             observation_id=base.observation.observation_id,
+            platform_context=base.observation.platform_context,
+            keyboard_visible=base.observation.keyboard_visible,
             screen_fingerprint=base.observation.screen_fingerprint.value,
         ),
     )

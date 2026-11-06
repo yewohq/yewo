@@ -4,15 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from yewo.agent.actuation import (
-    ACTION_DEFINITIONS,
-    ActionHandling,
-    ActionKind,
-    ActionOutcomeSignal,
-)
+from yewo.agent.actuation import ACTION_DEFINITIONS, ActionHandling, ActionKind, ActionOutcomeSignal
 from yewo.agent.memory.records import AppMemory
+from yewo.agent.screen_analysis import ScreenSemanticRole, ScreenWorkflowRole
 from yewo.agent.replay.procedure.action_risks import known_action_risk_reasons
-from yewo.agent.replay.reconciliation.evidence import is_commit_target
 from yewo.agent.replay.reconciliation.environment import (
     compile_setup_contract,
     environment_step_refusal_reason,
@@ -23,11 +18,11 @@ from yewo.agent.replay.reconciliation.records import (
     CompilerCheck,
     CompilerReason,
     CompilerRefusal,
-    ControlRole,
     EvidenceDocument,
     EvidenceResult,
     EvidenceStep,
     EvidenceStepKind,
+    REUSABLE_EVIDENCE_RESULTS,
     ProcedureEffect,
     ProcedureExpectation,
     ReconcilerResponse,
@@ -37,29 +32,21 @@ from yewo.agent.replay.reconciliation.records import (
 from yewo.artifacts import new_record_identifier
 
 
-_REUSABLE_RESULTS = frozenset(
-    {
-        EvidenceResult.OBSERVED,
-        EvidenceResult.AMBIGUOUS,
-        EvidenceResult.NOT_CAPTURED,
-        EvidenceResult.RECOVERED,
-    }
-)
 _STATE_CONTROL_ROLES = frozenset(
     {
-        ControlRole.CHECKBOX,
-        ControlRole.RADIO_BUTTON,
-        ControlRole.SWITCH,
-        ControlRole.OPTION,
+        ScreenSemanticRole.CHECKBOX,
+        ScreenSemanticRole.RADIO_BUTTON,
+        ScreenSemanticRole.SWITCH,
+        ScreenSemanticRole.OPTION,
     }
 )
 _NAVIGATION_ROLES = frozenset(
     {
-        ControlRole.MENU_ITEM,
-        ControlRole.TAB,
-        ControlRole.LINK,
-        ControlRole.LIST_ITEM,
-        ControlRole.ROW,
+        ScreenSemanticRole.MENU_ITEM,
+        ScreenSemanticRole.NAVIGATION_ITEM,
+        ScreenSemanticRole.TAB,
+        ScreenSemanticRole.LINK,
+        ScreenSemanticRole.LIST_ITEM,
     }
 )
 
@@ -129,20 +116,20 @@ def procedure_effect(step: EvidenceStep) -> ProcedureEffect:
     """Classify replay behavior without changing authorization side effects."""
     if step.kind is EvidenceStepKind.ENVIRONMENT:
         return ProcedureEffect.ENVIRONMENT
-    if step.action in {ActionKind.TYPE, ActionKind.CLEAR}:
+    if step.proposal.action in {ActionKind.TYPE, ActionKind.CLEAR}:
         return ProcedureEffect.STATE_SETTING
-    if step.control.role in _STATE_CONTROL_ROLES:
+    if step.control.kind.semantic in _STATE_CONTROL_ROLES:
         return ProcedureEffect.STATE_SETTING
-    if step.action in {
+    if step.proposal.action in {
         ActionKind.BACK,
         ActionKind.DISMISS_KEYBOARD,
         ActionKind.FOCUS,
         ActionKind.SCROLL,
     }:
         return ProcedureEffect.NAVIGATION
-    if step.control.role in _NAVIGATION_ROLES:
+    if step.control.kind.semantic in _NAVIGATION_ROLES:
         return ProcedureEffect.NAVIGATION
-    if is_commit_target(step.proposal.target_expression):
+    if step.control.workflow_role is ScreenWorkflowRole.ADVANCE_STAGE:
         return ProcedureEffect.COMMIT
     return ProcedureEffect.UNKNOWN
 
@@ -231,7 +218,7 @@ def _check_required_work(
 
 
 def _is_required_source_step(step: EvidenceStep) -> bool:
-    if step.result not in _REUSABLE_RESULTS:
+    if step.result not in REUSABLE_EVIDENCE_RESULTS:
         return False
     return procedure_effect(step) in {
         ProcedureEffect.STATE_SETTING,
@@ -263,8 +250,8 @@ def _has_selected_correction(
                     missing.step < selected_index < kept.step for selected_index in selected_indexes
                 )
                 and kept.control.identity_key == identity
-                and kept.action == missing.action
-                and kept.result in _REUSABLE_RESULTS
+                and kept.proposal.action == missing.proposal.action
+                and kept.result in REUSABLE_EVIDENCE_RESULTS
             ):
                 return True
     return False
@@ -299,7 +286,7 @@ def _step_reuse_reasons(
     previous: EvidenceStep | None,
 ) -> tuple[CompilerReason, ...]:
     reasons: list[CompilerReason] = []
-    if ACTION_DEFINITIONS[step.action].handling is not ActionHandling.EXECUTE:
+    if ACTION_DEFINITIONS[step.proposal.action].handling is not ActionHandling.EXECUTE:
         reasons.append(
             CompilerReason(
                 check=CompilerCheck.RESULTS_REUSABLE,
@@ -316,7 +303,7 @@ def _step_reuse_reasons(
                 reason=environment_reason,
             )
         )
-    if step.result not in _REUSABLE_RESULTS:
+    if step.result not in REUSABLE_EVIDENCE_RESULTS:
         reasons.append(
             CompilerReason(
                 check=CompilerCheck.RESULTS_REUSABLE,
@@ -352,9 +339,12 @@ def _disconnected_context_reason(
         return None
     destination = evidence.states[destination_state_id]
     source = evidence.states[current.source_state_id]
+    destination_presentation = destination.representative_presentation
+    source_presentation = source.representative_presentation
     shares_application_context = (
-        destination.foreground_application_id == source.foreground_application_id
-        and destination.platform_context == source.platform_context
+        destination_presentation.foreground_application_id
+        == source_presentation.foreground_application_id
+        and destination_presentation.platform_context == source_presentation.platform_context
     )
     if shares_application_context:
         return None
@@ -443,9 +433,12 @@ def _warnings(
         elif previous.destination_state_id != current.source_state_id:
             before = evidence.states[previous.destination_state_id]
             after = evidence.states[current.source_state_id]
+            before_presentation = before.representative_presentation
+            after_presentation = after.representative_presentation
             if (
-                before.foreground_application_id == after.foreground_application_id
-                and before.platform_context == after.platform_context
+                before_presentation.foreground_application_id
+                == after_presentation.foreground_application_id
+                and before_presentation.platform_context == after_presentation.platform_context
             ):
                 warnings.append(
                     CompilationWarning(
@@ -499,8 +492,8 @@ def _required_signals(
     step: EvidenceStep,
     previous_step: EvidenceStep | None,
 ) -> frozenset[ActionOutcomeSignal]:
-    signals = step.signals - ACTION_DEFINITIONS[step.action].incidental_replay_signals
-    if step.action is not ActionKind.TYPE or not _is_secure_text_step(step, previous_step):
+    signals = step.signals - ACTION_DEFINITIONS[step.proposal.action].incidental_replay_signals
+    if step.proposal.action is not ActionKind.TYPE or not _is_secure_text_step(step, previous_step):
         return signals
     return signals - {
         ActionOutcomeSignal.TEXT_LANDED,
@@ -516,7 +509,7 @@ def _is_secure_text_step(step: EvidenceStep, previous_step: EvidenceStep | None)
 
 
 def _is_masked_field_focus(step: EvidenceStep | None) -> bool:
-    if step is None or step.action is not ActionKind.FOCUS:
+    if step is None or step.proposal.action is not ActionKind.FOCUS:
         return False
     description = " ".join(
         value

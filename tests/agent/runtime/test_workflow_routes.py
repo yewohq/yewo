@@ -10,7 +10,7 @@ from yewo.agent.actuation import (
     ActionProposal,
     ActionRefusalCode,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.records import ProgressRouteAttempt
 from yewo.agent.runtime.interaction_intent import interaction_intent_key
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
@@ -230,6 +230,7 @@ def test_verifier_applies_route_exhaustion_to_the_exact_work_item(tmp_path: Path
     assert refusal is not None
     assert refusal.code is ActionRefusalCode.REPEATED_NO_PROGRESS
     assert allowed is None
+
 
 def test_pixel_change_without_task_advancement_does_not_clear_screen_exhaustion() -> None:
     tracker = ActionNoProgressTracker(ScreenComparisonPolicy())

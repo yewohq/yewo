@@ -9,17 +9,10 @@ from typing import Annotated, Literal, Protocol, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.artifacts import RecordIdentifier, Sha256Digest
-from yewo.models import (
-    ModelArtifactKind,
-    ModelArtifactReference,
-    ModelCallDisposition,
-    ModelCallUsage,
-)
 from yewo.observations import (
-    DeviceOrientation,
     PixelRegion,
+    PresentationKey,
     ScreenRegion,
-    ScreenFingerprint,
     ScreenshotRedactionState,
     ScreenshotReference,
 )
@@ -59,8 +52,56 @@ class GroundingResolutionSource(StrEnum):
     """The evidence source that resolved one grounding request."""
 
     MODEL = "model"
+    SCREEN_ANALYSIS = "screen_analysis"
     MEMORY = "memory"
     PROCEDURE = "procedure"
+
+
+class ModelGroundingResolution(BaseModel):
+    """Model-call identities used to resolve one grounding request."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["model"] = "model"
+    grounding_profile_id: RecordIdentifier
+    model_request_ids: tuple[RecordIdentifier, ...] = Field(min_length=1)
+
+
+class ScreenAnalysisGroundingResolution(BaseModel):
+    """Screen-analysis element evidence used without another model call."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["screen_analysis"] = "screen_analysis"
+    analysis_id: RecordIdentifier
+    element_ref: RecordIdentifier
+
+
+class MemoryGroundingResolution(BaseModel):
+    """Accepted transition reused from application memory."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["memory"] = "memory"
+    transition_id: RecordIdentifier
+
+
+class ProcedureGroundingResolution(BaseModel):
+    """Accepted source step reused from a compiled procedure."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["procedure"] = "procedure"
+    source_step_id: RecordIdentifier
+
+
+GroundingResolution = Annotated[
+    ModelGroundingResolution
+    | ScreenAnalysisGroundingResolution
+    | MemoryGroundingResolution
+    | ProcedureGroundingResolution,
+    Field(discriminator="kind"),
+]
 
 
 class GroundingCoordinateConvention(StrEnum):
@@ -115,6 +156,17 @@ class NormalizedRegion(BaseModel):
         return self
 
 
+class ScreenAnalysisGroundingCandidate(BaseModel):
+    """One high-confidence analyzed region eligible for direct grounding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    analysis_id: RecordIdentifier
+    element_ref: RecordIdentifier
+    screenshot_sha256: Sha256Digest
+    region: NormalizedRegion
+
+
 class GroundedPoint(BaseModel):
     """One accepted point in canonical and source-pixel coordinates."""
 
@@ -157,19 +209,29 @@ class GroundingRequest(BaseModel):
 
     grounding_id: RecordIdentifier
     screenshot: ScreenshotReference
-    source_fingerprint: ScreenFingerprint | None = None
-    source_orientation: DeviceOrientation | None = None
-    source_keyboard_visible: bool | None = None
+    source_presentation: PresentationKey | None = None
     expression: str = Field(min_length=1)
     operation: GroundingTargetOperation
     output_shape: GroundingOutputShape
     excluded_regions: tuple[ScreenRegion, ...] | None = None
     correction: GroundingCorrection | None = None
+    screen_analysis_candidate: ScreenAnalysisGroundingCandidate | None = None
 
     @model_validator(mode="after")
     def _validate_request(self) -> Self:
         if self.screenshot.redaction_state is not ScreenshotRedactionState.REDACTED:
             raise ValueError("A grounding request must use a redacted screenshot.")
+        if (
+            self.screen_analysis_candidate is not None
+            and self.screen_analysis_candidate.screenshot_sha256 != self.screenshot.sha256
+        ):
+            raise ValueError("A screen-analysis grounding candidate must match the screenshot.")
+        if self.screen_analysis_candidate is not None and (
+            self.output_shape is not GroundingOutputShape.POINT or self.correction is not None
+        ):
+            raise ValueError(
+                "A screen-analysis grounding candidate requires uncorrected point output."
+            )
         validate_screen_regions(
             self.excluded_regions,
             self.screenshot.width_px,
@@ -252,70 +314,32 @@ class GroundingResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     grounding_id: RecordIdentifier
-    profile_id: RecordIdentifier
-    model_profile_id: RecordIdentifier
     source_screenshot_sha256: Sha256Digest
     output_shape: GroundingOutputShape
     disposition: GroundingDisposition
-    resolution_source: GroundingResolutionSource = GroundingResolutionSource.MODEL
+    resolution: GroundingResolution
     location: GroundedLocation | None = None
     reason: str | None = Field(default=None, min_length=1)
-    requested_provider: str = Field(min_length=1)
-    requested_model: str = Field(min_length=1)
-    requested_revision: str | None = Field(default=None, min_length=1)
-    served_model: str | None = Field(default=None, min_length=1)
-    upstream_provider: str | None = Field(default=None, min_length=1)
-    transport_disposition: ModelCallDisposition | None = None
-    raw_response_artifact: ModelArtifactReference | None = None
-    cached_transition_id: RecordIdentifier | None = None
-    cached_procedure_step_id: RecordIdentifier | None = None
-    latency_ms: float | None = Field(default=None, ge=0)
-    usage: ModelCallUsage
-    model_request_count: int = Field(default=0, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
+
+    @property
+    def resolution_source(self) -> GroundingResolutionSource:
+        """Return the typed resolution discriminator."""
+        return GroundingResolutionSource(self.resolution.kind)
+
+    @property
+    def model_request_count(self) -> int:
+        """Return logical grounding-model requests consumed by this result."""
+        if isinstance(self.resolution, ModelGroundingResolution):
+            return len(self.resolution.model_request_ids)
+        return 0
 
     @model_validator(mode="after")
     def _validate_result(self) -> Self:
-        if self.resolution_source is GroundingResolutionSource.MODEL:
-            if self.model_request_count < 1:
-                raise ValueError("Model grounding requires at least one model request.")
-            if self.transport_disposition is None or self.raw_response_artifact is None:
-                raise ValueError("Model grounding requires transport and call evidence.")
-            if self.raw_response_artifact.kind is not ModelArtifactKind.CALL:
-                raise ValueError("A grounding response artifact must contain a model call.")
-            if (self.disposition is GroundingDisposition.PROVIDER_UNAVAILABLE) != (
-                self.transport_disposition is ModelCallDisposition.PROVIDER_ERROR
-            ):
-                raise ValueError(
-                    "Provider-unavailable grounding requires provider-error transport evidence."
-                )
-            if self.cached_transition_id is not None:
-                raise ValueError("Model grounding cannot reference a cached transition.")
-            if self.cached_procedure_step_id is not None:
-                raise ValueError("Model grounding cannot reference a procedure step.")
-        elif self.resolution_source is GroundingResolutionSource.MEMORY:
-            if (
-                self.cached_transition_id is None
-                or self.cached_procedure_step_id is not None
-                or self.transport_disposition is not None
-                or self.raw_response_artifact is not None
-                or self.disposition is not GroundingDisposition.ACCEPTED
-                or self.usage != ModelCallUsage()
-                or self.model_request_count != 0
-            ):
-                raise ValueError(
-                    "Memory grounding requires accepted zero-usage transition evidence."
-                )
-        elif (
-            self.cached_procedure_step_id is None
-            or self.cached_transition_id is not None
-            or self.transport_disposition is not None
-            or self.raw_response_artifact is not None
-            or self.disposition is not GroundingDisposition.ACCEPTED
-            or self.usage != ModelCallUsage()
-            or self.model_request_count != 0
+        if not isinstance(self.resolution, ModelGroundingResolution) and (
+            self.disposition is not GroundingDisposition.ACCEPTED
         ):
-            raise ValueError("Procedure grounding requires accepted zero-usage procedure evidence.")
+            raise ValueError("Only model grounding can produce a non-accepted result.")
         if self.disposition is GroundingDisposition.ACCEPTED:
             if self.location is None or self.reason is not None:
                 raise ValueError("An accepted grounding must contain one location and no reason.")

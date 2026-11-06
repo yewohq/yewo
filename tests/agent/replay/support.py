@@ -9,6 +9,15 @@ from yewo.agent.replay import (
     ReconcilerResponse,
     build_evidence_document,
 )
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    ScreenElement,
+    ScreenElementConfidence,
+    ScreenElementKind,
+    ScreenSemanticRole,
+    ScreenVisualKind,
+    ScreenWorkflowRole,
+)
 from yewo.observations import Observation
 
 from agent.discovery.support import agent_result, observation
@@ -79,9 +88,32 @@ def evidence() -> EvidenceDocument:
             "step_id": "step_3",
             "step_index": 3,
             "proposal": third_source.proposal.model_copy(
-                update={"target_expression": "the 'Save' button"}
+                update={
+                    "target_element_ref": "save-control",
+                    "target_expression": "the 'Save' button",
+                }
             ),
         }
+    )
+    save_analysis = CurrentScreenAnalysis(
+        analysis_id="analysis-save",
+        observation_id=observed[3].observation_id,
+        screenshot_sha256=observed[3].redacted_screenshot.sha256,
+        presentation=observed[3].presentation_key,
+        screen_summary="Visible form with save control.",
+        elements=(
+            ScreenElement(
+                element_ref="save-control",
+                name="Save",
+                kind=ScreenElementKind(
+                    visual=ScreenVisualKind.CONTROL_SURFACE,
+                    semantic=ScreenSemanticRole.BUTTON,
+                ),
+                confidence=ScreenElementConfidence.HIGH,
+                workflow_role=ScreenWorkflowRole.ADVANCE_STAGE,
+                evidence="A primary action control is visible.",
+            ),
+        ),
     )
     task = AgentTask(
         objective="Create and save one named item.",
@@ -94,6 +126,7 @@ def evidence() -> EvidenceDocument:
         task=task,
         steps=(first, second, third),
         observations=observed,
+        screen_analyses=(save_analysis,),
         identifier_factory=lambda: "evidence_1",
     )
 

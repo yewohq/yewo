@@ -13,8 +13,8 @@ from yewo.agent.replay.visual_matching import (
 from yewo.observations import (
     Observation,
     ObservationCaptureError,
+    ScreenMatcher,
     ScreenshotReference,
-    fingerprint_distance,
 )
 from yewo.run_narration import current_narrator
 
@@ -187,20 +187,15 @@ def _minimum_distance(
     state: EvidenceState,
 ) -> int | None:
     distances: list[int] = []
-    for fingerprint in state.comparison_fingerprints():
-        try:
-            distances.append(fingerprint_distance(observation.screen_fingerprint, fingerprint))
-        except ValueError:
-            continue
+    for presentation in state.presentations:
+        distance = ScreenMatcher.distance(observation.presentation_key, presentation)
+        if distance is not None:
+            distances.append(distance)
     return min(distances, default=None)
 
 
 def _metadata_matches(observation: Observation, state: EvidenceState) -> bool:
-    screenshot = observation.redacted_screenshot
-    return (
-        observation.foreground_application_id == state.foreground_application_id
-        and observation.platform_context == state.platform_context
-        and observation.keyboard_visible is state.keyboard_visible
-        and observation.orientation is state.orientation
-        and (screenshot.width_px, screenshot.height_px) == (state.width_px, state.height_px)
+    return any(
+        ScreenMatcher.metadata_matches(observation.presentation_key, presentation)
+        for presentation in state.presentations
     )

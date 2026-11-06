@@ -17,12 +17,12 @@ from yewo.grounding import (
     GroundingDisposition,
     GroundingProfile,
     GroundingRequest,
-    GroundingResolutionSource,
+    GroundingResolution,
     GroundingResult,
+    MemoryGroundingResolution,
     VisualGrounder,
     validate_grounding_request,
 )
-from yewo.models import ModelCallUsage
 from yewo.run_narration import current_narrator
 from yewo.agent.memory.knowledge import (
     GroundingAssessment,
@@ -66,9 +66,7 @@ class AcceptedGrounding(BaseModel):
     source_observation_id: RecordIdentifier | None = None
     source_masked_pixels_sha256: Sha256Digest
     source_system_region_mask_sha256: Sha256Digest | None = None
-    profile_id: RecordIdentifier
-    model_profile_id: RecordIdentifier
-    requested_model: str
+    resolution: GroundingResolution
 
 
 class AppMemoryGrounder:
@@ -111,18 +109,11 @@ class AppMemoryGrounder:
         transition, grounding = lookup.match
         return GroundingResult(
             grounding_id=request.grounding_id,
-            profile_id=grounding.profile_id,
-            model_profile_id=grounding.model_profile_id,
             source_screenshot_sha256=request.screenshot.sha256,
             output_shape=request.output_shape,
             disposition=GroundingDisposition.ACCEPTED,
-            resolution_source=GroundingResolutionSource.MEMORY,
+            resolution=MemoryGroundingResolution(transition_id=transition.transition_id),
             location=grounding.location,
-            requested_provider="memory",
-            requested_model=grounding.requested_model,
-            cached_transition_id=transition.transition_id,
-            usage=ModelCallUsage(),
-            model_request_count=0,
         )
 
     def _lookup(
@@ -192,7 +183,7 @@ class AppMemoryGrounder:
 
 
 def _lookup_precondition(request: GroundingRequest) -> GroundingMemoryLookup | None:
-    if request.source_fingerprint is None:
+    if request.source_presentation is None:
         return GroundingMemoryLookup(
             GroundingMemoryDisposition.MISS,
             "source_fingerprint_unavailable",
@@ -259,12 +250,7 @@ def _grounding_contract_invalidation_reason(
 ) -> str | None:
     if assessment is not None and assessment.status is GroundingAssessmentStatus.INVALIDATED:
         return "writeback_invalidated"
-    if (
-        grounding.profile_id != profile.profile_id
-        or grounding.model_profile_id
-        not in {candidate.model_profile_id for candidate in profile.candidates}
-    ):
-        return "grounding_profile_changed"
+    del profile
     if grounding.location.kind != request.output_shape.value:
         return "output_shape_changed"
     return None
@@ -275,21 +261,25 @@ def _grounding_source_invalidation_reason(
     source_variant: ObservationVariant,
     request: GroundingRequest,
 ) -> str | None:
-    fingerprint = request.source_fingerprint
-    if fingerprint is None:
+    presentation = request.source_presentation
+    if presentation is None:
         return "source_fingerprint_unavailable"
-    if (source_variant.width_px, source_variant.height_px) != (
+    source_presentation = source_variant.presentation
+    if (source_presentation.width_px, source_presentation.height_px) != (
         request.screenshot.width_px,
         request.screenshot.height_px,
     ):
         return "screenshot_dimensions_changed"
-    if source_variant.orientation is not request.source_orientation:
+    if source_presentation.orientation is not presentation.orientation:
         return "orientation_changed"
-    if source_variant.keyboard_visible is not request.source_keyboard_visible:
+    if source_presentation.keyboard_visible is not presentation.keyboard_visible:
         return "keyboard_state_changed"
-    if grounding.source_masked_pixels_sha256 != fingerprint.masked_pixels_sha256:
+    if grounding.source_masked_pixels_sha256 != presentation.fingerprint.masked_pixels_sha256:
         return "source_pixels_changed"
-    if grounding.source_system_region_mask_sha256 != fingerprint.system_region_mask_sha256:
+    if (
+        grounding.source_system_region_mask_sha256
+        != presentation.fingerprint.system_region_mask_sha256
+    ):
         return "system_region_mask_changed"
     if _location_is_excluded(grounding.location, request):
         return "cached_location_excluded"
@@ -305,7 +295,6 @@ _INVALIDATION_REASON_PRIORITY = (
     "orientation_changed",
     "screenshot_dimensions_changed",
     "output_shape_changed",
-    "grounding_profile_changed",
 )
 
 
@@ -386,8 +375,8 @@ def validate_transition_groundings(
                 raise ValueError("Cached grounding must reference a source-screen observation.")
             if (
                 grounding.source_masked_pixels_sha256
-                != grounding_variant.fingerprint.masked_pixels_sha256
+                != grounding_variant.presentation.fingerprint.masked_pixels_sha256
                 or grounding.source_system_region_mask_sha256
-                != grounding_variant.fingerprint.system_region_mask_sha256
+                != grounding_variant.presentation.fingerprint.system_region_mask_sha256
             ):
                 raise ValueError("Cached grounding must match its exact source observation.")

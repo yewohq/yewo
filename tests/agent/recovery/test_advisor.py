@@ -18,7 +18,7 @@ from yewo.agent.planning.records import (
     PlanningRequest,
     TaskProgressContext,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.recovery.advisor import (
     ModelRecoveryAdvisor,
     RecoveryAssessment,
@@ -72,7 +72,7 @@ def _planning_request(before: Observation) -> PlanningRequest:
             current_progress=("The record editor was opened.",),
             known_procedures=("The Add control opens the editor.",),
             remaining_work=("Complete the record form.", "Save the record."),
-            exhausted_branches=("The overflow menu was irrelevant.",),
+            recovery_guidance=("The overflow menu was irrelevant.",),
         ),
         discovery_mode=True,
     )
@@ -163,9 +163,7 @@ def test_advisor_persists_validated_continue_decision(tmp_path: Path) -> None:
     context = json.loads(context_json)
     assert context["discovery_mode"] is True
     assert context["progress_context"]["current_progress"] == ["The record editor was opened."]
-    assert context["progress_context"]["exhausted_branches"] == [
-        "The overflow menu was irrelevant."
-    ]
+    assert context["progress_context"]["recovery_guidance"] == ["The overflow menu was irrelevant."]
     assert context["recent_history"][0]["action"] == "type"
     assert len(context["recent_history"]) == 14
     assert context["earlier_history_summary"]["entries"][0]["count"] == 2

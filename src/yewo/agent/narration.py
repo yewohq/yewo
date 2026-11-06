@@ -12,7 +12,16 @@ from yewo.agent.actuation import (
     AuthorizedAction,
     DispatchReceipt,
 )
-from yewo.grounding import GroundedPoint, GroundedRegion, GroundingEvidence
+from yewo.grounding import (
+    GroundedPoint,
+    GroundedRegion,
+    GroundingEvidence,
+    GroundingResolution,
+    MemoryGroundingResolution,
+    ModelGroundingResolution,
+    ProcedureGroundingResolution,
+    ScreenAnalysisGroundingResolution,
+)
 from yewo.observations import Observation
 from yewo.run_narration import current_narrator
 from yewo.agent.planning.planner import (
@@ -151,10 +160,27 @@ def narrate_grounding(
             f"step={step_index} grounding={evidence.request.grounding_id} label={label} "
             f"operation={evidence.request.operation.value} "
             f"disposition={evidence.result.disposition.value} {geometry} "
-            f"source={source} profile={evidence.result.profile_id} "
-            f"model_profile={evidence.result.model_profile_id} "
-            f"cached_transition={evidence.result.cached_transition_id or 'none'}"
+            f"source={source} {_grounding_resolution_trace(evidence.result.resolution)}"
         )
+
+
+def _grounding_resolution_trace(resolution: GroundingResolution) -> str:
+    if isinstance(resolution, ModelGroundingResolution):
+        request_ids = ",".join(resolution.model_request_ids)
+        return (
+            f"resolution=model grounding_profile={resolution.grounding_profile_id} "
+            f"model_requests={request_ids}"
+        )
+    if isinstance(resolution, ScreenAnalysisGroundingResolution):
+        return (
+            f"resolution=screen_analysis analysis={resolution.analysis_id} "
+            f"element={resolution.element_ref}"
+        )
+    if isinstance(resolution, MemoryGroundingResolution):
+        return f"resolution=memory transition={resolution.transition_id}"
+    if isinstance(resolution, ProcedureGroundingResolution):
+        return f"resolution=procedure source_step={resolution.source_step_id}"
+    raise TypeError("Grounding resolution trace received an unsupported resolution.")
 
 
 def narrate_recovery(step_index: int, recovery_observation_id: str | None) -> None:

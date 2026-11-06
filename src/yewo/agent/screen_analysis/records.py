@@ -17,8 +17,8 @@ from yewo.agent.screen_analysis.catalog import (
     screen_element_catalog,
 )
 from yewo.artifacts import RecordIdentifier, Sha256Digest
-from yewo.grounding import NormalizedRegion
-from yewo.observations import DeviceOrientation, Observation
+from yewo.grounding import NormalizedRegion, ScreenAnalysisGroundingCandidate
+from yewo.observations import Observation, PresentationKey
 
 
 # The grounder searches on these details, so both element models must request them.
@@ -120,10 +120,10 @@ class ScreenElement(BaseModel):
     region_hint: NormalizedRegion | None = Field(
         default=None,
         description=(
-            "Approximate bounds of this exact element on this screenshot. Coordinates are "
+            "Bounds of this exact element on this screenshot. Coordinates are "
             "normalized from zero to one with the origin at the top-left. This is "
-            "observation-scoped analyzer evidence. It is not a grounding constraint or durable "
-            "control geometry."
+            "observation-scoped analyzer evidence. A high-confidence interactive region can "
+            "resolve one action point. It is not durable control geometry."
         ),
     )
 
@@ -142,14 +142,12 @@ class CurrentScreenAnalysis(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     analysis_id: RecordIdentifier
     observation_id: RecordIdentifier
-    screen_fingerprint: str = Field(pattern=r"^[0-9a-f]{16}$")
     screenshot_sha256: Sha256Digest
-    platform_context: str | None = Field(default=None, min_length=1)
-    keyboard_visible: bool | None
-    orientation: DeviceOrientation | None
+    presentation: PresentationKey
+    screen_summary: str = Field(min_length=1, max_length=120)
     elements: tuple[ScreenElement, ...] = Field(default=(), max_length=200)
 
     @model_validator(mode="after")
@@ -195,11 +193,8 @@ class CurrentScreenAnalysis(BaseModel):
         """Return whether this analysis describes the exact supplied observation."""
         return (
             self.observation_id == observation.observation_id
-            and self.screen_fingerprint == observation.screen_fingerprint.value
             and self.screenshot_sha256 == observation.redacted_screenshot.sha256
-            and self.platform_context == observation.platform_context
-            and self.keyboard_visible == observation.keyboard_visible
-            and self.orientation == observation.orientation
+            and self.presentation == observation.presentation_key
         )
 
 
@@ -208,6 +203,7 @@ def screen_analysis_context(analysis: CurrentScreenAnalysis) -> dict[str, object
     return {
         "analysis_id": analysis.analysis_id,
         "observation_id": analysis.observation_id,
+        "screen_summary": analysis.screen_summary,
         "elements": tuple(
             {
                 key: value
@@ -306,4 +302,28 @@ def interactive_element_references(
         element.element_ref
         for element in (analysis.elements if analysis is not None else ())
         if element_may_be_targeted(element)
+    )
+
+
+def screen_analysis_grounding_candidate(
+    analysis: CurrentScreenAnalysis | None,
+    observation: Observation,
+    element_ref: str | None,
+) -> ScreenAnalysisGroundingCandidate | None:
+    """Return exact-observation analyzer evidence that can safely resolve one point."""
+    if analysis is None or element_ref is None or not analysis.matches(observation):
+        return None
+    element = next((item for item in analysis.elements if item.element_ref == element_ref), None)
+    if (
+        element is None
+        or element.region_hint is None
+        or element.confidence is not ScreenElementConfidence.HIGH
+        or element_affordance(element) is not ScreenElementAffordance.INTERACTIVE
+    ):
+        return None
+    return ScreenAnalysisGroundingCandidate(
+        analysis_id=analysis.analysis_id,
+        element_ref=element.element_ref,
+        screenshot_sha256=analysis.screenshot_sha256,
+        region=element.region_hint,
     )

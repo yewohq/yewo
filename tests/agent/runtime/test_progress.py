@@ -15,12 +15,10 @@ from yewo.agent.actuation import (
     ActionRefusalCode,
 )
 from yewo.agent.actuation import ActionBudget, ActionPolicy
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.planning.history import build_refusal_history_entry
-from yewo.agent.planning.records import (
-    TaskProgressContext,
-)
+from yewo.agent.planning.records import TaskProgressContext
 from yewo.agent.runtime.interaction_intent import interaction_intent_key
 from yewo.agent.runtime.no_progress import MAXIMUM_SCREEN_NO_PROGRESS_EVENTS
 from yewo.agent.runtime.progress import (
@@ -161,11 +159,9 @@ def test_observed_non_english_workflow_role_advances_stage_without_completing_ta
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-confirm",
         observation_id=before.observation_id,
-        screen_fingerprint=before.screen_fingerprint.value,
         screenshot_sha256=before.redacted_screenshot.sha256,
-        platform_context=before.platform_context,
-        keyboard_visible=before.keyboard_visible,
-        orientation=before.orientation,
+        presentation=before.presentation_key,
+        screen_summary="Visible confirmation screen.",
         elements=(
             ScreenElement(
                 element_ref="confirm-control",
@@ -455,13 +451,23 @@ def test_a_walled_screen_still_admits_a_system_action(tmp_path: Path) -> None:
 
     assert (
         refusal_before_grounding(
-            ledger, policy, wait, screen, ActionBudget(dispatched_actions=0), PlannerDecisionSource.MODEL
+            ledger,
+            policy,
+            wait,
+            screen,
+            ActionBudget(dispatched_actions=0),
+            PlannerDecisionSource.MODEL,
         )
         is not None
     )
     assert (
         refusal_before_grounding(
-            ledger, policy, wait, screen, ActionBudget(dispatched_actions=0), PlannerDecisionSource.SYSTEM
+            ledger,
+            policy,
+            wait,
+            screen,
+            ActionBudget(dispatched_actions=0),
+            PlannerDecisionSource.SYSTEM,
         )
         is None
     )

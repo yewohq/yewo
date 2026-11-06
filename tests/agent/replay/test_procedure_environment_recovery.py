@@ -42,6 +42,7 @@ class ExpectedSurfaceDivergenceSource:
         self.repair_target = ProcedureRepairTarget(
             expected_state_id="expected-app-state",
             resume_procedure_index=1,
+            presentation=_observations()[0].presentation_key,
             reason="The environment-step expectation diverged.",
         )
 

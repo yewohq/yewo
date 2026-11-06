@@ -298,21 +298,6 @@ class AppMemoryBuilder:
             receipt_id=receipt.receipt_id,
             outcome_id=outcome.outcome_id,
             outcome_signals=outcome.signals,
-            grounding_profile_ids=tuple(
-                evidence.result.profile_id
-                for evidence in (step.target_grounding, step.destination_grounding)
-                if evidence is not None
-            ),
-            grounder_model_profile_ids=tuple(
-                evidence.result.model_profile_id
-                for evidence in (step.target_grounding, step.destination_grounding)
-                if evidence is not None
-            ),
-            requested_grounder_models=tuple(
-                evidence.result.requested_model
-                for evidence in (step.target_grounding, step.destination_grounding)
-                if evidence is not None
-            ),
             target_grounding=_accepted_grounding(step.target_grounding, source),
             destination_grounding=_accepted_grounding(step.destination_grounding, source),
             source_step_id=step.step_id,
@@ -330,9 +315,7 @@ def _accepted_grounding(
         source_observation_id=source.observation_id,
         source_masked_pixels_sha256=source.screen_fingerprint.masked_pixels_sha256,
         source_system_region_mask_sha256=source.screen_fingerprint.system_region_mask_sha256,
-        profile_id=evidence.result.profile_id,
-        model_profile_id=evidence.result.model_profile_id,
-        requested_model=evidence.result.requested_model,
+        resolution=evidence.result.resolution,
     )
 
 
@@ -360,7 +343,6 @@ def _unsuccessful_attempt(
         raise ValueError("Unsuccessful step evidence is incomplete.")
     screen = add_observation_screen(source, screens, source_run_id, compatibility)
     grounding = step.target_grounding
-    grounding_result = grounding.result if grounding is not None else None
     grounded_point = None
     width_px = None
     height_px = None
@@ -384,9 +366,6 @@ def _unsuccessful_attempt(
         grounded_point=grounded_point,
         screenshot_width_px=width_px,
         screenshot_height_px=height_px,
-        grounding_profile_id=grounding_result and grounding_result.profile_id,
-        grounder_model_profile_id=grounding_result and grounding_result.model_profile_id,
-        requested_grounder_model=grounding_result and grounding_result.requested_model,
         source_step_id=step.step_id,
         source_run_id=source_run_id,
     )

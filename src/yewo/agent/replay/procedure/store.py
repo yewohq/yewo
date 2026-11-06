@@ -45,6 +45,15 @@ class StoredProcedureBundle(BaseModel):
             raise ValueError("Stored procedure compatibility does not match the application.")
         if self.evidence.evidence_id != self.procedure.evidence_id:
             raise ValueError("Stored procedure evidence does not match the procedure.")
+        condition_count = len(self.evidence.task.completion_conditions)
+        if any(
+            condition_index >= condition_count
+            for step in self.procedure.steps
+            for condition_index in step.captures_completion_conditions
+        ):
+            raise ValueError(
+                "Stored procedure completion-condition references must exist in the evidence."
+            )
         return self
 
 
@@ -67,12 +76,6 @@ class ProcedureReplayStore:
         directory = ARTIFACTS_DIRECTORY / "agent" / "procedure-replay"
         paths = [directory / "attempt.json"]
         self._writer.write(paths[0], result.model_dump_json(indent=2).encode("utf-8"))
-        if result.divergence is not None:
-            paths.append(directory / "divergence.json")
-            self._writer.write(
-                paths[-1],
-                result.divergence.model_dump_json(indent=2).encode("utf-8"),
-            )
         if result.divergences:
             paths.append(directory / "divergences.json")
             content = (
@@ -276,10 +279,15 @@ def _validate_supported_schema(payload: object) -> None:
     procedure = bundle.get("procedure") if isinstance(bundle, dict) else None
     envelope_version = payload.get("schema_version")
     bundle_version = bundle.get("schema_version") if isinstance(bundle, dict) else None
-    procedure_version = (
-        procedure.get("schema_version") if isinstance(procedure, dict) else None
-    )
-    if envelope_version != 2 or bundle_version != 2 or procedure_version != 2:
+    procedure_version = procedure.get("schema_version") if isinstance(procedure, dict) else None
+    evidence = bundle.get("evidence") if isinstance(bundle, dict) else None
+    evidence_version = evidence.get("schema_version") if isinstance(evidence, dict) else None
+    if (
+        envelope_version != 2
+        or bundle_version != 2
+        or evidence_version != 2
+        or procedure_version != 3
+    ):
         raise CompiledProcedureSchemaError(
             "The compiled procedure schema is unsupported. "
             "Rebuild the procedure with this Yewo version."

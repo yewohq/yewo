@@ -12,11 +12,13 @@ from yewo.agent.planning.records import (
     TaskProgressContext,
 )
 from yewo.agent.replay.procedure.execution import _can_audit_replay, _procedure_terminal
-from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
-from yewo.agent.replay.procedure.records import ProcedureDivergence, ProcedureRepairEvidence
+from yewo.agent.replay.procedure.records import (
+    ProcedureDivergence,
+    ProcedureRepairEvidence,
+    ProcedureRepairTarget,
+    ProcedureReplayTerminal,
+)
 from yewo.agent.replay.procedure.repair import BoundedProcedureRepairActionSource
-from yewo.agent.replay.procedure.repair import _target_facts
-from yewo.agent.replay.procedure.records import ProcedureRepairTarget
 from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
@@ -212,7 +214,7 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     outer_request = _request(wrong).model_copy(
         update={
             "progress_context": TaskProgressContext(
-                exhausted_branches=("Do not reopen Edit Record.",)
+                recovery_guidance=("Do not reopen Edit Record.",)
             )
         }
     )
@@ -220,11 +222,22 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     repair_action = source.plan(outer_request)
     assert repair_action.action is ActionKind.WAIT
     assert planner.requests[0].objective.startswith("Restore the application")
+    assert planner.requests[0].reference_screenshot is not None
     assert any(
         fact.startswith("Expected repair state metadata:")
         for fact in planner.requests[0].known_facts
     )
-    assert any("resumes with action=tap" in fact for fact in planner.requests[0].known_facts)
+    remaining_fact = next(
+        fact
+        for fact in planner.requests[0].known_facts
+        if fact.startswith("Remaining compiled step 0:")
+    )
+    assert "action=tap" in remaining_fact
+    assert "expected outcome=The editor opens." in remaining_fact
+    assert any(
+        "completion conditions=1 of 1: The named item is saved." in fact
+        for fact in planner.requests[0].known_facts
+    )
     assert source.last_planning_model_request_count() == 1
     verification = source.action_verification_context(outer_request)
     assert verification.request.objective.startswith("Restore the application")
@@ -269,7 +282,9 @@ def test_expectation_divergence_does_not_repeat_the_dispatched_action() -> None:
     assert source.repair_evidence is not None
     assert source.repair_evidence.target.resume_procedure_index == 1
     assert source.repair_evidence.target.established_by_action is ActionKind.TAP
-    assert source.repair_evidence.target.next_action is ActionKind.TYPE
+    remaining = source.repair_evidence.target.remaining_step_summaries
+    assert remaining[0].action is ActionKind.TYPE
+    assert remaining[0].expected_outcome == "The name field contains the text."
 
     next_destination = _observations()[3]
     suffix_action = source.plan(
@@ -343,15 +358,10 @@ def test_keyboard_repair_resets_focus_without_a_planner_call() -> None:
     target = ProcedureRepairTarget(
         expected_state_id="state_password_focused",
         resume_procedure_index=4,
-        foreground_application_id=observation.foreground_application_id,
-        platform_context=observation.platform_context,
-        keyboard_visible=True,
-        orientation=observation.orientation,
+        presentation=observation.presentation_key.model_copy(update={"keyboard_visible": True}),
         established_by_action=ActionKind.FOCUS,
         established_by_target_expression="the Password text field",
         keyboard_reset_target_expression="the Email text field",
-        next_action=ActionKind.TYPE,
-        next_target_expression="the focused Password text field",
         reason="The keyboard closed after focus.",
     )
     planner = RepairPlanner()
@@ -495,6 +505,7 @@ def test_successful_repair_can_be_audited_and_complete() -> None:
         target=ProcedureRepairTarget(
             expected_state_id="state_2",
             resume_procedure_index=2,
+            presentation=_observations()[0].presentation_key,
             reason=divergence.reason,
         ),
         maximum_actions=8,
@@ -528,18 +539,3 @@ def test_successful_repair_can_be_audited_and_complete() -> None:
         )
         is ProcedureReplayTerminal.COMPLETED
     )
-
-
-def test_keyboard_repair_target_explains_how_to_reset_focus() -> None:
-    target = ProcedureRepairTarget(
-        expected_state_id="state_password",
-        resume_procedure_index=4,
-        keyboard_visible=True,
-        established_by_action=ActionKind.FOCUS,
-        established_by_target_expression="the Password text field",
-        next_action=ActionKind.TYPE,
-        next_target_expression="the focused Password text field",
-        reason="The keyboard closed after password focus.",
-    )
-
-    assert any("focus one other visible text field once" in fact for fact in _target_facts(target))

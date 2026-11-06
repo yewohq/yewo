@@ -8,17 +8,18 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.agent.actuation import (
-    ActionKind,
+    ActionRefusalCode,
     ActionOutcomeDisposition,
     ActionOutcomeSignal,
     TextDeliveryEvidence,
     ActionProposal,
     SideEffectClass,
 )
+from yewo.agent.screen_analysis import ScreenElementKind, ScreenWorkflowRole
 from yewo.artifacts import EvidenceApplicationIdentity, EvidenceDeviceIdentity, RecordIdentifier
 from yewo.devices.focus import TextFieldContextSource, TextFieldType
 from yewo.grounding import GroundingEvidence
-from yewo.observations import DeviceOrientation, ScreenFingerprint
+from yewo.observations import PresentationKey, ScreenFingerprint, ScreenshotReference
 
 
 class EvidenceStepKind(StrEnum):
@@ -42,30 +43,14 @@ class EvidenceResult(StrEnum):
     UNKNOWN = "unknown"
 
 
-class ControlRole(StrEnum):
-    """A deterministic semantic role inferred from recorded planner text."""
-
-    TEXT_FIELD = "text_field"
-    STATIC_TEXT = "static_text"
-    BUTTON = "button"
-    IMAGE_BUTTON = "image_button"
-    CHECKBOX = "checkbox"
-    RADIO_BUTTON = "radio_button"
-    SWITCH = "switch"
-    SLIDER = "slider"
-    DROPDOWN = "dropdown"
-    OPTION = "option"
-    MENU_ITEM = "menu_item"
-    TAB = "tab"
-    LINK = "link"
-    LIST = "list"
-    LIST_ITEM = "list_item"
-    ROW = "row"
-    CARD = "card"
-    ICON = "icon"
-    DATE_PICKER = "date_picker"
-    TIME_PICKER = "time_picker"
-    UNKNOWN = "unknown"
+REUSABLE_EVIDENCE_RESULTS = frozenset(
+    {
+        EvidenceResult.OBSERVED,
+        EvidenceResult.AMBIGUOUS,
+        EvidenceResult.NOT_CAPTURED,
+        EvidenceResult.RECOVERED,
+    }
+)
 
 
 class ControlValueType(StrEnum):
@@ -73,8 +58,6 @@ class ControlValueType(StrEnum):
 
     NONE = "none"
     TEXT = "text"
-    INTEGER = "integer"
-    DECIMAL = "decimal"
     BOOLEAN = "boolean"
     ENUM = "enum"
     DATE = "date"
@@ -85,9 +68,11 @@ class ControlValueType(StrEnum):
 
 ControlInferenceInput = Literal[
     "recorded_action",
-    "model_authored_target_expression",
     "recorded_input_contract",
+    "current_screen_analysis",
 ]
+
+ControlKindSource = Literal["screen_analysis", "recorded_action"]
 
 
 class ControlInference(BaseModel):
@@ -95,7 +80,7 @@ class ControlInference(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    method: Literal["recorded-control-parser-v1"] = "recorded-control-parser-v1"
+    method: Literal["screen-analysis-element-v1", "recorded-action-kind-v1"]
     input_sources: tuple[ControlInferenceInput, ...] = Field(min_length=1, max_length=3)
     certainty: Literal["inferred", "unknown"]
 
@@ -128,7 +113,9 @@ class EvidenceControl(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    role: ControlRole
+    kind: ScreenElementKind
+    kind_source: ControlKindSource
+    workflow_role: ScreenWorkflowRole | None = None
     label: str | None = Field(default=None, min_length=1, max_length=500)
     value_type: ControlValueType
     identity_key: str | None = Field(default=None, min_length=1, max_length=600)
@@ -181,31 +168,38 @@ class EvidenceState(BaseModel):
 
     state_id: RecordIdentifier
     representative_observation_id: RecordIdentifier
+    representative_screenshot: ScreenshotReference
     observation_ids: tuple[RecordIdentifier, ...] = Field(min_length=1, max_length=1_000)
-    foreground_application_id: str | None = Field(default=None, min_length=1)
-    platform_context: str | None = Field(default=None, min_length=1)
-    keyboard_visible: bool | None
-    orientation: DeviceOrientation | None
-    width_px: int = Field(gt=0)
-    height_px: int = Field(gt=0)
-    fingerprint: ScreenFingerprint
-    fingerprints: tuple[ScreenFingerprint, ...] = Field(default=(), max_length=1_000)
-    screenshot_artifact_id: RecordIdentifier
+    presentations: tuple[PresentationKey, ...] = Field(min_length=1, max_length=1_000)
     visual_signature: StateVisualSignature | None = None
 
     @model_validator(mode="after")
-    def _validate_fingerprints(self) -> Self:
-        fingerprints = self.fingerprints or (self.fingerprint,)
-        artifact_ids = [item.source_artifact_id for item in fingerprints]
+    def _validate_presentations(self) -> Self:
+        if len(self.presentations) != len(self.observation_ids):
+            raise ValueError("An evidence state needs one presentation per observation.")
+        if self.representative_observation_id not in self.observation_ids:
+            raise ValueError("An evidence state representative must belong to the state.")
+        representative_index = self.observation_ids.index(self.representative_observation_id)
+        representative = self.presentations[representative_index]
+        if (
+            representative.fingerprint.source_artifact_id
+            != self.representative_screenshot.artifact_id
+        ):
+            raise ValueError("An evidence state screenshot must match its representative.")
+        artifact_ids = [item.fingerprint.source_artifact_id for item in self.presentations]
         if len(artifact_ids) != len(set(artifact_ids)):
             raise ValueError("An evidence state cannot repeat a screen fingerprint.")
-        if self.fingerprint not in fingerprints:
-            raise ValueError("The representative fingerprint must belong to the evidence state.")
         return self
 
+    @property
+    def representative_presentation(self) -> PresentationKey:
+        """Return the presentation selected as this state's representative."""
+        index = self.observation_ids.index(self.representative_observation_id)
+        return self.presentations[index]
+
     def comparison_fingerprints(self) -> tuple[ScreenFingerprint, ...]:
-        """Return all recorded variants, including legacy singleton evidence."""
-        return self.fingerprints or (self.fingerprint,)
+        """Return every recorded presentation fingerprint."""
+        return tuple(item.fingerprint for item in self.presentations)
 
 
 class EvidenceStep(BaseModel):
@@ -214,26 +208,23 @@ class EvidenceStep(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     step: int = Field(gt=0)
-    recorded_step_index: int = Field(gt=0)
     source_step_id: RecordIdentifier
     source_observation_id: RecordIdentifier
     destination_observation_id: RecordIdentifier | None = None
     source_state_id: RecordIdentifier
     destination_state_id: RecordIdentifier | None = None
     kind: EvidenceStepKind
-    action: ActionKind
     proposal: ActionProposal
     control: EvidenceControl
     result: EvidenceResult
     outcome_disposition: ActionOutcomeDisposition | None = None
+    refusal_code: ActionRefusalCode | None = None
     signals: frozenset[ActionOutcomeSignal] = frozenset()
     text_delivery: TextDeliveryEvidence | None = None
     authorization_side_effect: SideEffectClass | None = None
     target_grounding: GroundingEvidence | None = None
     target_visual_descriptor: TargetVisualDescriptor | None = None
     destination_grounding: GroundingEvidence | None = None
-    refused: bool = False
-    application_failed: bool = False
 
 
 DiagnosticInput = Literal[
@@ -316,7 +307,7 @@ class EvidenceDocument(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     evidence_id: RecordIdentifier
     run: EvidenceRun
     task: EvidenceTask

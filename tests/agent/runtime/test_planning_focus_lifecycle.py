@@ -10,7 +10,7 @@ from yewo.agent.actuation import (
     ActionRefusal,
     ActionRefusalCode,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 
@@ -240,9 +240,9 @@ def test_screen_facts_reach_the_planner_only_for_the_current_screen() -> None:
 
 def test_more_screen_facts_than_the_cap_are_truncated_not_rejected() -> None:
     from yewo.agent.planning.records import (
-    MAXIMUM_SCREEN_FACTS,
-    PlanningRequest,
-)
+        MAXIMUM_SCREEN_FACTS,
+        PlanningRequest,
+    )
 
     screen = _observation("obs_1", "0000000000000000")
     tracker = ActionNoProgressTracker(ScreenComparisonPolicy())
@@ -280,8 +280,8 @@ def test_more_screen_facts_than_the_cap_are_truncated_not_rejected() -> None:
 
 def test_more_prohibited_intents_than_the_cap_are_truncated_not_rejected() -> None:
     from yewo.agent.planning.records import (
-    MAXIMUM_PROHIBITED_INTENTS,
-)
+        MAXIMUM_PROHIBITED_INTENTS,
+    )
 
     screen = _observation("obs_1", "0000000000000000")
     tracker = ActionNoProgressTracker(ScreenComparisonPolicy())

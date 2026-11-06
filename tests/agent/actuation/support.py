@@ -18,14 +18,15 @@ from yewo.grounding import (
     GroundingOutputShape,
     GroundingResult,
     GroundingTargetOperation,
+    ModelGroundingResolution,
     NormalizedPoint,
     NormalizedRegion,
     PixelPoint,
 )
-from yewo.models import ModelCallDisposition, ModelCallUsage
+from yewo.models import ModelCallDisposition
 from yewo.observations import PixelRegion
 
-from grounding.support import build_call_artifact, build_grounding_request
+from grounding.support import build_grounding_request
 
 
 EXECUTABLE_ACTIONS = frozenset(
@@ -198,17 +199,13 @@ def _grounding(
 ) -> GroundingResult:
     return GroundingResult(
         grounding_id=grounding_id,
-        profile_id="grounder",
-        model_profile_id="grounder-model",
         source_screenshot_sha256=screenshot_sha256,
         output_shape=output_shape,
         disposition=disposition,
+        resolution=ModelGroundingResolution(
+            grounding_profile_id="grounder",
+            model_request_ids=("grounding-request-1",),
+        ),
         location=location,
         reason=None if disposition is GroundingDisposition.ACCEPTED else reason,
-        requested_provider="offline",
-        requested_model="test-grounder",
-        transport_disposition=transport_disposition,
-        raw_response_artifact=build_call_artifact(),
-        usage=ModelCallUsage(),
-        model_request_count=1,
     )

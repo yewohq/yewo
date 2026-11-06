@@ -30,6 +30,7 @@ from yewo.agent.replay.reconciliation.records import ReconcilerResponse
 from yewo.agent.replay.procedure.records import ProcedureReplayResult
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.runtime.records import AgentResult, AgentStep
+from yewo.agent.screen_analysis import CurrentScreenAnalysis
 from yewo.artifacts import RecordIdentifier
 from yewo.devices.diagnostics import ApplicationFailureKind
 from yewo.observations import Observation
@@ -42,6 +43,7 @@ def build_memory_delta(
     observations: Mapping[RecordIdentifier, Observation],
     applied_at: datetime,
     *,
+    screen_analyses: tuple[CurrentScreenAnalysis, ...] = (),
     procedure_attempt_id: RecordIdentifier | None = None,
     grounding_assessments: tuple[GroundingAssessment, ...] = (),
     recovery_assessments: Sequence[RecoveryAssessment] = (),
@@ -111,7 +113,7 @@ def build_memory_delta(
         screen_summaries=_screen_summaries(
             memory,
             source_run_id,
-            agent_result.steps,
+            screen_analyses,
             observations,
             procedure_attempt_id,
         ),
@@ -119,6 +121,7 @@ def build_memory_delta(
             memory,
             source_run_id,
             agent_result,
+            screen_analyses,
             observations,
             procedure_attempt_id,
             skipped_records,
@@ -380,23 +383,28 @@ def _run_outcomes(
 def _screen_summaries(
     memory: AppMemory,
     source_run_id: RecordIdentifier,
-    steps: tuple[AgentStep, ...],
+    screen_analyses: tuple[CurrentScreenAnalysis, ...],
     observations: Mapping[RecordIdentifier, Observation],
     procedure_attempt_id: RecordIdentifier | None,
 ) -> tuple[ScreenSummaryKnowledge, ...]:
     summaries: dict[RecordIdentifier, ScreenSummaryKnowledge] = {}
-    for step in steps:
-        text = step.proposal.screen_summary
-        observation = observations.get(step.source_observation_id)
-        if text is None or observation is None:
+    for analysis in screen_analyses:
+        observation = observations.get(analysis.observation_id)
+        if observation is None:
             continue
         screen_id = _screen_id(memory, observation)
         if screen_id is None:
             continue
         summaries[screen_id] = ScreenSummaryKnowledge(
             screen_id=screen_id,
-            text=text,
-            sources=(_reference(source_run_id, step, procedure_attempt_id),),
+            text=analysis.screen_summary,
+            sources=(
+                KnowledgeEvidenceReference(
+                    run_id=source_run_id,
+                    observation_id=analysis.observation_id,
+                    procedure_attempt_id=procedure_attempt_id,
+                ),
+            ),
         )
     return tuple(summaries.values())
 

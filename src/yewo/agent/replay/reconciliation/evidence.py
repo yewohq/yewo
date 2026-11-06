@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import re
 
 from yewo import observations as observation_records
 from yewo.agent.actuation import ActionKind, ActionOutcomeDisposition
-from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.runtime.records import AgentStep, AgentTask
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    ScreenElement,
+    ScreenElementKind,
+    ScreenSemanticRole,
+    ScreenVisualKind,
+)
 from yewo.agent.runtime.observation_settlement import latest_settlement_candidate
 from yewo.agent.replay.reconciliation.records import (
     ControlInference,
     ControlInputTraits,
     ControlInferenceInput,
-    ControlRole,
     ControlValueType,
     EvidenceControl,
     EvidenceDocument,
@@ -32,36 +36,19 @@ from yewo.agent.replay.visual_matching import (
     build_target_visual_descriptor,
 )
 from yewo.artifacts import RecordIdentifier, new_record_identifier
-from yewo.grounding import GroundedPoint
-from yewo.observations import fingerprint_distance
+from yewo.grounding import GroundedPoint, ScreenAnalysisGroundingResolution
+from yewo.observations import ScreenComparisonPolicy, ScreenMatcher
 
 
-_QUOTED_TEXT = re.compile(r"['\"]([^'\"]+)['\"]")
-_REFERENCE_PREFIX = re.compile(
-    r"(?:left of|right of|below|above|under|beside|after|before|showing|"
-    r"title|header|containing|of the|in the|on the|screen|dialog|form|list)\s*(?:the\s*)?$",
-    re.IGNORECASE,
-)
-_FIELD_NAME = re.compile(
-    r"^(?:focused |empty )?([a-z][\w \[\]-]{1,80}?) "
-    r"(?:text |numeric )?(?:input )?field",
-    re.IGNORECASE,
-)
-_COMMIT_WORDS = re.compile(
-    r"\b(?:save|ok|submit|confirm|apply|create|add|finish|checkmark)\b",
-    re.IGNORECASE,
-)
-_INTEGER = re.compile(r"^[+-]?\d+$")
-_DECIMAL = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+)$")
-_VALUE_TYPE_BY_ROLE = {
-    ControlRole.CHECKBOX: ControlValueType.BOOLEAN,
-    ControlRole.RADIO_BUTTON: ControlValueType.BOOLEAN,
-    ControlRole.SWITCH: ControlValueType.BOOLEAN,
-    ControlRole.DROPDOWN: ControlValueType.ENUM,
-    ControlRole.OPTION: ControlValueType.ENUM,
-    ControlRole.SLIDER: ControlValueType.RANGE,
-    ControlRole.DATE_PICKER: ControlValueType.DATE,
-    ControlRole.TIME_PICKER: ControlValueType.TIME,
+_VALUE_TYPE_BY_SEMANTIC_ROLE = {
+    ScreenSemanticRole.CHECKBOX: ControlValueType.BOOLEAN,
+    ScreenSemanticRole.RADIO_BUTTON: ControlValueType.BOOLEAN,
+    ScreenSemanticRole.SWITCH: ControlValueType.BOOLEAN,
+    ScreenSemanticRole.DROPDOWN: ControlValueType.ENUM,
+    ScreenSemanticRole.OPTION: ControlValueType.ENUM,
+    ScreenSemanticRole.SLIDER: ControlValueType.RANGE,
+    ScreenSemanticRole.DATE_PICKER: ControlValueType.DATE,
+    ScreenSemanticRole.TIME_PICKER: ControlValueType.TIME,
 }
 
 
@@ -76,6 +63,7 @@ def build_evidence_document(
     task: AgentTask,
     steps: Sequence[AgentStep],
     observations: Sequence[observation_records.Observation],
+    screen_analyses: Sequence[CurrentScreenAnalysis] = (),
     comparison: ScreenComparisonPolicy | None = None,
     screenshot_loader: Callable[[observation_records.ScreenshotReference], bytes] | None = None,
     identifier_factory: Callable[[], str] = new_record_identifier,
@@ -87,6 +75,8 @@ def build_evidence_document(
     if len({step.step_id for step in steps}) != len(steps):
         raise EvidenceConstructionError("Source step identifiers must be unique.")
     observation_by_id = _index_observations(observations)
+    analysis_by_observation = {item.observation_id: item for item in screen_analyses}
+    analysis_by_id = {item.analysis_id: item for item in screen_analyses}
     application = observations[0].application
     if any(observation.application != application for observation in observations):
         raise EvidenceConstructionError("All observations must use one application build.")
@@ -104,6 +94,8 @@ def build_evidence_document(
             index,
             step,
             observation_by_id,
+            analysis_by_observation,
+            analysis_by_id,
             state_by_observation,
             screenshot_loader,
         )
@@ -174,21 +166,13 @@ def _group_states(
     for ordinal, members in enumerate(grouped, start=1):
         state_id = f"state_{ordinal:03d}"
         representative = members[0]
-        screenshot = representative.redacted_screenshot
         visual_signature = build_observation_visual_signature(members, screenshot_loader)
         states[state_id] = EvidenceState(
             state_id=state_id,
             representative_observation_id=representative.observation_id,
+            representative_screenshot=representative.redacted_screenshot,
             observation_ids=tuple(item.observation_id for item in members),
-            foreground_application_id=representative.foreground_application_id,
-            platform_context=representative.platform_context,
-            keyboard_visible=representative.keyboard_visible,
-            orientation=representative.orientation,
-            width_px=screenshot.width_px,
-            height_px=screenshot.height_px,
-            fingerprint=representative.screen_fingerprint,
-            fingerprints=tuple(item.screen_fingerprint for item in members),
-            screenshot_artifact_id=screenshot.artifact_id,
+            presentations=tuple(item.presentation_key for item in members),
             visual_signature=visual_signature,
         )
         for item in members:
@@ -201,29 +185,18 @@ def _replay_equivalent(
     right: observation_records.Observation,
     policy: ScreenComparisonPolicy,
 ) -> bool:
-    left_shot = left.redacted_screenshot
-    right_shot = right.redacted_screenshot
-    if (
-        left.foreground_application_id != right.foreground_application_id
-        or left.platform_context != right.platform_context
-        or left.keyboard_visible is not right.keyboard_visible
-        or left.orientation is not right.orientation
-        or (left_shot.width_px, left_shot.height_px) != (right_shot.width_px, right_shot.height_px)
-    ):
-        return False
-    try:
-        return (
-            fingerprint_distance(left.screen_fingerprint, right.screen_fingerprint)
-            <= policy.maximum_replay_phash_distance
-        )
-    except ValueError:
-        return False
+    return ScreenMatcher(policy).replay_equivalent(
+        left.presentation_key,
+        right.presentation_key,
+    )
 
 
 def _build_step(
     selector: int,
     step: AgentStep,
     observations: dict[str, observation_records.Observation],
+    analyses_by_observation: dict[str, CurrentScreenAnalysis],
+    analyses_by_id: dict[str, CurrentScreenAnalysis],
     state_by_observation: dict[str, str],
     screenshot_loader: Callable[[observation_records.ScreenshotReference], bytes] | None,
 ) -> EvidenceStep:
@@ -236,9 +209,7 @@ def _build_step(
         observations,
     )
     destination_id = (
-        step.settled_observation_id
-        or step.recovery_observation_id
-        or recovered_destination_id
+        step.settled_observation_id or step.recovery_observation_id or recovered_destination_id
     )
     if destination_id is not None and destination_id not in observations:
         raise EvidenceConstructionError("A step destination observation is missing.")
@@ -264,7 +235,6 @@ def _build_step(
             )
     return EvidenceStep(
         step=selector,
-        recorded_step_index=step.step_index,
         source_step_id=step.step_id,
         source_observation_id=step.source_observation_id,
         destination_observation_id=destination_id,
@@ -273,11 +243,14 @@ def _build_step(
             state_by_observation[destination_id] if destination_id is not None else None
         ),
         kind=kind,
-        action=step.proposal.action,
         proposal=step.proposal,
-        control=_infer_control(step),
+        control=_infer_control(
+            step,
+            _analysis_for_step(step, analyses_by_observation, analyses_by_id),
+        ),
         result=_step_result(step, recovered_destination_id is not None),
         outcome_disposition=(step.outcome.disposition if step.outcome is not None else None),
+        refusal_code=(step.refusal.code if step.refusal is not None else None),
         signals=(step.outcome.signals if step.outcome is not None else frozenset()),
         text_delivery=(step.outcome.text_delivery if step.outcome is not None else None),
         authorization_side_effect=(
@@ -286,9 +259,21 @@ def _build_step(
         target_grounding=step.target_grounding,
         target_visual_descriptor=target_visual_descriptor,
         destination_grounding=step.destination_grounding,
-        refused=step.refusal is not None,
-        application_failed=step.application_failure is not None,
     )
+
+
+def _analysis_for_step(
+    step: AgentStep,
+    analyses_by_observation: dict[str, CurrentScreenAnalysis],
+    analyses_by_id: dict[str, CurrentScreenAnalysis],
+) -> CurrentScreenAnalysis | None:
+    grounding = step.target_grounding
+    if grounding is not None and isinstance(
+        grounding.result.resolution,
+        ScreenAnalysisGroundingResolution,
+    ):
+        return analyses_by_id.get(grounding.result.resolution.analysis_id)
+    return analyses_by_observation.get(step.source_observation_id)
 
 
 def _recovered_settlement_observation_id(
@@ -344,19 +329,28 @@ def _step_result(step: AgentStep, recovered_destination: bool = False) -> Eviden
     }[step.outcome.disposition]
 
 
-def _infer_control(step: AgentStep) -> EvidenceControl:
-    expression = step.proposal.target_expression
-    role = _control_role(step.proposal.action, expression)
-    label = _semantic_label(expression)
-    value_type = _value_type(step, role, expression)
-    identity = _control_identity(role, label, expression)
+def _infer_control(
+    step: AgentStep,
+    analysis: CurrentScreenAnalysis | None,
+) -> EvidenceControl:
+    analyzed_element = _analyzed_target(step, analysis)
+    kind = (
+        analyzed_element.kind
+        if analyzed_element is not None
+        else _control_kind(step.proposal.action)
+    )
+    label = analyzed_element.name if analyzed_element is not None else None
+    value_type = _value_type(kind.semantic)
+    identity = _control_identity(kind.semantic, label)
     input_sources: list[ControlInferenceInput] = ["recorded_action"]
-    if expression is not None:
-        input_sources.append("model_authored_target_expression")
+    if analyzed_element is not None:
+        input_sources.append("current_screen_analysis")
     if step.proposal.text is not None:
         input_sources.append("recorded_input_contract")
     return EvidenceControl(
-        role=role,
+        kind=kind,
+        kind_source="screen_analysis" if analyzed_element is not None else "recorded_action",
+        workflow_role=(analyzed_element.workflow_role if analyzed_element is not None else None),
         label=label,
         value_type=value_type,
         identity_key=identity,
@@ -364,10 +358,15 @@ def _infer_control(step: AgentStep) -> EvidenceControl:
             step.outcome.text_delivery if step.outcome else None
         ),
         inference=ControlInference(
+            method=(
+                "screen-analysis-element-v1"
+                if analyzed_element is not None
+                else "recorded-action-kind-v1"
+            ),
             input_sources=tuple(input_sources),
             certainty=(
                 "inferred"
-                if expression is not None
+                if analyzed_element is not None
                 or step.proposal.action in {ActionKind.FOCUS, ActionKind.TYPE, ActionKind.CLEAR}
                 else "unknown"
             ),
@@ -375,95 +374,42 @@ def _infer_control(step: AgentStep) -> EvidenceControl:
     )
 
 
-def _control_role(action: ActionKind, expression: str | None) -> ControlRole:
-    if action in {ActionKind.FOCUS, ActionKind.TYPE, ActionKind.CLEAR}:
-        return ControlRole.TEXT_FIELD
-    if expression is None:
-        return ControlRole.UNKNOWN
-    lowered = expression.lower()
-    candidates = (
-        ("image button", ControlRole.IMAGE_BUTTON),
-        ("radio button", ControlRole.RADIO_BUTTON),
-        ("date picker", ControlRole.DATE_PICKER),
-        ("time picker", ControlRole.TIME_PICKER),
-        ("menu item", ControlRole.MENU_ITEM),
-        ("list-item", ControlRole.LIST_ITEM),
-        ("list item", ControlRole.LIST_ITEM),
-        ("static text", ControlRole.STATIC_TEXT),
-        ("text field", ControlRole.TEXT_FIELD),
-        ("input field", ControlRole.TEXT_FIELD),
-        ("checkbox", ControlRole.CHECKBOX),
-        ("switch", ControlRole.SWITCH),
-        ("slider", ControlRole.SLIDER),
-        ("dropdown", ControlRole.DROPDOWN),
-        ("option", ControlRole.OPTION),
-        ("button", ControlRole.BUTTON),
-        ("tab", ControlRole.TAB),
-        ("link", ControlRole.LINK),
-        ("list", ControlRole.LIST),
-        (" row", ControlRole.ROW),
-        ("card", ControlRole.CARD),
-        ("icon", ControlRole.ICON),
-        ("label", ControlRole.STATIC_TEXT),
-    )
-    matches = ((lowered.find(text), role) for text, role in candidates if text in lowered)
-    return min(matches, default=(0, ControlRole.UNKNOWN), key=lambda item: item[0])[1]
-
-
-def _semantic_label(expression: str | None) -> str | None:
-    if expression is None:
-        return None
-    for match in _QUOTED_TEXT.finditer(expression):
-        if not _REFERENCE_PREFIX.search(expression[: match.start()].rstrip()):
-            return match.group(1).strip().rstrip(":")
-    landmark = re.search(
-        r"field\b.*?(?:right of|below|under|next to)\s+(?:the\s+)?"
-        r"(?:checked\s+)?['\"]([^'\"]+)['\"]",
-        expression,
-        re.IGNORECASE,
-    )
-    if landmark is not None:
-        return landmark.group(1).strip().rstrip(":")
-    field = _FIELD_NAME.match(expression)
-    if field is not None:
-        candidate = field.group(1).strip()
-        if candidate.lower() not in {"text", "numeric", "input", "empty"}:
-            return candidate
-    return None
-
-
-def _value_type(
+def _analyzed_target(
     step: AgentStep,
-    role: ControlRole,
-    expression: str | None,
-) -> ControlValueType:
-    inferred_type = _VALUE_TYPE_BY_ROLE.get(role)
+    analysis: CurrentScreenAnalysis | None,
+) -> ScreenElement | None:
+    element_ref = step.proposal.target_element_ref
+    if analysis is None or element_ref is None:
+        return None
+    return next((item for item in analysis.elements if item.element_ref == element_ref), None)
+
+
+def _control_kind(action: ActionKind) -> ScreenElementKind:
+    if action in {ActionKind.FOCUS, ActionKind.TYPE, ActionKind.CLEAR}:
+        return ScreenElementKind(
+            visual=ScreenVisualKind.INPUT_SURFACE,
+            semantic=ScreenSemanticRole.TEXT_FIELD,
+        )
+    return ScreenElementKind(
+        visual=ScreenVisualKind.UNKNOWN,
+        semantic=ScreenSemanticRole.UNKNOWN,
+    )
+
+
+def _value_type(semantic_role: ScreenSemanticRole) -> ControlValueType:
+    inferred_type = _VALUE_TYPE_BY_SEMANTIC_ROLE.get(semantic_role)
     if inferred_type is not None:
         return inferred_type
-    if role is not ControlRole.TEXT_FIELD:
+    if semantic_role is not ScreenSemanticRole.TEXT_FIELD:
         return ControlValueType.NONE
-    text = step.proposal.text
-    if text is None or text.source != "literal":
-        return ControlValueType.TEXT
-    lowered = (expression or "").lower()
-    is_numeric_target = "numeric" in lowered or "number" in lowered
-    if not is_numeric_target:
-        return ControlValueType.TEXT
-    if _INTEGER.fullmatch(text.value):
-        return ControlValueType.INTEGER
-    if _DECIMAL.fullmatch(text.value):
-        return ControlValueType.DECIMAL
     return ControlValueType.TEXT
 
 
-def _control_identity(role: ControlRole, label: str | None, expression: str | None) -> str | None:
-    source = label or expression
-    if source is None:
+def _control_identity(
+    semantic_role: ScreenSemanticRole,
+    label: str | None,
+) -> str | None:
+    if label is None:
         return None
-    normalized = re.sub(r"[^a-z0-9]+", "_", source.lower()).strip("_")
-    return f"{role.value}:{normalized}" if normalized else None
-
-
-def is_commit_target(expression: str | None) -> bool:
-    """Return whether recorded target wording positively identifies a commit control."""
-    return expression is not None and (_COMMIT_WORDS.search(expression) is not None)
+    normalized = " ".join(label.casefold().split())
+    return f"{semantic_role.value}:{normalized}" if normalized else None

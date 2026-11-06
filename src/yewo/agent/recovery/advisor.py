@@ -383,7 +383,7 @@ def _grounding_context(
             evidence.result.location.model_dump(mode="json") if evidence.result.location else None
         ),
         "reason": evidence.result.reason,
-        "cached_transition_id": evidence.result.cached_transition_id,
+        "resolution": evidence.result.resolution.model_dump(mode="json"),
     }
     return _redact_literal_from_fields(
         context,

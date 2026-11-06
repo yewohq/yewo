@@ -5,7 +5,7 @@ from typing import cast
 
 import pytest
 
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.discovery.compilation_milestones import (
     DiscoveryCompilationMilestones,
 )

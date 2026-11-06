@@ -22,8 +22,10 @@ from yewo.agent.screen_analysis.records import (
     grounding_expression_for_element,
     resolve_element_expression,
     interactive_element_references,
+    screen_analysis_grounding_candidate,
 )
 from yewo.agent.screen_analysis.manager import CurrentScreenAnalysisManager
+from yewo.agent.screen_analysis.store import ScreenAnalysisStore, ScreenAnalysisStoreError
 from yewo.agent.screen_analysis.service import (
     ModelScreenAnalyzer,
     ScreenAnalysisError,
@@ -35,6 +37,8 @@ from yewo.agent.screen_analysis.service import (
 __all__ = [
     "CurrentScreenAnalysis",
     "CurrentScreenAnalysisManager",
+    "ScreenAnalysisStore",
+    "ScreenAnalysisStoreError",
     "ModelScreenAnalyzer",
     "ScreenElement",
     "ScreenElementAffordance",
@@ -57,5 +61,6 @@ __all__ = [
     "grounding_expression_for_element",
     "resolve_element_expression",
     "interactive_element_references",
+    "screen_analysis_grounding_candidate",
     "screen_element_catalog",
 ]

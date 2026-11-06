@@ -4,9 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from yewo.agent.actuation import ActionKind
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.records import (
     PlanningRequest,
+    TaskProgressContext,
 )
 from yewo.agent.recovery.advisor import RecoveryAssessment, RecoveryDisposition
 from yewo.agent.recovery.records import RecoveryBudgetCredit
@@ -178,3 +179,27 @@ def test_advisor_text_reaches_the_planner_as_guidance_not_as_a_work_item() -> No
     assert "Unproven recovery cause: A stale internal value may have caused the failure." in (
         context.recovery_guidance
     )
+
+
+def test_failed_branch_constraint_survives_full_recovery_guidance() -> None:
+    frontier = observation("obs_frontier", "0000000000000000")
+    fresh = observation("obs_fresh", "1111111111111111", offset_seconds=1)
+    state = RecoveryRunState(ContinuingAdvisor(), ScreenComparisonPolicy())
+    state.assess(
+        _planning_request(frontier),
+        _failed_step(),
+        fresh,
+        completed_step_count=4,
+        now=10,
+    )
+    base = TaskProgressContext(
+        recovery_guidance=tuple(f"Existing guidance {index}." for index in range(20))
+    )
+
+    context = state.progress_context(base)
+
+    assert context is not None
+    assert context.recovery_guidance[0] == (
+        "Do not repeat the application-failing action without a material state change."
+    )
+    assert len(context.recovery_guidance) == 20

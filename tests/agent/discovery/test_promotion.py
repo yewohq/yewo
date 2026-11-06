@@ -20,7 +20,7 @@ from yewo.agent.actuation import (
 )
 from yewo.artifacts import EvidenceApplicationIdentity
 from yewo.devices.inventory import DevicePlatform
-from yewo.grounding import GroundedPoint
+from yewo.grounding import GroundedPoint, ModelGroundingResolution
 from yewo.agent.discovery import (
     AppMemoryBuilder,
     DiscoveryObjective,
@@ -120,12 +120,11 @@ def test_done_promotes_one_transition_and_exact_source_grounding() -> None:
     assert transition.target_grounding.location.pixel.y == 200
     assert (
         transition.target_grounding.source_masked_pixels_sha256
-        == promotion.memory.screens[0].variants[0].fingerprint.masked_pixels_sha256
+        == promotion.memory.screens[0].variants[0].presentation.fingerprint.masked_pixels_sha256
     )
     assert transition.outcome_signals
-    assert len(transition.grounding_profile_ids) == 1
-    assert len(transition.grounder_model_profile_ids) == 1
-    assert len(transition.requested_grounder_models) == 1
+    assert isinstance(transition.target_grounding.resolution, ModelGroundingResolution)
+    assert transition.target_grounding.resolution.grounding_profile_id == "grounder"
 
 
 @pytest.mark.parametrize(
@@ -527,7 +526,6 @@ def test_literal_text_transition_retains_only_its_input_shape() -> None:
     assert promotion.memory is not None
     assert len(promotion.memory.transitions) == 2
     assert all(
-        transition.action.declared_value_name is None
-        for transition in promotion.memory.transitions
+        transition.action.declared_value_name is None for transition in promotion.memory.transitions
     )
     assert promotion.coverage.entries[0].state is DiscoveryObjectiveState.UNRESOLVED

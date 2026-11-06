@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from yewo.agent.discovery.conclusion import persist_discovery_outcome
 from yewo.agent.discovery.records import DiscoveryResult
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.memory.runtime_writeback import write_back_discovery_knowledge
 from yewo.agent.memory.store import AppMemoryStore

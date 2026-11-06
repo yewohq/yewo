@@ -7,7 +7,7 @@ from yewo.agent.actuation import (
     ActionOutcomeSignal,
     ActionRefusalCode,
 )
-from yewo.agent.memory.records import ScreenComparisonPolicy
+from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 

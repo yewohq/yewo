@@ -20,16 +20,25 @@ def _permission_evidence():
     assert permission_state_id is not None
     permission_state = evidence.states[permission_state_id].model_copy(
         update={
-            "foreground_application_id": "com.google.android.permissioncontroller",
-            "platform_context": (
-                "com.android.permissioncontroller.permission.ui.GrantPermissionsActivity"
+            "presentations": tuple(
+                presentation.model_copy(
+                    update={
+                        "foreground_application_id": (
+                            "com.google.android.permissioncontroller"
+                        ),
+                        "platform_context": (
+                            "com.android.permissioncontroller.permission.ui."
+                            "GrantPermissionsActivity"
+                        ),
+                    }
+                )
+                for presentation in evidence.states[permission_state_id].presentations
             ),
         }
     )
     environment_step = evidence.steps[1].model_copy(
         update={
             "kind": EvidenceStepKind.ENVIRONMENT,
-            "action": ActionKind.TAP,
             "proposal": evidence.steps[1].proposal.model_copy(
                 update={
                     "action": ActionKind.TAP,
@@ -72,7 +81,14 @@ def test_compiler_refuses_generic_system_surface() -> None:
     evidence = _permission_evidence()
     state_id = evidence.steps[1].source_state_id
     system_state = evidence.states[state_id].model_copy(
-        update={"foreground_application_id": "com.android.systemui"}
+        update={
+            "presentations": tuple(
+                presentation.model_copy(
+                    update={"foreground_application_id": "com.android.systemui"}
+                )
+                for presentation in evidence.states[state_id].presentations
+            )
+        }
     )
     evidence = evidence.model_copy(
         update={"states": {**evidence.states, state_id: system_state}}

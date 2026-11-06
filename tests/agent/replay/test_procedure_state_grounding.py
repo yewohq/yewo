@@ -84,7 +84,6 @@ def test_keyboard_repair_reuses_a_locally_validated_compiled_coordinate() -> Non
     )
     focused_step = first.model_copy(
         update={
-            "action": ActionKind.FOCUS,
             "proposal": first.proposal.model_copy(
                 update={"action": ActionKind.FOCUS, "target_expression": expression}
             ),
@@ -94,7 +93,12 @@ def test_keyboard_repair_reuses_a_locally_validated_compiled_coordinate() -> Non
     destination_state_id = focused_step.destination_state_id
     assert destination_state_id is not None
     focused_state = evidence.states[destination_state_id].model_copy(
-        update={"keyboard_visible": True}
+        update={
+            "presentations": tuple(
+                presentation.model_copy(update={"keyboard_visible": True})
+                for presentation in evidence.states[destination_state_id].presentations
+            )
+        }
     )
     evidence = evidence.model_copy(
         update={
@@ -125,18 +129,14 @@ def test_keyboard_repair_reuses_a_locally_validated_compiled_coordinate() -> Non
     first_procedure_step = procedure.steps[0].model_copy(
         update={"target_visual_descriptor": descriptor}
     )
-    procedure = procedure.model_copy(
-        update={"steps": (first_procedure_step, *procedure.steps[1:])}
-    )
+    procedure = procedure.model_copy(update={"steps": (first_procedure_step, *procedure.steps[1:])})
     procedure_source = CompiledProcedureActionSource(procedure, evidence)
     before = _observations()[0]
     dispatched = procedure_source.plan(_request(before))
     wrong = _observations()[2].model_copy(
         update={"observation_id": "password_keyboard_closed", "keyboard_visible": False}
     )
-    diverged = procedure_source.plan(
-        _request(wrong, (_outcome(dispatched, before, wrong),))
-    )
+    diverged = procedure_source.plan(_request(wrong, (_outcome(dispatched, before, wrong),)))
     assert diverged.action is ActionKind.CANNOT_PROGRESS
     repair_focus = ActionProposal(
         proposal_id="repair_password_focus",
@@ -156,9 +156,7 @@ def test_keyboard_repair_reuses_a_locally_validated_compiled_coordinate() -> Non
         update={
             "grounding_id": "repair_grounding",
             "screenshot": wrong.redacted_screenshot,
-            "source_fingerprint": wrong.screen_fingerprint,
-            "source_orientation": wrong.orientation,
-            "source_keyboard_visible": wrong.keyboard_visible,
+            "source_presentation": wrong.presentation_key,
         }
     )
     grounder = ProcedureGrounder(
@@ -209,7 +207,12 @@ def test_keyboard_reflow_uses_the_same_control_in_both_keyboard_states() -> None
     )
     visible_state_id = procedure.steps[1].source_state_id
     visible_state = evidence.states[visible_state_id].model_copy(
-        update={"keyboard_visible": True}
+        update={
+            "presentations": tuple(
+                presentation.model_copy(update={"keyboard_visible": True})
+                for presentation in evidence.states[visible_state_id].presentations
+            )
+        }
     )
     evidence = evidence.model_copy(
         update={
@@ -217,18 +220,10 @@ def test_keyboard_reflow_uses_the_same_control_in_both_keyboard_states() -> None
             "states": {**evidence.states, visible_state_id: visible_state},
         }
     )
-    hidden_reset = procedure.steps[0].model_copy(
-        update={"target_grounding": moved_grounding(200)}
-    )
-    visible_reset = procedure.steps[1].model_copy(
-        update={"target_grounding": moved_grounding(100)}
-    )
-    required = procedure.steps[2].model_copy(
-        update={"target_grounding": moved_grounding(150)}
-    )
-    procedure = procedure.model_copy(
-        update={"steps": (hidden_reset, visible_reset, required)}
-    )
+    hidden_reset = procedure.steps[0].model_copy(update={"target_grounding": moved_grounding(200)})
+    visible_reset = procedure.steps[1].model_copy(update={"target_grounding": moved_grounding(100)})
+    required = procedure.steps[2].model_copy(update={"target_grounding": moved_grounding(150)})
+    procedure = procedure.model_copy(update={"steps": (hidden_reset, visible_reset, required)})
 
     translated = build_keyboard_reflow_step(
         required,
@@ -285,9 +280,7 @@ def test_procedure_grounder_reuses_authorized_nonidentical_pixels() -> None:
         update={
             "grounding_id": "live_grounding",
             "screenshot": live_screenshot,
-            "source_fingerprint": live_fingerprint,
-            "source_orientation": live.orientation,
-            "source_keyboard_visible": live.keyboard_visible,
+            "source_presentation": live.presentation_key,
         }
     )
     grounder = ProcedureGrounder(_RefusingFallback(), source)
@@ -304,19 +297,13 @@ def test_compiled_source_rejects_ambiguous_known_state() -> None:
     expected = evidence.states["state_001"]
     competing = evidence.states["state_002"].model_copy(
         update={
-            "foreground_application_id": expected.foreground_application_id,
-            "platform_context": expected.platform_context,
-            "keyboard_visible": expected.keyboard_visible,
-            "orientation": expected.orientation,
-            "width_px": expected.width_px,
-            "height_px": expected.height_px,
-            "fingerprint": expected.fingerprint,
-            "fingerprints": (expected.fingerprint,),
+            "presentations": tuple(
+                expected.representative_presentation
+                for unused in evidence.states["state_002"].observation_ids
+            ),
         }
     )
-    evidence = evidence.model_copy(
-        update={"states": {**evidence.states, "state_002": competing}}
-    )
+    evidence = evidence.model_copy(update={"states": {**evidence.states, "state_002": competing}})
     procedure = compile_replay_procedure(evidence, _response())
     assert isinstance(procedure, ReplayProcedure)
     source = CompiledProcedureActionSource(procedure, evidence)
@@ -340,19 +327,13 @@ def test_ambiguous_source_state_escalates_instead_of_false_rejoining() -> None:
     expected = evidence.states["state_001"]
     competing = evidence.states["state_002"].model_copy(
         update={
-            "foreground_application_id": expected.foreground_application_id,
-            "platform_context": expected.platform_context,
-            "keyboard_visible": expected.keyboard_visible,
-            "orientation": expected.orientation,
-            "width_px": expected.width_px,
-            "height_px": expected.height_px,
-            "fingerprint": expected.fingerprint,
-            "fingerprints": (expected.fingerprint,),
+            "presentations": tuple(
+                expected.representative_presentation
+                for unused in evidence.states["state_002"].observation_ids
+            ),
         }
     )
-    evidence = evidence.model_copy(
-        update={"states": {**evidence.states, "state_002": competing}}
-    )
+    evidence = evidence.model_copy(update={"states": {**evidence.states, "state_002": competing}})
     procedure = compile_replay_procedure(evidence, _response())
     assert isinstance(procedure, ReplayProcedure)
     planner = RepairPlanner()

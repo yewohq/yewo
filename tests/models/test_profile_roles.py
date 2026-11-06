@@ -35,6 +35,14 @@ def test_a_screen_analyzer_profile_must_accept_one_screenshot() -> None:
         ModelProfile.model_validate(payload)
 
 
+def test_a_task_planner_profile_must_accept_both_repair_screenshots() -> None:
+    with pytest.raises(ValidationError, match="at least 2 images"):
+        build_model_profile(
+            profile_id="planner-primary",
+            role=ModelRole.TASK_PLANNER,
+        )
+
+
 def test_a_replay_preparer_profile_keeps_the_single_image_default() -> None:
     profile = build_model_profile(
         profile_id="replay-preparer-primary",

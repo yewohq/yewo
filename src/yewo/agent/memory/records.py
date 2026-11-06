@@ -28,23 +28,13 @@ from yewo.devices.interaction import ScrollDirection
 from yewo.grounding import PixelPoint
 from yewo.observations import (
     DeviceOrientation,
-    ScreenFingerprint,
+    PresentationKey,
+    ScreenComparisonPolicy,
     ScreenshotReference,
 )
 
 
 MemoryText = Annotated[str, Field(min_length=1, max_length=4_000)]
-
-
-class ScreenComparisonPolicy(BaseModel):
-    """Versioned fail-closed rules shared by memory promotion and replay."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    algorithm: Literal["effective-mask-phash-distance-v1"] = "effective-mask-phash-distance-v1"
-    maximum_phash_distance: int = Field(default=0, ge=0, le=64)
-    maximum_replay_phash_distance: int = Field(default=2, ge=0, le=64)
-    require_same_effective_mask: Literal[True] = True
 
 
 class MemoryRetentionPolicy(BaseModel):
@@ -88,23 +78,17 @@ class ObservationVariant(BaseModel):
 
     observation_id: RecordIdentifier
     source_run_id: RecordIdentifier
-    foreground_application_id: str | None = Field(default=None, min_length=1)
-    platform_context: str | None = Field(default=None, min_length=1)
-    keyboard_visible: bool | None
-    orientation: DeviceOrientation | None
-    width_px: int = Field(gt=0)
-    height_px: int = Field(gt=0)
-    fingerprint: ScreenFingerprint
+    presentation: PresentationKey
     screenshot: ScreenshotReference
 
     @model_validator(mode="after")
     def _validate_screenshot(self) -> Self:
-        if (self.width_px, self.height_px) != (
+        if (self.presentation.width_px, self.presentation.height_px) != (
             self.screenshot.width_px,
             self.screenshot.height_px,
         ):
             raise ValueError("A memory variant must match its screenshot dimensions.")
-        if self.fingerprint.source_artifact_id != self.screenshot.artifact_id:
+        if self.presentation.fingerprint.source_artifact_id != self.screenshot.artifact_id:
             raise ValueError("A memory variant fingerprint must identify its screenshot.")
         return self
 
@@ -233,9 +217,6 @@ class AcceptedTransition(BaseModel):
     receipt_id: RecordIdentifier
     outcome_id: RecordIdentifier
     outcome_signals: frozenset[ActionOutcomeSignal] = Field(min_length=1)
-    grounding_profile_ids: tuple[RecordIdentifier, ...] = ()
-    grounder_model_profile_ids: tuple[RecordIdentifier, ...] = ()
-    requested_grounder_models: tuple[str, ...] = ()
     target_grounding: AcceptedGrounding | None = None
     destination_grounding: AcceptedGrounding | None = None
     source_step_id: RecordIdentifier
@@ -250,13 +231,6 @@ class AcceptedTransition(BaseModel):
 
     @model_validator(mode="after")
     def _validate_grounding_provenance(self) -> Self:
-        counts = {
-            len(self.grounding_profile_ids),
-            len(self.grounder_model_profile_ids),
-            len(self.requested_grounder_models),
-        }
-        if len(counts) != 1:
-            raise ValueError("Transition grounding provenance must describe the same attempts.")
         if self.target_grounding is not None and self.action.target_description is None:
             raise ValueError("Transition target grounding requires a target expression.")
         if self.destination_grounding is not None and self.action.destination_description is None:
@@ -289,9 +263,6 @@ class UnsuccessfulAttempt(BaseModel):
     grounded_point: PixelPoint | None = None
     screenshot_width_px: int | None = Field(default=None, gt=0)
     screenshot_height_px: int | None = Field(default=None, gt=0)
-    grounding_profile_id: RecordIdentifier | None = None
-    grounder_model_profile_id: RecordIdentifier | None = None
-    requested_grounder_model: str | None = Field(default=None, min_length=1)
     source_step_id: RecordIdentifier
     source_run_id: RecordIdentifier
 
@@ -313,15 +284,6 @@ class UnsuccessfulAttempt(BaseModel):
                 raise ValueError("Grounded attempt evidence requires screenshot dimensions.")
             if self.grounded_point.x >= width_px or self.grounded_point.y >= height_px:
                 raise ValueError("The unsuccessful-attempt point must be within the screenshot.")
-        grounding_fields = (
-            self.grounding_profile_id,
-            self.grounder_model_profile_id,
-            self.requested_grounder_model,
-        )
-        if any(value is not None for value in grounding_fields) and not all(
-            value is not None for value in grounding_fields
-        ):
-            raise ValueError("Attempt grounding provenance must be complete.")
         return self
 
     def has_same_evidence(self, other: UnsuccessfulAttempt) -> bool:
@@ -409,8 +371,8 @@ class AppMemory(BaseModel):
             raise ValueError("An unsuccessful attempt must reference its source observation.")
         source_variant = source_variants[0]
         has_wrong_grounding_dimensions = attempt.grounded_point is not None and (
-            attempt.screenshot_width_px != source_variant.width_px
-            or attempt.screenshot_height_px != source_variant.height_px
+            attempt.screenshot_width_px != source_variant.presentation.width_px
+            or attempt.screenshot_height_px != source_variant.presentation.height_px
         )
         if has_wrong_grounding_dimensions:
             raise ValueError("An unsuccessful-attempt point must match its source screenshot.")
@@ -439,8 +401,13 @@ class AppMemory(BaseModel):
         masks_by_shape: dict[tuple[DeviceOrientation | None, int, int], str | None] = {}
         for screen in self.screens:
             for variant in screen.variants:
-                shape = (variant.orientation, variant.width_px, variant.height_px)
-                mask = variant.fingerprint.system_region_mask_sha256
+                presentation = variant.presentation
+                shape = (
+                    presentation.orientation,
+                    presentation.width_px,
+                    presentation.height_px,
+                )
+                mask = presentation.fingerprint.system_region_mask_sha256
                 if shape in masks_by_shape and masks_by_shape[shape] != mask:
                     raise ValueError(
                         "A compatible device shape must use one canonical effective mask."

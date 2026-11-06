@@ -9,6 +9,7 @@ from yewo.grounding import (
     GroundingDisposition,
     GroundingProfile,
     GroundingService,
+    ModelGroundingResolution,
 )
 from yewo.models import ModelCallDisposition, ModelRequest, ModelResponse, TextModelContent
 from grounding.support import build_call, build_grounding_profile, build_grounding_request
@@ -20,6 +21,7 @@ class SequencedModelClient:
     def __init__(self, responses: list[tuple[str | None, ModelCallDisposition]]) -> None:
         self._responses = list(responses)
         self.requests: list[ModelRequest] = []
+        self.model_responses: list[ModelResponse] = []
 
     def complete(
         self,
@@ -30,15 +32,23 @@ class SequencedModelClient:
         del response_model, validation_context
         self.requests.append(request)
         text, disposition = self._responses[len(self.requests) - 1]
-        return ModelResponse(
+        response = ModelResponse(
             request_id=request.request_id,
             disposition=disposition,
             text=text,
             reason=None if disposition is ModelCallDisposition.COMPLETED else "rate limited",
-            calls=(build_call(request.request_id, disposition=disposition),),
+            calls=(
+                build_call(
+                    request.request_id,
+                    profile_id=request.profile_id,
+                    disposition=disposition,
+                ),
+            ),
             sensitivity=request.sensitivity,
             retention=request.retention,
         )
+        self.model_responses.append(response)
+        return response
 
 
 def _chained_profile() -> GroundingProfile:
@@ -66,11 +76,18 @@ def test_an_absent_primary_provider_falls_back_and_decodes_the_second_convention
     assert result.disposition is GroundingDisposition.ACCEPTED
     assert isinstance(result.location, GroundedPoint)
     assert result.location.pixel.model_dump() == {"x": 50, "y": 299}
-    assert result.model_profile_id == "grounder-secondary"
     assert [request.profile_id for request in client.requests] == [
         "grounder-primary",
         "grounder-secondary",
     ]
+    request_profiles = {
+        call.request_id: call.profile_id
+        for response in client.model_responses
+        for call in response.calls
+    }
+    assert isinstance(result.resolution, ModelGroundingResolution)
+    assert result.resolution.model_request_ids[-1] in request_profiles
+    assert request_profiles[result.resolution.model_request_ids[-1]] == "grounder-secondary"
 
 
 def test_each_candidate_is_told_its_own_coordinate_space() -> None:

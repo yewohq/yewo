@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.discovery.records import DiscoveryObjective
@@ -14,6 +15,7 @@ from yewo.agent.replay.procedure.store import (
     CompiledProcedureSchemaError,
     CompiledProcedureStore,
     CompiledProcedureStoreError,
+    StoredProcedureBundle,
 )
 
 from agent.replay.support import evidence as _evidence, response as _response
@@ -25,6 +27,19 @@ def _rewrite_as_previous_schema(path: Path) -> None:
     payload["bundle"]["schema_version"] = 1
     payload["bundle"]["procedure"]["schema_version"] = 1
     payload["bundle"]["procedure"].pop("setup_contract")
+    content = json.dumps(
+        payload["bundle"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    payload["bundle_sha256"] = sha256(content).hexdigest()
+    path.write_text(json.dumps(payload))
+
+
+def _rewrite_with_previous_evidence_schema(path: Path) -> None:
+    payload = json.loads(path.read_text())
+    payload["bundle"]["evidence"]["schema_version"] = 1
     content = json.dumps(
         payload["bundle"],
         ensure_ascii=False,
@@ -50,6 +65,23 @@ def test_compiled_procedure_store_rejects_tampered_snapshot(tmp_path: Path) -> N
             compatibility,
             evidence.task.objective_id,
             evidence.task.objective,
+        )
+
+
+def test_bundle_rejects_an_unknown_completion_condition_index() -> None:
+    evidence = _evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    invalid_step = procedure.steps[0].model_copy(
+        update={"captures_completion_conditions": (len(evidence.task.completion_conditions),)}
+    )
+    procedure = procedure.model_copy(update={"steps": (invalid_step, *procedure.steps[1:])})
+
+    with pytest.raises(ValidationError, match="completion-condition references"):
+        StoredProcedureBundle(
+            compatibility=MemoryCompatibility(application=evidence.run.application),
+            evidence=evidence,
+            procedure=procedure,
         )
 
 
@@ -83,6 +115,20 @@ def test_previous_procedure_schema_is_rebuilt_instead_of_aborting_preparation(
     )
 
     assert preparation.selection is None
+
+
+def test_previous_evidence_schema_requests_a_rebuild(tmp_path: Path) -> None:
+    evidence = _evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    compatibility = MemoryCompatibility(application=evidence.run.application)
+    store = CompiledProcedureStore(tmp_path)
+    store.save(compatibility, evidence, procedure)
+    path = next((tmp_path / "procedures").rglob("procedure.json"))
+    _rewrite_with_previous_evidence_schema(path)
+
+    with pytest.raises(CompiledProcedureSchemaError, match="Rebuild the procedure"):
+        store.load(compatibility, evidence.task.objective_id, evidence.task.objective)
 
 
 def test_stale_candidate_does_not_hide_valid_procedure(tmp_path: Path) -> None:

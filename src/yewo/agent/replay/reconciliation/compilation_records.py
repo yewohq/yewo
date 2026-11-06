@@ -206,7 +206,7 @@ class ReplayProcedure(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     visual_policy_version: Literal[1] = 1
     procedure_id: RecordIdentifier
     request_id: RecordIdentifier

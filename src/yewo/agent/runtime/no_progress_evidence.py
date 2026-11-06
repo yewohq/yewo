@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from yewo.agent.actuation import ActionProposal, ActionRefusal
-from yewo.agent.memory.records import ScreenComparisonPolicy
-from yewo.agent.memory.screens import exact_observation_state_key, observations_match
+from yewo.agent.memory.screens import observations_match
 from yewo.agent.planning.history import (
     MAXIMUM_SCREEN_FACT_CHARACTERS,
     PlanningScreenFact,
@@ -14,7 +13,7 @@ from yewo.agent.runtime.interaction_intent import same_interaction_family
 from yewo.agent.runtime.prohibited_intents import collect_prohibited_intents
 from yewo.agent.runtime.interaction_intent import AmbiguousInteractionState
 from yewo.agent.runtime.workflow_routes import WorkflowRouteExhaustion
-from yewo.observations import Observation
+from yewo.observations import Observation, ScreenComparisonPolicy, ScreenMatcher
 
 
 class NoProgressEvidence:
@@ -98,8 +97,7 @@ class NoProgressEvidence:
             (
                 (code, count)
                 for prior, code, screen, count in self._refusals
-                if same_interaction_family(proposal, prior)
-                and self._matches(observation, screen)
+                if same_interaction_family(proposal, prior) and self._matches(observation, screen)
             ),
             None,
         )
@@ -157,8 +155,8 @@ class NoProgressEvidence:
         """Record an observed transition and return its exact repetition count."""
         count = 1 + sum(
             proposal.action is prior_proposal.action
-            and exact_observation_state_key(before) == exact_observation_state_key(prior_before)
-            and exact_observation_state_key(after) == exact_observation_state_key(prior_after)
+            and ScreenMatcher.exact(before.presentation_key, prior_before.presentation_key)
+            and ScreenMatcher.exact(after.presentation_key, prior_after.presentation_key)
             for prior_proposal, prior_before, prior_after in self._transitions
         )
         self._transitions.append((proposal, before, after))

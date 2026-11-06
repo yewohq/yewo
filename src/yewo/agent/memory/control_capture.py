@@ -7,7 +7,11 @@ from yewo.agent.memory.records import AppMemory, derived_memory_identifier
 from yewo.agent.memory.screens import observation_matches_screen
 from yewo.agent.memory.writeback import MemoryWritebackSkip
 from yewo.agent.runtime.records import AgentResult
-from yewo.agent.screen_analysis import ScreenElementAffordance, screen_role_affordance
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    ScreenElementAffordance,
+    screen_role_affordance,
+)
 from yewo.artifacts import RecordIdentifier
 from yewo.observations import Observation
 
@@ -16,12 +20,13 @@ def capture_controls(
     memory: AppMemory,
     source_run_id: RecordIdentifier,
     result: AgentResult,
+    screen_analyses: tuple[CurrentScreenAnalysis, ...],
     observations: Mapping[RecordIdentifier, Observation],
     procedure_attempt_id: RecordIdentifier | None,
     skipped_records: list[MemoryWritebackSkip],
 ) -> tuple[ControlKnowledge, ...]:
     """Return screen-scoped visible controls with deterministic exercise evidence."""
-    if not result.screen_analyses:
+    if not screen_analyses:
         skipped_records.append(
             MemoryWritebackSkip(
                 record_kind="control",
@@ -30,7 +35,7 @@ def capture_controls(
         )
         return ()
     captured: dict[RecordIdentifier, ControlKnowledge] = {}
-    for analysis in result.screen_analyses:
+    for analysis in screen_analyses:
         observation = observations.get(analysis.observation_id)
         screen_id = _screen_id(memory, observation) if observation is not None else None
         if screen_id is None:

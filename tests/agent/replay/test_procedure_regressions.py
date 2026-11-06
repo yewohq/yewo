@@ -5,12 +5,17 @@ import pytest
 from yewo.agent import AgentTask, AgentTerminalReason
 from yewo.agent.actuation import ActionKind, ActionOutcomeSignal
 from yewo.agent.replay import (
-    ControlRole,
     EvidenceStepKind,
     ProcedureEffect,
     ReplayProcedure,
     build_evidence_document,
     compile_replay_procedure,
+)
+from yewo.agent.screen_analysis import (
+    ScreenElementKind,
+    ScreenSemanticRole,
+    ScreenVisualKind,
+    ScreenWorkflowRole,
 )
 from yewo.agent.replay.reconciliation.compiler import procedure_effect
 
@@ -123,34 +128,43 @@ def test_dismiss_keyboard_is_application_path_work() -> None:
 
 
 def test_focus_and_keyboard_dismissal_are_navigation_effects() -> None:
-    focus = _evidence().steps[0].model_copy(update={"action": ActionKind.FOCUS})
-    dismissal = focus.model_copy(update={"action": ActionKind.DISMISS_KEYBOARD})
+    focus = _evidence().steps[0]
+    focus = focus.model_copy(
+        update={"proposal": focus.proposal.model_copy(update={"action": ActionKind.FOCUS})}
+    )
+    dismissal = focus.model_copy(
+        update={
+            "proposal": focus.proposal.model_copy(update={"action": ActionKind.DISMISS_KEYBOARD})
+        }
+    )
 
     assert procedure_effect(focus) is ProcedureEffect.NAVIGATION
     assert procedure_effect(dismissal) is ProcedureEffect.NAVIGATION
 
 
-def test_generic_submit_target_is_a_commit_effect() -> None:
+def test_analyzed_advance_stage_is_a_commit_effect() -> None:
     step = _evidence().steps[0]
     step = step.model_copy(
         update={
-            "proposal": step.proposal.model_copy(
-                update={"target_expression": "the primary Submit button"}
-            )
+            "control": step.control.model_copy(
+                update={"workflow_role": ScreenWorkflowRole.ADVANCE_STAGE}
+            ),
         }
     )
 
     assert procedure_effect(step) is ProcedureEffect.COMMIT
 
 
-def test_navigation_role_wins_over_neighboring_commit_text() -> None:
+def test_link_semantic_role_produces_a_navigation_effect() -> None:
     step = _evidence().steps[0]
     step = step.model_copy(
         update={
-            "control": step.control.model_copy(update={"role": ControlRole.LINK}),
-            "proposal": step.proposal.model_copy(
+            "control": step.control.model_copy(
                 update={
-                    "target_expression": ("The Sign In link below the Register & Continue button.")
+                    "kind": ScreenElementKind(
+                        visual=ScreenVisualKind.TEXT,
+                        semantic=ScreenSemanticRole.LINK,
+                    )
                 }
             ),
         }

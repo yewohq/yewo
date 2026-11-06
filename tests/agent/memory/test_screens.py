@@ -26,9 +26,24 @@ from yewo.grounding import (
     PixelPoint,
 )
 from yewo.run_narration import RunNarrator, narration_scope
+from yewo.observations import ScreenMatcher
 
 from agent.actuation.support import proposal
 from agent.discovery.support import agent_result, observation
+
+
+def test_exact_screen_match_rejects_a_fingerprint_algorithm_change() -> None:
+    first = observation("obs-1", "0000000000000000")
+    second = first.model_copy(
+        update={
+            "observation_id": "obs-2",
+            "screen_fingerprint": first.screen_fingerprint.model_copy(
+                update={"algorithm": "other-fingerprint-algorithm"}
+            ),
+        }
+    )
+
+    assert not ScreenMatcher.exact(first.presentation_key, second.presentation_key)
 
 
 class RecordingActionSource:
@@ -124,9 +139,6 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
         grounded_point=PixelPoint(x=10, y=20),
         screenshot_width_px=before.redacted_screenshot.width_px,
         screenshot_height_px=before.redacted_screenshot.height_px,
-        grounding_profile_id=transition.grounding_profile_ids[0],
-        grounder_model_profile_id=transition.grounder_model_profile_ids[0],
-        requested_grounder_model=transition.requested_grounder_models[0],
         source_step_id="step_1",
         source_run_id="run_1",
     )
@@ -137,11 +149,7 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
         }
     )
     source = RecordingActionSource()
-    profile = _grounding_profile(
-        transition.grounding_profile_ids[0],
-        transition.grounder_model_profile_ids[0],
-    )
-    wrapped = AppMemoryActionSource(source, memory, profile)
+    wrapped = AppMemoryActionSource(source, memory)
 
     with narration_scope(RunNarrator(tmp_path)):
         wrapped.plan(
@@ -172,10 +180,9 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
             )
         }
     )
-    assert memory_planning_facts(memory, transient_before, profile) == historical_facts
-    destination_facts = memory_planning_facts(memory, after, profile)
+    assert memory_planning_facts(memory, transient_before) == historical_facts
+    destination_facts = memory_planning_facts(memory, after)
     assert all("unrelated settings menu" in fact for fact in destination_facts)
-    assert memory_planning_facts(memory, before, _grounding_profile("other-profile")) == ()
 
 
 def test_memory_wrapper_does_not_hide_delegated_source_capabilities() -> None:
@@ -203,7 +210,6 @@ def test_memory_wrapper_does_not_hide_delegated_source_capabilities() -> None:
     wrapped = AppMemoryActionSource(
         CapableSource(),
         cast(AppMemory, SimpleNamespace(screens=(), transitions=(), unsuccessful_attempts=())),
-        _grounding_profile("grounding-primary", "grounder-primary"),
     )
     request = PlanningRequest(
         observation=screen,

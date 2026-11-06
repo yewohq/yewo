@@ -97,3 +97,33 @@ def test_stored_procedure_is_rechecked_after_memory_learns_an_action_risk(
 
     assert len(reasons) == 1
     assert reasons[0].action_risk_id == "action_risk_1"
+
+
+def test_action_risk_does_not_cross_keyboard_presentations(tmp_path: Path) -> None:
+    evidence = _evidence()
+    source_state_id = evidence.steps[0].source_state_id
+    source_state = evidence.states[source_state_id]
+    observation_ids = tuple(
+        f"keyboard-observation-{index}" for index in range(len(source_state.observation_ids))
+    )
+    keyboard_state = source_state.model_copy(
+        update={
+            "representative_observation_id": observation_ids[0],
+            "observation_ids": observation_ids,
+            "presentations": tuple(
+                presentation.model_copy(update={"keyboard_visible": True})
+                for presentation in source_state.presentations
+            ),
+        }
+    )
+    evidence = evidence.model_copy(
+        update={"states": evidence.states | {source_state_id: keyboard_state}}
+    )
+    memory = memory_with_action_risk(
+        tmp_path,
+        target=evidence.steps[0].proposal.target_expression,
+    )
+
+    outcome = compile_replay_procedure(evidence, _response(), memory=memory)
+
+    assert isinstance(outcome, ReplayProcedure)

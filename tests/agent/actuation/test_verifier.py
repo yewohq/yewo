@@ -99,11 +99,9 @@ def _analysis(request: PlanningRequest) -> CurrentScreenAnalysis:
     return CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=observed.observation_id,
-        screen_fingerprint=observed.screen_fingerprint.value,
         screenshot_sha256=observed.redacted_screenshot.sha256,
-        platform_context=observed.platform_context,
-        keyboard_visible=observed.keyboard_visible,
-        orientation=observed.orientation,
+        presentation=observed.presentation_key,
+        screen_summary="Visible workflow form.",
         elements=(
             ScreenElement(
                 element_ref="section-heading",
@@ -167,9 +165,7 @@ def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() ->
     assert model.requests[0].max_completion_tokens == ACTION_VERIFIER_MAX_COMPLETION_TOKENS
     validation_context = model.validation_contexts[0]
     assert validation_context is not None
-    assert validation_context["allowed_work_items"] == (
-        "Complete Primary field before saving.",
-    )
+    assert validation_context["allowed_work_items"] == ("Complete Primary field before saving.",)
     requirement_evidence = validation_context["required_control_evidence"]
     assert isinstance(requirement_evidence, dict)
     assert requirement_evidence["Primary field"]["objective_or_open_work"] == (
@@ -409,7 +405,9 @@ def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
         and content.text.startswith("Current verification context:")
     )
     context = json.loads(user_content.text.split("Current verification context:\n", 1)[1])
-    assert context["progress_context"]["route_attempts"][0]["target"] == ("the visible create control")
+    assert context["progress_context"]["route_attempts"][0]["target"] == (
+        "the visible create control"
+    )
     assert "remaining_work" not in context["progress_context"]
     assert "interaction_intent_key" not in context["progress_context"]["route_attempts"][0]
     assert "source_screen_fingerprint" not in context["progress_context"]["route_attempts"][0]
@@ -491,9 +489,7 @@ def test_action_verifier_rejects_unresolved_control_without_analyzed_evidence() 
     }
 
     with pytest.raises(ValidationError, match="analyzed interactive control"):
-        ActionReadinessAssessment.model_validate(
-            payload, context={"interactive_control_names": ()}
-        )
+        ActionReadinessAssessment.model_validate(payload, context={"interactive_control_names": ()})
 
 
 def test_action_verifier_rejects_noninteractive_unresolved_evidence() -> None:

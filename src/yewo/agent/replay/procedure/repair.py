@@ -22,6 +22,7 @@ from yewo.agent.replay.procedure.records import (
     ProcedureDivergence,
     ProcedureEnvironmentEvent,
     ProcedureRepairEvidence,
+    ProcedureRepairStepSummary,
     ProcedureRepairTarget,
 )
 from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
@@ -286,13 +287,14 @@ class BoundedProcedureRepairActionSource:
             target is None
             or self._keyboard_repair_stage >= 3
             or ActionKind.FOCUS not in request.available_actions
-            or target.keyboard_visible is not True
+            or target.presentation.keyboard_visible is not True
             or target.established_by_action is not ActionKind.FOCUS
             or target.established_by_target_expression is None
             or target.keyboard_reset_target_expression is None
-            or observation.foreground_application_id != target.foreground_application_id
-            or observation.platform_context != target.platform_context
-            or observation.orientation is not target.orientation
+            or observation.foreground_application_id
+            != target.presentation.foreground_application_id
+            or observation.platform_context != target.presentation.platform_context
+            or observation.orientation is not target.presentation.orientation
         ):
             return False
         return self._keyboard_repair_stage > 0 or observation.keyboard_visible is False
@@ -369,6 +371,7 @@ class BoundedProcedureRepairActionSource:
                 ),
                 "screen_facts": (),
                 "progress_context": None,
+                "reference_screenshot": target.reference_screenshot,
                 "discovery_mode": True,
             }
         )
@@ -412,9 +415,8 @@ class BoundedProcedureRepairActionSource:
         surface = self._trusted_system_surface(request)
         if surface is None:
             return None
-        if (
-            not self._repair_active
-            and self._procedure_source.accepts_expected_system_surface(request.observation)
+        if not self._repair_active and self._procedure_source.accepts_expected_system_surface(
+            request.observation
         ):
             return None
         if self._repair_action_count >= self._maximum_total_actions:
@@ -453,10 +455,10 @@ def _target_facts(target: ProcedureRepairTarget) -> tuple[str, ...]:
     """Describe the expected state without claiming that it is current."""
     metadata = (
         "Expected repair state metadata: "
-        f"foreground application={target.foreground_application_id or 'unknown'}, "
-        f"platform context={target.platform_context or 'unknown'}, "
-        f"keyboard visible={target.keyboard_visible}, "
-        f"orientation={target.orientation.value if target.orientation is not None else 'unknown'}."
+        f"foreground application={target.presentation.foreground_application_id or 'unknown'}, "
+        f"platform context={target.presentation.platform_context or 'unknown'}, "
+        f"keyboard visible={target.presentation.keyboard_visible}, "
+        f"orientation={target.presentation.orientation.value if target.presentation.orientation is not None else 'unknown'}."
     )
     facts = [metadata]
     if target.established_by_action is not None:
@@ -465,7 +467,10 @@ def _target_facts(target: ProcedureRepairTarget) -> tuple[str, ...]:
             f"{target.established_by_action.value}, target="
             f"{target.established_by_target_expression or 'none'}."
         )
-    if target.keyboard_visible is True and target.established_by_action is ActionKind.FOCUS:
+    if (
+        target.presentation.keyboard_visible is True
+        and target.established_by_action is ActionKind.FOCUS
+    ):
         facts.append(
             "If focus on the required field does not open the keyboard, focus one other visible "
             "text field once and then return to the required field."
@@ -475,9 +480,24 @@ def _target_facts(target: ProcedureRepairTarget) -> tuple[str, ...]:
             "The compiler-recorded alternate field for one keyboard-focus reset is target="
             f"{target.keyboard_reset_target_expression}."
         )
-    if target.next_action is not None:
+    if target.remaining_procedure_step_count:
         facts.append(
-            "The remaining compiled procedure resumes with action="
-            f"{target.next_action.value}, target={target.next_target_expression or 'none'}."
+            "The remaining compiled procedure contains "
+            f"{target.remaining_procedure_step_count} step(s)."
         )
+    facts.extend(_remaining_step_fact(item) for item in target.remaining_step_summaries)
     return tuple(facts)
+
+
+def _remaining_step_fact(step: ProcedureRepairStepSummary) -> str:
+    conditions = " | ".join(step.completion_conditions) or "none"
+    condition_summary = (
+        f"{len(step.completion_conditions)} of {step.completion_condition_count}: {conditions}"
+        if step.completion_condition_count
+        else "none"
+    )
+    return (
+        f"Remaining compiled step {step.procedure_index}: action={step.action.value}, "
+        f"target={step.target_expression or 'none'}, expected outcome="
+        f"{step.expected_outcome or 'none'}, completion conditions={condition_summary}."
+    )

@@ -19,11 +19,9 @@ def _analysis() -> CurrentScreenAnalysis:
     return CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=observation.observation_id,
-        screen_fingerprint=observation.screen_fingerprint.value,
         screenshot_sha256=observation.redacted_screenshot.sha256,
-        platform_context=observation.platform_context,
-        keyboard_visible=observation.keyboard_visible,
-        orientation=observation.orientation,
+        presentation=observation.presentation_key,
+        screen_summary="Visible form with two fields.",
         elements=(
             _field("first-field", "First value", "10"),
             _field("second-field", "Second value", "20"),
