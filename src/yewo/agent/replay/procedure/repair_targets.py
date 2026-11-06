@@ -22,6 +22,7 @@ class ProcedureRepairPreparation:
     grounding_steps_by_expression: dict[str, ReplayProcedureStep]
     blocked_proposal: ActionProposal | None
     clears_pending_step: bool
+    requires_exact_content_match: bool
 
 
 def build_procedure_repair_preparation(
@@ -90,6 +91,10 @@ def build_procedure_repair_preparation(
             else None
         ),
         clears_pending_step=guard == "expectation",
+        requires_exact_content_match=(
+            establishing_step is not None
+            and establishing_step.proposal.action in {ActionKind.TYPE, ActionKind.CLEAR}
+        ),
     )
 
 

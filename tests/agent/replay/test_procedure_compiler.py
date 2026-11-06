@@ -6,19 +6,20 @@ from typing import cast
 
 import pytest
 
-from yewo.agent import AgentTask, AgentTerminalReason
+from yewo.agent import AgentTerminalReason
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.actuation import ActionKind
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.planning.history import PlanningHistoryEntry
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
 from yewo.agent.replay.procedure.grounding import ProcedureGrounder
 from yewo.agent.replay.procedure.execution import _procedure_terminal
 from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
 from yewo.agent.replay.procedure.store import (
     CompiledProcedureStore,
-    CompiledProcedureStoreError,
 )
 from yewo.agent.replay import (
     COMPILER_REFUSAL_PATH,
@@ -31,110 +32,15 @@ from yewo.agent.replay import (
     ReconcilerResponse,
     ReconciliationArtifactStore,
     ReplayProcedure,
-    build_evidence_document,
     compile_replay_procedure,
 )
-from yewo.observations import Observation
 from yewo.grounding import GroundingResolutionSource
 
-from agent.discovery.support import agent_result, observation
-
-
-def _observations() -> tuple[Observation, ...]:
-    return (
-        observation("obs_1", "0000000000000000", offset_seconds=0),
-        observation(
-            "obs_same",
-            "0000000000000001",
-            predecessor_observation_id="obs_1",
-            offset_seconds=1,
-        ),
-        observation(
-            "obs_2",
-            "ffffffffffffffff",
-            predecessor_observation_id="obs_same",
-            offset_seconds=2,
-        ),
-        observation(
-            "obs_3",
-            "aaaaaaaaaaaaaaaa",
-            predecessor_observation_id="obs_2",
-            offset_seconds=3,
-        ),
-        observation(
-            "obs_4",
-            "5555555555555555",
-            predecessor_observation_id="obs_3",
-            offset_seconds=4,
-        ),
-    )
-
-
-def _evidence():
-    observations = _observations()
-    first = (
-        agent_result(
-            observations[0],
-            observations[2],
-            action=ActionKind.TAP,
-            terminal=AgentTerminalReason.BUDGET_EXHAUSTED,
-        )
-        .steps[0]
-        .model_copy(update={"step_id": "step_1", "step_index": 1})
-    )
-    second = (
-        agent_result(
-            observations[2],
-            observations[3],
-            action=ActionKind.TYPE,
-            terminal=AgentTerminalReason.BUDGET_EXHAUSTED,
-        )
-        .steps[0]
-        .model_copy(update={"step_id": "step_2", "step_index": 2})
-    )
-    third_source = agent_result(
-        observations[3],
-        observations[4],
-        action=ActionKind.TAP,
-        terminal=AgentTerminalReason.BUDGET_EXHAUSTED,
-    ).steps[0]
-    third = third_source.model_copy(
-        update={
-            "step_id": "step_3",
-            "step_index": 3,
-            "proposal": third_source.proposal.model_copy(
-                update={"target_expression": "the 'Save' button"}
-            ),
-        }
-    )
-    task = AgentTask(
-        objective="Create and save one named item.",
-        completion_conditions=("The named item is saved.",),
-        discovery_mode=True,
-    )
-    return build_evidence_document(
-        run_id="run_1",
-        objective_id="objective_1",
-        task=task,
-        steps=(first, second, third),
-        observations=observations,
-        identifier_factory=lambda: "evidence_1",
-    )
-
-
-def _response(
-    procedure: tuple[int, ...] = (1, 2, 3),
-    milestones: dict[int, int] | None = None,
-) -> ReconcilerResponse:
-    return ReconcilerResponse(
-        request_id="request_1",
-        procedure=procedure,
-        milestones={0: 3} if milestones is None else milestones,
-    )
-
-
-def _checks(refusal: CompilerRefusal) -> set[CompilerCheck]:
-    return {reason.check for reason in refusal.reasons}
+from agent.discovery.support import agent_result
+from agent.replay.support import checks as _checks
+from agent.replay.support import evidence as _evidence
+from agent.replay.support import observations as _observations
+from agent.replay.support import response as _response
 
 
 def test_evidence_is_lossless_groups_states_and_marks_inference() -> None:
@@ -169,6 +75,25 @@ def test_compiler_builds_zero_based_procedure_and_capture_point() -> None:
     assert outcome.steps[2].captures_completion_conditions == (0,)
     assert outcome.source_step_ids == ("step_1", "step_2", "step_3")
     assert outcome.steps[0].target_grounding == _evidence().steps[0].target_grounding
+
+
+def test_compiler_removes_run_local_element_references() -> None:
+    evidence = _evidence()
+    expression = evidence.steps[0].proposal.target_expression
+    first = evidence.steps[0].model_copy(
+        update={
+            "proposal": evidence.steps[0].proposal.model_copy(
+                update={"target_element_ref": "discovery-element-1"}
+            )
+        }
+    )
+    evidence = evidence.model_copy(update={"steps": (first, *evidence.steps[1:])})
+
+    outcome = compile_replay_procedure(evidence, _response())
+
+    assert isinstance(outcome, ReplayProcedure)
+    assert outcome.steps[0].proposal.target_element_ref is None
+    assert outcome.steps[0].proposal.target_expression == expression
 
 
 def test_compiler_uses_next_selected_source_as_missing_expectation() -> None:
@@ -350,7 +275,6 @@ def test_compiler_refuses_each_invalid_selection(
         (EvidenceResult.REFUSED, EvidenceStepKind.PATH),
         (EvidenceResult.CRASHED, EvidenceStepKind.PATH),
         (EvidenceResult.NO_EFFECT, EvidenceStepKind.PATH),
-        (EvidenceResult.OBSERVED, EvidenceStepKind.ENVIRONMENT),
     ),
 )
 def test_compiler_refuses_bad_results_and_environment_steps(
@@ -403,6 +327,7 @@ def test_selected_correction_can_replace_same_control() -> None:
     evidence = evidence.model_copy(update={"steps": (evidence.steps[0], original, corrected)})
     response = ReconcilerResponse(
         request_id="request_1",
+        completion_conditions=evidence.task.completion_conditions,
         procedure=(1, 3),
         milestones={0: 3},
         decisions=(
@@ -440,6 +365,7 @@ def test_correction_cannot_replace_work_after_dependent_selected_steps() -> None
     )
     response = ReconcilerResponse(
         request_id="request_1",
+        completion_conditions=evidence.task.completion_conditions,
         procedure=(1, 3, 4),
         milestones={0: 4},
         decisions=(
@@ -519,21 +445,3 @@ def test_compiled_procedure_store_lists_only_compatible_objective_candidates(
         procedure.procedure_id,
         "procedure_2",
     }
-
-
-def test_compiled_procedure_store_rejects_tampered_snapshot(tmp_path: Path) -> None:
-    evidence = _evidence()
-    procedure = compile_replay_procedure(evidence, _response())
-    assert isinstance(procedure, ReplayProcedure)
-    compatibility = MemoryCompatibility(application=evidence.run.application)
-    store = CompiledProcedureStore(tmp_path)
-    store.save(compatibility, evidence, procedure)
-    path = next((tmp_path / "procedures").rglob("procedure.json"))
-    path.write_bytes(path.read_bytes().replace(b'"procedure_id":', b'"changed_id":', 1))
-
-    with pytest.raises(CompiledProcedureStoreError):
-        store.load(
-            compatibility,
-            evidence.task.objective_id,
-            evidence.task.objective,
-        )

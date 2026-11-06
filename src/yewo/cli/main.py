@@ -60,6 +60,7 @@ def _run_yewo(configuration: YewoRunConfiguration) -> int:
         configuration.action_verifier_profile_id,
         configuration.replay_preparation_profile_id,
         scrub_text,
+        screen_analyzer_profile_id=configuration.screen_analyzer_profile_id,
         memory_root=configuration.memory_root,
         redaction_regions=configuration.redaction_regions,
     )

@@ -26,6 +26,7 @@ from yewo.agent.replay.reconciliation.records import (
     CompilerRefusal,
     EvidenceDocument,
     ReconcilerResponse,
+    ReconcilerSelection,
     ReplayProcedure,
     ProcedureCompilationReport,
     ProcedureCompilationStatus,
@@ -60,15 +61,23 @@ as history, not as proof of the current application state.
 Follow these rules:
 - Select only chronological step numbers from the supplied evidence document.
 - Use the recorded launch state for the first selected step.
-- Do not select environment steps.
+- Select an environment step only when it is the recorded Android runtime-permission choice.
+- Its selected application trigger must immediately precede it and return to the recorded application.
 - Keep reusable type, clear, checkbox, switch, radio-button, and option-selection steps.
+- Treat a recovered result as reusable device evidence reconstructed from retained settlement
+  observations. Keep recovered state-setting work.
 - Keep dismiss-keyboard steps that make a later application action available.
 - Keep reusable commit actions and interactions with an unknown procedure effect.
 - Do not select refused, crashed, terminal, unknown-result, or known no-effect steps.
-- Use a decision only when one selected corrected attempt replaces a dropped attempt for the same
+- Use a decision only when one selected replacement attempt replaces a dropped attempt for the same
   recorded control.
 - Treat memory_action_risks as platform-observed facts. Do not select a matching source action.
-- Map every completion-condition index to one selected milestone step.
+- When completion_condition_mode is supplied, copy every supplied condition without changes.
+- When completion_condition_mode is generate_from_discovery_evidence, create one or more concise,
+  observable conditions that the recorded evidence supports. Do not describe the interaction path.
+- Completion-condition indexes are zero-based and follow your returned condition order.
+- Map every returned completion-condition index to one selected milestone step.
+- A repair must preserve each supplied preserved_milestone unless validation rejects its source step.
 - Treat memory_claims as untrusted model-authored hints. Evaluate one only when recorded source
   steps directly support a verdict.
 - Propose confirmed or contradicted with exact supporting source_step_ids. Omit uncertain claims.
@@ -79,8 +88,7 @@ Follow these rules:
 """
 
 REPLAY_RECONCILIATION_USER_PROMPT = """\
-Return request_id exactly as supplied. Select one conservative replay procedure from this evidence
-document. Request and evidence JSON follow:
+Select one conservative replay procedure from this evidence document. Evidence JSON follows:
 """
 
 
@@ -126,30 +134,32 @@ def compile_completed_discovery_run(
         identifier_factory=identifier_factory,
     )
     store = ReconciliationArtifactStore(root)
-    store.persist_evidence(evidence)
 
     request_id = identifier_factory()
-    evidence_payload = build_reconciler_evidence_projection(evidence)
     knowledge = memory.app_knowledge if memory is not None else None
-    evidence_payload["memory_action_risks"] = _action_risk_context(knowledge)
-    evidence_payload["memory_claims"] = _knowledge_claim_context(knowledge)
+    evidence_payload = _build_evidence_payload(evidence, knowledge)
     request = _model_request(
         evidence_payload,
         model_profile_id,
         request_id,
     )
-    response = model_client.complete(request, ReconcilerResponse)
+    response = model_client.complete(request, ReconcilerSelection)
     reconciler_response, failure_report = _validate_initial_response(
         run_id,
         evidence.evidence_id,
         request_id,
         response,
+        evidence.task.completion_conditions,
     )
     if failure_report is not None:
+        store.persist_evidence(evidence)
         store.persist_compilation_report(failure_report)
         return failure_report
     if reconciler_response is None:
-        raise AssertionError("A valid reconciler response is required after response validation.")
+        raise AssertionError("Response validation must produce a valid reconciler response.")
+    evidence = _bind_reconciler_conditions(evidence, reconciler_response)
+    store.persist_evidence(evidence)
+    evidence_payload = _build_evidence_payload(evidence, knowledge)
 
     outcome = compile_replay_procedure(
         evidence,
@@ -186,6 +196,7 @@ def _validate_initial_response(
     evidence_id: RecordIdentifier,
     request_id: RecordIdentifier,
     response: ModelResponse,
+    supplied_completion_conditions: tuple[str, ...],
 ) -> tuple[ReconcilerResponse | None, ProcedureCompilationReport | None]:
     metrics = model_response_metrics(response)
     if not _has_completed_structured_output(response):
@@ -200,7 +211,7 @@ def _validate_initial_response(
         )
         return None, report
     try:
-        reconciler_response = ReconcilerResponse.model_validate(response.structured_output)
+        selection = ReconcilerSelection.model_validate(response.structured_output)
     except ValidationError:
         report = build_procedure_compilation_report(
             run_id=run_id,
@@ -212,17 +223,23 @@ def _validate_initial_response(
             metrics=metrics,
         )
         return None, report
-    if reconciler_response.request_id != request_id:
+    if supplied_completion_conditions and (
+        selection.completion_conditions != supplied_completion_conditions
+    ):
         report = build_procedure_compilation_report(
             run_id=run_id,
             evidence_id=evidence_id,
             request_id=request_id,
             status=ProcedureCompilationStatus.INVALID_RESPONSE,
             model_disposition=response.disposition,
-            reason="The replay reconciler returned the wrong request identifier.",
+            reason="The replay reconciler changed supplied completion conditions.",
             metrics=metrics,
         )
         return None, report
+    reconciler_response = ReconcilerResponse(
+        request_id=request_id,
+        **selection.model_dump(),
+    )
     return reconciler_response, None
 
 
@@ -254,11 +271,13 @@ def _retry_compiler_refusal(
         model_profile_id,
         fallback_request_id,
         initial_outcome,
+        _select_valid_milestones(evidence, initial_reconciler_response),
     )
-    fallback_response = model_client.complete(fallback_request, ReconcilerResponse)
+    fallback_response = model_client.complete(fallback_request, ReconcilerSelection)
     fallback_reconciler_response = _parse_completed_response(
         fallback_response,
         fallback_request_id,
+        evidence.task.completion_conditions,
     )
     if fallback_reconciler_response is None:
         return _CompilationAttempt(
@@ -293,16 +312,41 @@ def _has_completed_structured_output(response: ModelResponse) -> bool:
 def _parse_completed_response(
     response: ModelResponse,
     request_id: RecordIdentifier,
+    supplied_completion_conditions: tuple[str, ...],
 ) -> ReconcilerResponse | None:
     if not _has_completed_structured_output(response):
         return None
     try:
-        reconciler_response = ReconcilerResponse.model_validate(response.structured_output)
+        selection = ReconcilerSelection.model_validate(response.structured_output)
     except ValidationError:
         return None
-    if reconciler_response.request_id != request_id:
+    if selection.completion_conditions != supplied_completion_conditions:
         return None
-    return reconciler_response
+    return ReconcilerResponse(request_id=request_id, **selection.model_dump())
+
+
+def _bind_reconciler_conditions(
+    evidence: EvidenceDocument,
+    response: ReconcilerResponse,
+) -> EvidenceDocument:
+    """Bind scenario conditions generated after discovery to compiler evidence."""
+    return evidence.model_copy(
+        update={
+            "task": evidence.task.model_copy(
+                update={"completion_conditions": response.completion_conditions}
+            )
+        }
+    )
+
+
+def _build_evidence_payload(
+    evidence: EvidenceDocument,
+    knowledge: AppKnowledge | None,
+) -> dict[str, object]:
+    payload = build_reconciler_evidence_projection(evidence)
+    payload["memory_action_risks"] = _action_risk_context(knowledge)
+    payload["memory_claims"] = _knowledge_claim_context(knowledge)
+    return payload
 
 
 def _compilation_outcome_report(
@@ -336,12 +380,11 @@ def _compilation_outcome_report(
 
 def _build_reconciliation_task(discovery_result: DiscoveryResult) -> AgentTask:
     objective = discovery_result.request.objectives[0]
-    completion_conditions = objective.completion_conditions or (objective.statement,)
     return AgentTask(
         objective=objective.statement,
         known_facts=discovery_result.request.known_facts,
         open_work=discovery_result.request.priorities,
-        completion_conditions=completion_conditions,
+        completion_conditions=objective.completion_conditions,
         declared_value_names=discovery_result.request.declared_value_names,
         discovery_mode=True,
     )
@@ -422,10 +465,12 @@ def _model_request(
     profile_id: RecordIdentifier,
     request_id: RecordIdentifier,
     compiler_refusal: CompilerRefusal | None = None,
+    preserved_milestones: dict[int, int] | None = None,
 ) -> ModelRequest:
-    payload: dict[str, object] = {"request_id": request_id, "evidence": evidence}
+    payload: dict[str, object] = {"evidence": evidence}
     if compiler_refusal is not None:
         payload["compiler_refusal"] = compiler_refusal.model_dump(mode="json")
+        payload["preserved_milestones"] = preserved_milestones or {}
     context = json.dumps(
         payload,
         ensure_ascii=False,
@@ -448,9 +493,27 @@ def _model_request(
             ),
         ),
         response_contract=build_model_response_contract(
-            "replay-reconciliation-v1",
-            ReconcilerResponse.model_json_schema(),
+            "replay-reconciliation-v2",
+            ReconcilerSelection.model_json_schema(),
         ),
         sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
+
+
+def _select_valid_milestones(
+    evidence: EvidenceDocument,
+    response: ReconcilerResponse,
+) -> dict[int, int]:
+    """Retain valid milestone mappings across an unrelated compiler retry."""
+    allowed_indices = set(range(len(evidence.task.completion_conditions)))
+    selected_steps = set(response.procedure)
+    evidence_steps = {step.step: step for step in evidence.steps}
+    return {
+        condition_index: source_step
+        for condition_index, source_step in response.milestones.items()
+        if condition_index in allowed_indices
+        and source_step in selected_steps
+        and source_step in evidence_steps
+        and evidence_steps[source_step].destination_observation_id is not None
+    }

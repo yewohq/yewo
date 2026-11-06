@@ -25,8 +25,8 @@ from yewo.agent.actuation.outcomes import (
     TextDeliveryReason,
     TextDeliveryStatus,
 )
+from yewo.agent.actuation.action_catalog import ActionKind
 from yewo.agent.actuation.records import (
-    ActionKind,
     AuthorizedAction,
     DeclaredValueReference,
     DispatchDisposition,
@@ -123,7 +123,7 @@ class ActionExecutor:
                 authorization_id=action.authorization_id,
                 proposal_id=action.proposal_id,
                 action=action.action,
-                disposition=DispatchDisposition.DISPATCH_UNVERIFIED,
+                disposition=DispatchDisposition.TARGET_REJECTED,
                 dispatched_at=self._clock(),
                 reason=str(error),
                 sensitivity=action.sensitivity,

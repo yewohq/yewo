@@ -23,7 +23,7 @@ DISCOVERY_CONTROL_COVERAGE = (
     "before advancing or declaring completion. Do not skip a control because another action can "
     "advance. A visible default does not prove coverage. Open each relevant dropdown or spinner "
     "and observe its available choices without changing it unless the requested work requires a "
-    "change. No relevant visible field or control is optional during discovery. Exercise it "
+    "change. Visibility alone does not make a field or control mandatory. Exercise controls "
     "before leaving its workflow, or record trusted evidence that it is disabled, irrelevant to "
     "the objective, unsafe, inaccessible, or already exercised."
 )

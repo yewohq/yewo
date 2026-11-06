@@ -7,6 +7,9 @@ from yewo.agent.actuation import ActionPolicyLimits
 
 DEFAULT_MAXIMUM_STEPS = 100
 MAXIMUM_STEPS_LIMIT = 500
+MAXIMUM_CREDITED_RECOVERY_STEPS = 10
+# Recovery refunds its own steps, so the loop can dispatch past the logical limit.
+MAXIMUM_PHYSICAL_STEPS = MAXIMUM_STEPS_LIMIT + MAXIMUM_CREDITED_RECOVERY_STEPS
 DEFAULT_MAXIMUM_DURATION_SECONDS = 300
 MAXIMUM_DURATION_SECONDS_LIMIT = 14_400
 
@@ -25,5 +28,5 @@ class AgentModePolicy(BaseModel):
         gt=0,
         le=MAXIMUM_DURATION_SECONDS_LIMIT,
     )
-    maximum_settlement_observations: int = Field(default=6, ge=2, le=20)
+    maximum_settlement_observations: int = Field(default=7, ge=2, le=20)
     settlement_interval_seconds: float = Field(default=0.35, ge=0, le=5)

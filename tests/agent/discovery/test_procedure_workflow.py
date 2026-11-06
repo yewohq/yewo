@@ -22,7 +22,10 @@ from yewo.agent.replay.procedure.records import (
     ProcedureReplayResult,
     ProcedureReplayTerminal,
 )
-from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import (
+    CompiledProcedureSchemaError,
+    CompiledProcedureStore,
+)
 from yewo.applications import ApplicationInstallationChange, ApplicationInstallMode
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelClient
@@ -41,7 +44,7 @@ from agent.discovery.test_workflow import (
     _workflow,
 )
 from agent.replay.test_action_risk_gating import memory_with_action_risk
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def _procedure_replay(
@@ -53,7 +56,7 @@ def _procedure_replay(
     result = agent_result(before, after)
     verification = GoalVerification(
         verification_id="procedure_verification",
-        objective_id="account_form",
+        objective_id="record_form",
         final_observation_id=after.observation_id,
         satisfied=satisfied,
         reason="The configured procedure audit conclusion.",
@@ -118,6 +121,40 @@ def test_compiled_procedure_never_runs_without_a_fresh_install() -> None:
     assert replay is None
 
 
+def test_fresh_install_ignores_a_stale_procedure_at_replay_handoff() -> None:
+    class StaleProcedureStore:
+        def load(self, *args, **kwargs):
+            del args, kwargs
+            raise CompiledProcedureSchemaError(
+                "The compiled procedure schema is unsupported. Rebuild the procedure."
+            )
+
+    context = cast(
+        RunExecutionContext,
+        SimpleNamespace(
+            session=SimpleNamespace(installation_change=ApplicationInstallationChange.REINSTALLED)
+        ),
+    )
+
+    replay = replay_compiled_procedure_if_available(
+        context,
+        cast(MemoryCompatibility, object()),
+        "objective_1",
+        "Complete the task.",
+        _mode_policy(),
+        cast(ModelClient, object()),
+        cast(GroundingProfile, object()),
+        "auditor-primary",
+        NeverInterrupted(),
+        cast(CompiledProcedureStore, StaleProcedureStore()),
+        memory=None,
+        redaction_regions=(),
+        declared_value_resolver=None,
+    )
+
+    assert replay is None
+
+
 def test_compiled_procedure_does_not_run_after_memory_learns_an_action_risk(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -125,7 +162,7 @@ def test_compiled_procedure_does_not_run_after_memory_learns_an_action_risk(
     evidence = _evidence()
     procedure = compile_replay_procedure(
         evidence,
-        _response(),
+        _response(completion_conditions=evidence.task.completion_conditions),
         identifier_factory=lambda: "procedure_1",
     )
     assert isinstance(procedure, ReplayProcedure)
@@ -187,7 +224,7 @@ def test_preparation_selects_an_available_install_procedure_without_falling_thro
     )
     procedure = compile_replay_procedure(
         evidence,
-        _response(),
+        _response(completion_conditions=evidence.task.completion_conditions),
         identifier_factory=lambda: "procedure_1",
     )
     assert isinstance(procedure, ReplayProcedure)
@@ -308,7 +345,7 @@ def test_replay_complete_continues_with_remaining_discovery_budget(
 
     assert outcome.category is RunTerminalCategory.COMPLETED
     assert discovery_agent.task is not None
-    assert tuple(item.completion_condition_index for item in verifier.milestone_evidence) == (0,)
+    assert tuple(item.completion_condition_index for item in verifier.milestone_evidence) == (None,)
     result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
     assert result["procedure_replay"]["terminal"] == "replay_complete"
 

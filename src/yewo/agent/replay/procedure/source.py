@@ -8,12 +8,15 @@ from typing import Literal
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.planning.history import PlanningHistoryEntry
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.replay.procedure.grounding import (
     ProcedureGroundingAuthorization,
     ProcedureGroundingMatch,
     build_keyboard_repair_grounding_match,
 )
+from yewo.agent.replay.procedure.feedback import application_recovered, find_action_feedback
 from yewo.agent.replay.procedure.records import MilestoneEvidence, ProcedureDivergence
 from yewo.agent.replay.procedure.records import ProcedureRepairTarget
 from yewo.agent.replay.reconciliation.records import (
@@ -21,30 +24,21 @@ from yewo.agent.replay.reconciliation.records import (
     ReplayProcedure,
     ReplayProcedureStep,
 )
+from yewo.agent.replay.procedure.system_surfaces import expected_system_surface_matches
 from yewo.agent.replay.procedure.repair_targets import (
     build_procedure_repair_preparation,
 )
 from yewo.agent.replay.procedure.entry import select_procedure_entry_index
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingRequest
-from yewo.agent.replay.state_matching import match_evidence_state, state_matches_observation
+from yewo.agent.replay.state_matching import (
+    AMBIGUOUS_SOURCE_STATE,
+    trace_repair_target_match,
+    match_evidence_state,
+    repair_state_matches_observation,
+    state_matches_observation,
+)
 from yewo.observations import Observation, ScreenshotReference
-
-
-def _find_action_feedback(
-    history: tuple[PlanningHistoryEntry, ...],
-    proposal_id: str,
-) -> PlanningHistoryEntry | None:
-    return next(
-        (entry for entry in reversed(history) if entry.proposal.proposal_id == proposal_id),
-        None,
-    )
-
-
-def _application_recovered(feedback: PlanningHistoryEntry) -> bool:
-    failure = feedback.application_failure
-    return failure is not None and failure.recovery_succeeded
-
 
 class CompiledProcedureActionSource:
     """Supply stored actions only while current-run guards pass."""
@@ -81,6 +75,7 @@ class CompiledProcedureActionSource:
         self._active_divergence: ProcedureDivergence | None = None
         self._divergences: list[ProcedureDivergence] = []
         self._repair_target: ProcedureRepairTarget | None = None
+        self._repair_requires_exact_content_match = False
         self._blocked_repair_proposal: ActionProposal | None = None
         self._milestones: list[MilestoneEvidence] = []
         self._last_metadata = PlannerDecisionMetadata(
@@ -143,15 +138,25 @@ class CompiledProcedureActionSource:
         """Return whether every compiled expectation passed in this run."""
         return self._next_index == len(self._procedure.steps)
 
+    def accepts_expected_system_surface(self, observation: Observation) -> bool:
+        """Return whether a compiled guard expects this platform-owned screen."""
+        next_step = (
+            self._procedure.steps[self._next_index]
+            if self._next_index < len(self._procedure.steps)
+            else None
+        )
+        return expected_system_surface_matches(
+            observation,
+            self._pending_step,
+            next_step,
+            self._evidence,
+            self._screenshot_loader,
+        )
+
     def rejoin(self, observation: Observation) -> bool:
         """Resume at the repair target only after its compiled guard accepts."""
         target = self._repair_target
-        if target is None or not state_matches_observation(
-            observation,
-            self._evidence.states[target.expected_state_id],
-            self._evidence.state_grouping_maximum_phash_distance,
-            self._screenshot_loader,
-        ):
+        if target is None or not self._repair_target_matches(observation):
             return False
         repaired_step_count = max(0, target.resume_procedure_index - self._next_index)
         if repaired_step_count:
@@ -170,22 +175,44 @@ class CompiledProcedureActionSource:
         previous_index = self._next_index
         self._next_index = target.resume_procedure_index
         self._completed_indexes.update(range(previous_index, target.resume_procedure_index))
-        self._repair_target = None
-        self._repair_grounding_match = None
-        self._repair_grounding_steps_by_expression.clear()
-        self._blocked_repair_proposal = None
-        self._active_divergence = None
+        self._clear_repair_state()
         return True
 
     def matches_repair_target(self, observation: Observation) -> bool:
         """Return whether the current repair target accepts an observation."""
         target = self._repair_target
-        return target is not None and state_matches_observation(
+        return target is not None and self._repair_target_matches(observation)
+
+    def _clear_repair_state(self) -> None:
+        self._repair_target = None
+        self._repair_requires_exact_content_match = False
+        self._repair_grounding_match = None
+        self._repair_grounding_steps_by_expression.clear()
+        self._blocked_repair_proposal = None
+        self._active_divergence = None
+
+    def _repair_target_matches(self, observation: Observation) -> bool:
+        target = self._repair_target
+        if target is None:
+            return False
+        source_match = match_evidence_state(
+            observation,
+            target.expected_state_id,
+            self._evidence,
+            self._screenshot_loader,
+        )
+        exact = self._repair_requires_exact_content_match
+        if not exact or (
+            not source_match.accepted and source_match.reason != AMBIGUOUS_SOURCE_STATE
+        ):
+            return trace_repair_target_match(source_match.accepted, source_match.reason)
+        accepted = repair_state_matches_observation(
             observation,
             self._evidence.states[target.expected_state_id],
             self._evidence.state_grouping_maximum_phash_distance,
             self._screenshot_loader,
         )
+        return trace_repair_target_match(accepted, "exact_content_match")
 
     def repair_would_repeat_failed_action(self, proposal: ActionProposal) -> bool:
         """Reject an exact retry of a dispatched non-navigation action."""
@@ -337,7 +364,7 @@ class CompiledProcedureActionSource:
         proposal_id = self._pending_proposal_id
         if step is None or proposal_id is None:
             raise AssertionError("A pending procedure step requires its proposal identifier.")
-        feedback = _find_action_feedback(request.history, proposal_id)
+        feedback = find_action_feedback(request.history, proposal_id)
         if feedback is None:
             reason = (
                 "Procedure action feedback does not match the pending action."
@@ -351,8 +378,12 @@ class CompiledProcedureActionSource:
                 step.expects.destination_state_id,
                 reason,
             )
-        if _application_recovered(feedback):
+        if application_recovered(feedback):
             self._clear_pending_action()
+            self._clear_repair_state()
+            self._next_index = 0
+            self._completed_indexes.clear()
+            self._milestones.clear()
             self._entry_selected = False
             return None
         failure = self._settlement_failure(request, step, feedback)
@@ -498,6 +529,7 @@ class CompiledProcedureActionSource:
         self._repair_grounding_match = None
         self._repair_grounding_steps_by_expression = preparation.grounding_steps_by_expression
         self._repair_target = preparation.target
+        self._repair_requires_exact_content_match = preparation.requires_exact_content_match
 
     def _terminal(
         self,

@@ -314,9 +314,9 @@ def test_declared_value_task_enters_discovery_by_name_without_exposing_value(
 
     monkeypatch.setattr("yewo.agent.discovery.workflow.DiscoveryWorkflow", StubDiscoveryWorkflow)
     task = AgentTask(
-        objective="Enter the disposable account value.",
+        objective="Enter the disposable declared value.",
         completion_conditions=("The value is accepted.",),
-        declared_value_names=("account_value",),
+        declared_value_names=("declared_value",),
     )
 
     workflow = _workflow(
@@ -328,7 +328,7 @@ def test_declared_value_task_enters_discovery_by_name_without_exposing_value(
 
     assert outcome.category is RunTerminalCategory.COMPLETED
     request = cast(DiscoveryRequest, captured["request"])
-    assert request.declared_value_names == ("account_value",)
+    assert request.declared_value_names == ("declared_value",)
     assert "actual-secret-value" not in request.model_dump_json()
     resolver = cast(object, captured["resolver"])
     assert callable(resolver)

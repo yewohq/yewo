@@ -21,7 +21,7 @@ def test_targeted_literal_type_builds_input_contract_before_validation() -> None
     result = agent_result(before, typed, action=ActionKind.TYPE)
     type_step = result.steps[0]
     targeted_proposal = type_step.proposal.model_copy(
-        update={"target_expression": "the Email Address text input field"}
+        update={"target_expression": "the declared-value input field"}
     )
     targeted_step = type_step.model_copy(update={"proposal": targeted_proposal})
     result = result.model_copy(update={"steps": (targeted_step, *result.steps[1:])})
@@ -31,7 +31,7 @@ def test_targeted_literal_type_builds_input_contract_before_validation() -> None
         result,
         {before.observation_id: before, typed.observation_id: typed},
         _compatibility(),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -40,6 +40,6 @@ def test_targeted_literal_type_builds_input_contract_before_validation() -> None
     assert len(promotion.memory.transitions) == 1
     action = promotion.memory.transitions[0].action
     assert action.action is ActionKind.TYPE
-    assert action.target_description == "the Email Address text input field"
+    assert action.target_description == "the declared-value input field"
     assert action.input_contract is not None
     assert action.input_contract.value_shape is InputValueShape.TEXT

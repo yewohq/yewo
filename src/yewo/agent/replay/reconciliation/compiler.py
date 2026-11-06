@@ -13,6 +13,10 @@ from yewo.agent.actuation import (
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.replay.procedure.action_risks import known_action_risk_reasons
 from yewo.agent.replay.reconciliation.evidence import is_commit_target
+from yewo.agent.replay.reconciliation.environment import (
+    compile_setup_contract,
+    environment_step_refusal_reason,
+)
 from yewo.agent.replay.reconciliation.records import (
     CompilationOutcome,
     CompilationWarning,
@@ -38,6 +42,7 @@ _REUSABLE_RESULTS = frozenset(
         EvidenceResult.OBSERVED,
         EvidenceResult.AMBIGUOUS,
         EvidenceResult.NOT_CAPTURED,
+        EvidenceResult.RECOVERED,
     }
 )
 _STATE_CONTROL_ROLES = frozenset(
@@ -70,6 +75,18 @@ def compile_replay_procedure(
     selection_reasons = _check_selection(evidence, response)
     if selection_reasons:
         return _refusal(evidence, response, selection_reasons)
+    device = evidence.run.device
+    if device is None:
+        return _refusal(
+            evidence,
+            response,
+            (
+                CompilerReason(
+                    check=CompilerCheck.RESULTS_REUSABLE,
+                    reason="A replay procedure requires recorded device identity.",
+                ),
+            ),
+        )
 
     by_index = {step.step: step for step in evidence.steps}
     selected = tuple(by_index[index] for index in response.procedure)
@@ -101,6 +118,7 @@ def compile_replay_procedure(
         evidence_id=evidence.evidence_id,
         source_run_id=evidence.run.run_id,
         application=evidence.run.application,
+        setup_contract=compile_setup_contract(evidence, selected, device),
         source_step_ids=tuple(step.source_step_id for step in selected),
         steps=compiled_steps,
         warnings=warnings,
@@ -256,7 +274,15 @@ def _check_reusable(
     evidence: EvidenceDocument,
     selected: tuple[EvidenceStep, ...],
 ) -> tuple[CompilerReason, ...]:
-    reasons = [reason for step in selected for reason in _step_reuse_reasons(step)]
+    reasons = [
+        reason
+        for index, step in enumerate(selected)
+        for reason in _step_reuse_reasons(
+            evidence,
+            step,
+            selected[index - 1] if index > 0 else None,
+        )
+    ]
     final_reason = _final_expectation_reason(selected)
     if final_reason is not None:
         reasons.append(final_reason)
@@ -267,7 +293,11 @@ def _check_reusable(
     return tuple(reasons)
 
 
-def _step_reuse_reasons(step: EvidenceStep) -> tuple[CompilerReason, ...]:
+def _step_reuse_reasons(
+    evidence: EvidenceDocument,
+    step: EvidenceStep,
+    previous: EvidenceStep | None,
+) -> tuple[CompilerReason, ...]:
     reasons: list[CompilerReason] = []
     if ACTION_DEFINITIONS[step.action].handling is not ActionHandling.EXECUTE:
         reasons.append(
@@ -277,12 +307,13 @@ def _step_reuse_reasons(step: EvidenceStep) -> tuple[CompilerReason, ...]:
                 reason="A replay procedure can contain only executable device actions.",
             )
         )
-    if step.kind is EvidenceStepKind.ENVIRONMENT:
+    environment_reason = environment_step_refusal_reason(evidence, step, previous)
+    if environment_reason is not None:
         reasons.append(
             CompilerReason(
                 check=CompilerCheck.RESULTS_REUSABLE,
                 source_step=step.step,
-                reason="An environment step cannot be stored in a replay procedure.",
+                reason=environment_reason,
             )
         )
     if step.result not in _REUSABLE_RESULTS:
@@ -344,6 +375,13 @@ def _check_coverage(
     selected = set(response.procedure)
     expected_conditions = set(range(len(evidence.task.completion_conditions)))
     reasons: list[CompilerReason] = []
+    if response.completion_conditions != evidence.task.completion_conditions:
+        reasons.append(
+            CompilerReason(
+                check=CompilerCheck.COVERS_TASK,
+                reason="Reconciler completion conditions must match the compiler evidence.",
+            )
+        )
     missing = sorted(expected_conditions - set(response.milestones))
     extra = sorted(set(response.milestones) - expected_conditions)
     if missing:
@@ -378,7 +416,11 @@ def _warnings(
 ) -> tuple[CompilationWarning, ...]:
     warnings: list[CompilationWarning] = []
     for step in selected:
-        if step.result in {EvidenceResult.AMBIGUOUS, EvidenceResult.NOT_CAPTURED}:
+        if step.result in {
+            EvidenceResult.AMBIGUOUS,
+            EvidenceResult.NOT_CAPTURED,
+            EvidenceResult.RECOVERED,
+        }:
             warnings.append(
                 CompilationWarning(
                     source_step=step.step,
@@ -434,7 +476,12 @@ def _compile_step(
         source_step=step.step,
         source_step_id=step.source_step_id,
         source_state_id=step.source_state_id,
-        proposal=step.proposal,
+        proposal=step.proposal.model_copy(
+            update={
+                "target_element_ref": None,
+                "destination_element_ref": None,
+            }
+        ),
         target_grounding=step.target_grounding,
         target_visual_descriptor=step.target_visual_descriptor,
         destination_grounding=step.destination_grounding,
@@ -452,7 +499,7 @@ def _required_signals(
     step: EvidenceStep,
     previous_step: EvidenceStep | None,
 ) -> frozenset[ActionOutcomeSignal]:
-    signals = step.signals
+    signals = step.signals - ACTION_DEFINITIONS[step.action].incidental_replay_signals
     if step.action is not ActionKind.TYPE or not _is_secure_text_step(step, previous_step):
         return signals
     return signals - {

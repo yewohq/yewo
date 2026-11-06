@@ -66,7 +66,6 @@ def _replay_default_policy(default: ActionSettlementPolicy) -> ActionSettlementP
         update={
             "initial_delay_seconds": 0,
             "interval_seconds": maximum_window_seconds / interval_count,
-            "required_stable_observations": 1,
         }
     )
 

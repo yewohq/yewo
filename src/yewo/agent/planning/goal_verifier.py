@@ -48,8 +48,10 @@ GOAL_VERIFIER_SYSTEM_PROMPT = """You are the independent completion verifier for
 
 Decide whether the supplied current-run evidence proves the objective and every completion
 condition.
+When completion conditions are empty, verify the objective directly. Do not invent a condition.
 Use only the supplied objective, completion conditions, current-run observation metadata, and
-redacted screenshots. Milestone source and destination screenshots are evidence only for their
+redacted screenshots. When completion conditions are empty, objective milestones are evidence for
+the objective. Otherwise, milestone source and destination screenshots are evidence only for their
 mapped completion condition. Supporting action evidence describes the observed transition between
 those screenshots. Use it only with the mapped screenshots. Do not use it to prove an unrelated
 condition.
@@ -63,16 +65,16 @@ Apply these evidence rules:
   visible state or later application behavior.
 - Do not infer a hidden, off-screen, future, or unsupplied state.
 - Accept visible application evidence and supplied application-state metadata.
-- Return satisfied=false when the evidence does not support a completion condition, leaves it
-  unclear, or contradicts it.
+- Return satisfied=false when the evidence does not support the objective or one completion
+  condition, leaves either unclear, or contradicts either.
 
 Example: An objective requires a created record. If the final screen shows an empty collection,
 the final screen does not prove creation or persistence.
 
-Return exactly one GoalVerification payload and no other text. Set satisfied=true only when the
-evidence proves every completion condition. In reason, identify the decisive visible evidence or
-the specific missing evidence. Copy verification_id, objective_id, and final_observation_id
-exactly. Set observed_app_state to one concise description of the visible final application state."""
+Return exactly one GoalVerificationAssessment payload and no other text. Set satisfied=true only
+when the evidence proves the objective and every supplied completion condition. In reason, identify
+the decisive visible evidence or the specific missing evidence. Set observed_app_state to one
+concise description of the visible final application state."""
 GOAL_VERIFIER_USER_PROMPT = (
     "Verify the requested objective against the supplied current-run evidence."
 )
@@ -93,6 +95,16 @@ class GoalVerification(BaseModel):
     model_call_count: int = Field(default=0, ge=0)
 
 
+class GoalVerificationAssessment(BaseModel):
+    """Model-authored judgment without runtime-owned identity or accounting."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    satisfied: bool
+    reason: VerificationText
+    observed_app_state: VerificationText | None = None
+
+
 class GoalVerificationActionEvidence(BaseModel):
     """Secret-free evidence for one action supporting a milestone transition."""
 
@@ -108,11 +120,11 @@ class GoalVerificationActionEvidence(BaseModel):
 
 
 class GoalVerificationMilestone(BaseModel):
-    """One current-run transition mapped to one completion condition."""
+    """One current-run transition mapped to the objective or one condition."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    completion_condition_index: int = Field(ge=0)
+    completion_condition_index: int | None = Field(default=None, ge=0)
     source_observation: Observation | None = None
     observation: Observation
     transition_evidence: VerificationText | None = None
@@ -188,11 +200,8 @@ class ModelGoalVerifier:
             else direct_goal_evidence_images(evidence_sources)
         )
         context = {
-            "verification_id": verification_id,
-            "objective_id": objective_id,
-            "final_observation_id": observation.observation_id,
             "objective": objective,
-            "completion_conditions": completion_conditions or (objective,),
+            "completion_conditions": completion_conditions,
             "application_state": observation.application_state.name.lower(),
             "foreground_application_id": observation.foreground_application_id,
             "platform_context": observation.platform_context,
@@ -200,7 +209,11 @@ class ModelGoalVerifier:
             "milestones": tuple(
                 {
                     "completion_condition_index": item.completion_condition_index,
-                    "completion_condition": completion_conditions[item.completion_condition_index],
+                    "completion_condition": (
+                        completion_conditions[item.completion_condition_index]
+                        if item.completion_condition_index is not None
+                        else None
+                    ),
                     "source_observation": _observation_context(item.source_observation),
                     "destination_observation": _observation_context(item.observation),
                     "transition_evidence": item.transition_evidence,
@@ -250,13 +263,13 @@ class ModelGoalVerifier:
                 ),
             ),
             response_contract=build_model_response_contract(
-                "goal-verification-v1",
-                GoalVerification.model_json_schema(),
+                "goal-verification-assessment-v1",
+                GoalVerificationAssessment.model_json_schema(),
             ),
             sensitivity=observation.redacted_screenshot.sensitivity,
             retention=observation.redacted_screenshot.retention,
         )
-        response = self._model_client.complete(request, GoalVerification)
+        response = self._model_client.complete(request, GoalVerificationAssessment)
         if (
             response.disposition is not ModelCallDisposition.COMPLETED
             or response.structured_output is None
@@ -270,7 +283,7 @@ class ModelGoalVerifier:
                 len(response.calls),
             )
         try:
-            verification = GoalVerification.model_validate(response.structured_output)
+            assessment = GoalVerificationAssessment.model_validate(response.structured_output)
         except ValidationError:
             return _failed_verification(
                 verification_id,
@@ -280,24 +293,15 @@ class ModelGoalVerifier:
                 request.request_id,
                 len(response.calls),
             )
-        if (
-            verification.verification_id != verification_id
-            or verification.objective_id != objective_id
-            or verification.final_observation_id != observation.observation_id
-        ):
-            return _failed_verification(
-                verification_id,
-                objective_id,
-                observation.observation_id,
-                "The independent verification response did not match its request.",
-                request.request_id,
-                len(response.calls),
-            )
-        return verification.model_copy(
-            update={
-                "model_request_id": request.request_id,
-                "model_call_count": len(response.calls),
-            }
+        return GoalVerification(
+            verification_id=verification_id,
+            objective_id=objective_id,
+            final_observation_id=observation.observation_id,
+            satisfied=assessment.satisfied,
+            reason=assessment.reason,
+            observed_app_state=assessment.observed_app_state,
+            model_request_id=request.request_id,
+            model_call_count=len(response.calls),
         )
 
 
@@ -306,11 +310,19 @@ def _validate_milestone_evidence(
     final_observation: Observation,
     milestone_evidence: tuple[GoalVerificationMilestone, ...],
 ) -> None:
-    indexes = tuple(item.completion_condition_index for item in milestone_evidence)
+    indexes = tuple(
+        item.completion_condition_index
+        for item in milestone_evidence
+        if item.completion_condition_index is not None
+    )
     if len(indexes) != len(set(indexes)):
         raise ValueError("Goal verification milestone indexes must be unique.")
     if any(index >= len(completion_conditions) for index in indexes):
         raise ValueError("Goal verification milestone indexes must name a condition.")
+    if completion_conditions and any(
+        item.completion_condition_index is None for item in milestone_evidence
+    ):
+        raise ValueError("Objective milestones require an objective without conditions.")
     screenshots = (
         *(
             item.source_observation.redacted_screenshot
@@ -357,7 +369,11 @@ def _goal_evidence_sources(
                 continue
             observations_by_id[candidate.observation_id] = candidate
             labels_by_observation_id.setdefault(candidate.observation_id, []).append(
-                f"{role} for completion condition index {index}"
+                (
+                    f"{role} for completion condition index {index}"
+                    if index is not None
+                    else f"{role} for the objective"
+                )
             )
     observations_by_id[final_observation.observation_id] = final_observation
     final_labels = labels_by_observation_id.setdefault(final_observation.observation_id, [])

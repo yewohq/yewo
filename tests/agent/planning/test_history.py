@@ -12,17 +12,20 @@ from yewo.agent.actuation import (
     ActionRefusalCode,
 )
 from yewo.agent.planning.history import (
+    RECENT_PLANNING_HISTORY_LIMIT,
+    planning_history_context,
+    planning_history_summary,
+    trusted_history_content,
     EARLIER_HISTORY_SUMMARY_CHARACTER_LIMIT,
     EARLIER_HISTORY_SUMMARY_LIMIT,
     PlanningHistoryEntry,
     build_planning_history_entry,
-    planning_history_context,
-    planning_history_summary,
 )
-from yewo.agent.planning.prompt import TASK_PLANNER_SYSTEM_PROMPT
+from yewo.agent.planning.records import MAXIMUM_PLANNING_HISTORY_ENTRIES
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 
 from agent.actuation.support import proposal
+from agent.planning.support import planning_request
 from agent.runtime.test_agent import _observation
 
 
@@ -43,15 +46,6 @@ def _refused_history(target_expression: str, index: int) -> PlanningHistoryEntry
             reason="This action is unavailable.",
         ),
     )
-
-
-def test_planner_prompt_explains_how_to_read_screen_scoped_history() -> None:
-    prompt = TASK_PLANNER_SYSTEM_PROMPT
-
-    assert "### Reading history" in prompt
-    assert "which action led to that state" in prompt
-    assert "model interpretation, not trusted evidence" in prompt
-    assert "only when its screen signature matches current_observation" in prompt
 
 
 def _outcome(
@@ -145,7 +139,9 @@ def test_older_history_does_not_merge_the_same_action_across_source_screens() ->
     assert [item["count"] for item in summary_entries] == [1, 1]
     source_screens = [item["source_screen"] for item in summary_entries]
     assert all(isinstance(screen, dict) for screen in source_screens)
-    assert [screen["screen_fingerprint"] for screen in source_screens if isinstance(screen, dict)] == [
+    assert [
+        screen["screen_fingerprint"] for screen in source_screens if isinstance(screen, dict)
+    ] == [
         "0000000000000000",
         "1111111111111111",
     ]
@@ -168,9 +164,7 @@ def test_older_history_summary_reports_item_limit_omissions() -> None:
 
 
 def test_older_history_summary_reports_character_limit_omissions() -> None:
-    history = tuple(
-        _refused_history(f"target {index} " + "x" * 900, index) for index in range(20)
-    )
+    history = tuple(_refused_history(f"target {index} " + "x" * 900, index) for index in range(20))
 
     summary = planning_history_summary(history)
     encoded = json.dumps(summary, sort_keys=True, separators=(",", ":"))
@@ -179,3 +173,58 @@ def test_older_history_summary_reports_character_limit_omissions() -> None:
     assert len(encoded) <= EARLIER_HISTORY_SUMMARY_CHARACTER_LIMIT
     assert len(summary_entries) < EARLIER_HISTORY_SUMMARY_LIMIT
     assert summary["omitted_groups"] > 0
+
+
+def test_trusted_history_keeps_recent_steps_and_summarises_the_rest() -> None:
+    candidate = proposal(
+        ActionKind.TAP,
+        proposal_id="proposal-refused",
+        target_expression="the Save button",
+        source_observation_id="obs_0",
+    )
+    entry = PlanningHistoryEntry(
+        proposal=candidate,
+        refusal=ActionRefusal(
+            proposal_id=candidate.proposal_id,
+            code=ActionRefusalCode.KEYBOARD_RULE,
+            reason="Dismiss the visible keyboard before pointer actions.",
+        ),
+    )
+
+    blocks = trusted_history_content((entry,) * 110)
+
+    # One summary block, then one byte-stable block per recent step. Without the
+    # window the planner prompt grows by one block for every step of the run.
+    assert len(blocks) == RECENT_PLANNING_HISTORY_LIMIT + 1
+    assert blocks[0].text.startswith("Earlier history summary:")
+    assert all(item.text.startswith("Trusted history event:") for item in blocks[1:])
+
+
+def test_maximum_planning_history_validates_and_compacts() -> None:
+    history = tuple(
+        _refused_history(f"target {index}", index)
+        for index in range(MAXIMUM_PLANNING_HISTORY_ENTRIES)
+    )
+
+    request = planning_request(history=history)
+    blocks = trusted_history_content(request.history)
+
+    assert len(request.history) == MAXIMUM_PLANNING_HISTORY_ENTRIES
+    assert len(blocks) == RECENT_PLANNING_HISTORY_LIMIT + 1
+
+
+def test_trusted_history_omits_the_summary_for_a_short_run() -> None:
+    candidate = proposal(ActionKind.TAP, proposal_id="p1", source_observation_id="obs_0")
+    entry = PlanningHistoryEntry(
+        proposal=candidate,
+        refusal=ActionRefusal(
+            proposal_id=candidate.proposal_id,
+            code=ActionRefusalCode.KEYBOARD_RULE,
+            reason="Dismiss the visible keyboard before pointer actions.",
+        ),
+    )
+
+    blocks = trusted_history_content((entry,) * 3)
+
+    assert len(blocks) == 3
+    assert all(item.text.startswith("Trusted history event:") for item in blocks)

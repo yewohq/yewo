@@ -54,7 +54,7 @@ def _authorization(
         values["target"] = PixelPoint(x=50, y=100)
     if action is ActionKind.TYPE:
         values["text"] = (
-            DeclaredValueReference(value_name="account_password")
+            DeclaredValueReference(value_name="declared_secret")
             if declared_text
             else LiteralText(value="hello")
         )
@@ -430,4 +430,4 @@ def test_outcome_serialization_never_contains_a_declared_value() -> None:
 
     assert ActionOutcome.model_validate_json(encoded) == outcome
     assert secret not in encoded
-    assert "account_password" not in encoded
+    assert "declared_secret" not in encoded

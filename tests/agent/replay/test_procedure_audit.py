@@ -17,7 +17,7 @@ from yewo.runs import RunExecutionContext
 
 from agent.actuation.support import limits
 from agent.discovery.support import agent_result
-from agent.replay.test_procedure_compiler import _evidence, _observations
+from agent.replay.support import evidence as _evidence, observations as _observations
 
 
 def test_completed_procedure_auditor_receives_transition_evidence(

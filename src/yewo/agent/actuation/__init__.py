@@ -8,22 +8,29 @@ from yewo.agent.actuation.executor import (
 from yewo.agent.actuation.outcomes import (
     ActionOutcome,
     ActionOutcomeDisposition,
-    ActionOutcomeSignal,
     ActionOutcomeVerifier,
     TextDeliveryEvidence,
     TextDeliveryReason,
     TextDeliveryStatus,
 )
 from yewo.agent.actuation.policy import ActionPolicy
-from yewo.agent.actuation.control_records import VisibleControl, VisibleControlKind
-from yewo.agent.actuation.records import (
+from yewo.agent.actuation.control_records import (
+    RequiredControlBasis,
+    UnresolvedControl,
+)
+from yewo.agent.actuation.action_catalog import (
     ACTION_DEFINITIONS,
-    ActionBudget,
     ActionDefinition,
     ActionHandling,
     ActionKind,
+    ActionOutcomeSignal,
+    SideEffectClass,
+)
+from yewo.agent.actuation.records import (
+    ActionBudget,
     ActionPolicyLimits,
     ActionProposal,
+    ActionProposalDecision,
     ActionRefusal,
     ActionRefusalCode,
     ActionSource,
@@ -33,7 +40,6 @@ from yewo.agent.actuation.records import (
     DispatchReceipt,
     LiteralText,
     ScrollDistance,
-    SideEffectClass,
     TapRepetition,
     TextInput,
 )
@@ -53,6 +59,7 @@ __all__ = [
     "ActionPolicy",
     "ActionPolicyLimits",
     "ActionProposal",
+    "ActionProposalDecision",
     "ActionRefusal",
     "ActionRefusalCode",
     "ActionSource",
@@ -69,6 +76,6 @@ __all__ = [
     "TextDeliveryEvidence",
     "TextDeliveryReason",
     "TextInput",
-    "VisibleControl",
-    "VisibleControlKind",
+    "UnresolvedControl",
+    "RequiredControlBasis",
 ]

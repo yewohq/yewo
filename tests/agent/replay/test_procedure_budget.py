@@ -10,7 +10,7 @@ from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
 
 from agent.actuation.support import limits
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def _procedure() -> ReplayProcedure:
@@ -39,7 +39,7 @@ def test_requirement_reserves_repair_terminal_and_settlement_capacity() -> None:
 
     assert requirement.action_count == len(procedure.steps) + 32
     assert requirement.step_count == requirement.action_count + 1
-    assert requirement.duration_seconds == requirement.action_count * 3
+    assert requirement.duration_seconds == requirement.action_count * 2.5
 
 
 def test_duration_reserve_can_refuse_an_undersized_policy() -> None:

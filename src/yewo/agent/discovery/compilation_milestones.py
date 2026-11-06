@@ -19,10 +19,12 @@ from yewo.agent.replay.reconciliation.records import (
     ReplayProcedure,
     ProcedureCompilationReport,
     ProcedureCompilationStatus,
+    ReconcilerResponse,
 )
 from yewo.agent.replay.reconciliation.compilation import compile_completed_discovery_run
 from yewo.agent.replay.reconciliation.store import (
     EVIDENCE_DOCUMENT_PATH,
+    RECONCILER_RESPONSE_PATH,
     REPLAY_PROCEDURE_PATH,
 )
 from yewo.models import ModelClient
@@ -36,6 +38,7 @@ class DiscoveryCompilationMilestones:
 
     report: ProcedureCompilationReport
     evidence: EvidenceDocument | None = None
+    response: ReconcilerResponse | None = None
     procedure: ReplayProcedure | None = None
 
     def observation_ids(self) -> set[str]:
@@ -52,7 +55,7 @@ class DiscoveryCompilationMilestones:
         observations_by_id: dict[str, Observation],
     ) -> tuple[GoalVerificationMilestone, ...]:
         """Convert compiler mappings into final-auditor evidence."""
-        if self.evidence is None or self.procedure is None:
+        if self.evidence is None:
             return ()
         evidence_by_step = {step.step: step for step in self.evidence.steps}
         return tuple(
@@ -65,23 +68,22 @@ class DiscoveryCompilationMilestones:
                     source.proposal.target_expression,
                     source.signals,
                 ),
-                supporting_actions=tuple(
-                    _compiled_action_evidence(
-                        evidence_by_step[procedure_step.source_step],
-                        procedure_step.procedure_index,
-                    )
-                    for procedure_step in self.procedure.steps
-                    if procedure_step.procedure_index <= procedure_index
+                supporting_actions=self._supporting_actions(
+                    procedure_index,
+                    source,
+                    evidence_by_step,
                 ),
             )
             for condition_index, procedure_index, source in self._milestone_steps()
             if source.destination_observation_id is not None
         )
 
-    def _milestone_steps(self) -> tuple[tuple[int, int, EvidenceStep], ...]:
-        if self.evidence is None or self.procedure is None:
+    def _milestone_steps(self) -> tuple[tuple[int, int | None, EvidenceStep], ...]:
+        if self.evidence is None:
             return ()
         evidence_by_step = {step.step: step for step in self.evidence.steps}
+        if self.procedure is None:
+            return self._response_milestone_steps(evidence_by_step)
         captures: list[tuple[int, int, EvidenceStep]] = []
         for procedure_step in self.procedure.steps:
             evidence_step = evidence_by_step[procedure_step.source_step]
@@ -93,10 +95,78 @@ class DiscoveryCompilationMilestones:
             )
         return tuple(sorted(captures))
 
+    def _response_milestone_steps(
+        self,
+        evidence_by_step: dict[int, EvidenceStep],
+    ) -> tuple[tuple[int, int | None, EvidenceStep], ...]:
+        evidence = self.evidence
+        if self.response is None or evidence is None:
+            return ()
+        allowed_indices = set(range(len(evidence.task.completion_conditions)))
+        procedure_indices = {
+            source_step: procedure_index
+            for procedure_index, source_step in enumerate(self.response.procedure)
+            if source_step in evidence_by_step
+        }
+        return tuple(
+            sorted(
+                (
+                    (
+                        condition_index,
+                        procedure_indices.get(source_step),
+                        evidence_by_step[source_step],
+                    )
+                    for condition_index, source_step in self.response.milestones.items()
+                    if condition_index in allowed_indices
+                    and source_step in evidence_by_step
+                    and evidence_by_step[source_step].destination_observation_id is not None
+                ),
+                key=lambda item: (item[0], item[2].step),
+            ),
+        )
+
+    def _supporting_actions(
+        self,
+        maximum_index: int | None,
+        milestone_source: EvidenceStep,
+        evidence_by_step: dict[int, EvidenceStep],
+    ) -> tuple[GoalVerificationActionEvidence, ...]:
+        if self.procedure is not None:
+            if maximum_index is None:
+                raise AssertionError("A compiled milestone requires a procedure index.")
+            return tuple(
+                _compiled_action_evidence(
+                    evidence_by_step[step.source_step],
+                    step.procedure_index,
+                )
+                for step in self.procedure.steps
+                if step.procedure_index <= maximum_index
+            )
+        if self.evidence is None or self.response is None:
+            return ()
+        selected_actions = tuple(
+            (index, evidence_by_step[source_step])
+            for index, source_step in enumerate(self.response.procedure)
+            if source_step in evidence_by_step
+            and source_step <= milestone_source.step
+        )
+        milestone_action = (
+            ()
+            if milestone_source.step in self.response.procedure
+            else ((None, milestone_source),)
+        )
+        return tuple(
+            _compiled_action_evidence(step, index)
+            for index, step in sorted(
+                (*selected_actions, *milestone_action),
+                key=lambda item: item[1].step,
+            )
+        )
+
 
 def _compiled_action_evidence(
     step: EvidenceStep,
-    procedure_index: int,
+    procedure_index: int | None,
 ) -> GoalVerificationActionEvidence:
     return GoalVerificationActionEvidence(
         step_index=step.recorded_step_index,
@@ -129,13 +199,28 @@ def compile_discovery_milestones(
         comparison=comparison,
         memory=memory,
     )
-    if report.status is not ProcedureCompilationStatus.COMPILED:
-        return DiscoveryCompilationMilestones(report=report)
-    evidence = EvidenceDocument.model_validate_json((root / EVIDENCE_DOCUMENT_PATH).read_bytes())
-    procedure = ReplayProcedure.model_validate_json((root / REPLAY_PROCEDURE_PATH).read_bytes())
+    evidence_path = root / EVIDENCE_DOCUMENT_PATH
+    response_path = root / RECONCILER_RESPONSE_PATH
+    evidence = (
+        EvidenceDocument.model_validate_json(evidence_path.read_bytes())
+        if evidence_path.is_file()
+        else None
+    )
+    response = (
+        ReconcilerResponse.model_validate_json(response_path.read_bytes())
+        if response_path.is_file()
+        else None
+    )
+    procedure_path = root / REPLAY_PROCEDURE_PATH
+    procedure = (
+        ReplayProcedure.model_validate_json(procedure_path.read_bytes())
+        if report.status is ProcedureCompilationStatus.COMPILED and procedure_path.is_file()
+        else None
+    )
     return DiscoveryCompilationMilestones(
         report=report,
         evidence=evidence,
+        response=response,
         procedure=procedure,
     )
 

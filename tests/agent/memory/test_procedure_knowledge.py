@@ -35,11 +35,11 @@ def test_verified_shorter_run_flags_procedure_optimization_not_failure(tmp_path:
     )
     verification = GoalVerification(
         verification_id="verification_1",
-        objective_id="account_form",
+        objective_id="record_form",
         final_observation_id=after.observation_id,
         satisfied=True,
         reason="The current run proves the objective.",
-        observed_app_state="The account form is visible.",
+        observed_app_state="The record form is visible.",
     )
 
     delta = build_memory_delta(

@@ -101,7 +101,6 @@ def build_memory_delta(
             procedure_attempt_id,
             skipped_records,
         ),
-        skipped_records=tuple(skipped_records),
         run_outcomes=_run_outcomes(
             memory,
             source_run_id,
@@ -124,6 +123,7 @@ def build_memory_delta(
             procedure_attempt_id,
             skipped_records,
         ),
+        skipped_records=tuple(skipped_records),
     )
 
 

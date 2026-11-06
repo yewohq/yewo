@@ -11,7 +11,13 @@ from yewo.agent.actuation import (
     ActionRefusalCode,
     LiteralText,
 )
-from yewo.agent.planning.planner import PlanningHistoryEntry, PlanningRequest, TaskProgressContext
+from yewo.agent.planning.planner import (
+    PlanningHistoryEntry,
+)
+from yewo.agent.planning.records import (
+    PlanningRequest,
+    TaskProgressContext,
+)
 from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.recovery.advisor import (
     ModelRecoveryAdvisor,
@@ -47,10 +53,10 @@ def _planning_request(before: Observation) -> PlanningRequest:
     )
     return PlanningRequest(
         observation=before,
-        objective="Save a training schedule.",
+        objective="Save a record.",
         known_facts=("The editor was reached in this run.",),
-        open_work=("Complete the schedule form.", "Save the schedule."),
-        completion_conditions=("The saved schedule is visible in the schedule list.",),
+        open_work=("Complete the record form.", "Save the record."),
+        completion_conditions=("The saved record is visible in the record list.",),
         available_actions=frozenset({ActionKind.TAP}),
         history=(
             PlanningHistoryEntry(
@@ -63,9 +69,9 @@ def _planning_request(before: Observation) -> PlanningRequest:
             ),
         ),
         progress_context=TaskProgressContext(
-            current_progress=("The schedule editor was opened.",),
+            current_progress=("The record editor was opened.",),
             known_procedures=("The Add control opens the editor.",),
-            remaining_work=("Complete the schedule form.", "Save the schedule."),
+            remaining_work=("Complete the record form.", "Save the record."),
             exhausted_branches=("The overflow menu was irrelevant.",),
         ),
         discovery_mode=True,
@@ -111,14 +117,11 @@ def test_advisor_persists_validated_continue_decision(tmp_path: Path) -> None:
     failed_step = _failed_step(before, recovered)
     model = StubPlannerModel(
         {
-            "assessment_id": "assessment_1",
-            "failed_proposal_id": failed_step.proposal.proposal_id,
-            "pre_failure_observation_id": before.observation_id,
-            "recovery_observation_id": recovered.observation_id,
             "disposition": "continue",
             "reason": "The fresh screen allows one bounded reconstruction.",
             "remaining_work": ["Complete every visible required field before submission."],
             "planner_guidance": ["The previous submission did not prove persistence."],
+            "candidate_causes": ["An incomplete interactive control may have caused failure."],
         }
     )
     identifiers = iter(("assessment_1", "request_1"))
@@ -141,7 +144,7 @@ def test_advisor_persists_validated_continue_decision(tmp_path: Path) -> None:
     request = model.requests[0]
     assert request.response_contract is not None
     assert request.role is ModelRole.RECOVERY_ADVISOR
-    assert request.response_contract.name == "recovery-assessment-v1"
+    assert request.response_contract.name == "recovery-decision-v1"
     assert request.max_completion_tokens == 8_192
     system = request.messages[0].content[0]
     assert isinstance(system, TextModelContent)
@@ -150,14 +153,16 @@ def test_advisor_persists_validated_continue_decision(tmp_path: Path) -> None:
     assert isinstance(before_image, ImageModelContent)
     assert isinstance(label, TextModelContent)
     assert isinstance(recovered_image, ImageModelContent)
+    assert assessment.planner_guidance == ("The previous submission did not prove persistence.",)
+    assert assessment.candidate_causes == (
+        "An incomplete interactive control may have caused failure.",
+    )
     context_json = text.text.split("Context JSON follows:\n", 1)[1].split(
         "\nPre-failure screenshot:", 1
     )[0]
     context = json.loads(context_json)
     assert context["discovery_mode"] is True
-    assert context["progress_context"]["current_progress"] == [
-        "The schedule editor was opened."
-    ]
+    assert context["progress_context"]["current_progress"] == ["The record editor was opened."]
     assert context["progress_context"]["exhausted_branches"] == [
         "The overflow menu was irrelevant."
     ]
@@ -168,9 +173,7 @@ def test_advisor_persists_validated_continue_decision(tmp_path: Path) -> None:
     assert context["failed_step"]["application_failure"]["recovery_succeeded"]
     assert "do-not-send" not in text.text
     assert "failed-secret" not in text.text
-    assert context["failed_step"]["proposal"]["reason"] == (
-        "Type [typed value] into the field."
-    )
+    assert context["failed_step"]["proposal"]["reason"] == ("Type [typed value] into the field.")
     stored = tmp_path / "assets/agent/recovery-assessments.jsonl"
     assert json.loads(stored.read_text().strip())["assessment_id"] == "assessment_1"
 

@@ -35,6 +35,7 @@ class EvidenceResult(StrEnum):
     NO_EFFECT = "no_effect"
     AMBIGUOUS = "ambiguous"
     NOT_CAPTURED = "not_captured"
+    RECOVERED = "recovered"
     REFUSED = "refused"
     CRASHED = "crashed"
     TERMINAL = "terminal"
@@ -297,7 +298,7 @@ class EvidenceTask(BaseModel):
     objective_id: RecordIdentifier
     objective: str = Field(min_length=1, max_length=4_000)
     open_work: tuple[str, ...] = Field(default=(), max_length=100)
-    completion_conditions: tuple[str, ...] = Field(min_length=1, max_length=100)
+    completion_conditions: tuple[str, ...] = Field(default=(), max_length=100)
 
 
 class TimelineEntry(BaseModel):
@@ -401,9 +402,12 @@ from yewo.agent.replay.reconciliation.compilation_records import (  # noqa: E402
     ProcedureCompilationStatus,
     ProcedureEffect,
     ProcedureExpectation,
+    ProcedureSetupContract,
     ReconcilerClaimVerdict,
     ReconcilerDecision,
     ReconcilerResponse,
+    ReconcilerSelection,
     ReplayProcedure,
     ReplayProcedureStep,
+    RuntimePermissionSetupRequirement,
 )

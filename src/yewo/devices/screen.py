@@ -160,8 +160,10 @@ class ScreenGeometry:
                 self._sleep(self._screenshot_retry_interval_seconds)
             try:
                 return self._capture_png_once(attempt_number)
-            except Exception as error:  # noqa: BLE001 - external driver boundary
+            except ConnectionError as error:
                 last_error = error
+            except Exception as error:  # noqa: BLE001 - external driver boundary
+                raise DeviceInteractionError("Could not capture a device screenshot.") from error
         raise DeviceInteractionError("Could not capture a device screenshot.") from last_error
 
     def _capture_png_once(self, attempt_number: int) -> bytes:

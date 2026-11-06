@@ -6,11 +6,14 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from yewo.agent.actuation import ActionKind, ActionProposal
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.replay.procedure.grounding import (
     ProcedureGrounder,
     build_keyboard_reflow_step,
 )
+from yewo.agent.replay.procedure.repair import BoundedProcedureRepairActionSource
 from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
@@ -27,8 +30,12 @@ from yewo.grounding import (
     PixelPoint,
 )
 
-from agent.replay.test_procedure_compiler import _evidence, _observations, _response
-from agent.replay.test_procedure_repair import _outcome, _request
+from agent.replay.support import (
+    evidence as _evidence,
+    observations as _observations,
+    response as _response,
+)
+from agent.replay.test_procedure_repair import RepairPlanner, _outcome, _request
 from agent.replay.test_state_visuals import _screen
 
 
@@ -326,6 +333,47 @@ def test_compiled_source_rejects_ambiguous_known_state() -> None:
     assert proposal.action is ActionKind.CANNOT_PROGRESS
     assert source.divergence is not None
     assert source.divergence.reason.endswith("source_state_ambiguous.")
+
+
+def test_ambiguous_source_state_escalates_instead_of_false_rejoining() -> None:
+    evidence = _evidence()
+    expected = evidence.states["state_001"]
+    competing = evidence.states["state_002"].model_copy(
+        update={
+            "foreground_application_id": expected.foreground_application_id,
+            "platform_context": expected.platform_context,
+            "keyboard_visible": expected.keyboard_visible,
+            "orientation": expected.orientation,
+            "width_px": expected.width_px,
+            "height_px": expected.height_px,
+            "fingerprint": expected.fingerprint,
+            "fingerprints": (expected.fingerprint,),
+        }
+    )
+    evidence = evidence.model_copy(
+        update={"states": {**evidence.states, "state_002": competing}}
+    )
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    planner = RepairPlanner()
+    source = BoundedProcedureRepairActionSource(
+        CompiledProcedureActionSource(procedure, evidence),
+        planner,
+    )
+    request = _request(_observations()[0])
+
+    boundary = source.plan(request)
+    assert boundary.action is ActionKind.WAIT
+    assert source.required_model_requests(request) == 1
+
+    repair_action = source.plan(request)
+
+    assert repair_action.action is ActionKind.WAIT
+    assert planner.request_count == 1
+    assert len(source.divergences) == 1
+    assert len(source.repairs) == 1
+    assert not source.repairs[0].succeeded
+    assert source.repairs[0].model_call_count == 1
 
 
 def test_stable_regions_can_match_when_global_phash_is_too_distant() -> None:

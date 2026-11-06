@@ -1,16 +1,21 @@
 """Current-screen reuse of verified and unsuccessful app-memory evidence."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from typing import cast
 from pathlib import Path
 
 from yewo.agent import (
+    AppMemory,
     MemoryCompatibility,
     UnsuccessfulAttempt,
     UnsuccessfulAttemptDisposition,
 )
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.discovery import AppMemoryBuilder, DiscoveryObjective, DiscoveryRequest
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.memory.screens import AppMemoryActionSource, memory_planning_facts
 from yewo.grounding import (
@@ -83,15 +88,15 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
             request_id="request_1",
             objectives=(
                 DiscoveryObjective(
-                    objective_id="account_form",
-                    statement="The account form is reachable.",
+                    objective_id="record_form",
+                    statement="The record form is reachable.",
                 ),
             ),
         ),
         agent_result(before, after),
         {before.observation_id: before, after.observation_id: after},
         MemoryCompatibility(application=before.application),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -142,8 +147,8 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
         wrapped.plan(
             PlanningRequest(
                 observation=before,
-                objective="Open the account form.",
-                completion_conditions=("The account form is visible.",),
+                objective="Open the record form.",
+                completion_conditions=("The record form is visible.",),
                 available_actions=frozenset({ActionKind.DONE}),
             )
         )
@@ -171,3 +176,44 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
     destination_facts = memory_planning_facts(memory, after, profile)
     assert all("unrelated settings menu" in fact for fact in destination_facts)
     assert memory_planning_facts(memory, before, _grounding_profile("other-profile")) == ()
+
+
+def test_memory_wrapper_does_not_hide_delegated_source_capabilities() -> None:
+    from yewo.agent.planning.planner import (
+        ActionVerificationContext,
+        source_accepts_planning_focus,
+        resolve_action_verification_context,
+    )
+    from yewo.agent.planning.evidence import resolve_planning_model_request_count
+
+    class CapableSource(RecordingActionSource):
+        def declines_planning_focus(self) -> bool:
+            return True
+
+        def last_planning_model_request_count(self) -> int:
+            return 0
+
+        def action_verification_context(
+            self,
+            default_request: PlanningRequest,
+        ) -> ActionVerificationContext:
+            return ActionVerificationContext(request=default_request, assess_task_progress=False)
+
+    screen = observation("obs_1", "0000000000000000")
+    wrapped = AppMemoryActionSource(
+        CapableSource(),
+        cast(AppMemory, SimpleNamespace(screens=(), transitions=(), unsuccessful_attempts=())),
+        _grounding_profile("grounding-primary", "grounder-primary"),
+    )
+    request = PlanningRequest(
+        observation=screen,
+        objective="Open the record form.",
+        completion_conditions=("The record form is visible.",),
+        available_actions=frozenset({ActionKind.DONE}),
+    )
+
+    # Capability protocols are method-presence checks on the outermost object, so a
+    # wrapper that cannot forward them silently downgrades the inner source.
+    assert source_accepts_planning_focus(wrapped) is False
+    assert resolve_planning_model_request_count(wrapped, 3) == 0
+    assert resolve_action_verification_context(wrapped, request).assess_task_progress is False

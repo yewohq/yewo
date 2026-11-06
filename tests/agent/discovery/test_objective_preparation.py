@@ -30,7 +30,7 @@ from agent.discovery.test_workflow import (
     _workflow,
 )
 from agent.planning.support import StubPlannerModel
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def test_semantic_selection_loads_stored_identity_and_audits_requested_objective(
@@ -39,7 +39,7 @@ def test_semantic_selection_loads_stored_identity_and_audits_requested_objective
     evidence = _evidence()
     procedure = compile_replay_procedure(
         evidence,
-        _response(),
+        _response(completion_conditions=evidence.task.completion_conditions),
         identifier_factory=lambda: "procedure_1",
     )
     assert isinstance(procedure, ReplayProcedure)
@@ -127,9 +127,9 @@ def test_preparation_uses_llm_equivalent_procedure_after_exact_lookup_misses(
             "task": _evidence().task.model_copy(
                 update={
                     "objective_id": "stored_objective",
-                    "objective": "Open the form used to add an account.",
+                    "objective": "Open the form used to add a record.",
                     "completion_conditions": (
-                        "The form used to add an account is visible.",
+                        "The form used to add a record is visible.",
                     ),
                 }
             )
@@ -137,7 +137,7 @@ def test_preparation_uses_llm_equivalent_procedure_after_exact_lookup_misses(
     )
     procedure = compile_replay_procedure(
         evidence,
-        _response(),
+        _response(completion_conditions=evidence.task.completion_conditions),
         identifier_factory=lambda: "procedure_1",
     )
     assert isinstance(procedure, ReplayProcedure)
@@ -155,10 +155,9 @@ def test_preparation_uses_llm_equivalent_procedure_after_exact_lookup_misses(
     class EquivalentObjectiveModel(StubPlannerModel):
         def complete(self, request, response_model=None, validation_context=None):
             self.output = {
-                "request_id": request.request_id,
                 "procedure_id": "procedure_1",
                 "relationship": "equivalent",
-                "reason": "Both objectives require the account form to be visible.",
+                "reason": "Both objectives require the record form to be visible.",
             }
             return super().complete(request, response_model, validation_context)
 

@@ -102,6 +102,15 @@ def state_visual_match_ratio(png: bytes, signature: StateVisualSignature) -> flo
     return _match_ratio(hashes, signature.stable_tiles, signature.maximum_tile_distance)
 
 
+def state_visual_match_is_exact(png: bytes, signature: StateVisualSignature) -> bool:
+    """Require every compiler-stable tile to match within the signature tolerance."""
+    image = _decode_image(png)
+    if image is None:
+        return False
+    hashes = _tile_hashes(image, signature.column_count, signature.row_count)
+    return _match_ratio(hashes, signature.stable_tiles, signature.maximum_tile_distance) == 1.0
+
+
 def build_target_visual_descriptor(
     png: bytes,
     point: PixelPoint,

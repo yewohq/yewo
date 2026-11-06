@@ -24,12 +24,16 @@ def test_screen_geometry_traces_screenshot_and_window_size_duration(tmp_path: Pa
 
 def test_screen_geometry_traces_bounded_driver_failure_detail(tmp_path: Path) -> None:
     class FailingScreenshotDriver(DriverStub):
+        screenshot_calls = 0
+
         def get_screenshot_as_png(self) -> bytes:
+            self.screenshot_calls += 1
             error = RuntimeError("session unavailable\nconnection closed")
             error.msg = "invalid session id"  # type: ignore[attr-defined]
             raise error
 
-    screen = ScreenGeometry(FailingScreenshotDriver(), sleep=lambda unused: None)
+    driver = FailingScreenshotDriver()
+    screen = ScreenGeometry(driver, sleep=lambda unused: None)
 
     with (
         narration_scope(RunNarrator(tmp_path)),
@@ -42,6 +46,8 @@ def test_screen_geometry_traces_bounded_driver_failure_detail(tmp_path: Path) ->
         "appium-command: operation=screenshot state=failed "
         "attempt=1/3 error=RuntimeError detail=invalid session id"
     ) in trace
+
+    assert driver.screenshot_calls == 1
 
 
 def test_screen_geometry_retries_a_transient_screenshot_failure() -> None:
@@ -65,3 +71,22 @@ def test_screen_geometry_retries_a_transient_screenshot_failure() -> None:
     assert result == png(200, 400)
     assert driver.screenshot_calls == 2
     assert delays == [0.25]
+
+
+def test_screen_geometry_does_not_retry_a_screenshot_timeout() -> None:
+    class TimedOutScreenshotDriver(DriverStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.screenshot_calls = 0
+
+        def get_screenshot_as_png(self) -> bytes:
+            self.screenshot_calls += 1
+            raise TimeoutError("screenshot command timed out")
+
+    driver = TimedOutScreenshotDriver()
+    screen = ScreenGeometry(driver, sleep=lambda unused: None)
+
+    with pytest.raises(DeviceInteractionError, match="Could not capture"):
+        screen.capture()
+
+    assert driver.screenshot_calls == 1

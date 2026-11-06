@@ -19,7 +19,7 @@ from yewo.runs import (
 
 from yewo.agent.memory.records import build_memory_compatibility
 from yewo.agent.composition import build_device_agent, build_model_client
-from yewo.agent.memory.store import AppMemoryStore
+from yewo.agent.memory.store import AppMemoryStore, load_discovery_memory
 from yewo.applications import ApplicationInstallMode
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.runtime.records import AgentModePolicy
@@ -64,6 +64,7 @@ class DiscoveryWorkflow:
         memory_root: Path | None,
         scrub_text: Callable[[str], str],
         *,
+        screen_analyzer_profile_id: str | None = None,
         redaction_regions: Sequence[RedactionRegion] = (),
         declared_value_resolver: Callable[[str], str] | None = None,
         memory_builder: AppMemoryBuilder | None = None,
@@ -82,6 +83,7 @@ class DiscoveryWorkflow:
         self._recovery_profile_id = recovery_profile_id
         self._action_verifier_profile_id = action_verifier_profile_id
         self._replay_preparation_profile_id = replay_preparation_profile_id
+        self._screen_analyzer_profile_id = screen_analyzer_profile_id
         if memory_store is not None:
             self._memory_store = memory_store
         elif memory_root is not None:
@@ -160,7 +162,7 @@ class DiscoveryWorkflow:
             context.session.application,
             context.workspace.start.request.application,
         )
-        existing = self._memory_store.load(compatibility)
+        existing = load_discovery_memory(self._memory_store, compatibility)
         model_client = build_model_client(
             context.workspace.root,
             context.workspace.start.run_id,
@@ -202,6 +204,7 @@ class DiscoveryWorkflow:
             self._redaction_regions,
             self._declared_value_resolver,
             prepared,
+            screen_analyzer_profile_id=self._screen_analyzer_profile_id,
         )
         procedure_replay = replay_entry.replay
         if replay_entry.conclusion is not None:
@@ -230,6 +233,7 @@ class DiscoveryWorkflow:
             recovery_profile_id=self._recovery_profile_id,
             redaction_regions=self._redaction_regions,
             action_verifier_profile_id=self._action_verifier_profile_id,
+            screen_analyzer_profile_id=self._screen_analyzer_profile_id,
             recover_application=True,
             declared_value_resolver=self._declared_value_resolver,
             screen_comparison=compatibility.screen_comparison,

@@ -53,6 +53,9 @@ from agent.planning.support import StubPlannerModel
 from agent.memory.test_store import _memory
 
 
+GENERATED_CONDITION = "The requested result is visibly established."
+
+
 class MeasuredReconciler(StubPlannerModel):
     """Return one measured response with a durable call reference."""
 
@@ -104,8 +107,7 @@ class SequentialReconciler(StubPlannerModel):
     ) -> ModelResponse:
         procedure = next(self._procedures)
         self.output = {
-            "schema_version": 1,
-            "request_id": request.request_id,
+            "completion_conditions": [GENERATED_CONDITION],
             "procedure": procedure,
             "milestones": {"0": 1} if procedure else {},
             "decisions": [],
@@ -127,11 +129,10 @@ def _result() -> tuple[DiscoveryResult, Observation, Observation]:
         objectives=(
             DiscoveryObjective(
                 objective_id="objective_1",
-                statement="Save one reusable schedule.",
-                completion_conditions=("The schedule is saved.",),
+                statement="Save one reusable record.",
             ),
         ),
-        priorities=("Create the schedule.",),
+        priorities=("Create the record.",),
     )
     result = DiscoveryResult(
         request=request,
@@ -167,8 +168,7 @@ def test_completed_result_builds_calls_compiles_and_measures(
     result, before, after = _result()
     model = MeasuredReconciler(
         {
-            "schema_version": 1,
-            "request_id": "model_request_1",
+            "completion_conditions": [GENERATED_CONDITION],
             "procedure": [1],
             "milestones": {"0": 1},
             "decisions": [],
@@ -206,12 +206,15 @@ def test_completed_result_builds_calls_compiles_and_measures(
     assert request.reasoning_effort is None
     assert request.max_completion_tokens == 8_192
     assert request.response_contract is not None
-    assert request.response_contract.name == "replay-reconciliation-v1"
+    assert request.response_contract.name == "replay-reconciliation-v2"
     content = request.messages[1].content[0]
     assert isinstance(content, TextModelContent)
-    payload = json.loads(content.text.split("Request and evidence JSON follow:\n", 1)[1])
+    payload = json.loads(content.text.split("Evidence JSON follows:\n", 1)[1])
     projected = payload["evidence"]
-    assert projected["projection_version"] == 1
+    assert projected["projection_version"] == 2
+    assert projected["task"]["completion_condition_mode"] == (
+        "generate_from_discovery_evidence"
+    )
     assert "timeline" not in projected
     assert "fingerprint" not in next(iter(projected["states"].values()))
     assert "target_grounding" not in projected["steps"][0]
@@ -227,10 +230,11 @@ def test_completed_result_builds_calls_compiles_and_measures(
     stored = procedure_store.load(
         compatibility,
         "objective_1",
-        "Save one reusable schedule.",
+        "Save one reusable record.",
     )
     assert stored is not None
     assert stored.procedure.procedure_id == "procedure_1"
+    assert stored.evidence.task.completion_conditions == (GENERATED_CONDITION,)
 
 
 def test_reconciler_receives_action_risk_facts_and_advisory_claims(
@@ -258,8 +262,7 @@ def test_reconciler_receives_action_risk_facts_and_advisory_claims(
     )
     model = StubPlannerModel(
         {
-            "schema_version": 1,
-            "request_id": "model_request_1",
+            "completion_conditions": [GENERATED_CONDITION],
             "procedure": [1],
             "milestones": {"0": 1},
             "decisions": [],
@@ -291,6 +294,46 @@ def test_reconciler_receives_action_risk_facts_and_advisory_claims(
     assert '"claim_id":"rule_1"' in content.text
 
 
+def test_reconciler_cannot_replace_supplied_scenario_conditions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, before, after = _result()
+    supplied_condition = "The saved record can be reopened."
+    objective = result.request.objectives[0].model_copy(
+        update={"completion_conditions": (supplied_condition,)}
+    )
+    result = result.model_copy(
+        update={"request": result.request.model_copy(update={"objectives": (objective,)})}
+    )
+    model = StubPlannerModel(
+        {
+            "completion_conditions": [GENERATED_CONDITION],
+            "procedure": [1],
+            "milestones": {"0": 1},
+            "decisions": [],
+            "findings": [],
+        }
+    )
+    monkeypatch.setattr(
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
+        lambda unused, observation_ids: (before, after),
+    )
+
+    report = compile_completed_discovery_run(
+        root=tmp_path,
+        run_id="run_1",
+        discovery_result=result,
+        model_client=model,
+        model_profile_id="reconciler_primary",
+        comparison=ScreenComparisonPolicy(),
+        identifier_factory=_identifiers("evidence_1", "model_request_1"),
+    )
+
+    assert report.status is ProcedureCompilationStatus.INVALID_RESPONSE
+    assert report.reason == "The replay reconciler changed supplied completion conditions."
+
+
 def test_compiler_refusal_stores_no_procedure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -298,8 +341,7 @@ def test_compiler_refusal_stores_no_procedure(
     result, before, after = _result()
     model = StubPlannerModel(
         {
-            "schema_version": 1,
-            "request_id": "model_request_1",
+            "completion_conditions": [GENERATED_CONDITION],
             "procedure": [],
             "milestones": {},
             "decisions": [],
@@ -364,6 +406,39 @@ def test_compiler_feedback_fallback_can_repair_a_refusal(
     fallback_context = model.requests[1].messages[1].content[0]
     assert isinstance(fallback_context, TextModelContent)
     assert "compiler_refusal" in fallback_context.text
+    assert '"allowed_milestone_indices":[0]' in fallback_context.text
+    assert '"preserved_milestones":{}' in fallback_context.text
+
+
+def test_compiler_repair_preserves_valid_zero_based_milestones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, before, after = _result()
+    model = SequentialReconciler(([1, 2], [1]))
+    monkeypatch.setattr(
+        "yewo.agent.replay.reconciliation.compilation.ObservationStore.load_selected",
+        lambda unused, observation_ids: (before, after),
+    )
+
+    compile_completed_discovery_run(
+        root=tmp_path,
+        run_id="run_1",
+        discovery_result=result,
+        model_client=model,
+        model_profile_id="reconciler_primary",
+        comparison=ScreenComparisonPolicy(),
+        identifier_factory=_identifiers(
+            "evidence_1",
+            "model_request_1",
+            "model_request_2",
+            "procedure_1",
+        ),
+    )
+
+    fallback_context = model.requests[1].messages[1].content[0]
+    assert isinstance(fallback_context, TextModelContent)
+    assert '"preserved_milestones":{"0":1}' in fallback_context.text
 
 
 def test_model_failure_stores_report_without_compilation(

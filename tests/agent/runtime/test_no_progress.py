@@ -17,6 +17,7 @@ from yewo.agent.runtime.no_progress import (
     MAXIMUM_CONSECUTIVE_REFUSALS,
     ActionNoProgressTracker,
 )
+from yewo.agent.runtime.interaction_intent import interaction_intent_key
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 
 from agent.actuation.support import limits, proposal
@@ -69,13 +70,13 @@ def test_runtime_exposes_failed_target_point_and_stops_after_one_correction(
 ) -> None:
     planner = SequencePlanner(
         [
-            proposal(ActionKind.TAP, target_expression="the Edit Schedule item"),
+            proposal(ActionKind.TAP, target_expression="the Edit Record item"),
             proposal(
                 ActionKind.TAP,
                 proposal_id="proposal-2",
                 grounding_correction_for_proposal_id="proposal-1",
                 target_expression=(
-                    "the Edit Schedule row near the top of the drawer, not the blank lower area"
+                    "the Edit Record row near the top of the drawer, not the blank lower area"
                 ),
             ),
         ]
@@ -106,18 +107,18 @@ def test_runtime_allows_one_declared_interaction_refinement_then_exhausts_family
 ) -> None:
     planner = SequencePlanner(
         [
-            proposal(ActionKind.TAP, target_expression="the Full Body Workout card"),
+            proposal(ActionKind.TAP, target_expression="the Example Record card"),
             proposal(
                 ActionKind.TAP,
                 proposal_id="refinement-template-1",
                 interaction_refinement_for_proposal_id="proposal-1",
-                target_expression="the Full Body Workout text inside the card",
+                target_expression="the Example Record text inside the card",
             ),
             proposal(
                 ActionKind.TAP,
                 proposal_id="refinement-template-2",
                 interaction_refinement_for_proposal_id="proposal-1",
-                target_expression="the right side of the Full Body Workout card",
+                target_expression="the right side of the Example Record card",
             ),
             proposal(ActionKind.CANNOT_PROGRESS),
         ]
@@ -172,6 +173,27 @@ def test_no_progress_suppression_uses_equivalent_screen_policy() -> None:
     assert tracker.refusal_for(repeated, nearby) is not None
 
 
+def test_provider_unavailability_does_not_poison_target_no_progress() -> None:
+    screen = _observation("obs_1", "0000000000000000")
+    attempted = proposal(ActionKind.TAP, source_observation_id=screen.observation_id)
+    retry = proposal(
+        ActionKind.TAP,
+        proposal_id="proposal-2",
+        source_observation_id=screen.observation_id,
+    )
+    refusal = ActionRefusal(
+        proposal_id=attempted.proposal_id,
+        code=ActionRefusalCode.PROVIDER_UNAVAILABLE,
+        reason="RateLimitError (HTTP 429)",
+    )
+    tracker = ActionNoProgressTracker(ScreenComparisonPolicy())
+    tracker.start(screen)
+
+    assert tracker.record_refusal(attempted, screen, refusal) is None
+    assert tracker.refusal_for(retry, screen) is None
+    assert tracker.known_facts() == ()
+
+
 def test_runtime_stops_only_after_consecutive_refusals_reach_the_bound(
     tmp_path: Path,
 ) -> None:
@@ -196,6 +218,31 @@ def test_runtime_stops_only_after_consecutive_refusals_reach_the_bound(
     assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS
     assert "consecutive refusals" in result.reason
     assert len(result.steps) == MAXIMUM_CONSECUTIVE_REFUSALS
+
+
+def test_runtime_requests_an_isolated_focus_decision_after_screen_exhaustion(
+    tmp_path: Path,
+) -> None:
+    planner = SequencePlanner(
+        [proposal(ActionKind.TAP, target_expression=f"control {index}") for index in range(3)]
+        + [proposal(ActionKind.BACK), proposal(ActionKind.CANNOT_PROGRESS)]
+    )
+    observations = ObservationSequence(
+        [
+            _observation(f"obs_{index}", "0000000000000000", offset_seconds=index)
+            for index in range(1, 10)
+        ]
+    )
+
+    result = _runtime(tmp_path, planner, observations, RuntimeDevice()).run(
+        _task(), _mode_policy(), NeverInterrupted()
+    )
+
+    assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS
+    assert planner.requests[3].planning_focus is not None
+    assert planner.requests[3].planning_focus.cause == "screen_no_progress"
+    assert planner.requests[2].planning_focus is None
+    assert planner.requests[4].planning_focus is None
 
 
 def test_runtime_allows_distinct_routes_to_return_to_a_visited_screen(
@@ -261,6 +308,7 @@ def test_repeated_observed_transition_warns_then_stops_despite_target_rewording(
     )
     tracker.start(source_observations[0])
     terminal_reasons: list[str | None] = []
+    candidates = []
 
     for index, (source, destination) in enumerate(
         zip(source_observations, destination_observations, strict=True)
@@ -271,6 +319,7 @@ def test_repeated_observed_transition_warns_then_stops_despite_target_rewording(
             source_observation_id=source.observation_id,
             target_expression=f"rewritten target description {index}",
         )
+        candidates.append(candidate)
         outcome = ActionOutcome(
             outcome_id=f"outcome-{index}",
             authorization_id=f"authorization-{index}",
@@ -288,9 +337,19 @@ def test_repeated_observed_transition_warns_then_stops_despite_target_rewording(
 
     assert terminal_reasons == [None, None, None]
     assert any(
-        "repeated an already observed screen transition" in fact
-        for fact in tracker.known_facts()
+        "repeated an already observed screen transition" in fact for fact in tracker.known_facts()
     )
+    focus = tracker.pending_planning_focus(
+        destination_observations[-1],
+        lambda: "focus-repeated-transition",
+        ("Reach the next workflow stage.",),
+        (),
+    )
+    if focus is not None:
+        tracker.commit_planning_focus(destination_observations[-1])
+    assert focus is not None
+    assert focus.cause == "repeated_transition"
+    assert focus.prohibited_interaction_intents == (interaction_intent_key(candidates[1]),)
     repeat = proposal(
         ActionKind.TAP,
         proposal_id="proposal-repeat",

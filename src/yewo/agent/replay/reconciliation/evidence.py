@@ -9,6 +9,7 @@ from yewo import observations as observation_records
 from yewo.agent.actuation import ActionKind, ActionOutcomeDisposition
 from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.runtime.records import AgentStep, AgentTask
+from yewo.agent.runtime.observation_settlement import latest_settlement_candidate
 from yewo.agent.replay.reconciliation.records import (
     ControlInference,
     ControlInputTraits,
@@ -229,7 +230,16 @@ def _build_step(
     source = observations.get(step.source_observation_id)
     if source is None:
         raise EvidenceConstructionError("A step source observation is missing.")
-    destination_id = step.settled_observation_id or step.recovery_observation_id
+    recovered_destination_id = _recovered_settlement_observation_id(
+        step,
+        source,
+        observations,
+    )
+    destination_id = (
+        step.settled_observation_id
+        or step.recovery_observation_id
+        or recovered_destination_id
+    )
     if destination_id is not None and destination_id not in observations:
         raise EvidenceConstructionError("A step destination observation is missing.")
     kind = _step_kind(step, source)
@@ -266,7 +276,7 @@ def _build_step(
         action=step.proposal.action,
         proposal=step.proposal,
         control=_infer_control(step),
-        result=_step_result(step),
+        result=_step_result(step, recovered_destination_id is not None),
         outcome_disposition=(step.outcome.disposition if step.outcome is not None else None),
         signals=(step.outcome.signals if step.outcome is not None else frozenset()),
         text_delivery=(step.outcome.text_delivery if step.outcome is not None else None),
@@ -281,6 +291,29 @@ def _build_step(
     )
 
 
+def _recovered_settlement_observation_id(
+    step: AgentStep,
+    source: observation_records.Observation,
+    observations: dict[str, observation_records.Observation],
+) -> str | None:
+    if step.outcome is None or step.outcome.disposition is not ActionOutcomeDisposition.UNAVAILABLE:
+        return None
+    captured = [
+        observations[observation_id]
+        for observation_id in step.settlement_observation_ids
+        if observation_id in observations
+    ]
+    for index in range(1, len(captured) + 1):
+        candidate = latest_settlement_candidate(
+            source,
+            captured[:index],
+            final_attempt=index == len(captured),
+        )
+        if candidate is not None:
+            return candidate.observation_id
+    return None
+
+
 def _step_kind(step: AgentStep, source: observation_records.Observation) -> EvidenceStepKind:
     action = step.proposal.action
     foreign_context = (
@@ -292,7 +325,7 @@ def _step_kind(step: AgentStep, source: observation_records.Observation) -> Evid
     return EvidenceStepKind.PATH
 
 
-def _step_result(step: AgentStep) -> EvidenceResult:
+def _step_result(step: AgentStep, recovered_destination: bool = False) -> EvidenceResult:
     if step.application_failure is not None:
         return EvidenceResult.CRASHED
     if step.refusal is not None:
@@ -301,6 +334,8 @@ def _step_result(step: AgentStep) -> EvidenceResult:
         return EvidenceResult.TERMINAL
     if step.outcome is None:
         return EvidenceResult.UNKNOWN
+    if recovered_destination:
+        return EvidenceResult.RECOVERED
     return {
         ActionOutcomeDisposition.OBSERVED: EvidenceResult.OBSERVED,
         ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE: EvidenceResult.NO_EFFECT,

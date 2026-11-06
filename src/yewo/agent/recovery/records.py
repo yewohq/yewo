@@ -13,6 +13,7 @@ class RecoveryBudgetCredit(BaseModel):
     assessment_id: RecordIdentifier | None = None
     steps: int = Field(default=0, ge=0, le=10)
     planning_requests: int = Field(default=0, ge=0, le=11)
+    analysis_requests: int = Field(default=0, ge=0, le=10)
     grounding_requests: int = Field(default=0, ge=0, le=20)
     dispatched_actions: int = Field(default=0, ge=0, le=10)
     duration_seconds: float = Field(default=0, ge=0, le=600)

@@ -13,6 +13,7 @@ from yewo.agent.replay.procedure.records import (
 from yewo.agent.replay.reconciliation.records import (
     ProcedureEffect,
     ProcedureExpectation,
+    ProcedureSetupContract,
     ReplayProcedure,
     ReplayProcedureStep,
 )
@@ -44,6 +45,10 @@ def test_completed_procedure_grounding_reinforces_exact_memory_location(
         evidence_id="evidence_1",
         source_run_id="run_1",
         application=memory.compatibility.application,
+        setup_contract=ProcedureSetupContract(
+            device=before.device,
+            launch_state_id="state_1",
+        ),
         source_step_ids=(source_step.step_id,),
         steps=(
             ReplayProcedureStep(

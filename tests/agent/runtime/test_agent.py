@@ -1,4 +1,5 @@
 """Deterministic integration tests for the shared Device Agent loop."""
+
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -25,7 +26,12 @@ from yewo.agent.actuation import (
     SideEffectClass,
 )
 from yewo.agent.runtime.application_state import ApplicationRecovery
-from yewo.agent.planning.planner import ActionProposalSource, PlanningRequest
+from yewo.agent.planning.planner import (
+    ActionProposalSource,
+)
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.devices.focus import FocusedFieldReading
 from yewo.devices.interaction import ScrollDirection
 from yewo.grounding import VisualGrounder
@@ -33,7 +39,10 @@ from yewo.observations import Observation, ObservationService
 from yewo.runs.errors import RunWorkflowInterrupted
 
 from agent.actuation.support import limits, proposal
-from grounding.support import DeterministicGrounder, ExpressionGrounder
+from grounding.support import (
+    DeterministicGrounder,
+    ExpressionGrounder,
+)
 from observations.factories import build_observation, build_screenshot
 
 
@@ -208,9 +217,9 @@ def _observation(
 
 def _task() -> AgentTask:
     return AgentTask(
-        objective="Open the account form.",
-        completion_conditions=("The account form is visible.",),
-        declared_value_names=("account_password",),
+        objective="Open the record form.",
+        completion_conditions=("The record form is visible.",),
+        declared_value_names=("declared_secret",),
     )
 
 
@@ -243,6 +252,7 @@ def _runtime(
     reused_flow_id: str | None = None,
     recovery_advisor=None,
     action_verifier=None,
+    screen_analysis=None,
     initial_planning_requests: int = 0,
 ) -> DeviceAgent:
     return DeviceAgent(
@@ -254,7 +264,9 @@ def _runtime(
         AgentStepStore(tmp_path),
         sleep=lambda unused: None,
         application_recovery=ApplicationRecovery(
-            application_recovery, application_failure_recovery, action_diagnostic_source,
+            application_recovery,
+            application_failure_recovery,
+            action_diagnostic_source,
             cast(ObservationService, observations),
         ),
         screen_comparison=screen_comparison,
@@ -266,6 +278,7 @@ def _runtime(
         reused_flow_id=reused_flow_id,
         recovery_advisor=recovery_advisor,
         action_verifier=action_verifier,
+        screen_analysis=screen_analysis,
         initial_planning_requests=initial_planning_requests,
         **({"monotonic": monotonic} if monotonic is not None else {}),
     )
@@ -281,8 +294,8 @@ def _stored_steps(tmp_path: Path) -> list[dict[str, object]]:
     [
         _task(),
         AgentTask(
-            objective="Learn the route to the account form.",
-            completion_conditions=("The account form route is observed.",),
+            objective="Learn the route to the record form.",
+            completion_conditions=("The record form route is observed.",),
         ),
         AgentTask(
             objective="Exercise the invalid-password scenario.",
@@ -436,7 +449,7 @@ def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Pat
     secret = "correct horse battery staple"
     typed = proposal(
         ActionKind.TYPE,
-        text=DeclaredValueReference(value_name="account_password"),
+        text=DeclaredValueReference(value_name="declared_secret"),
     )
     planner = SequencePlanner([typed, proposal(ActionKind.DONE)])
     observations = ObservationSequence(
@@ -451,7 +464,7 @@ def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Pat
         planner,
         observations,
         RuntimeDevice(),
-        declared_value_resolver=lambda name: secret if name == "account_password" else "",
+        declared_value_resolver=lambda name: secret if name == "declared_secret" else "",
     )
 
     result = runtime.run(_task(), _mode_policy(), NeverInterrupted())

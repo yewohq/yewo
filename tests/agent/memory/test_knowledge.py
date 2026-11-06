@@ -172,6 +172,7 @@ def test_reconciler_verdict_is_retained_without_promoting_claim_trust(
     source_step = evidence.steps[0]
     response = ReconcilerResponse(
         request_id="request_verdict",
+        completion_conditions=("The requested result is visible.",),
         procedure=(1,),
         milestones={},
         claim_verdicts=(
@@ -330,6 +331,7 @@ def test_capture_labels_reconciler_output_as_unconfirmed_findings(
     )
     response = ReconcilerResponse(
         request_id="request_2",
+        completion_conditions=("The requested result is visible.",),
         procedure=(1,),
         milestones={},
         findings=("The confirmation screen follows the submit action.",),
@@ -363,7 +365,7 @@ def test_capture_records_auditor_observed_application_state(tmp_path: Path) -> N
         final_observation_id=after.observation_id,
         satisfied=True,
         reason="The final state proves completion.",
-        observed_app_state="The saved account appears in the account list.",
+        observed_app_state="The saved record appears in the record list.",
     )
 
     delta = build_memory_delta(
@@ -376,7 +378,7 @@ def test_capture_records_auditor_observed_application_state(tmp_path: Path) -> N
     )
 
     assert len(delta.run_outcomes) == 1
-    assert delta.run_outcomes[0].observed_app_state.startswith("The saved account")
+    assert delta.run_outcomes[0].observed_app_state.startswith("The saved record")
 
 
 def test_capture_records_crash_action_risk_and_unconfirmed_recovery_rule(
@@ -451,6 +453,7 @@ def test_unmatched_action_risk_is_skipped_without_discarding_other_records(
     )
     response = ReconcilerResponse(
         request_id="request_skip",
+        completion_conditions=("The requested result is visible.",),
         procedure=(),
         milestones={},
         findings=("Retain this independent finding.",),
@@ -467,5 +470,7 @@ def test_unmatched_action_risk_is_skipped_without_discarding_other_records(
 
     assert delta.action_risks == ()
     assert len(delta.findings) == 1
-    assert len(delta.skipped_records) == 1
-    assert delta.skipped_records[0].record_kind == "action_risk"
+    assert {record.record_kind for record in delta.skipped_records} == {
+        "action_risk",
+        "control",
+    }

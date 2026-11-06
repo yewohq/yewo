@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from yewo.agent.memory.knowledge import ActionRiskKnowledge
+from yewo.agent.runtime.interaction_intent import normalize_target_expression
 from yewo.agent.memory.records import AppMemory, LogicalScreen, ObservationVariant
 from yewo.agent.replay.reconciliation.records import (
     CompilerCheck,
@@ -108,7 +109,7 @@ def _target_matches(action_risk: ActionRiskKnowledge, step: EvidenceStep) -> boo
 
 
 def _normalize_target(value: str) -> str:
-    return " ".join(value.casefold().split())
+    return normalize_target_expression(value)
 
 
 def _state_matches_screen(

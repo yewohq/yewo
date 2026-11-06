@@ -9,8 +9,18 @@ from yewo.agent.replay.reconciliation.records import EvidenceDocument, EvidenceS
 
 def build_reconciler_evidence_projection(evidence: EvidenceDocument) -> dict[str, Any]:
     """Keep model-relevant semantics while the compiler retains lossless evidence."""
+    task = evidence.task.model_dump(mode="json")
+    completion_conditions = tuple(
+        {"index": index, "condition": condition}
+        for index, condition in enumerate(evidence.task.completion_conditions)
+    )
+    task["completion_conditions"] = completion_conditions
+    task["allowed_milestone_indices"] = tuple(range(len(completion_conditions)))
+    task["completion_condition_mode"] = (
+        "supplied" if completion_conditions else "generate_from_discovery_evidence"
+    )
     return {
-        "projection_version": 1,
+        "projection_version": 2,
         "schema_version": evidence.schema_version,
         "evidence_id": evidence.evidence_id,
         "run": {
@@ -25,7 +35,7 @@ def build_reconciler_evidence_projection(evidence: EvidenceDocument) -> dict[str
             "observation_count": evidence.run.observation_count,
             "launch_state_id": evidence.run.launch_state_id,
         },
-        "task": evidence.task.model_dump(mode="json"),
+        "task": task,
         "states": {state_id: _project_state(state) for state_id, state in evidence.states.items()},
         "steps": tuple(_project_step(step) for step in evidence.steps),
         "diagnostics": evidence.diagnostics.model_dump(mode="json"),

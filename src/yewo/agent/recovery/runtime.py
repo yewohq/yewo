@@ -6,19 +6,21 @@ from collections.abc import Callable
 
 from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.narration import narrate_recovery_unavailable
-from yewo.agent.planning.planner import PlanningRequest, TaskProgressContext
+from yewo.agent.planning.records import (
+    MAXIMUM_RECOVERY_GUIDANCE,
+    PlanningRequest,
+    TaskProgressContext,
+)
 from yewo.agent.recovery.advisor import (
     RecoveryAdvisor,
     RecoveryAssessment,
     RecoveryDisposition,
 )
 from yewo.agent.recovery.records import RecoveryBudgetCredit
+from yewo.agent.runtime.limits import MAXIMUM_CREDITED_RECOVERY_STEPS
 from yewo.agent.runtime.records import AgentStep
 from yewo.agent.memory.screens import observations_match
 from yewo.observations import Observation
-
-
-MAXIMUM_CREDITED_RECOVERY_STEPS = 10
 
 
 class RecoveryRunState:
@@ -37,6 +39,7 @@ class RecoveryRunState:
         self._baseline_step_count = 0
         self._credited_step_count = 0
         self._planning_requests = 0
+        self._analysis_requests = 0
         self._grounding_requests = 0
         self._dispatched_actions = 0
         self._started_at: float | None = None
@@ -98,17 +101,29 @@ class RecoveryRunState:
         assessment = self._assessment
         if assessment is None or assessment.disposition is RecoveryDisposition.STOP:
             return None
-        context = base or TaskProgressContext(remaining_work=assessment.remaining_work)
+        context = base or TaskProgressContext()
         failed_branch = (
             "Do not repeat the application-failing action without a material state change."
         )
+        candidate_guidance = tuple(
+            f"Unproven recovery cause: {cause}" for cause in assessment.candidate_causes
+        )
+        guidance = tuple(
+            dict.fromkeys(
+                (
+                    *context.recovery_guidance,
+                    *assessment.remaining_work,
+                    *assessment.planner_guidance,
+                    *candidate_guidance,
+                )
+            )
+        )
         return context.model_copy(
             update={
-                "remaining_work": assessment.remaining_work,
                 "exhausted_branches": tuple(
                     dict.fromkeys((*context.exhausted_branches, failed_branch))
                 ),
-                "recovery_guidance": assessment.planner_guidance,
+                "recovery_guidance": guidance[:MAXIMUM_RECOVERY_GUIDANCE],
             }
         )
 
@@ -116,6 +131,11 @@ class RecoveryRunState:
         """Credit planner calls used while restoring the recorded frontier."""
         if self._active:
             self._planning_requests += count
+
+    def credit_analysis_requests(self, count: int) -> None:
+        """Credit perception calls used while restoring the recorded frontier."""
+        if self._active:
+            self._analysis_requests += count
 
     def credit_grounding_requests(self, count: int) -> None:
         """Credit grounding calls used while restoring the recorded frontier."""
@@ -187,6 +207,7 @@ class RecoveryRunState:
             assessment_id=assessment.assessment_id,
             steps=credited_steps,
             planning_requests=min(self._planning_requests, 11),
+            analysis_requests=min(self._analysis_requests, 10),
             grounding_requests=min(self._grounding_requests, 20),
             dispatched_actions=min(self._dispatched_actions, 10),
             duration_seconds=min(max(0.0, finished_at - started_at), 600.0),

@@ -11,7 +11,10 @@ from yewo.agent.replay.procedure.objective_matching import (
     ReplayProcedureSelection,
     exact_procedure_selection,
 )
-from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import (
+    CompiledProcedureSchemaError,
+    CompiledProcedureStore,
+)
 from yewo.models import ModelClient
 
 
@@ -33,15 +36,20 @@ def prepare_replay_procedure(
     maximum_model_requests: int | None,
 ) -> ReplayProcedurePreparation:
     """Use exact lookup first and one fail-closed LLM match only on a miss."""
-    exact_bundle = procedure_store.load(
-        compatibility,
-        objective.objective_id,
-        objective.statement,
-    )
-    current_conditions = objective.completion_conditions or (objective.statement,)
+    try:
+        exact_bundle = procedure_store.load(
+            compatibility,
+            objective.objective_id,
+            objective.statement,
+        )
+    except CompiledProcedureSchemaError:
+        exact_bundle = None
     if (
         exact_bundle is not None
-        and exact_bundle.evidence.task.completion_conditions == current_conditions
+        and (
+            not objective.completion_conditions
+            or exact_bundle.evidence.task.completion_conditions == objective.completion_conditions
+        )
         and not compiled_procedure_has_known_action_risk(
             exact_bundle.evidence,
             exact_bundle.procedure,

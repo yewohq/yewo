@@ -190,6 +190,8 @@ def _task_verification_summary(result: DiscoveryResult) -> str:
         return "Task verification was not available."
     condition_count = len(result.request.objectives[0].completion_conditions)
     if result.verification.satisfied:
+        if condition_count == 0:
+            return "Task completed: the objective was independently verified."
         return f"Task completed: {condition_count} of {condition_count} conditions verified."
     return f"Task verification failed: {result.verification.reason}"
 

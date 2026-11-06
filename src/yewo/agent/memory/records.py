@@ -335,7 +335,7 @@ class AppMemory(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     memory_id: RecordIdentifier
     compatibility: MemoryCompatibility
     source_run_ids: tuple[RecordIdentifier, ...] = Field(min_length=1)

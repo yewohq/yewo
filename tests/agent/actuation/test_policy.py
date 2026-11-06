@@ -19,6 +19,7 @@ from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.inventory import DevicePlatform
 from yewo.devices.screen import SystemRegionKind
 from yewo.grounding import GroundingDisposition, GroundingTargetOperation
+from yewo.models import ModelCallDisposition
 from yewo.observations import ScreenRegion
 
 from agent.actuation.support import budget, limits, point_grounding, proposal, region_grounding
@@ -86,6 +87,22 @@ def test_rejects_grounding_that_does_not_match_the_proposal(grounding: object) -
 
     assert isinstance(result, ActionRefusal)
     assert result.code is ActionRefusalCode.INVALID_GROUNDING
+
+
+def test_reports_provider_unavailability_without_rejecting_the_target() -> None:
+    grounding = point_grounding(
+        disposition=GroundingDisposition.PROVIDER_UNAVAILABLE,
+        transport_disposition=ModelCallDisposition.PROVIDER_ERROR,
+        reason="RateLimitError (HTTP 429)",
+    )
+
+    result = ActionPolicy(limits()).authorize(
+        proposal(), build_observation(), budget(), target_grounding=grounding
+    )
+
+    assert isinstance(result, ActionRefusal)
+    assert result.code is ActionRefusalCode.PROVIDER_UNAVAILABLE
+    assert result.reason == "RateLimitError (HTTP 429)"
 
 
 def test_rejects_grounding_in_system_owned_region() -> None:

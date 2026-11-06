@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from enum import StrEnum
 from collections.abc import Callable
-from typing import Protocol, Self, runtime_checkable
+from typing import Protocol, Self, TypeVar, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.artifacts import RecordIdentifier
 from yewo.agent.actuation import ActionKind, ActionProposal
+
+_Capability = TypeVar("_Capability")
 
 
 class PlannerDecisionSource(StrEnum):
@@ -52,6 +54,33 @@ class PlannerDecisionMetadata(BaseModel):
 
 
 @runtime_checkable
+class DelegatingProposalSource(Protocol):
+    """Expose a wrapped proposal source so capability checks see through wrappers."""
+
+    def delegate_source(self) -> object: ...
+
+
+def proposal_source_chain(source: object) -> tuple[object, ...]:
+    """Return one source and every source it delegates to, outermost first."""
+    chain: list[object] = []
+    current = source
+    while current is not None and len(chain) < 10:
+        chain.append(current)
+        if not isinstance(current, DelegatingProposalSource):
+            break
+        current = current.delegate_source()
+    return tuple(chain)
+
+
+def first_source_of(source: object, protocol: type[_Capability]) -> _Capability | None:
+    """Return the outermost delegated source that satisfies one capability."""
+    return next(
+        (item for item in proposal_source_chain(source) if isinstance(item, protocol)),
+        None,
+    )
+
+
+@runtime_checkable
 class PlannerDecisionMetadataSource(Protocol):
     """Expose dynamic decision provenance after proposal selection."""
 
@@ -67,16 +96,18 @@ class PlanningModelUsageSource(Protocol):
 
 def resolve_planner_decision_metadata(source: object) -> PlannerDecisionMetadata:
     """Return delegated decision evidence or the default model provenance."""
-    if isinstance(source, PlannerDecisionMetadataSource):
-        return source.decision_metadata()
+    resolved = first_source_of(source, PlannerDecisionMetadataSource)
+    if resolved is not None:
+        return resolved.decision_metadata()
     return PlannerDecisionMetadata(source=PlannerDecisionSource.MODEL)
 
 
 def resolve_planning_model_request_count(source: object, reserved_count: int) -> int:
     """Return actual model calls after one planning operation."""
-    if not isinstance(source, PlanningModelUsageSource):
+    resolved = first_source_of(source, PlanningModelUsageSource)
+    if resolved is None:
         return reserved_count
-    consumed_count = source.last_planning_model_request_count()
+    consumed_count = resolved.last_planning_model_request_count()
     if consumed_count < 0 or consumed_count > reserved_count:
         raise ValueError("Planning model use must remain within the reserved request count.")
     return consumed_count

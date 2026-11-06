@@ -42,8 +42,7 @@ Select at most one candidate. Return only the JSON response.
 """
 
 OBJECTIVE_MATCHING_USER_PROMPT = """\
-Compare the requested objective with the stored candidates. Return request_id exactly as supplied.
-Context JSON follows:
+Compare the requested objective with the stored candidates. Context JSON follows:
 """
 
 
@@ -74,7 +73,6 @@ class ObjectiveMatchOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    request_id: RecordIdentifier
     procedure_id: RecordIdentifier | None = None
     relationship: ObjectiveRelationship
     reason: str = Field(min_length=1, max_length=1_000)
@@ -156,8 +154,7 @@ class ObjectiveMatcher:
         except ValidationError:
             return None
         if (
-            output.request_id != request_id
-            or output.relationship is not ObjectiveRelationship.EQUIVALENT
+            output.relationship is not ObjectiveRelationship.EQUIVALENT
             or output.procedure_id is None
         ):
             return None
@@ -165,8 +162,9 @@ class ObjectiveMatcher:
         candidate = candidate_by_procedure_id.get(output.procedure_id)
         if candidate is None:
             return None
-        current_conditions = objective.completion_conditions or (objective.statement,)
-        if len(current_conditions) != len(candidate.completion_conditions):
+        if objective.completion_conditions and (
+            len(objective.completion_conditions) != len(candidate.completion_conditions)
+        ):
             return None
         return ReplayProcedureSelection(
             procedure_id=candidate.procedure_id,
@@ -213,13 +211,11 @@ def _model_request(
     profile_id: RecordIdentifier,
     request_id: RecordIdentifier,
 ) -> ModelRequest:
-    current_conditions = objective.completion_conditions or (objective.statement,)
     context = {
-        "request_id": request_id,
         "requested_objective": {
             "objective_id": objective.objective_id,
             "objective": objective.statement,
-            "completion_conditions": current_conditions,
+            "completion_conditions": objective.completion_conditions,
         },
         "candidates": [item.model_dump(mode="json") for item in candidates],
     }

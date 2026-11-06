@@ -18,7 +18,7 @@ from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.runtime.observation_settlement import ActionSettlementPolicy
 
 from agent.memory.test_store import _memory
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def _procedure() -> ReplayProcedure:
@@ -75,7 +75,7 @@ def test_repeated_dispatch_timing_shortens_compiled_action_polling(
     assert resolved.initial_delay_seconds == 0
     assert resolved.interval_seconds == pytest.approx(0.24)
     assert resolved.maximum_observations == 6
-    assert resolved.required_stable_observations == 1
+    assert resolved.required_stable_observations == 2
 
 
 def test_legacy_timing_uses_fast_replay_policy_without_tuning(
@@ -95,7 +95,7 @@ def test_legacy_timing_uses_fast_replay_policy_without_tuning(
     assert resolved.initial_delay_seconds == 0
     assert resolved.interval_seconds == pytest.approx(0.42)
     assert resolved.maximum_observations == 6
-    assert resolved.required_stable_observations == 1
+    assert resolved.required_stable_observations == 2
 
 
 def test_fast_replay_policy_preserves_the_configured_maximum_wait_window() -> None:
@@ -112,7 +112,7 @@ def test_fast_replay_policy_preserves_the_configured_maximum_wait_window() -> No
     default_window = default.initial_delay_seconds + default.interval_seconds * 5
     resolved_window = resolved.initial_delay_seconds + resolved.interval_seconds * 5
     assert resolved_window == pytest.approx(default_window)
-    assert resolved.required_stable_observations == 1
+    assert resolved.required_stable_observations == 2
 
 
 def test_timing_does_not_change_model_repair_settlement(tmp_path: Path) -> None:

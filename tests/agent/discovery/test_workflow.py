@@ -142,12 +142,12 @@ def _discovery_request() -> DiscoveryRequest:
         request_id="request_1",
         objectives=(
             DiscoveryObjective(
-                objective_id="account_form",
-                statement="The account form is reachable.",
+                objective_id="record_form",
+                statement="The record form is reachable.",
             ),
         ),
-        known_facts=("The account list is visible.",),
-        priorities=("Open the account form.", "Establish that it can be reached again."),
+        known_facts=("The record list is visible.",),
+        priorities=("Open the record form.", "Establish that it can be reached again."),
     )
 
 
@@ -176,7 +176,7 @@ def _context(tmp_path: Path) -> RunExecutionContext:
                     version="2.1.0",
                     build="42",
                     artifact_sha256="b" * 64,
-                )
+                ),
             ),
         ),
     )
@@ -279,10 +279,10 @@ def test_workflow_uses_shared_agent_and_promotes_supported_memory(
     outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
     assert outcome.category is RunTerminalCategory.COMPLETED
     assert agent.task is not None
-    assert agent.task.completion_conditions == ("The account form is reachable.",)
+    assert agent.task.completion_conditions == ()
     assert agent.task.known_facts == _discovery_request().known_facts
     assert agent.task.open_work[:-1] == _discovery_request().priorities
-    assert "visible default does not prove coverage" in agent.task.open_work[-1]
+    assert "Exercise each relevant control when policy permits" in agent.task.open_work[-1]
     assert memory_store.saved is not None
     assert memory_store.saved.transitions
     result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())

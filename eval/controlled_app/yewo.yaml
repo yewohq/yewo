@@ -11,14 +11,20 @@ policy:
     android.allow_backup: "Bundled development build contains no production user data"
 workflows:
   permissions_flow:
+    env:
+      email: permissions.tester@example.com
+      password:
+        value: secret-password123
+        secret: true
     journeys:
       - id: permissions_flow_01
         name: Native Location Permission Flow
         journey: |
-          A user opens the app and lands directly on the location access screen. They tap
-          the Grant Location Permission button. When the operating system displays the location
-          permission dialog, they tap While using the app. The app opens the home screen,
-          which lists restaurants sorted nearest first.
+          A user opens the app and lands on the sign-in screen. They type {{email}} in the Email
+          Address field and type {{password}} in the Password field. They tap the Login button.
+          On the location access screen, they tap the Grant Location Permission button. When the
+          operating system displays the location permission dialog, they tap While using the app.
+          The app opens the home screen, which lists restaurants sorted nearest first.
   restaurant_menu_matrix_smoke:
     targets:
       - id: ios_iphone_17_pro_max

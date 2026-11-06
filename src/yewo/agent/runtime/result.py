@@ -9,7 +9,7 @@ from yewo.agent.runtime.records import (
     AgentTerminalReason,
     AgentUsage,
 )
-from yewo.agent.runtime.control_evidence import VisibleControlObservation
+from yewo.agent.screen_analysis import CurrentScreenAnalysis
 from yewo.observations import Observation
 
 
@@ -43,7 +43,7 @@ def build_agent_result(
     dispatched_actions: int,
     steps: list[AgentStep],
     recovery_budget_credit: RecoveryBudgetCredit | None = None,
-    visible_control_observations: tuple[VisibleControlObservation, ...] = (),
+    screen_analyses: tuple[CurrentScreenAnalysis, ...] = (),
 ) -> AgentResult:
     """Build one Device Agent conclusion from gross counters and explicit credit."""
     return AgentResult(
@@ -58,5 +58,5 @@ def build_agent_result(
         ),
         recovery_budget_credit=recovery_budget_credit or RecoveryBudgetCredit(),
         steps=tuple(steps),
-        visible_control_observations=visible_control_observations,
+        screen_analyses=screen_analyses,
     )

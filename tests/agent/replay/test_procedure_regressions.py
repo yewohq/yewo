@@ -1,5 +1,7 @@
 """Regressions found by live compiled-procedure runs."""
 
+import pytest
+
 from yewo.agent import AgentTask, AgentTerminalReason
 from yewo.agent.actuation import ActionKind, ActionOutcomeSignal
 from yewo.agent.replay import (
@@ -13,7 +15,18 @@ from yewo.agent.replay import (
 from yewo.agent.replay.reconciliation.compiler import procedure_effect
 
 from agent.discovery.support import agent_result, observation
-from agent.replay.test_procedure_compiler import _evidence, _response
+from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+
+from agent.replay.support import (
+    evidence as _evidence,
+    observations as _observations,
+    response as _response,
+)
+from agent.replay.test_procedure_repair import (
+    _evidence as _procedure_evidence,
+    _outcome,
+    _request,
+)
 
 
 def test_compiler_does_not_require_visible_text_signal_for_masked_input() -> None:
@@ -40,6 +53,34 @@ def test_compiler_does_not_require_visible_text_signal_for_masked_input() -> Non
         }
     )
     evidence = evidence.model_copy(update={"steps": (focus, typed, evidence.steps[2])})
+
+    outcome = compile_replay_procedure(evidence, _response())
+
+    assert isinstance(outcome, ReplayProcedure)
+    assert outcome.steps[1].expects.required_signals == frozenset(
+        {ActionOutcomeSignal.PIXELS_CHANGED}
+    )
+
+
+@pytest.mark.parametrize("action", (ActionKind.TYPE, ActionKind.CLEAR))
+def test_compiler_ignores_incidental_focus_change(action: ActionKind) -> None:
+    evidence = _evidence()
+    proposal_update: dict[str, object] = {"action": action}
+    if action is ActionKind.CLEAR:
+        proposal_update["text"] = None
+    typed = evidence.steps[1].model_copy(
+        update={
+            "action": action,
+            "proposal": evidence.steps[1].proposal.model_copy(update=proposal_update),
+            "signals": frozenset(
+                {
+                    ActionOutcomeSignal.PIXELS_CHANGED,
+                    ActionOutcomeSignal.FOCUS_CHANGED,
+                }
+            ),
+        }
+    )
+    evidence = evidence.model_copy(update={"steps": (evidence.steps[0], typed, evidence.steps[2])})
 
     outcome = compile_replay_procedure(evidence, _response())
 
@@ -116,3 +157,23 @@ def test_navigation_role_wins_over_neighboring_commit_text() -> None:
     )
 
     assert procedure_effect(step) is ProcedureEffect.NAVIGATION
+
+
+def test_a_stale_repair_target_cannot_rewind_the_procedure_cursor() -> None:
+    evidence = _procedure_evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    source = CompiledProcedureActionSource(procedure, evidence)
+    screens = _observations()
+    first = source.plan(_request(screens[0]))
+    source.plan(_request(screens[-1], (_outcome(first, screens[0], screens[-1]),)))
+
+    assert source.rejoin(screens[2]) is True
+    second = source.plan(_request(screens[2]))
+    source.plan(_request(screens[3], (_outcome(second, screens[2], screens[3]),)))
+    assert source.next_procedure_index == 2
+
+    # A target kept past its rejoin would resume at its own index, so a later
+    # match rewinds the cursor and redispatches work the run already completed.
+    assert source.rejoin(screens[2]) is False
+    assert source.next_procedure_index == 2

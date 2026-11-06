@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw
 
 from yewo.agent.replay.visual_matching import (
     build_state_visual_signature,
+    state_visual_match_is_exact,
     state_visual_match_ratio,
 )
 
@@ -69,6 +70,14 @@ def test_state_signature_tolerates_one_changed_stable_tile() -> None:
     assert ratio >= signature.minimum_match_ratio
 
 
+def test_repair_match_rejects_one_changed_stable_tile() -> None:
+    signature = build_state_visual_signature((_screen(1), _screen(2)))
+    assert signature is not None
+
+    assert state_visual_match_is_exact(_screen(3), signature)
+    assert not state_visual_match_is_exact(_screen(3, stable_change=True), signature)
+
+
 def test_state_signature_rejects_large_stable_region_change() -> None:
     signature = build_state_visual_signature((_screen(1), _screen(2)))
     assert signature is not None
@@ -77,3 +86,28 @@ def test_state_signature_rejects_large_stable_region_change() -> None:
 
     assert ratio is not None
     assert ratio < signature.minimum_match_ratio
+
+
+def _tolerance_sample(nudge: int = 0) -> bytes:
+    image = Image.new("RGB", (480, 960), "white")
+    drawing = ImageDraw.Draw(image)
+    drawing.rectangle((0, 0, 480, 40), fill="navy")
+    drawing.text((400, 12), f"09:4{nudge}", fill="white")
+    for row in range(6):
+        top = 80 + row * 120
+        drawing.rectangle((20, top, 460, top + 90), outline="#888888", width=2)
+        drawing.text((36, top + 30), f"Entry {row}", fill="black")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_exact_match_honours_the_signature_tile_tolerance() -> None:
+    signature = build_state_visual_signature((_tolerance_sample(1),))
+    assert signature is not None
+    later = _tolerance_sample(2)
+
+    # The ordinary matcher scores this a perfect ratio, so demanding distance 0
+    # would reject a screen every other comparison accepts.
+    assert state_visual_match_ratio(later, signature) == 1.0
+    assert state_visual_match_is_exact(later, signature)

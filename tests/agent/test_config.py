@@ -87,6 +87,12 @@ def _configuration() -> dict[str, object]:
                 },
                 {
                     **profile,
+                    "profile_id": "screen-analyzer-primary",
+                    "role": "screen_analyzer",
+                    "model": "openrouter/configured/screen-analyzer",
+                },
+                {
+                    **profile,
                     "profile_id": "reconciler-primary",
                     "role": "replay_preparer",
                     "model": "openrouter/configured/reconciler",
@@ -105,6 +111,7 @@ def _configuration() -> dict[str, object]:
         "auditor_profile_id": "auditor-primary",
         "recovery_profile_id": "recovery-primary",
         "action_verifier_profile_id": "action-verifier-primary",
+        "screen_analyzer_profile_id": "screen-analyzer-primary",
         "replay_preparation_profile_id": "reconciler-primary",
     }
 
@@ -121,6 +128,7 @@ def test_loads_explicit_profiles_without_a_default_model(tmp_path: Path) -> None
     assert configuration.planner_profile_id == "planner-primary"
     assert configuration.recovery_profile_id == "recovery-primary"
     assert configuration.action_verifier_profile_id == "action-verifier-primary"
+    assert configuration.screen_analyzer_profile_id == "screen-analyzer-primary"
     assert configuration.replay_preparation_profile_id == "reconciler-primary"
     assert [profile.model for profile in configuration.model_profiles.profiles] == [
         "openrouter/configured/planner",
@@ -128,8 +136,30 @@ def test_loads_explicit_profiles_without_a_default_model(tmp_path: Path) -> None
         "openrouter/configured/auditor",
         "openrouter/configured/recovery",
         "openrouter/configured/action-verifier",
+        "openrouter/configured/screen-analyzer",
         "openrouter/configured/reconciler",
     ]
+
+
+def test_objective_only_task_preserves_absent_discovery_conditions(
+    tmp_path: Path,
+) -> None:
+    payload = _configuration()
+    payload["task"] = {"objective": "Create and reopen one record."}
+
+    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+
+    assert configuration.task.known_facts == ()
+    assert configuration.task.open_work == ()
+    assert configuration.task.completion_conditions == ()
+
+
+def test_normal_configuration_requires_the_screen_analyzer(tmp_path: Path) -> None:
+    payload = _configuration()
+    del payload["screen_analyzer_profile_id"]
+
+    with pytest.raises(YewoRunConfigurationError, match="screen_analyzer_profile_id"):
+        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
 
 
 def test_loads_an_optional_reusable_memory_root(tmp_path: Path) -> None:
@@ -247,6 +277,21 @@ def test_rejects_a_recovery_profile_that_cannot_receive_both_screenshots(
     images = recovery_profile["images"]
     assert isinstance(images, dict)
     images["max_images"] = 1
+
+    with pytest.raises(YewoRunConfigurationError, match="invalid"):
+        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+
+
+def test_rejects_a_grounding_fallback_whose_profile_is_not_a_grounder(tmp_path: Path) -> None:
+    payload = _configuration()
+    grounding_profile = payload["grounding_profile"]
+    assert isinstance(grounding_profile, dict)
+    grounding_profile["fallbacks"] = [
+        {
+            "model_profile_id": "planner-primary",
+            "coordinate_convention": "normalized_1000",
+        }
+    ]
 
     with pytest.raises(YewoRunConfigurationError, match="invalid"):
         load_yewo_run_configuration(_write_configuration(tmp_path, payload))

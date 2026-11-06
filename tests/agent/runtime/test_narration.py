@@ -34,7 +34,7 @@ def test_runtime_narrates_agent_decisions_actions_and_outcomes(tmp_path: Path) -
         )
 
     narration = (tmp_path / "runtime/yewo-session.log").read_text()
-    assert "device-agent: Starting task: Open the account form." in narration
+    assert "device-agent: Starting task: Open the record form." in narration
     assert "Step 1 requested a new planner decision." in narration
     assert "Step 1 decision: This is the next useful action" in narration
     assert "Step 1 planned tap on the add button." in narration

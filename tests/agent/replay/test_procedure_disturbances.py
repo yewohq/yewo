@@ -1,13 +1,19 @@
 """Fail-closed perturbations for compiler-approved procedure replay."""
 
 import json
+
+import pytest
+from pydantic import ValidationError
 from pathlib import Path
 
 from yewo.agent import AgentTerminalReason
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.actuation.diagnostics import ActionApplicationFailure
 from yewo.agent.planning.history import PlanningHistoryEntry
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.replay.procedure.execution import _procedure_terminal
 from yewo.agent.replay.procedure.records import (
     ProcedureReplayResult,
@@ -23,10 +29,15 @@ from yewo.devices.diagnostics import (
     ApplicationFailureKind,
 )
 from yewo.agent.runtime.application_state import observation_terminal
+from yewo.agent.runtime.records import AgentStep
 from yewo.observations import Observation
 
 from agent.discovery.support import agent_result
-from agent.replay.test_procedure_compiler import _evidence, _observations, _response
+from agent.replay.support import (
+    evidence as _evidence,
+    observations as _observations,
+    response as _response,
+)
 
 
 def _source() -> tuple[CompiledProcedureActionSource, ReplayProcedure]:
@@ -47,6 +58,58 @@ def _request(
         available_actions=frozenset(ActionKind),
         history=history,
     )
+
+
+def test_system_repair_boundary_requires_no_retained_action_identity() -> None:
+    observation = _observations()[0]
+    proposal = ActionProposal(
+        proposal_id="repair_boundary",
+        source_observation_id=observation.observation_id,
+        action=ActionKind.WAIT,
+        duration_seconds=0.1,
+        expected_outcome="A fresh observation is available.",
+        reason="Capture the repair boundary observation.",
+    )
+
+    step = AgentStep(
+        step_id="repair_step",
+        step_index=1,
+        source_observation_id=observation.observation_id,
+        proposal=proposal,
+        decision=PlannerDecisionMetadata(source=PlannerDecisionSource.SYSTEM),
+    )
+
+    assert step.decision.reused_procedure_step_ids == ()
+
+    with pytest.raises(ValidationError, match="retained evidence"):
+        AgentStep(
+            step_id="repair_step",
+            step_index=1,
+            source_observation_id=observation.observation_id,
+            proposal=proposal,
+            decision=PlannerDecisionMetadata(
+                source=PlannerDecisionSource.COMPILED_PROCEDURE,
+                reused_flow_id="procedure_1",
+            ),
+        )
+
+    with pytest.raises(ValidationError, match="retained evidence"):
+        step.model_copy(
+            update={
+                "decision": PlannerDecisionMetadata(
+                    source=PlannerDecisionSource.COMPILED_PROCEDURE,
+                    reused_flow_id="procedure_1",
+                )
+            }
+        ).model_validate(
+            step.model_dump(mode="python")
+            | {
+                "decision": {
+                    "source": PlannerDecisionSource.COMPILED_PROCEDURE.value,
+                    "reused_flow_id": "procedure_1",
+                }
+            }
+        )
 
 
 def _outcome_entry(
@@ -197,6 +260,32 @@ def test_successful_crash_relaunch_reenters_from_the_matching_screen() -> None:
     assert resumed.action is ActionKind.TAP
     assert source.decision_metadata().reused_segment_index == 0
     assert source.divergence is None
+
+
+def test_crash_relaunch_discards_pre_crash_completion_and_milestones() -> None:
+    evidence = _evidence()
+    procedure = compile_replay_procedure(evidence, _response(milestones={0: 1}))
+    assert isinstance(procedure, ReplayProcedure)
+    source = CompiledProcedureActionSource(procedure, evidence)
+    before, second = _advance_first_step(source)
+    assert len(source.milestones) == 1
+    relaunched = _observations()[0].model_copy(update={"observation_id": "relaunch_entry"})
+    feedback = _outcome_entry(second, before, relaunched).model_copy(
+        update={
+            "application_failure": ActionApplicationFailure(
+                classification=ApplicationDiagnosticClassification.APPLICATION_CRASH,
+                failure_kinds=(ApplicationFailureKind.CRASH,),
+                summary="The application crashed and was relaunched.",
+                recovery_succeeded=True,
+            )
+        }
+    )
+
+    resumed = source.plan(_request(relaunched, (feedback,)))
+
+    assert resumed.action is ActionKind.TAP
+    assert source.completed_step_count == 0
+    assert source.milestones == ()
 
 
 def test_mid_procedure_divergence_is_persisted_and_never_a_completion(

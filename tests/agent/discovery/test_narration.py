@@ -67,7 +67,7 @@ def test_discovery_narrates_coverage_verification_and_memory(
     trace = (tmp_path / "runtime/trace.log").read_text()
     assert "request=request_1 objectives=1" in trace
     assert "flow_lookup=miss reason=no_compatible_compiled_procedure" in trace
-    assert "objective=account_form coverage_state=supported" in trace
+    assert "objective=record_form coverage_state=supported" in trace
     assert "memory=" in trace
 
 
@@ -117,7 +117,7 @@ def test_procedure_replay_narration_separates_task_and_objective_coverage(
     assert "procedure_replay=completed" in trace
     assert "compiled_procedure_reusable=true" in trace
     assert "objectives_supported=0" in trace
-    assert "objective=account_form coverage_state=unresolved" in trace
+    assert "objective=record_form coverage_state=unresolved" in trace
 
 
 def test_compiled_discovery_narration_does_not_call_procedure_reuse_unresolved(

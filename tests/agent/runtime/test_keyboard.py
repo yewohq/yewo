@@ -127,7 +127,7 @@ class _RejectIncompatibleInput(RuntimeDevice):
         return super().type_focused_text(text)
 
 
-def test_unverified_text_target_reobserves_before_returning_to_planner(
+def test_pre_dispatch_text_rejection_is_not_dispatched(
     tmp_path: Path,
 ) -> None:
     planner = SequencePlanner(
@@ -154,15 +154,17 @@ def test_unverified_text_target_reobserves_before_returning_to_planner(
         _task(), _mode_policy(), NeverInterrupted()
     )
 
-    assert result.steps[0].receipt is not None
-    assert result.steps[0].receipt.disposition is DispatchDisposition.DISPATCH_UNVERIFIED
-    assert result.steps[0].outcome is not None
-    assert result.steps[0].settled_observation_id == "obs_3"
-    assert planner.requests[1].observation.observation_id == "obs_3"
-    assert planner.requests[1].history[0].outcome == result.steps[0].outcome
-    assert planner.requests[1].history[0].destination_screen is not None
+    receipt = result.steps[0].receipt
+    assert receipt is not None
+    assert receipt.disposition is DispatchDisposition.TARGET_REJECTED
+    assert receipt.reason == "The active field rejected text entry."
+    assert result.steps[0].outcome is None
+    assert result.steps[0].settled_observation_id is None
+    assert planner.requests[1].observation.observation_id == "obs_1"
+    assert planner.requests[1].history[0].receipt == result.steps[0].receipt
+    assert planner.requests[1].history[0].destination_screen is None
     assert [name for name, unused in device.calls] == []
-    assert result.usage.dispatched_actions == 1
+    assert result.usage.dispatched_actions == 0
 
 
 def test_rejected_input_returns_to_planner_and_allows_one_corrected_value(
@@ -173,7 +175,7 @@ def test_rejected_input_returns_to_planner_and_allows_one_corrected_value(
             proposal(
                 ActionKind.TYPE,
                 text=LiteralText(value="medium"),
-                target_expression="the focused Movement Speed numeric field",
+                target_expression="the focused numeric field",
             ),
             proposal(ActionKind.TYPE, text=LiteralText(value="5")),
             proposal(ActionKind.DONE),

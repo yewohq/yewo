@@ -59,6 +59,7 @@ class YewoAgent:
         replay_preparation_profile_id: str,
         scrub_text: Callable[[str], str],
         *,
+        screen_analyzer_profile_id: str | None = None,
         memory_root: Path | None = None,
         memory_store: AppMemoryStore | None = None,
         procedure_store: CompiledProcedureStore | None = None,
@@ -77,6 +78,7 @@ class YewoAgent:
         self._recovery_profile_id = recovery_profile_id
         self._action_verifier_profile_id = action_verifier_profile_id
         self._replay_preparation_profile_id = replay_preparation_profile_id
+        self._screen_analyzer_profile_id = screen_analyzer_profile_id
         self._scrub_text = scrub_text
         if memory_root is not None and memory_store is not None:
             raise ValueError("Configure a Yewo memory root or memory store, not both.")
@@ -135,6 +137,7 @@ class YewoAgent:
             self._planner_profile_id,
             recovery_profile_id=self._recovery_profile_id,
             action_verifier_profile_id=self._action_verifier_profile_id,
+            screen_analyzer_profile_id=self._screen_analyzer_profile_id,
             redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
         ).run(self._task, self._mode_policy, interruption)
@@ -201,6 +204,7 @@ class YewoAgent:
             self._replay_preparation_profile_id,
             self._memory_root,
             self._scrub_text,
+            screen_analyzer_profile_id=self._screen_analyzer_profile_id,
             redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
             memory_store=self._memory_store,

@@ -15,7 +15,12 @@ from yewo.agent.actuation import (
 from yewo.grounding import GroundedPoint, GroundedRegion, GroundingEvidence
 from yewo.observations import Observation
 from yewo.run_narration import current_narrator
-from yewo.agent.planning.planner import ActionProposalSource
+from yewo.agent.planning.planner import (
+    ActionProposalSource,
+)
+from yewo.agent.planning.records import (
+    PlanningFocusContext,
+)
 from yewo.agent.planning.evidence import (
     guard_planner_decision,
     PlannerDecisionMetadata,
@@ -177,13 +182,25 @@ def narrate_recovery_unavailable() -> None:
     trace("recovery_assessment=none disposition=unavailable")
 
 
+def narrate_planning_focus(focus: PlanningFocusContext | None) -> None:
+    """Record one bounded fresh planning request after no progress."""
+    if focus is None:
+        return
+    narrate(f"Focus mode started: {focus.reason}")
+    trace(
+        f"planning_focus={focus.focus_id} cause={focus.cause} "
+        f"prohibited_intents={len(focus.prohibited_interaction_intents)}"
+    )
+
+
 def narrate_recovery_credit(credit: RecoveryBudgetCredit) -> None:
     """Trace gross-to-effective allowance without changing provider usage."""
     if credit.assessment_id is None:
         return
     trace(
         f"recovery_credit assessment={credit.assessment_id} steps={credit.steps} "
-        f"planning={credit.planning_requests} grounding={credit.grounding_requests} "
+        f"planning={credit.planning_requests} analysis={credit.analysis_requests} "
+        f"grounding={credit.grounding_requests} "
         f"actions={credit.dispatched_actions} duration_seconds={credit.duration_seconds:.3f}"
     )
 
@@ -233,6 +250,20 @@ def trace_dispatch(step_index: int, receipt: DispatchReceipt) -> None:
     )
 
 
+def narrate_dispatched_step(
+    step_index: int,
+    observation: Observation,
+    outcome: ActionOutcome,
+    recovery_observation_id: str | None,
+    application_failure: ActionApplicationFailure | None,
+) -> None:
+    """Describe one dispatched step, its settled screen, and any recovery."""
+    narrate_observation(observation, label=f"Step {step_index}")
+    narrate_outcome(step_index, outcome)
+    narrate_recovery(step_index, recovery_observation_id)
+    narrate_application_failure(step_index, application_failure)
+
+
 def narrate_outcome(step_index: int, outcome: ActionOutcome) -> None:
     """Describe and index one deterministic action outcome."""
     signals = ", ".join(sorted(signal.value for signal in outcome.signals)) or "none"
@@ -255,6 +286,12 @@ def narrate_no_progress(message: str) -> None:
     trace(f"no_progress={message}")
 
 
+def narrate_no_progress_facts(progress_facts: tuple[str, ...]) -> None:
+    """Record each new deterministic no-progress advisory."""
+    for progress_fact in progress_facts:
+        narrate_no_progress(progress_fact)
+
+
 def narrate_application_failure(
     step_index: int,
     failure: ActionApplicationFailure | None,
@@ -263,10 +300,7 @@ def narrate_application_failure(
     if failure is None:
         return
     recovery = "succeeded" if failure.recovery_succeeded else "did not succeed"
-    narrate(
-        f"Step {step_index} application diagnostic: "
-        f"{failure.summary} Recovery {recovery}."
-    )
+    narrate(f"Step {step_index} application diagnostic: {failure.summary} Recovery {recovery}.")
 
 
 def narrate_verification(

@@ -265,13 +265,13 @@ def test_declared_value_is_resolved_only_during_dispatch() -> None:
     device = RecordingDevice()
     action = authorization(
         ActionKind.TYPE,
-        text=DeclaredValueReference(value_name="account_password"),
+        text=DeclaredValueReference(value_name="declared_secret"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
 
     receipt = ActionExecutor(
         device,
-        declared_value_resolver=lambda name: secret if name == "account_password" else "",
+        declared_value_resolver=lambda name: secret if name == "declared_secret" else "",
     ).dispatch(action)
 
     assert device.calls == [("type_focused_text", (secret,), {})]
@@ -284,7 +284,7 @@ def test_text_delivery_comparison_returns_only_secret_free_status() -> None:
     device = RecordingDevice()
     action = authorization(
         ActionKind.TYPE,
-        text=DeclaredValueReference(value_name="account_password"),
+        text=DeclaredValueReference(value_name="declared_secret"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
     executor = ActionExecutor(device, declared_value_resolver=lambda unused: secret)
@@ -339,14 +339,14 @@ def test_pending_text_can_be_discarded_without_device_comparison() -> None:
 def test_missing_declared_value_resolver_returns_safe_refusal() -> None:
     action = authorization(
         ActionKind.TYPE,
-        text=DeclaredValueReference(value_name="account_password"),
+        text=DeclaredValueReference(value_name="declared_secret"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
 
     receipt = ActionExecutor(RecordingDevice()).dispatch(action)
 
     assert receipt.disposition is DispatchDisposition.DEVICE_REFUSED
-    assert "account_password" not in receipt.model_dump_json()
+    assert "declared_secret" not in receipt.model_dump_json()
 
 
 def test_refusal_receipt_does_not_retry_or_retain_driver_detail() -> None:

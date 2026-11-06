@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+import json
 from enum import StrEnum
 from typing import Literal, Self
 
@@ -10,7 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from yewo.agent.actuation import ActionOutcomeDisposition, ActionOutcomeSignal, ActionProposal
 from yewo.agent.memory.knowledge import KnowledgeEvidenceReference
 from yewo.agent.replay.reconciliation.records import TargetVisualDescriptor
-from yewo.artifacts import EvidenceApplicationIdentity, RecordIdentifier
+from yewo.artifacts import (
+    EvidenceApplicationIdentity,
+    EvidenceDeviceIdentity,
+    RecordIdentifier,
+    Sha256Digest,
+)
+from yewo.devices.application_lifecycle import TrustedSystemSurface
 from yewo.grounding import GroundingEvidence
 
 
@@ -35,13 +43,12 @@ class ReconcilerClaimVerdict(BaseModel):
     reason: str = Field(min_length=1, max_length=2_000)
 
 
-class ReconcilerResponse(BaseModel):
-    """Untrusted model output that selects only recorded source steps."""
+class ReconcilerSelection(BaseModel):
+    """Model-authored source-step selection without transport identity."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
-    request_id: RecordIdentifier
+    completion_conditions: tuple[str, ...] = Field(min_length=1, max_length=100)
     procedure: tuple[int, ...] = Field(max_length=500)
     milestones: dict[int, int]
     decisions: tuple[ReconcilerDecision, ...] = Field(default=(), max_length=100)
@@ -59,6 +66,13 @@ class ReconcilerResponse(BaseModel):
         ):
             raise ValueError("A claim verdict cannot repeat a source step.")
         return self
+
+
+class ReconcilerResponse(ReconcilerSelection):
+    """A reconciler selection bound to one runtime request."""
+
+    schema_version: Literal[2] = 2
+    request_id: RecordIdentifier
 
 
 class CompilerCheck(StrEnum):
@@ -126,6 +140,40 @@ class ProcedureExpectation(BaseModel):
     source_outcome_disposition: ActionOutcomeDisposition | None = None
 
 
+class RuntimePermissionSetupRequirement(BaseModel):
+    """One discovery-proven Android permission transition required by replay."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    surface: Literal[TrustedSystemSurface.RUNTIME_PERMISSION] = (
+        TrustedSystemSurface.RUNTIME_PERMISSION
+    )
+    trigger_source_step: int = Field(gt=0)
+    interaction_source_step: int = Field(gt=0)
+    prompt_state_id: RecordIdentifier
+    return_state_id: RecordIdentifier
+
+
+class ProcedureSetupContract(BaseModel):
+    """Canonical discovery-derived prerequisites for one replay procedure."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reset_method: Literal["fresh_install"] = "fresh_install"
+    device: EvidenceDeviceIdentity
+    launch_state_id: RecordIdentifier
+    runtime_permissions: tuple[RuntimePermissionSetupRequirement, ...] = ()
+
+    def content_sha256(self) -> Sha256Digest:
+        """Return a stable identity for runtime setup evidence."""
+        encoded = json.dumps(
+            self.model_dump(mode="json"),
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return sha256(encoded).hexdigest()
+
+
 class ReplayProcedureStep(BaseModel):
     """One compiled action copied from source evidence without modification."""
 
@@ -158,13 +206,14 @@ class ReplayProcedure(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     visual_policy_version: Literal[1] = 1
     procedure_id: RecordIdentifier
     request_id: RecordIdentifier
     evidence_id: RecordIdentifier
     source_run_id: RecordIdentifier
     application: EvidenceApplicationIdentity
+    setup_contract: ProcedureSetupContract
     source_step_ids: tuple[RecordIdentifier, ...]
     steps: tuple[ReplayProcedureStep, ...]
     warnings: tuple[CompilationWarning, ...] = ()

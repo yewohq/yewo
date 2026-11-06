@@ -1,7 +1,5 @@
 """Planner context tests for action-scoped application failures."""
 
-import json
-
 from yewo.agent.actuation.diagnostics import ActionApplicationFailure
 from yewo.agent.actuation import (
     ActionKind,
@@ -19,10 +17,10 @@ from yewo.devices.diagnostics import (
 
 from agent.planning.support import (
     StubPlannerModel,
+    history_contexts,
     planner,
     planning_request,
     proposal_output,
-    user_context,
 )
 
 
@@ -62,9 +60,8 @@ def test_planner_receives_concise_recovered_application_failure() -> None:
 
     planner(model).plan(planning_request(history=(entry,)))
 
-    prompt, _ = user_context(model.requests[0])
-    context = json.loads(prompt.split("\n", 1)[1])
-    assert context["history"][0]["application_failure"] == {
+    history = history_contexts(model.requests[0])
+    assert history[0]["application_failure"] == {
         "classification": "application_crash",
         "summary": "The application crashed after Save.",
         "recovery_succeeded": True,

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Self, TypedDict
 import json
+from typing import Annotated, Self, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -20,14 +20,21 @@ from yewo.agent.actuation import (
 )
 from yewo.artifacts import RecordIdentifier
 from yewo.grounding import GroundedPoint, GroundingCorrection, GroundingEvidence, PixelPoint
+from yewo.models import TextModelContent
 from yewo.observations import Observation
 
 
+RECENT_PLANNING_HISTORY_LIMIT = 14
 EARLIER_HISTORY_SUMMARY_LIMIT = 20
 EARLIER_HISTORY_SUMMARY_CHARACTER_LIMIT = 6_000
 GROUNDING_CORRECTION_MINIMUM_DISTANCE_FRACTION = 0.02
 GROUNDING_CORRECTION_MINIMUM_DISTANCE_PX = 8
-ScreenFactText = Annotated[str, Field(min_length=1, max_length=1_000)]
+MAXIMUM_SCREEN_FACT_CHARACTERS = 1_000
+
+ScreenFactText = Annotated[
+    str,
+    Field(min_length=1, max_length=MAXIMUM_SCREEN_FACT_CHARACTERS),
+]
 
 
 class PlanningHistorySummary(TypedDict):
@@ -55,6 +62,9 @@ class PlanningScreenFact(BaseModel):
 
     screen: PlanningScreenReference
     fact: ScreenFactText
+    origin_proposal_id: RecordIdentifier | None = None
+    is_durable_constraint: bool = False
+    supersedes_recovery_guidance: bool = False
 
 
 class GroundedTargetPoint(BaseModel):
@@ -168,6 +178,20 @@ def planning_screen_reference(observation: Observation) -> PlanningScreenReferen
     )
 
 
+def grounding_correction_for_history(
+    proposal: ActionProposal,
+    history: list[PlanningHistoryEntry],
+) -> GroundingCorrection | None:
+    """Resolve one declared correction from trusted no-progress history."""
+    failed_proposal_id = proposal.grounding_correction_for_proposal_id
+    for entry in reversed(history):
+        if entry.proposal.proposal_id != failed_proposal_id:
+            continue
+        point = entry.grounded_target_point
+        return point.correction() if point is not None else None
+    return None
+
+
 def build_planning_history_entry(
     proposal: ActionProposal,
     outcome: ActionOutcome,
@@ -250,9 +274,7 @@ def planning_history_context(
             "source_screen": _screen_context(entry.source_screen),
             "destination_screen": _screen_context(entry.destination_screen),
             "action": proposal.action.value,
-            "grounding_correction_for_proposal_id": (
-                proposal.grounding_correction_for_proposal_id
-            ),
+            "grounding_correction_for_proposal_id": (proposal.grounding_correction_for_proposal_id),
             "interaction_refinement_for_proposal_id": (
                 proposal.interaction_refinement_for_proposal_id
             ),
@@ -273,6 +295,36 @@ def planning_history_context(
     if entry.grounded_target_point is not None:
         context["grounded_target_point"] = entry.grounded_target_point.model_dump(mode="json")
     return context
+
+
+def trusted_history_content(
+    history: tuple[PlanningHistoryEntry, ...],
+    *,
+    include_text: bool = True,
+) -> tuple[TextModelContent, ...]:
+    """Summarise older evidence first, then one byte-stable block per recent step."""
+    older = history[:-RECENT_PLANNING_HISTORY_LIMIT]
+    recent = history[-RECENT_PLANNING_HISTORY_LIMIT:]
+    blocks: list[TextModelContent] = []
+    if older:
+        blocks.append(
+            TextModelContent(
+                text="Earlier history summary:\n"
+                + json.dumps(planning_history_summary(older), sort_keys=True, separators=(",", ":"))
+            )
+        )
+    blocks.extend(
+        TextModelContent(
+            text="Trusted history event:\n"
+            + json.dumps(
+                planning_history_context(entry, include_text=include_text),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        for entry in recent
+    )
+    return tuple(blocks)
 
 
 def planning_history_summary(entries: tuple[PlanningHistoryEntry, ...]) -> PlanningHistorySummary:
@@ -377,9 +429,34 @@ def _screen_context(
     return context
 
 
+def correctable_grounding_proposals(
+    history: tuple[PlanningHistoryEntry, ...],
+) -> dict[str, tuple[str, str | None]]:
+    """Map each failed grounded target that still allows one correction attempt."""
+    corrected = {
+        entry.proposal.grounding_correction_for_proposal_id
+        for entry in history
+        if entry.proposal.grounding_correction_for_proposal_id is not None
+    }
+    return {
+        entry.proposal.proposal_id: (
+            entry.proposal.action.value,
+            entry.proposal.target_expression,
+        )
+        for entry in history
+        if entry.grounded_target_point is not None
+        and entry.proposal.grounding_correction_for_proposal_id is None
+        and entry.proposal.proposal_id not in corrected
+    }
+
+
 def planning_screen_fact_context(fact: PlanningScreenFact) -> dict[str, object]:
     """Render one screen-scoped fact without identifiers the planner cannot use."""
-    return {"screen": _screen_context(fact.screen), "fact": fact.fact}
+    return {
+        "screen": _screen_context(fact.screen),
+        "fact": fact.fact,
+        "supersedes_recovery_guidance": fact.supersedes_recovery_guidance,
+    }
 
 
 def _without_empty_values(context: dict[str, object]) -> dict[str, object]:
@@ -412,6 +489,7 @@ def _grounded_target_point(
 
 
 __all__ = [
+    "correctable_grounding_proposals",
     "EARLIER_HISTORY_SUMMARY_CHARACTER_LIMIT",
     "EARLIER_HISTORY_SUMMARY_LIMIT",
     "GroundedTargetPoint",

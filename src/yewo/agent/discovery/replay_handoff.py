@@ -131,14 +131,19 @@ def verify_goal_after_replay(
     discovery_milestones: tuple[GoalVerificationMilestone, ...] = (),
 ) -> GoalVerification:
     """Audit repair output with any completed procedure milestones."""
+    milestones = (
+        replay_goal_milestones(procedure_replay, observations_by_id) or discovery_milestones
+    )
+    if not objective.completion_conditions:
+        milestones = tuple(
+            item.model_copy(update={"completion_condition_index": None}) for item in milestones
+        )
     return verifier.verify(
         objective.objective_id,
         objective.statement,
         objective.completion_conditions,
         final_observation,
-        milestone_evidence=(
-            replay_goal_milestones(procedure_replay, observations_by_id) or discovery_milestones
-        ),
+        milestone_evidence=milestones,
     )
 
 

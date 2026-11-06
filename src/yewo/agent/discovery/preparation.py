@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from yewo.agent.memory.records import AppMemory, build_memory_compatibility
 from yewo.agent.composition import build_model_client
 from yewo.agent.discovery.records import DiscoveryRequest
-from yewo.agent.memory.store import AppMemoryStore
-from yewo.agent.planning.planner import TaskProgressContext
+from yewo.agent.memory.store import AppMemoryStore, load_discovery_memory
+from yewo.agent.planning.records import (
+    TaskProgressContext,
+)
 from yewo.agent.replay.procedure.preparation import (
     ReplayProcedureSelection,
     prepare_replay_procedure,
@@ -46,7 +48,7 @@ def prepare_compiled_procedure(
         context.application,
         context.workspace.start.request.application,
     )
-    memory = memory_store.load(compatibility)
+    memory = load_discovery_memory(memory_store, compatibility)
     procedure_preparation = prepare_replay_procedure(
         objective,
         compatibility,
@@ -87,7 +89,7 @@ def prepare_memory_identity(
         context.application,
         context.workspace.start.request.application,
     )
-    memory = memory_store.load(compatibility)
+    memory = load_discovery_memory(memory_store, compatibility)
     return DiscoveryPreparation(
         memory_id=memory.memory_id if memory is not None else None,
         progress_context=(

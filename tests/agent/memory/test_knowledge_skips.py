@@ -28,5 +28,7 @@ def test_negative_transition_duration_skips_only_timing(tmp_path: Path) -> None:
     )
 
     assert delta.timing == ()
-    assert len(delta.skipped_records) == 1
-    assert delta.skipped_records[0].record_kind == "timing"
+    assert {record.record_kind for record in delta.skipped_records} == {
+        "timing",
+        "control",
+    }

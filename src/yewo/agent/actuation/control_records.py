@@ -5,33 +5,28 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class VisibleControlKind(StrEnum):
-    """Coarse UI role reported by the action verifier."""
+class RequiredControlBasis(StrEnum):
+    """Trusted evidence that can make one visible control mandatory."""
 
-    TEXT_FIELD = "text_field"
-    TEXT = "text"
-    BUTTON = "button"
-    CHECKBOX = "checkbox"
-    RADIO_BUTTON = "radio_button"
-    SWITCH = "switch"
-    SLIDER = "slider"
-    DROPDOWN = "dropdown"
-    OPTION = "option"
-    LINK = "link"
-    TAB = "tab"
-    ROW = "row"
-    MENU_ITEM = "menu_item"
-    ICON = "icon"
-    OTHER = "other"
+    OBJECTIVE_OR_OPEN_WORK = "objective_or_open_work"
+    APPLICATION_REFUSAL = "application_refusal"
+    TRUSTED_INSTRUCTION = "trusted_instruction"
+    INPUT_CONTRACT = "input_contract"
 
 
-class VisibleControl(BaseModel):
-    """One visible control description. It is knowledge, not completion proof."""
+class UnresolvedControl(BaseModel):
+    """One unresolved condition tied to a reported visible control."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    name: str = Field(min_length=1, max_length=200)
-    kind: VisibleControlKind
-    state: str | None = Field(default=None, min_length=1, max_length=200)
-    options: tuple[str, ...] = Field(default=(), max_length=100)
-    matches_proposal_target: bool = False
+    control_name: str = Field(min_length=1, max_length=200)
+    required_by: RequiredControlBasis
+    requirement_evidence: str = Field(
+        min_length=1,
+        max_length=4_000,
+        description=(
+            "An exact objective, open-work item, trusted instruction, application-feedback "
+            "reason, or declared input name copied from the verifier context."
+        ),
+    )
+    reason: str = Field(min_length=1, max_length=500)

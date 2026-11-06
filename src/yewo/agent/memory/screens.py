@@ -22,7 +22,13 @@ from yewo.agent.memory.records import (
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.narration import narrate_memory_eviction
 from yewo.agent.memory.references import referenced_memory_observation_ids
-from yewo.agent.planning.planner import ActionProposalSource, PlanningRequest, TaskProgressContext
+from yewo.agent.planning.planner import (
+    ActionProposalSource,
+)
+from yewo.agent.planning.records import (
+    PlanningRequest,
+    TaskProgressContext,
+)
 from yewo.agent.planning.evidence import (
     PlannerDecisionMetadata,
     resolve_planner_decision_metadata,
@@ -58,18 +64,16 @@ class AppMemoryActionSource:
 
     def plan(self, request: PlanningRequest) -> ActionProposal:
         """Delegate with bounded historical hints for the matching screen."""
-        progress = request.progress_context or TaskProgressContext(
-            remaining_work=request.open_work
-        )
+        progress = request.progress_context or TaskProgressContext(remaining_work=request.open_work)
         memory_facts = memory_planning_facts(
             self._memory,
             request.observation,
             self._grounding_profile,
         )
         _narrate_planner_memory(request.observation, len(memory_facts))
-        historical_facts = tuple(
-            dict.fromkeys((*progress.historical_memory_facts, *memory_facts))
-        )[:20]
+        historical_facts = tuple(dict.fromkeys((*progress.historical_memory_facts, *memory_facts)))[
+            :20
+        ]
         return self._source.plan(
             request.model_copy(
                 update={
@@ -87,6 +91,10 @@ class AppMemoryActionSource:
     def decision_metadata(self) -> PlannerDecisionMetadata:
         """Preserve the evidence provenance selected by the delegated source."""
         return resolve_planner_decision_metadata(self._source)
+
+    def delegate_source(self) -> object:
+        """Expose the wrapped source so capability protocols survive the wrapper."""
+        return self._source
 
 
 def _narrate_planner_memory(observation: Observation, fact_count: int) -> None:

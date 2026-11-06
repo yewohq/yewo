@@ -19,7 +19,9 @@ from yewo.agent.actuation import (
     ActionProposal,
     ActionRefusalCode,
 )
-from yewo.agent.planning.planner import (
+from yewo.agent.planning.records import (
+    PlanningFocusCause,
+    PlanningFocusContext,
     PlanningRequest,
     ProgressRouteAttempt,
     TaskProgressContext,
@@ -27,6 +29,14 @@ from yewo.agent.planning.planner import (
 from yewo.agent.planning.history import PlanningHistoryEntry, planning_screen_reference
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.models import MINIMUM_COMPLETION_TOKENS, ModelRole, TextModelContent
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    ScreenElement,
+    ScreenElementConfidence,
+    ScreenElementKind,
+    ScreenSemanticRole,
+    ScreenVisualKind,
+)
 
 from agent.discovery.support import observation
 from agent.planning.support import StubPlannerModel
@@ -50,8 +60,8 @@ def _request() -> PlanningRequest:
         proposal_id="dropdown_proposal",
         source_observation_id=source.observation_id,
         action=ActionKind.TAP,
-        target_expression="the Trainings Type dropdown",
-        expected_outcome="The available training types become visible.",
+        target_expression="the Category dropdown",
+        expected_outcome="The available record types become visible.",
         reason="Inspect the dropdown choices.",
     )
     dropdown_outcome = ActionOutcome(
@@ -69,9 +79,9 @@ def _request() -> PlanningRequest:
     )
     return PlanningRequest(
         observation=observation("obs_1", "1111111111111111"),
-        objective="Discover how to create a schedule.",
-        open_work=("Exercise every relevant visible field.",),
-        completion_conditions=("The saved schedule can be reopened.",),
+        objective="Discover how to create a record.",
+        open_work=("Cover every relevant visible field.",),
+        completion_conditions=("The saved record can be reopened.",),
         available_actions=frozenset({ActionKind.TAP}),
         history=(
             PlanningHistoryEntry(
@@ -84,24 +94,60 @@ def _request() -> PlanningRequest:
     )
 
 
+def _analysis(request: PlanningRequest) -> CurrentScreenAnalysis:
+    observed = request.observation
+    return CurrentScreenAnalysis(
+        analysis_id="analysis-1",
+        observation_id=observed.observation_id,
+        screen_fingerprint=observed.screen_fingerprint.value,
+        screenshot_sha256=observed.redacted_screenshot.sha256,
+        platform_context=observed.platform_context,
+        keyboard_visible=observed.keyboard_visible,
+        orientation=observed.orientation,
+        elements=(
+            ScreenElement(
+                element_ref="section-heading",
+                name="Section heading",
+                kind=ScreenElementKind(
+                    visual=ScreenVisualKind.TEXT,
+                    semantic=ScreenSemanticRole.LABEL,
+                ),
+                confidence=ScreenElementConfidence.HIGH,
+                evidence="Visible section text.",
+            ),
+            ScreenElement(
+                element_ref="primary-field",
+                name="Primary field",
+                kind=ScreenElementKind(
+                    visual=ScreenVisualKind.INPUT_SURFACE,
+                    semantic=ScreenSemanticRole.TEXT_FIELD,
+                ),
+                confidence=ScreenElementConfidence.HIGH,
+                evidence="Visible editable field.",
+            ),
+        ),
+    )
+
+
 def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() -> None:
+    request = _request().model_copy(
+        update={"open_work": ("Complete Primary field before saving.",)}
+    )
+    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
     model = StubPlannerModel(
         {
-            "verification_id": "verification_1",
-            "proposal_id": "proposal_1",
             "disposition": "refuse",
             "reason": "The action would leave visible discovery work unresolved.",
-            "unresolved_controls": ["The visible Heart field has not been exercised."],
-            "visible_controls": [
+            "unresolved_controls": [
                 {
-                    "name": "Heart",
-                    "kind": "text_field",
-                    "state": "empty",
-                    "matches_proposal_target": True,
+                    "control_name": "Primary field",
+                    "required_by": "objective_or_open_work",
+                    "requirement_evidence": "Complete Primary field before saving.",
+                    "reason": "The visible field has not been exercised.",
                 }
             ],
             "completed_work_items": [],
-            "proposal_work_item": "Exercise every relevant visible field.",
+            "proposal_work_item": "Complete Primary field before saving.",
             "restarts_completed_work_item": None,
         }
     )
@@ -112,37 +158,83 @@ def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() ->
         identifier_factory=lambda: next(identifiers),
     )
 
-    assessment = verifier.verify(_request(), _proposal())
+    assessment = verifier.verify(request, _proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.REFUSE
     assert assessment.refusal() is not None
-    assert assessment.visible_controls[0].name == "Heart"
-    assert assessment.visible_controls[0].matches_proposal_target is True
     assert model.requests[0].role is ModelRole.ACTION_VERIFIER
     assert model.requests[0].profile_id == "action-verifier-primary"
     assert model.requests[0].max_completion_tokens == ACTION_VERIFIER_MAX_COMPLETION_TOKENS
-    assert model.validation_contexts[0] == {
-        "allowed_work_items": ("Exercise every relevant visible field.",),
-        "completed_work_items": (),
-    }
+    validation_context = model.validation_contexts[0]
+    assert validation_context is not None
+    assert validation_context["allowed_work_items"] == (
+        "Complete Primary field before saving.",
+    )
+    requirement_evidence = validation_context["required_control_evidence"]
+    assert isinstance(requirement_evidence, dict)
+    assert requirement_evidence["Primary field"]["objective_or_open_work"] == (
+        "Complete Primary field before saving.",
+    )
     assert ACTION_VERIFIER_MAX_COMPLETION_TOKENS == MINIMUM_COMPLETION_TOKENS
-    user_content = model.requests[0].messages[1].content[0]
-    assert isinstance(user_content, TextModelContent)
-    context = json.loads(user_content.text.split("Context JSON follows:\n", 1)[1])
-    assert context["recent_history"][0]["target_expression"] == ("the Trainings Type dropdown")
-    assert context["recent_history"][0]["feedback"]["disposition"] == "observed"
+    assert model.requests[0].messages[1].cache_prefix_end
+    assert model.requests[0].messages[2].cache_prefix_end is False
+    history_content = model.requests[0].messages[2].content[0]
+    assert isinstance(history_content, TextModelContent)
+    history = json.loads(history_content.text.split("\n", 1)[1])
+    assert history["target_expression"] == "the Category dropdown"
+    assert history["feedback"]["disposition"] == "observed"
+
+
+def test_action_verifier_receives_the_planners_exact_no_progress_constraints() -> None:
+    focus = PlanningFocusContext(
+        focus_id="focus-1",
+        cause=PlanningFocusCause.SCREEN_NO_PROGRESS,
+        reason="The screen did not advance.",
+        unresolved_work=("Cover every relevant visible field.",),
+        prohibited_interaction_intents=("tap|ref:save-control||||",),
+    )
+    request = _request().model_copy(update={"planning_focus": focus})
+    model = StubPlannerModel(
+        {
+            "disposition": "allow",
+            "reason": "The proposal follows a different route.",
+            "unresolved_controls": [],
+            "completed_work_items": [],
+            "proposal_work_item": "Cover every relevant visible field.",
+            "restarts_completed_work_item": None,
+        }
+    )
+    identifiers = iter(("verification_1", "request_1"))
+
+    ModelActionVerifier(
+        model,
+        "action-verifier-primary",
+        identifier_factory=identifiers.__next__,
+    ).verify(request, _proposal())
+
+    current = model.requests[0].messages[2].content[-2]
+    assert isinstance(current, TextModelContent)
+    context = json.loads(current.text.split("Current verification context:\n", 1)[1])
+    assert context["planning_focus"]["prohibited_interaction_intents"] == [
+        "tap|ref:save-control||||"
+    ]
 
 
 def test_action_verifier_fails_closed_on_invalid_allow_response() -> None:
     model = StubPlannerModel(
         {
-            "verification_id": "verification_1",
-            "proposal_id": "proposal_1",
             "disposition": "allow",
             "reason": "The action is safe.",
-            "unresolved_controls": ["A field is unresolved."],
+            "unresolved_controls": [
+                {
+                    "control_name": "Missing field",
+                    "required_by": "objective_or_open_work",
+                    "requirement_evidence": "Cover every relevant visible field.",
+                    "reason": "It is unresolved.",
+                }
+            ],
             "completed_work_items": [],
-            "proposal_work_item": "Exercise every relevant visible field.",
+            "proposal_work_item": "Cover every relevant visible field.",
             "restarts_completed_work_item": None,
         }
     )
@@ -162,9 +254,110 @@ def test_action_verifier_fails_closed_on_invalid_allow_response() -> None:
     assert refusal.code is ActionRefusalCode.VERIFICATION_UNAVAILABLE
 
 
+def test_action_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> None:
+    model = StubPlannerModel(
+        {
+            "disposition": "refuse",
+            "reason": "The section heading remains unresolved.",
+            "unresolved_controls": [
+                {
+                    "control_name": "Section heading",
+                    "required_by": "objective_or_open_work",
+                    "requirement_evidence": "Cover every relevant visible field.",
+                    "reason": "No value is visible.",
+                }
+            ],
+            "completed_work_items": [],
+            "proposal_work_item": "Cover every relevant visible field.",
+            "restarts_completed_work_item": None,
+        }
+    )
+    request = _request()
+    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    identifiers = iter(("verification_1", "request_1"))
+
+    assessment = ModelActionVerifier(
+        model,
+        "action-verifier-primary",
+        identifier_factory=lambda: next(identifiers),
+    ).verify(request, _proposal())
+
+    assert assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
+    validation_context = model.validation_contexts[0]
+    assert validation_context is not None
+    assert validation_context["interactive_control_names"] == ("Primary field",)
+    current_content = model.requests[0].messages[2].content[-2]
+    assert isinstance(current_content, TextModelContent)
+    context = json.loads(current_content.text.split("\n", 1)[1])
+    assert context["current_screen_analysis"]["analysis_id"] == "analysis-1"
+
+
+def test_action_verifier_rejects_control_agnostic_requirement_claim() -> None:
+    request = _request()
+    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    model = StubPlannerModel(
+        {
+            "disposition": "refuse",
+            "reason": "Every visible field must be completed.",
+            "unresolved_controls": [
+                {
+                    "control_name": "Primary field",
+                    "required_by": "objective_or_open_work",
+                    "requirement_evidence": "Every visible field must be completed.",
+                    "reason": "The visible field is empty.",
+                }
+            ],
+            "completed_work_items": [],
+            "proposal_work_item": "Cover every relevant visible field.",
+            "restarts_completed_work_item": None,
+        }
+    )
+    identifiers = iter(("verification_1", "request_1"))
+
+    assessment = ModelActionVerifier(
+        model,
+        "action-verifier-primary",
+        identifier_factory=identifiers.__next__,
+    ).verify(request, _proposal())
+
+    assert assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
+
+
+def test_action_verifier_accepts_input_contract_as_a_producible_requirement_basis() -> None:
+    request = _request().model_copy(update={"declared_value_names": ("primary_field",)})
+    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    model = StubPlannerModel(
+        {
+            "disposition": "refuse",
+            "reason": "The declared primary input is unresolved.",
+            "unresolved_controls": [
+                {
+                    "control_name": "Primary field",
+                    "required_by": "input_contract",
+                    "requirement_evidence": "primary_field",
+                    "reason": "The declared input has not been entered.",
+                }
+            ],
+            "completed_work_items": [],
+            "proposal_work_item": "Cover every relevant visible field.",
+            "restarts_completed_work_item": None,
+        }
+    )
+    identifiers = iter(("verification_1", "request_1"))
+
+    assessment = ModelActionVerifier(
+        model,
+        "action-verifier-primary",
+        identifier_factory=identifiers.__next__,
+    ).verify(request, _proposal())
+
+    assert assessment.disposition is ActionReadinessDisposition.REFUSE
+    assert assessment.unresolved_controls[0].required_by.value == "input_contract"
+
+
 def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
-    create = "Create and save one reusable training schedule."
-    reopen = "Return to the saved schedule and establish that it can be repeated or updated."
+    create = "Create and save one reusable record."
+    reopen = "Return to the saved record and establish that it can be repeated or updated."
     request = _request().model_copy(
         update={
             "open_work": (reopen,),
@@ -175,25 +368,21 @@ def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
                     ProgressRouteAttempt(
                         step_index=4,
                         work_item=create,
-                        source_context="ScheduleList",
+                        source_context="RecordList",
                         action=ActionKind.TAP,
-                        target="the floating add button",
-                        destination_context="ScheduleEditor",
+                        target="the visible create control",
+                        destination_context="RecordEditor",
                         outcome="observed",
                     ),
                 ),
             ),
         }
     )
-    candidate = _proposal().model_copy(
-        update={"target_expression": "the floating add button"}
-    )
+    candidate = _proposal().model_copy(update={"target_expression": "the visible create control"})
     model = StubPlannerModel(
         {
-            "verification_id": "verification_1",
-            "proposal_id": candidate.proposal_id,
             "disposition": "refuse",
-            "reason": "This route opens a new schedule editor.",
+            "reason": "This route opens a new record editor.",
             "unresolved_controls": [],
             "completed_work_items": [create],
             "proposal_work_item": reopen,
@@ -213,12 +402,17 @@ def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
     assert refusal is not None
     assert refusal.code is ActionRefusalCode.COMPLETED_WORK_REGRESSION
     assert assessment.restarts_completed_work_item == create
-    user_content = model.requests[0].messages[1].content[0]
-    assert isinstance(user_content, TextModelContent)
-    context = json.loads(user_content.text.split("Context JSON follows:\n", 1)[1])
-    assert context["progress_context"]["route_attempts"][0]["target"] == (
-        "the floating add button"
+    user_content = next(
+        content
+        for content in model.requests[0].messages[2].content
+        if isinstance(content, TextModelContent)
+        and content.text.startswith("Current verification context:")
     )
+    context = json.loads(user_content.text.split("Current verification context:\n", 1)[1])
+    assert context["progress_context"]["route_attempts"][0]["target"] == ("the visible create control")
+    assert "remaining_work" not in context["progress_context"]
+    assert "interaction_intent_key" not in context["progress_context"]["route_attempts"][0]
+    assert "source_screen_fingerprint" not in context["progress_context"]["route_attempts"][0]
 
 
 def test_action_verifier_requires_an_exact_work_item_for_correction() -> None:
@@ -241,4 +435,87 @@ def test_action_verifier_requires_an_exact_work_item_for_correction() -> None:
                 "allowed_work_items": (work_item,),
                 "completed_work_items": (),
             },
+        )
+
+
+def test_action_verifier_does_not_treat_recovery_guidance_as_task_work() -> None:
+    work_item = "Create and save one reusable record."
+    recovery_step = "Refill fields lost after the application crash."
+    request = _request().model_copy(
+        update={
+            "open_work": (work_item,),
+            "progress_context": TaskProgressContext(remaining_work=(recovery_step,)),
+        }
+    )
+    model = StubPlannerModel(
+        {
+            "disposition": "allow",
+            "reason": "Continue the canonical task through the recovery route.",
+            "unresolved_controls": [],
+            "completed_work_items": [],
+            "proposal_work_item": work_item,
+            "restarts_completed_work_item": None,
+        }
+    )
+    identifiers = iter(("verification_1", "request_1"))
+    verifier = ModelActionVerifier(
+        model,
+        "action-verifier-primary",
+        identifier_factory=lambda: next(identifiers),
+    )
+
+    verifier.verify(request, _proposal())
+
+    validation_context = model.validation_contexts[0]
+    assert validation_context is not None
+    assert validation_context["allowed_work_items"] == (work_item,)
+
+
+def test_action_verifier_rejects_unresolved_control_without_analyzed_evidence() -> None:
+    payload = {
+        "verification_id": "verification_1",
+        "proposal_id": "proposal_1",
+        "disposition": "refuse",
+        "reason": "The workflow is incomplete.",
+        "unresolved_controls": [
+            {
+                "control_name": "Unreported control",
+                "required_by": "objective_or_open_work",
+                "requirement_evidence": "Complete the workflow.",
+                "reason": "No value is visible.",
+            }
+        ],
+        "completed_work_items": [],
+        "proposal_work_item": None,
+        "restarts_completed_work_item": None,
+    }
+
+    with pytest.raises(ValidationError, match="analyzed interactive control"):
+        ActionReadinessAssessment.model_validate(
+            payload, context={"interactive_control_names": ()}
+        )
+
+
+def test_action_verifier_rejects_noninteractive_unresolved_evidence() -> None:
+    payload = {
+        "verification_id": "verification_1",
+        "proposal_id": "proposal_1",
+        "disposition": "refuse",
+        "reason": "The workflow is incomplete.",
+        "unresolved_controls": [
+            {
+                "control_name": "Section title",
+                "required_by": "objective_or_open_work",
+                "requirement_evidence": "Complete the workflow.",
+                "reason": "No value is visible.",
+            }
+        ],
+        "completed_work_items": [],
+        "proposal_work_item": None,
+        "restarts_completed_work_item": None,
+    }
+
+    with pytest.raises(ValidationError, match="analyzed interactive control"):
+        ActionReadinessAssessment.model_validate(
+            payload, context={"interactive_control_names": ("Quantity",)}
         )

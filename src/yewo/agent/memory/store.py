@@ -37,10 +37,14 @@ class AppMemoryStoreError(RuntimeError):
     """Reusable app memory could not be read or persisted safely."""
 
 
+class AppMemorySchemaError(AppMemoryStoreError):
+    """An app-memory snapshot uses an unsupported persisted schema."""
+
+
 class _MemoryEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = Field(default=1, ge=1, le=1)
+    schema_version: int = Field(default=2, ge=2, le=2)
     memory_sha256: Sha256Digest
     memory: AppMemory
 
@@ -186,10 +190,22 @@ def _validate_supported_schema(payload: object) -> None:
     envelope_version = payload.get("schema_version")
     memory = payload.get("memory")
     memory_version = memory.get("schema_version") if isinstance(memory, dict) else None
-    if envelope_version != 1 or memory_version != 1:
-        raise AppMemoryStoreError(
+    if envelope_version != 2 or memory_version != 2:
+        raise AppMemorySchemaError(
             "The app-memory schema is unsupported. Rebuild memory with this Yewo version."
         )
+
+
+def load_discovery_memory(
+    store: AppMemoryStore,
+    compatibility: MemoryCompatibility,
+) -> AppMemory | None:
+    """Load supported memory, or ignore a snapshot that requires rebuilding."""
+    try:
+        return store.load(compatibility)
+    except AppMemorySchemaError:
+        _narrate_unsupported_memory()
+        return None
 
 
 def _without_legacy_target_rejections(memory: AppMemory) -> tuple[AppMemory, int]:
@@ -411,6 +427,17 @@ def _narrate_memory_load(memory: AppMemory | None, legacy_attempt_count: int = 0
         f"transitions={len(memory.transitions)} "
         f"invalidated_legacy_target_rejections={legacy_attempt_count}",
     )
+
+
+def _narrate_unsupported_memory() -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    narrator.record(
+        "agent-memory",
+        "Ignored incompatible application memory. Rebuild memory with this Yewo version.",
+    )
+    narrator.trace("agent-memory", "load=unsupported")
 
 
 def _narrate_memory_save(memory: AppMemory) -> None:

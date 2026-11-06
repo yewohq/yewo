@@ -4,11 +4,18 @@ from collections.abc import Callable
 
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.planning.evidence import (
+    resolve_planning_model_request_count,
     PlannerDecisionMetadata,
     PlannerDecisionSource,
     resolve_planner_decision_metadata,
 )
-from yewo.agent.planning.planner import ActionProposalSource, PlanningRequest
+from yewo.agent.planning.planner import (
+    ActionProposalSource,
+    ActionVerificationContext,
+)
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.replay.procedure.grounding import ProcedureGroundingMatch
 from yewo.agent.replay.procedure.records import (
     MilestoneEvidence,
@@ -67,6 +74,8 @@ class BoundedProcedureRepairActionSource:
         self._rejoined_observation_id: str | None = None
         self._keyboard_repair_stage = 0
         self._repair_reason = "Procedure repair has not started."
+        self._last_repair_request: PlanningRequest | None = None
+        self._repair_history_start_index = 0
         self._last_metadata = PlannerDecisionMetadata(
             source=PlannerDecisionSource.COMPILED_PROCEDURE,
             reused_flow_id=procedure_source.procedure_id,
@@ -162,6 +171,7 @@ class BoundedProcedureRepairActionSource:
     def plan(self, request: PlanningRequest) -> ActionProposal:
         """Run compiled work and repair each divergence within the shared limit."""
         self._last_model_call_count = 0
+        self._last_repair_request = None
         environment_action = self._plan_environment_action(request)
         if environment_action is not None:
             return environment_action
@@ -179,6 +189,7 @@ class BoundedProcedureRepairActionSource:
             return self._stop(request, "Procedure repair exhausted its total action limit.")
         self._target = target
         self._repair_active = True
+        self._repair_history_start_index = len(request.history)
         self._attempt_start_action_count = self._repair_action_count
         self._attempt_start_model_call_count = self._repair_model_call_count
         self._rejoined_observation_id = None
@@ -203,6 +214,33 @@ class BoundedProcedureRepairActionSource:
         """Return actual model calls consumed by the most recent plan operation."""
         return self._last_model_call_count
 
+    def declines_planning_focus(self) -> bool:
+        """Decline focus while repairing: the focus prompt drops repair history."""
+        return self._repair_active
+
+    def requires_screen_analysis(self) -> bool:
+        """Use semantic perception only during bounded procedure repair."""
+        return self._repair_active
+
+    def action_verification_context(
+        self,
+        default_request: PlanningRequest,
+    ) -> ActionVerificationContext:
+        """Verify planner repairs against their rejoin target, not global discovery."""
+        if self._last_repair_request is None:
+            return ActionVerificationContext(request=default_request)
+        return ActionVerificationContext(
+            request=self._last_repair_request.model_copy(
+                update={
+                    "history": self._last_repair_request.history[
+                        self._repair_history_start_index :
+                    ],
+                    "open_work": (),
+                }
+            ),
+            assess_task_progress=False,
+        )
+
     def grounding_match(self, request: GroundingRequest) -> ProcedureGroundingMatch | None:
         """Expose compiled grounding only for a pending procedure action."""
         return self._procedure_source.grounding_match(request)
@@ -222,9 +260,13 @@ class BoundedProcedureRepairActionSource:
             self._last_metadata = PlannerDecisionMetadata(source=PlannerDecisionSource.SYSTEM)
             return keyboard_action
         repair_request = self._repair_request(request)
-        self._last_model_call_count = self._pending_model_call_count
-        self._repair_model_call_count += self._last_model_call_count
+        self._last_repair_request = repair_request
         proposal = self._repair_source.plan(repair_request)
+        self._last_model_call_count = resolve_planning_model_request_count(
+            self._repair_source,
+            self._pending_model_call_count,
+        )
+        self._repair_model_call_count += self._last_model_call_count
         if proposal.action in {ActionKind.DONE, ActionKind.CANNOT_PROGRESS}:
             self._repair_reason = "The repair planner did not provide another device action."
             return self._stop(request, self._repair_reason)
@@ -325,6 +367,8 @@ class BoundedProcedureRepairActionSource:
                 "completion_conditions": (
                     "The compiled procedure rejoin guard accepts the current screen.",
                 ),
+                "screen_facts": (),
+                "progress_context": None,
                 "discovery_mode": True,
             }
         )
@@ -367,6 +411,11 @@ class BoundedProcedureRepairActionSource:
     ) -> ActionProposal | None:
         surface = self._trusted_system_surface(request)
         if surface is None:
+            return None
+        if (
+            not self._repair_active
+            and self._procedure_source.accepts_expected_system_surface(request.observation)
+        ):
             return None
         if self._repair_action_count >= self._maximum_total_actions:
             return self._stop(

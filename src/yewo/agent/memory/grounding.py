@@ -122,6 +122,7 @@ class AppMemoryGrounder:
             requested_model=grounding.requested_model,
             cached_transition_id=transition.transition_id,
             usage=ModelCallUsage(),
+            model_request_count=0,
         )
 
     def _lookup(
@@ -260,7 +261,8 @@ def _grounding_contract_invalidation_reason(
         return "writeback_invalidated"
     if (
         grounding.profile_id != profile.profile_id
-        or grounding.model_profile_id != profile.model_profile_id
+        or grounding.model_profile_id
+        not in {candidate.model_profile_id for candidate in profile.candidates}
     ):
         return "grounding_profile_changed"
     if grounding.location.kind != request.output_shape.value:

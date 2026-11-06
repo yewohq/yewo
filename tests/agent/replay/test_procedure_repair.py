@@ -7,7 +7,10 @@ from yewo.agent.actuation import ActionKind, ActionProposal, LiteralText
 from yewo.agent.planning.history import PlanningHistoryEntry
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.planning.goal_verifier import GoalVerification
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+    TaskProgressContext,
+)
 from yewo.agent.replay.procedure.execution import _can_audit_replay, _procedure_terminal
 from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
 from yewo.agent.replay.procedure.records import ProcedureDivergence, ProcedureRepairEvidence
@@ -17,12 +20,15 @@ from yewo.agent.replay.procedure.records import ProcedureRepairTarget
 from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
-from yewo.agent.runtime.records import AgentStep
 from yewo.grounding import GroundingRequest
 from yewo.observations import Observation
 
 from agent.discovery.support import agent_result
-from agent.replay.test_procedure_compiler import _evidence, _observations, _response
+from agent.replay.support import (
+    evidence as _evidence,
+    observations as _observations,
+    response as _response,
+)
 
 
 class RepairPlanner:
@@ -142,12 +148,15 @@ class KeyboardProcedureSource:
 
 
 def _repair_source(
-    *, maximum_actions: int = 8, maximum_total_actions: int | None = None
+    *,
+    maximum_actions: int = 8,
+    maximum_total_actions: int | None = None,
+    planner: RepairPlanner | None = None,
 ) -> tuple[BoundedProcedureRepairActionSource, RepairPlanner]:
     evidence = _evidence()
     procedure = compile_replay_procedure(evidence, _response())
     assert isinstance(procedure, ReplayProcedure)
-    planner = RepairPlanner()
+    planner = planner or RepairPlanner()
     source = BoundedProcedureRepairActionSource(
         CompiledProcedureActionSource(procedure, evidence),
         planner,
@@ -193,13 +202,22 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     source, planner = _repair_source()
     wrong = _observations()[-1]
 
+    assert not source.requires_screen_analysis()
     assert source.required_model_requests(_request(wrong)) == 0
     boundary = source.plan(_request(wrong))
     assert boundary.action is ActionKind.WAIT
     assert source.divergence is not None
+    assert source.requires_screen_analysis()
 
-    assert source.required_model_requests(_request(wrong)) == 1
-    repair_action = source.plan(_request(wrong))
+    outer_request = _request(wrong).model_copy(
+        update={
+            "progress_context": TaskProgressContext(
+                exhausted_branches=("Do not reopen Edit Record.",)
+            )
+        }
+    )
+    assert source.required_model_requests(outer_request) == 1
+    repair_action = source.plan(outer_request)
     assert repair_action.action is ActionKind.WAIT
     assert planner.requests[0].objective.startswith("Restore the application")
     assert any(
@@ -208,10 +226,17 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     )
     assert any("resumes with action=tap" in fact for fact in planner.requests[0].known_facts)
     assert source.last_planning_model_request_count() == 1
+    verification = source.action_verification_context(outer_request)
+    assert verification.request.objective.startswith("Restore the application")
+    assert verification.request.progress_context is None
+    assert verification.request.screen_facts == ()
+    assert verification.request.open_work == ()
+    assert not verification.assess_task_progress
 
     launch = _observations()[0]
     assert source.required_model_requests(_request(launch)) == 0
     replay_action = source.plan(_request(launch))
+    assert not source.requires_screen_analysis()
 
     assert replay_action.action is ActionKind.TAP
     assert source.decision_metadata().reused_segment_index == 0
@@ -503,28 +528,6 @@ def test_successful_repair_can_be_audited_and_complete() -> None:
         )
         is ProcedureReplayTerminal.COMPLETED
     )
-
-
-def test_system_repair_boundary_requires_no_retained_action_identity() -> None:
-    observation = _observations()[0]
-    proposal = ActionProposal(
-        proposal_id="repair_boundary",
-        source_observation_id=observation.observation_id,
-        action=ActionKind.WAIT,
-        duration_seconds=0.1,
-        expected_outcome="A fresh observation is available.",
-        reason="Capture the repair boundary observation.",
-    )
-
-    step = AgentStep(
-        step_id="repair_step",
-        step_index=1,
-        source_observation_id=observation.observation_id,
-        proposal=proposal,
-        decision=PlannerDecisionMetadata(source=PlannerDecisionSource.SYSTEM),
-    )
-
-    assert step.decision.source is PlannerDecisionSource.SYSTEM
 
 
 def test_keyboard_repair_target_explains_how_to_reset_focus() -> None:

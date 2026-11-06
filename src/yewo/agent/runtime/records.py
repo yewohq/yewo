@@ -27,7 +27,7 @@ from yewo.agent.planning.evidence import (
     PlannerDecisionSource,
 )
 from yewo.agent.recovery.records import RecoveryBudgetCredit
-from yewo.agent.runtime.control_evidence import VisibleControlObservation
+from yewo.agent.screen_analysis import CurrentScreenAnalysis
 from yewo.agent.runtime.limits import AgentModePolicy
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
@@ -73,7 +73,7 @@ class AgentTask(BaseModel):
     objective: TaskText
     known_facts: tuple[TaskText, ...] = Field(default=(), max_length=100)
     open_work: tuple[TaskText, ...] = Field(default=(), max_length=100)
-    completion_conditions: tuple[TaskText, ...] = Field(min_length=1, max_length=100)
+    completion_conditions: tuple[TaskText, ...] = Field(default=(), max_length=100)
     declared_value_names: tuple[RecordIdentifier, ...] = Field(default=(), max_length=100)
     targeted_type_available: bool = False
     discovery_mode: bool = False
@@ -228,27 +228,18 @@ class AgentResult(BaseModel):
     usage: AgentUsage
     recovery_budget_credit: RecoveryBudgetCredit = RecoveryBudgetCredit()
     steps: tuple[AgentStep, ...]
-    visible_control_observations: tuple[VisibleControlObservation, ...] = Field(
-        default=(), max_length=1_000
-    )
+    screen_analyses: tuple[CurrentScreenAnalysis, ...] = Field(default=(), max_length=1_000)
 
     @model_validator(mode="after")
     def _validate_recovery_credit(self) -> Self:
         credit = self.recovery_budget_credit
         usage = self.usage
-        credited = (
-            credit.steps,
-            credit.planning_requests,
-            credit.grounding_requests,
-            credit.dispatched_actions,
-        )
-        gross = (
-            usage.steps,
-            usage.planning_requests,
-            usage.grounding_requests,
-            usage.dispatched_actions,
-        )
-        if any(value > used for value, used in zip(credited, gross, strict=True)):
+        if (
+            credit.steps > usage.steps
+            or credit.planning_requests + credit.analysis_requests > usage.planning_requests
+            or credit.grounding_requests > usage.grounding_requests
+            or credit.dispatched_actions > usage.dispatched_actions
+        ):
             raise ValueError("Recovery budget credit cannot exceed gross usage.")
         return self
 

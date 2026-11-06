@@ -1,5 +1,11 @@
 """Milestone evidence derived from provisional discovery compilation."""
 
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from yewo.agent.memory.records import ScreenComparisonPolicy
 from yewo.agent.discovery.compilation_milestones import (
     DiscoveryCompilationMilestones,
 )
@@ -9,10 +15,16 @@ from yewo.agent.replay import (
     ProcedureCompilationStatus,
     compile_replay_procedure,
 )
-from yewo.models import ModelCallDisposition
+from yewo.agent.replay.reconciliation.store import (
+    EVIDENCE_DOCUMENT_PATH,
+    RECONCILER_RESPONSE_PATH,
+)
+from yewo.models import ModelCallDisposition, ModelClient
+
+from yewo.agent.discovery.records import DiscoveryResult
 
 from agent.discovery.support import observation
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def test_compiled_capture_becomes_goal_verification_milestone() -> None:
@@ -43,3 +55,105 @@ def test_compiled_capture_becomes_goal_verification_milestone() -> None:
     assert milestones[0].source_observation is source
     assert milestones[0].observation is captured
     assert tuple(action.procedure_index for action in milestones[0].supporting_actions) == (0, 1, 2)
+
+
+def test_valid_milestone_survives_unrelated_procedure_refusal() -> None:
+    evidence = _evidence()
+    response = _response(procedure=(1, 2, 3, 99), milestones={0: 3})
+    report = ProcedureCompilationReport(
+        source_run_id="run_1",
+        evidence_id=evidence.evidence_id,
+        request_id="request_1",
+        status=ProcedureCompilationStatus.COMPILER_REFUSED,
+        model_disposition=ModelCallDisposition.COMPLETED,
+        reason="The procedure selection was refused.",
+        compiler_refusal_reason_count=1,
+    )
+    compilation = DiscoveryCompilationMilestones(
+        report=report,
+        evidence=evidence,
+        response=response,
+    )
+    source = observation("obs_3", "bbbbbbbbbbbbbbbb")
+    captured = observation("obs_4", "aaaaaaaaaaaaaaaa")
+
+    milestones = compilation.goal_milestones({"obs_3": source, "obs_4": captured})
+
+    assert compilation.observation_ids() == {"obs_3", "obs_4"}
+    assert len(milestones) == 1
+    assert milestones[0].completion_condition_index == 0
+    assert tuple(action.procedure_index for action in milestones[0].supporting_actions) == (0, 1, 2)
+
+
+def test_unselected_current_run_milestone_remains_audit_evidence() -> None:
+    evidence = _evidence()
+    response = _response(procedure=(1, 2), milestones={0: 3})
+    report = ProcedureCompilationReport(
+        source_run_id="run_1",
+        evidence_id=evidence.evidence_id,
+        request_id="request_1",
+        status=ProcedureCompilationStatus.COMPILER_REFUSED,
+        model_disposition=ModelCallDisposition.COMPLETED,
+        reason="The procedure omitted one non-reusable milestone action.",
+        compiler_refusal_reason_count=1,
+    )
+    compilation = DiscoveryCompilationMilestones(
+        report=report,
+        evidence=evidence,
+        response=response,
+    )
+    source = observation("obs_3", "bbbbbbbbbbbbbbbb")
+    captured = observation("obs_4", "aaaaaaaaaaaaaaaa")
+
+    milestones = compilation.goal_milestones({"obs_3": source, "obs_4": captured})
+
+    assert len(milestones) == 1
+    assert tuple(action.step_index for action in milestones[0].supporting_actions) == (1, 2, 3)
+    assert tuple(action.procedure_index for action in milestones[0].supporting_actions) == (
+        0,
+        1,
+        None,
+    )
+
+
+def test_a_refused_compilation_retains_valid_audit_milestones(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yewo.agent.discovery import compilation_milestones as module
+
+    evidence = _evidence()
+    response = _response(procedure=(1, 2, 3, 99), milestones={0: 3})
+    refused = ProcedureCompilationReport(
+        source_run_id="run_1",
+        evidence_id=evidence.evidence_id,
+        request_id="request_1",
+        status=ProcedureCompilationStatus.COMPILER_REFUSED,
+        model_disposition=ModelCallDisposition.COMPLETED,
+        compiler_refusal_reason_count=1,
+        reason="The compiler refused a non-reusable step.",
+    )
+    monkeypatch.setattr(module, "compile_completed_discovery_run", lambda **kwargs: refused)
+    evidence_path = tmp_path / EVIDENCE_DOCUMENT_PATH
+    evidence_path.parent.mkdir(parents=True)
+    evidence_path.write_text(evidence.model_dump_json())
+    response_path = tmp_path / RECONCILER_RESPONSE_PATH
+    response_path.write_text(response.model_dump_json())
+
+    compilation = module.compile_discovery_milestones(
+        root=tmp_path,
+        run_id="run_1",
+        result=cast(DiscoveryResult, object()),
+        model_client=cast(ModelClient, object()),
+        model_profile_id="reconciler-primary",
+        comparison=ScreenComparisonPolicy(),
+    )
+
+    assert compilation.procedure is None
+    assert compilation.evidence == evidence
+    assert compilation.response == response
+    source = observation("obs_3", "bbbbbbbbbbbbbbbb")
+    captured = observation("obs_4", "aaaaaaaaaaaaaaaa")
+    milestones = compilation.goal_milestones({"obs_3": source, "obs_4": captured})
+    assert len(milestones) == 1
+    assert milestones[0].completion_condition_index == 0

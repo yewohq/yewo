@@ -46,6 +46,7 @@ class YewoRunConfiguration(BaseModel):
     recovery_profile_id: RecordIdentifier
     action_verifier_profile_id: RecordIdentifier
     replay_preparation_profile_id: RecordIdentifier
+    screen_analyzer_profile_id: RecordIdentifier
     memory_root: Path | None = None
     redaction_regions: tuple[RedactionRegion, ...] = ()
 
@@ -71,6 +72,7 @@ class YewoRunConfiguration(BaseModel):
             self.recovery_profile_id,
             self.action_verifier_profile_id,
             self.replay_preparation_profile_id,
+            self.screen_analyzer_profile_id,
         )
         return self
 
@@ -84,6 +86,7 @@ def validate_agent_configuration(
     recovery_profile_id: RecordIdentifier,
     action_verifier_profile_id: RecordIdentifier,
     replay_preparation_profile_id: RecordIdentifier,
+    screen_analyzer_profile_id: RecordIdentifier,
 ) -> None:
     """Validate model roles and grounding coverage shared by agent workflows."""
     try:
@@ -93,8 +96,10 @@ def validate_agent_configuration(
             recovery_profile_id, ModelRole.RECOVERY_ADVISOR
         )
         model_profiles.resolve(action_verifier_profile_id, ModelRole.ACTION_VERIFIER)
+        model_profiles.resolve(screen_analyzer_profile_id, ModelRole.SCREEN_ANALYZER)
         model_profiles.resolve(replay_preparation_profile_id, ModelRole.REPLAY_PREPARER)
-        model_profiles.resolve(grounding_profile.model_profile_id, ModelRole.GROUNDER)
+        for candidate in grounding_profile.candidates:
+            model_profiles.resolve(candidate.model_profile_id, ModelRole.GROUNDER)
     except LookupError as error:
         raise ValueError("The run references an incompatible model profile.") from error
     if recovery_profile.images.max_images < 2:
@@ -130,4 +135,11 @@ def load_yewo_run_configuration(path: Path) -> YewoRunConfiguration:
     try:
         return YewoRunConfiguration.model_validate(payload)
     except ValidationError as error:
+        if any(
+            issue["type"] == "missing" and issue["loc"] == ("screen_analyzer_profile_id",)
+            for issue in error.errors(include_input=False, include_url=False)
+        ):
+            raise YewoRunConfigurationError(
+                "The Yewo run configuration is missing screen_analyzer_profile_id."
+            ) from error
         raise YewoRunConfigurationError("The Yewo run configuration is invalid.") from error

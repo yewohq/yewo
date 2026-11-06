@@ -45,7 +45,7 @@ from yewo.agent.runtime.records import (
     AgentTerminalReason,
 )
 from yewo.applications import ApplicationInstallationChange
-from yewo.artifacts import EvidenceApplicationIdentity
+from yewo.artifacts import EvidenceApplicationIdentity, EvidenceDeviceIdentity
 from yewo.grounding import GroundingProfile, GroundingService, VisualGrounder
 from yewo.models import ModelClient, ModelImageConstraints
 from yewo.observations import (
@@ -70,6 +70,7 @@ def execute_compiled_procedure(
     recovery_profile_id: str | None = None,
     auditor_profile_id: str,
     action_verifier_profile_id: str | None = None,
+    screen_analyzer_profile_id: str | None = None,
     auditor_image_constraints: ModelImageConstraints | None = None,
     memory: AppMemory | None = None,
     redaction_regions: Sequence[RedactionRegion] = (),
@@ -136,6 +137,7 @@ def execute_compiled_procedure(
         recovery_profile_id=recovery_profile_id,
         recover_application=recovery_profile_id is not None,
         action_verifier_profile_id=action_verifier_profile_id,
+        screen_analyzer_profile_id=screen_analyzer_profile_id,
         screen_comparison=comparison,
         planner_decision_source=PlannerDecisionSource.COMPILED_PROCEDURE,
         reused_flow_id=procedure.procedure_id,
@@ -231,6 +233,10 @@ def _validate_execution(
         raise ValueError("The procedure does not match the evidence document.")
     if setup.application != procedure.application:
         raise ValueError("The replay setup does not match the procedure application.")
+    if setup.setup_contract_sha256 != procedure.setup_contract.content_sha256():
+        raise ValueError("The replay setup does not match the procedure setup contract.")
+    if setup.method.value != procedure.setup_contract.reset_method:
+        raise ValueError("The replay reset method does not match the procedure setup contract.")
     current_application = _application_identity(context)
     if current_application != procedure.application:
         raise ValueError("The active application build does not match the procedure.")
@@ -242,6 +248,17 @@ def _validate_execution(
         }
     ):
         raise ValueError("Fresh-install replay requires an observed installation change.")
+    device = context.session.device.descriptor
+    current_device = EvidenceDeviceIdentity(
+        target_id=device.target_id,
+        platform=device.platform,
+        kind=device.kind,
+        operating_system_version=device.operating_system_version,
+        model=device.device_model,
+        architecture=device.architecture,
+    )
+    if current_device != procedure.setup_contract.device:
+        raise ValueError("The active device does not match the procedure setup contract.")
     budget_refusal = procedure_budget_refusal_reason(mode_policy, procedure)
     if budget_refusal is not None:
         raise ValueError(budget_refusal)

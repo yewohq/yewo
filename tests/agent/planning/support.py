@@ -1,19 +1,28 @@
 """Deterministic task-planner test doubles and request builders."""
 
 from datetime import datetime, timezone
+from itertools import chain, count
 import json
+from typing import Any
 
 from pydantic import BaseModel
 
 from yewo.agent.actuation import ActionKind
-from yewo.agent.planning.planner import PlanningRequest, TaskPlanner
+from yewo.agent.planning.planner import (
+    TaskPlanner,
+)
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.models import (
     ImageModelContent,
+    ModelClient,
     ModelCallDisposition,
     ModelCallRecord,
     ModelCallUsage,
     ModelRequest,
     ModelResponse,
+    TextModelContent,
 )
 
 from observations.factories import build_observation
@@ -71,11 +80,11 @@ class StubPlannerModel:
 def planning_request(**updates: object) -> PlanningRequest:
     values: dict[str, object] = {
         "observation": build_observation(),
-        "objective": "Add one account.",
-        "known_facts": ("The account list is visible.",),
-        "open_work": ("Open the account form.",),
-        "completion_conditions": ("The new account appears in the list.",),
-        "declared_value_names": ("account_password",),
+        "objective": "Add one record.",
+        "known_facts": ("The record list is visible.",),
+        "open_work": ("Open the record form.",),
+        "completion_conditions": ("The new record appears in the list.",),
+        "declared_value_names": ("declared_secret",),
         "available_actions": frozenset({ActionKind.TAP, ActionKind.TYPE, ActionKind.WAIT}),
     }
     values.update(updates)
@@ -84,16 +93,14 @@ def planning_request(**updates: object) -> PlanningRequest:
 
 def proposal_output(action: ActionKind = ActionKind.TAP, **updates: object) -> dict[str, object]:
     values: dict[str, object] = {
-        "proposal_id": "proposal-1",
-        "source_observation_id": "obs_1",
         "action": action.value,
     }
     if action is ActionKind.TAP:
         values.update(
             {
-                "target_expression": "the Add account button",
-                "expected_outcome": "The account form opens.",
-                "reason": "The visible Add account button opens the required form.",
+                "target_expression": "the Create record control",
+                "expected_outcome": "The record form opens.",
+                "reason": "The visible Create record control opens the required form.",
             }
         )
     elif action is ActionKind.WAIT:
@@ -110,14 +117,26 @@ def proposal_output(action: ActionKind = ActionKind.TAP, **updates: object) -> d
     return values
 
 
-def planner(model: StubPlannerModel) -> TaskPlanner:
-    identifiers = iter(("proposal-1", "model-request-1"))
+def planner(model: ModelClient) -> TaskPlanner:
+    identifiers = chain.from_iterable(
+        (f"proposal-{attempt}", f"model-request-{attempt}") for attempt in count(1)
+    )
     return TaskPlanner(model, "planner-primary", identifier_factory=lambda: next(identifiers))
 
 
 def user_context(request: ModelRequest) -> tuple[str, ImageModelContent]:
-    user_message = request.messages[1]
+    user_message = request.messages[2]
     text_part, image_part = user_message.content
     assert text_part.kind == "text"
     assert isinstance(image_part, ImageModelContent)
     return text_part.text, image_part
+
+
+def history_contexts(request: ModelRequest) -> list[dict[str, Any]]:
+    return [
+        json.loads(content.text.split("\n", 1)[1])
+        for message in request.messages
+        for content in message.content
+        if isinstance(content, TextModelContent)
+        and content.text.startswith(("Earlier history summary:", "Trusted history event:"))
+    ]

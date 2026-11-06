@@ -17,6 +17,7 @@ from yewo.agent.memory.knowledge import (
 from yewo.agent import AgentTerminalReason, AppMemory, MemoryCompatibility
 from yewo.grounding import (
     GroundingCoordinateConvention,
+    GroundingCandidate,
     GroundingOutputShape,
     GroundingProfile,
     GroundingInputError,
@@ -56,15 +57,15 @@ def _memory_and_source():
             request_id="request_1",
             objectives=(
                 DiscoveryObjective(
-                    objective_id="account_form",
-                    statement="The account form is reachable.",
+                    objective_id="record_form",
+                    statement="The record form is reachable.",
                 ),
             ),
         ),
         agent_result(source, destination),
         {source.observation_id: source, destination.observation_id: destination},
         MemoryCompatibility(application=source.application),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -119,6 +120,40 @@ def test_exact_source_pixels_reuse_accepted_grounding_without_a_model_call(
     assert "Reusing an exact grounding location from app memory." in narration
     trace = (tmp_path / "runtime/trace.log").read_text()
     assert "lookup=hit reason=exact_source_match" in trace
+
+
+def test_fallback_model_grounding_remains_reusable(tmp_path: Path) -> None:
+    memory, source, _ = _memory_and_source()
+    transition = memory.transitions[0]
+    assert transition.target_grounding is not None
+    fallback_grounding = transition.target_grounding.model_copy(
+        update={"model_profile_id": "grounder-fallback"}
+    )
+    memory = memory.model_copy(
+        update={
+            "transitions": (
+                transition.model_copy(update={"target_grounding": fallback_grounding}),
+            )
+        }
+    )
+    profile = _profile().model_copy(
+        update={
+            "fallbacks": (
+                GroundingCandidate(
+                    model_profile_id="grounder-fallback",
+                    coordinate_convention=GroundingCoordinateConvention.SOURCE_PIXELS,
+                ),
+            )
+        }
+    )
+    delegate = CountingGrounder()
+    grounder = AppMemoryGrounder(delegate, memory, profile)
+
+    with narration_scope(RunNarrator(tmp_path)):
+        result = grounder.ground(_request(source))
+
+    assert result.resolution_source is GroundingResolutionSource.MEMORY
+    assert delegate.calls == 0
 
 
 def test_changed_exact_pixels_fall_back_to_the_visual_grounder(tmp_path: Path) -> None:
@@ -201,8 +236,8 @@ def test_reobserved_transition_enriches_legacy_memory_with_exact_grounding() -> 
             request_id="request_1",
             objectives=(
                 DiscoveryObjective(
-                    objective_id="account_form",
-                    statement="The account form is reachable.",
+                    objective_id="record_form",
+                    statement="The record form is reachable.",
                 ),
             ),
         ),

@@ -5,20 +5,31 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from yewo.agent.actuation import (
-    ActionBudget,
+    ActionKind,
     ActionOutcome,
     ActionOutcomeDisposition,
     ActionOutcomeSignal,
-    ActionPolicy,
     ActionProposal,
     ActionRefusal,
     ActionRefusalCode,
 )
 from yewo.agent.memory.records import ScreenComparisonPolicy
-from yewo.agent.planning.planner import PlanningHistoryEntry
-from yewo.agent.planning.history import PlanningScreenFact, planning_screen_reference
-from yewo.agent.memory.screens import exact_observation_state_key, observations_match
-from yewo.grounding import GroundingCorrection
+from yewo.agent.planning.planner import TERMINAL_ACTIONS
+from yewo.agent.planning.records import (
+    MAXIMUM_PROHIBITED_INTENTS,
+    MAXIMUM_SCREEN_FACTS,
+    PlanningFocusCause,
+    PlanningFocusContext,
+    ProgressRouteAttempt,
+)
+from yewo.agent.planning.history import PlanningScreenFact
+from yewo.agent.runtime.attempt_corrections import FailedAttemptCorrections
+from yewo.agent.runtime.interaction_intent import AmbiguousInteractionState
+from yewo.agent.runtime.planning_focus_state import PlanningFocusState
+from yewo.agent.runtime.refusal_streak import RefusalStreak
+from yewo.agent.runtime.no_progress_evidence import NoProgressEvidence
+from yewo.agent.runtime.screen_no_progress import ScreenNoProgressCounts
+from yewo.agent.runtime.workflow_routes import WorkflowRouteExhaustion
 from yewo.observations import Observation
 
 
@@ -28,102 +39,83 @@ CONDITIONAL_REFUSAL_CODES = frozenset(
         ActionRefusalCode.DISCOVERY_INCOMPLETE,
     }
 )
+TRANSIENT_REFUSAL_CODES = frozenset(
+    {
+        ActionRefusalCode.PROVIDER_UNAVAILABLE,
+        ActionRefusalCode.VERIFICATION_UNAVAILABLE,
+    }
+)
 MAXIMUM_CONSECUTIVE_REFUSALS = 5
-
-
-def proposal_refusal(
-    tracker: ActionNoProgressTracker,
-    policy: ActionPolicy,
-    proposal: ActionProposal,
-    observation: Observation,
-    budget: ActionBudget,
-) -> ActionRefusal | None:
-    """Return deterministic no-progress or state-policy feedback."""
-    return tracker.refusal_for(proposal, observation) or policy.refusal_before_grounding(
-        proposal, observation, budget
-    )
-
-
-def record_refusal_with_facts(
-    tracker: ActionNoProgressTracker,
-    proposal: ActionProposal,
-    observation: Observation,
-    refusal: ActionRefusal,
-    narrate_fact: Callable[[str], None],
-) -> str | None:
-    """Record a refusal and narrate only newly derived facts."""
-    facts_before = tracker.known_facts()
-    reason = tracker.record_refusal(proposal, observation, refusal)
-    for fact in tracker.known_facts()[len(facts_before) :]:
-        narrate_fact(fact)
-    return reason
-
-
-def record_outcome_with_facts(
-    tracker: ActionNoProgressTracker,
-    proposal: ActionProposal,
-    before: Observation,
-    after: Observation,
-    outcome: ActionOutcome,
-    narrate_fact: Callable[[str], None],
-) -> str | None:
-    """Record an outcome and narrate only newly derived facts."""
-    facts_before = tracker.known_facts()
-    reason = tracker.record_outcome(proposal, before, after, outcome)
-    for fact in tracker.known_facts()[len(facts_before) :]:
-        narrate_fact(fact)
-    return reason
-
-
-def grounding_correction_for_history(
-    proposal: ActionProposal,
-    history: list[PlanningHistoryEntry],
-) -> GroundingCorrection | None:
-    """Resolve one declared correction from trusted no-progress history."""
-    failed_proposal_id = proposal.grounding_correction_for_proposal_id
-    for entry in reversed(history):
-        if entry.proposal.proposal_id != failed_proposal_id:
-            continue
-        point = entry.grounded_target_point
-        return point.correction() if point is not None else None
-    return None
+MAXIMUM_SCREEN_NO_PROGRESS_EVENTS = 3
+_SCREEN_EXIT_ACTIONS = TERMINAL_ACTIONS | {ActionKind.BACK, ActionKind.DISMISS_KEYBOARD}
 
 
 class ActionNoProgressTracker:
     """Bound repeated semantic failures across equivalent observed screens."""
 
     def __init__(self, comparison: ScreenComparisonPolicy) -> None:
-        self._comparison = comparison
-        self._attempts: list[tuple[tuple[str, ...], Observation]] = []
-        self._no_change_proposals: list[tuple[ActionProposal, Observation]] = []
-        self._refusals: list[tuple[tuple[str, ...], str, Observation, int]] = []
-        self._transitions: list[tuple[str, Observation, Observation]] = []
-        self._exhausted_transitions: list[tuple[tuple[str, ...], Observation]] = []
-        self._exhausted_actions: list[tuple[str, Observation]] = []
-        self._visited: list[Observation] = []
-        self._reported_revisit = False
-        self._facts: list[PlanningScreenFact] = []
-        self._latest_feedback_proposal_id: str | None = None
-        self._consecutive_refusals = 0
+        self._ambiguous = AmbiguousInteractionState(comparison)
+        self._corrections = FailedAttemptCorrections(comparison)
+        self._evidence = NoProgressEvidence(comparison)
+        self._refusal_streak = RefusalStreak()
+        self._screen_counts = ScreenNoProgressCounts(comparison)
+        self._workflow_routes = WorkflowRouteExhaustion()
+        self._focus_state = PlanningFocusState(comparison)
 
     def start(self, observation: Observation) -> None:
         """Record the initial logical screen."""
-        self._transitions = []
-        self._exhausted_transitions = []
-        self._exhausted_actions = []
-        self._no_change_proposals = []
-        self._visited = [observation]
-        self._reported_revisit = False
-        self._latest_feedback_proposal_id = None
-        self._consecutive_refusals = 0
+        self._ambiguous.reset()
+        self._corrections.start()
+        self._evidence.reset(observation)
+        self._corrections.record_feedback(None)
+        self._refusal_streak.reset()
+        self._screen_counts.reset()
+        self._workflow_routes.reset()
+        self._focus_state.reset()
 
     def known_facts(self) -> tuple[str, ...]:
         """Return deterministic feedback for the next planning request."""
-        return tuple(fact.fact for fact in self._facts)
+        return self._evidence.known_facts()
 
-    def screen_facts(self) -> tuple[PlanningScreenFact, ...]:
-        """Return deterministic feedback with the screen that owns each fact."""
-        return tuple(self._facts)
+    def screen_facts(
+        self,
+        observation: Observation,
+        recent_proposal_ids: frozenset[str] = frozenset(),
+    ) -> tuple[PlanningScreenFact, ...]:
+        """Return deterministic feedback learned on this logical screen."""
+        return self._evidence.screen_facts(
+            observation,
+            recent_proposal_ids,
+            MAXIMUM_SCREEN_FACTS,
+        )
+
+    def pending_planning_focus(
+        self,
+        observation: Observation,
+        identifier_factory: Callable[[], str],
+        unresolved_work: tuple[str, ...],
+        recent_routes: tuple[ProgressRouteAttempt, ...],
+    ) -> PlanningFocusContext | None:
+        """Return the focus view owed to this screen without claiming it."""
+        return self._focus_state.pending_context(
+            observation,
+            identifier_factory,
+            unresolved_work,
+            self._prohibited_intents(observation, unresolved_work),
+            recent_routes,
+        )
+
+    def commit_planning_focus(self, observation: Observation) -> None:
+        """Claim the focus owed to this screen once a planner will receive it."""
+        self._focus_state.commit(observation)
+
+    def correctable_grounding_proposal_id(
+        self,
+        proposal: ActionProposal,
+        observation: Observation,
+    ) -> str | None:
+        """Name the no-effect attempt this repeated action may re-ground once."""
+        return self._corrections.correctable_proposal_id(proposal, observation)
 
     def refusal_for(
         self,
@@ -131,15 +123,28 @@ class ActionNoProgressTracker:
         observation: Observation,
     ) -> ActionRefusal | None:
         """Refuse a known no-progress action on an equivalent screen."""
-        refinement_refusal = self._interaction_refinement_refusal(proposal, observation)
+        focus_action = self._focus_state.action_armed(observation)
+        refinement_refusal = self._corrections.refinement_refusal(proposal, observation)
         if refinement_refusal is not None:
             return refinement_refusal
-        semantics = _action_semantics(proposal)
-        if any(
-            proposal.action.value == action
-            and observations_match(observation, screen, self._comparison)
-            for action, screen in self._exhausted_actions
+        if self._corrections.corrects_one_failed_grounding(proposal, observation):
+            # A correction carries a minimum distance from the recorded point, so it
+            # dispatches somewhere the repeated attempt never reached.
+            return None
+        if (
+            self._screen_counts.count(observation) >= MAXIMUM_SCREEN_NO_PROGRESS_EVENTS
+            and not focus_action
+            and proposal.action not in _SCREEN_EXIT_ACTIONS
         ):
+            return ActionRefusal(
+                proposal_id=proposal.proposal_id,
+                code=ActionRefusalCode.REPEATED_NO_PROGRESS,
+                reason=(
+                    "This screen reached the no-progress limit. Leave this screen or stop the "
+                    "task. Do not try another interaction on the same screen state."
+                ),
+            )
+        if self._evidence.exhausted_action(proposal, observation):
             return ActionRefusal(
                 proposal_id=proposal.proposal_id,
                 code=ActionRefusalCode.REPEATED_NO_PROGRESS,
@@ -148,10 +153,16 @@ class ActionNoProgressTracker:
                     "three times on this screen. Choose a different action."
                 ),
             )
-        if any(
-            semantics == prior and observations_match(observation, screen, self._comparison)
-            for prior, screen in self._exhausted_transitions
-        ):
+        if self._ambiguous.count(proposal, observation) >= 2:
+            return ActionRefusal(
+                proposal_id=proposal.proposal_id,
+                code=ActionRefusalCode.REPEATED_NO_PROGRESS,
+                reason=(
+                    "The same semantic interaction repeatedly produced an ambiguous outcome. "
+                    "Choose a different target or route."
+                ),
+            )
+        if self._evidence.exhausted_transition(proposal, observation):
             return ActionRefusal(
                 proposal_id=proposal.proposal_id,
                 code=ActionRefusalCode.REPEATED_NO_PROGRESS,
@@ -160,14 +171,7 @@ class ActionNoProgressTracker:
                     "Choose a different route."
                 ),
             )
-        prior_refusal = next(
-            (
-                (code, count)
-                for prior, code, screen, count in self._refusals
-                if semantics == prior and observations_match(observation, screen, self._comparison)
-            ),
-            None,
-        )
+        prior_refusal = self._evidence.prior_refusal(proposal, observation)
         if prior_refusal is not None:
             code, count = prior_refusal
             if code == ActionRefusalCode.INVALID_INPUT.value and count == 1:
@@ -183,19 +187,36 @@ class ActionNoProgressTracker:
                     "Choose a different action."
                 ),
             )
-        if not any(
-            semantics == prior and observations_match(observation, screen, self._comparison)
-            for prior, screen in self._attempts
-        ):
+        if not self._evidence.has_attempt(proposal, observation):
             return None
+        correctable_proposal_id = self._corrections.correctable_proposal_id(proposal, observation)
+        if correctable_proposal_id is None:
+            return ActionRefusal(
+                proposal_id=proposal.proposal_id,
+                code=ActionRefusalCode.REPEATED_NO_PROGRESS,
+                reason=(
+                    "The same semantic action already produced no observable change "
+                    "on an equivalent screen."
+                ),
+            )
         return ActionRefusal(
             proposal_id=proposal.proposal_id,
             code=ActionRefusalCode.REPEATED_NO_PROGRESS,
             reason=(
-                "The same semantic action already produced no observable change "
-                "on an equivalent screen."
+                "The same semantic action already produced no observable change on an "
+                "equivalent screen. Set grounding_correction_for_proposal_id to "
+                f"{correctable_proposal_id} when the recorded point missed the target."
             ),
         )
+
+    def workflow_route_is_exhausted(
+        self,
+        proposal: ActionProposal,
+        observation: Observation,
+        work_item: str,
+    ) -> bool:
+        """Return whether this interaction is exhausted for the verified work item."""
+        return self._workflow_routes.prohibits(proposal, observation, work_item)
 
     def record_refusal(
         self,
@@ -204,41 +225,53 @@ class ActionNoProgressTracker:
         refusal: ActionRefusal,
     ) -> str | None:
         """Bound one refused action and report only run-wide refusal deadlock."""
-        self._latest_feedback_proposal_id = proposal.proposal_id
-        self._consecutive_refusals += 1
+        self._corrections.record_feedback(proposal.proposal_id)
+        is_transient = refusal.code in TRANSIENT_REFUSAL_CODES
+        self._refusal_streak.record(is_transient)
+        if is_transient:
+            # Transport availability says nothing about the proposed target or
+            # current screen. Keep the run-wide deadlock bound without poisoning
+            # target-specific or screen-specific no-progress evidence.
+            return self._refusal_deadlock_reason()
         if refusal.code in CONDITIONAL_REFUSAL_CODES:
             self._record_fact(
                 observation,
                 f"Resolve this before you repeat {proposal.action.value}: {refusal.reason}",
+                origin_proposal_id=proposal.proposal_id,
             )
             return self._refusal_deadlock_reason()
-        semantics = _action_semantics(proposal)
-        matched_index = next(
-            (
-                index
-                for index, (prior, code, screen, unused_count) in enumerate(self._refusals)
-                if prior == semantics
-                and code == refusal.code.value
-                and observations_match(observation, screen, self._comparison)
-            ),
-            None,
-        )
-        if matched_index is None:
-            count = 1
-            self._refusals.append((semantics, refusal.code.value, observation, count))
-        else:
-            prior, code, screen, previous_count = self._refusals[matched_index]
-            count = previous_count + 1
-            self._refusals[matched_index] = (prior, code, screen, count)
+        self._record_screen_no_progress(observation, proposal.proposal_id)
+        count = self._evidence.record_refusal(proposal, observation, refusal)
         if count == 1:
             self._record_fact(
                 observation,
                 f"Do not repeat {proposal.action.value}: {refusal.reason}",
+                origin_proposal_id=proposal.proposal_id,
             )
         return self._refusal_deadlock_reason()
 
+    def record_system_refusal(
+        self,
+        proposal: ActionProposal,
+        refusal: ActionRefusal,
+    ) -> str | None:
+        """Count a refused runtime action against deadlock only: no model chose it."""
+        self._corrections.record_feedback(proposal.proposal_id)
+        self._refusal_streak.record(refusal.code in TRANSIENT_REFUSAL_CODES)
+        return self._refusal_deadlock_reason()
+
+    def record_system_outcome(self, proposal: ActionProposal) -> None:
+        """Clear deadlock for a dispatched runtime action the screen guard ignores."""
+        self._corrections.record_feedback(proposal.proposal_id)
+        self._refusal_streak.reset()
+
+    @property
+    def refusal_streak_is_entirely_transient(self) -> bool:
+        """Return whether every refusal in the current streak was transient."""
+        return self._refusal_streak.entirely_transient is True
+
     def _refusal_deadlock_reason(self) -> str | None:
-        if self._consecutive_refusals < MAXIMUM_CONSECUTIVE_REFUSALS:
+        if self._refusal_streak.count < MAXIMUM_CONSECUTIVE_REFUSALS:
             return None
         return (
             f"The agent reached {MAXIMUM_CONSECUTIVE_REFUSALS} consecutive refusals "
@@ -251,117 +284,171 @@ class ActionNoProgressTracker:
         before: Observation,
         after: Observation,
         outcome: ActionOutcome,
+        *,
+        task_advanced: bool = False,
     ) -> str | None:
         """Record trusted no-progress and advise after a screen revisit."""
-        self._latest_feedback_proposal_id = proposal.proposal_id
-        self._consecutive_refusals = 0
+        self._focus_state.consume_action(before)
+        self._corrections.record_feedback(proposal.proposal_id)
+        self._refusal_streak.reset()
         if ActionOutcomeSignal.APP_EXITED in outcome.signals:
-            self._exhausted_transitions.append((_action_semantics(proposal), before))
+            self._record_screen_no_progress(before, proposal.proposal_id)
+            self._evidence.record_exited_transition(proposal, before)
             self._record_fact(
                 before,
                 f"Do not repeat {proposal.action.value}: the application exited after this action.",
+                origin_proposal_id=proposal.proposal_id,
+                is_durable_constraint=True,
             )
             return None
         if outcome.disposition is ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE:
-            self._attempts.append((_action_semantics(proposal), before))
-            self._no_change_proposals.append((proposal, before))
+            self._record_screen_no_progress(before, proposal.proposal_id)
+            self._evidence.record_attempt(proposal, before)
+            self._corrections.record_no_change(proposal, before)
             if proposal.interaction_refinement_for_proposal_id is not None:
                 self._record_fact(
                     before,
                     "The original target and its one visible interaction refinement had no "
                     "observable effect. Treat this interaction family as ineffective on the "
                     "current screen and choose another route.",
+                    origin_proposal_id=proposal.proposal_id,
+                    is_durable_constraint=True,
+                )
+            return None
+        if outcome.disposition is ActionOutcomeDisposition.AMBIGUOUS:
+            self._record_screen_no_progress(before, proposal.proposal_id)
+            if self._ambiguous.record(proposal, before) == 2:
+                fact = (
+                    "Repeated attempts did not establish the intended effect. Treat this target "
+                    "as unverified and choose a different target or route."
+                )
+                if proposal.action is ActionKind.FOCUS:
+                    fact = (
+                        "Repeated focus attempts did not establish an editable control for this "
+                        "target. Treat the target as unverified."
+                    )
+                self._record_fact(
+                    before,
+                    fact,
+                    origin_proposal_id=proposal.proposal_id,
+                    is_durable_constraint=True,
+                    supersedes_recovery_guidance=True,
+                )
+                self._focus_state.request(
+                    before,
+                    PlanningFocusCause.SCREEN_NO_PROGRESS,
+                    "The same interaction twice failed to establish its intended effect.",
                 )
             return None
         if outcome.disposition is not ActionOutcomeDisposition.OBSERVED:
             return None
-        repeated_transition_count = 1 + sum(
-            proposal.action.value == action
-            and exact_observation_state_key(before) == exact_observation_state_key(prior_before)
-            and exact_observation_state_key(after) == exact_observation_state_key(prior_after)
-            for action, prior_before, prior_after in self._transitions
-        )
-        self._transitions.append((proposal.action.value, before, after))
+        self._ambiguous.clear_observed(proposal, before)
+        if task_advanced:
+            self._screen_counts.clear(before)
+        repeated_transition_count = self._evidence.record_transition(proposal, before, after)
         if repeated_transition_count == 2:
-            self._exhausted_transitions.append((_action_semantics(proposal), before))
             self._record_fact(
                 before,
                 "The same action repeated an already observed screen transition. "
                 "Choose a different route.",
+                origin_proposal_id=proposal.proposal_id,
+                is_durable_constraint=True,
+            )
+            self._focus_state.request(
+                after,
+                PlanningFocusCause.REPEATED_TRANSITION,
+                "An observed screen transition repeated without advancing the task.",
             )
         elif repeated_transition_count >= 3:
-            self._exhausted_actions.append((proposal.action.value, before))
             self._record_fact(
                 before,
                 f"Stop using {proposal.action.value} on this screen. It repeated one "
                 "observed screen transition three times. A new target description does "
                 "not change the result.",
+                origin_proposal_id=proposal.proposal_id,
+                is_durable_constraint=True,
             )
-        prior_screens = self._visited[:-1] if self._visited else ()
-        revisited = any(
-            observations_match(after, prior, self._comparison) for prior in prior_screens
-        )
-        self._visited.append(after)
-        if not revisited or self._reported_revisit:
+        if not self._evidence.record_revisit(after):
             return None
-        self._reported_revisit = True
         self._record_fact(
             after,
             "The recent actions returned to an already visited screen. Choose a different route.",
+            origin_proposal_id=proposal.proposal_id,
+            is_durable_constraint=True,
         )
         return None
 
-    def _record_fact(self, observation: Observation, fact: str) -> None:
-        self._facts.append(
-            PlanningScreenFact(
-                screen=planning_screen_reference(observation),
-                fact=fact,
-            )
-        )
-
-    def _interaction_refinement_refusal(
+    def record_route(
         self,
         proposal: ActionProposal,
+        before: Observation,
+        after: Observation,
+        route: ProgressRouteAttempt,
+        *,
+        task_advanced: bool,
+    ) -> bool:
+        """Record one work-linked route and exhaust a repeated closed workflow."""
+        if not self._workflow_routes.record(route, task_advanced=task_advanced):
+            return False
+        self._record_fact(
+            after,
+            "This workflow route returned to its starting stage twice without advancing the "
+            "task. Do not repeat or rename an interaction from that route.",
+            origin_proposal_id=proposal.proposal_id,
+            is_durable_constraint=True,
+        )
+        self._focus_state.request(
+            after,
+            PlanningFocusCause.REPEATED_TRANSITION,
+            "A complete workflow route repeated without task progress.",
+        )
+        return True
+
+    def _record_fact(
+        self,
         observation: Observation,
-    ) -> ActionRefusal | None:
-        original_id = proposal.interaction_refinement_for_proposal_id
-        if original_id is None:
-            return None
-        original = next(
-            (
-                candidate
-                for candidate, screen in reversed(self._no_change_proposals)
-                if candidate.proposal_id == original_id
-                and observations_match(observation, screen, self._comparison)
-            ),
-            None,
-        )
-        reason = None
-        if original is None or original_id != self._latest_feedback_proposal_id:
-            reason = "An interaction refinement must reference the immediately preceding no-effect proposal."
-        elif original.interaction_refinement_for_proposal_id is not None:
-            reason = "An interaction refinement cannot refine another interaction refinement."
-        elif original.grounding_correction_for_proposal_id is not None:
-            reason = "An interaction refinement cannot refine a grounding correction."
-        elif proposal.action is not original.action:
-            reason = "An interaction refinement must use the original action."
-        elif proposal.target_expression == original.target_expression:
-            reason = "An interaction refinement must identify a distinct visible surface."
-        if reason is None:
-            return None
-        return ActionRefusal(
-            proposal_id=proposal.proposal_id,
-            code=ActionRefusalCode.INVALID_CONSTRAINT,
-            reason=reason,
+        fact: str,
+        *,
+        origin_proposal_id: str,
+        is_durable_constraint: bool = False,
+        supersedes_recovery_guidance: bool = False,
+    ) -> None:
+        self._evidence.record_fact(
+            observation,
+            fact,
+            origin_proposal_id=origin_proposal_id,
+            is_durable_constraint=is_durable_constraint,
+            supersedes_recovery_guidance=supersedes_recovery_guidance,
         )
 
+    def _record_screen_no_progress(
+        self,
+        observation: Observation,
+        origin_proposal_id: str,
+    ) -> None:
+        count = self._screen_counts.record(observation)
+        if count == MAXIMUM_SCREEN_NO_PROGRESS_EVENTS:
+            self._record_fact(
+                observation,
+                "This screen reached the no-progress limit. Leave this screen or stop the task.",
+                origin_proposal_id=origin_proposal_id,
+                is_durable_constraint=True,
+            )
+            self._focus_state.request(
+                observation,
+                PlanningFocusCause.SCREEN_NO_PROGRESS,
+                "Three interactions or refusals produced no task progress on this screen.",
+            )
 
-def _action_semantics(proposal: ActionProposal) -> tuple[str, ...]:
-    return (
-        proposal.action.value,
-        proposal.target_expression or "",
-        proposal.destination_expression or "",
-        proposal.direction.value if proposal.direction is not None else "",
-        proposal.distance.value if proposal.distance is not None else "",
-        str(proposal.duration_seconds) if proposal.duration_seconds is not None else "",
-    )
+    def _prohibited_intents(
+        self,
+        observation: Observation,
+        work_items: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        return self._evidence.prohibited_intents(
+            observation,
+            self._ambiguous,
+            self._workflow_routes,
+            work_items,
+            MAXIMUM_PROHIBITED_INTENTS,
+        )

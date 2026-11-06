@@ -16,7 +16,7 @@ from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.models import ModelRole, TextModelContent
 
 from agent.planning.support import StubPlannerModel
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def _bundle() -> StoredProcedureBundle:
@@ -33,9 +33,9 @@ def _bundle() -> StoredProcedureBundle:
 def _objective(*, condition_count: int = 1) -> DiscoveryObjective:
     return DiscoveryObjective(
         objective_id="current_objective",
-        statement="Sign in to the account.",
+        statement="Open the record.",
         completion_conditions=tuple(
-            f"The account home is visible {index}." for index in range(condition_count)
+            f"The record detail is visible {index}." for index in range(condition_count)
         ),
     )
 
@@ -44,7 +44,6 @@ def test_matcher_selects_only_an_llm_equivalent_audited_procedure() -> None:
     bundle = _bundle()
     model = StubPlannerModel(
         {
-            "request_id": "objective_match_request",
             "procedure_id": bundle.procedure.procedure_id,
             "relationship": "equivalent",
             "reason": "Both objectives require the same observable signed-in state.",
@@ -74,7 +73,6 @@ def test_matcher_rejects_a_non_equivalent_relationship() -> None:
     bundle = _bundle()
     model = StubPlannerModel(
         {
-            "request_id": "objective_match_request",
             "procedure_id": None,
             "relationship": "current_is_broader",
             "reason": "The requested objective requires an additional outcome.",
@@ -93,7 +91,6 @@ def test_matcher_rejects_unknown_procedure_and_condition_count_changes() -> None
     bundle = _bundle()
     unknown_model = StubPlannerModel(
         {
-            "request_id": "objective_match_request",
             "procedure_id": "unknown_procedure",
             "relationship": "equivalent",
             "reason": "The candidate is equivalent.",
@@ -106,7 +103,6 @@ def test_matcher_rejects_unknown_procedure_and_condition_count_changes() -> None
     )
     count_model = StubPlannerModel(
         {
-            "request_id": "objective_match_request",
             "procedure_id": bundle.procedure.procedure_id,
             "relationship": "equivalent",
             "reason": "The candidate is equivalent.",
@@ -155,6 +151,70 @@ def test_changed_completion_conditions_are_not_an_exact_procedure_match() -> Non
         None,
         cast(CompiledProcedureStore, StoredProcedure()),
         lambda: (_ for _ in ()).throw(AssertionError("matcher must respect the budget")),
+        "replay-preparer",
+        1,
+    )
+
+    assert preparation.selection is None
+    assert preparation.model_request_count == 0
+
+
+def test_exact_objective_without_user_conditions_reuses_stored_conditions() -> None:
+    bundle = _bundle()
+
+    class StoredProcedure:
+        def load(self, compatibility, objective_id, objective):
+            del compatibility, objective_id, objective
+            return bundle
+
+        def compatible_candidates(self, compatibility):
+            del compatibility
+            return (bundle,)
+
+    objective = DiscoveryObjective(
+        objective_id=bundle.evidence.task.objective_id,
+        statement=bundle.evidence.task.objective,
+    )
+
+    preparation = prepare_replay_procedure(
+        objective,
+        bundle.compatibility,
+        None,
+        cast(CompiledProcedureStore, StoredProcedure()),
+        lambda: (_ for _ in ()).throw(AssertionError("exact lookup must not use a model")),
+        "replay-preparer",
+        1,
+    )
+
+    assert preparation.selection is not None
+    assert preparation.selection.procedure_id == bundle.procedure.procedure_id
+    assert preparation.model_request_count == 0
+
+
+def test_explicit_objective_condition_does_not_reuse_different_stored_conditions() -> None:
+    bundle = _bundle()
+
+    class StoredProcedure:
+        def load(self, compatibility, objective_id, objective):
+            del compatibility, objective_id, objective
+            return bundle
+
+        def compatible_candidates(self, compatibility):
+            del compatibility
+            return (bundle,)
+
+    objective = DiscoveryObjective(
+        objective_id=bundle.evidence.task.objective_id,
+        statement=bundle.evidence.task.objective,
+        completion_conditions=(bundle.evidence.task.objective,),
+    )
+
+    preparation = prepare_replay_procedure(
+        objective,
+        bundle.compatibility,
+        None,
+        cast(CompiledProcedureStore, StoredProcedure()),
+        lambda: (_ for _ in ()).throw(AssertionError("exact lookup must not use a model")),
         "replay-preparer",
         1,
     )

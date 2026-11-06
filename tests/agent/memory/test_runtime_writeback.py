@@ -59,8 +59,8 @@ def _run_evidence(root: Path):
         request_id="request_2",
         objectives=(
             DiscoveryObjective(
-                objective_id="account_form",
-                statement="The account form is reachable.",
+                objective_id="record_form",
+                statement="The record form is reachable.",
             ),
         ),
     )
@@ -70,7 +70,7 @@ def _run_evidence(root: Path):
         coverage=DiscoveryCoverage(
             entries=(
                 DiscoveryCoverageEntry(
-                    objective_id="account_form",
+                    objective_id="record_form",
                     state=DiscoveryObjectiveState.UNRESOLVED,
                     reason="The terminal test keeps coverage independent from write-back.",
                 ),

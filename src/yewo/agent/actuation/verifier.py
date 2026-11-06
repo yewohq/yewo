@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import StrEnum
 import json
-from typing import Literal, Protocol
+import unicodedata
+from typing import Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, model_validator
 
@@ -14,11 +15,20 @@ from yewo.agent.actuation import (
     ActionProposal,
     ActionRefusal,
     ActionRefusalCode,
-    VisibleControl,
+    RequiredControlBasis,
+    UnresolvedControl,
 )
-from yewo.agent.planning.planner import RECENT_PLANNING_HISTORY_LIMIT, PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+    planning_focus_context,
+    planning_progress_context,
+)
+from yewo.agent.screen_analysis import (
+    element_may_be_targeted,
+    screen_analysis_context,
+)
 from yewo.agent.planning.history import (
-    planning_history_context,
+    trusted_history_content,
     planning_screen_fact_context,
 )
 from yewo.artifacts import RecordIdentifier, new_record_identifier
@@ -52,33 +62,54 @@ Recent history can contain your own earlier refusal of this action, with the unr
 you named. Read the entries after that refusal. Allow the action again when each control you
 named now has a dispatched action with observed evidence. A refusal is an instruction to resolve
 the named controls first. Do not refuse the same action again after Yewo resolved them.
+Newer trusted device outcomes supersede conflicting model-authored recovery guidance. A matched
+screen fact with supersedes_recovery_guidance=true explicitly replaces conflicting recovery
+guidance. Repeated target rejection does not prove a control is optional. It proves that the
+requested interactive control has not been established at that target.
+
+The proposal must be internally coherent. Its target, its reason, and its expected outcome must
+describe the same control and the same effect. Refuse when the named target cannot produce the
+stated expected outcome. One example is a reason that names one control while the target
+identifies another. Name the mismatch in your reason. This is a check on the proposal's own
+consistency, not evidence about the application.
 
 Allow ordinary exploration, field editing, option selection, and navigation toward required work.
-Refuse an action that would save, submit, accept, finish, close, or leave the current workflow
-when a relevant visible field or control remains unresolved. During discovery, do not call a
-relevant visible field optional. Exclude a relevant control only when trusted evidence supports
-the exclusion. The application can disable the control. The control can be irrelevant to the
-objective, unsafe, or inaccessible. Yewo can also have already exercised the control.
-Do not infer completion from the proposal's expected outcome or reason.
+A visible control is not mandatory merely because it exists. Refuse a save, submit, accept, finish,
+close, or leave action only for a required unresolved control. Trusted evidence must establish that
+requirement. Trusted evidence is an explicit objective or open-work requirement, an application
+refusal, a trusted instruction, or a declared input contract. A label,
+heading, convention, or visible optional control does not establish a required value. Do not convert
+visible text into a field or require a value without an input affordance or trusted interaction
+evidence. Do not infer completion from the proposal's expected outcome or reason.
+For every unresolved control, set required_by to the trusted evidence category that makes it
+mandatory. Copy the exact supporting context value into requirement_evidence. Do not paraphrase
+or create evidence. The supporting value must contain the analyzed control's exact visible name.
+The runtime normalizes case, spacing, and punctuation only. It does not infer synonyms or translate
+names. The runtime rejects evidence that is absent or does not identify that control.
 
 Use progress_context as the same-run workflow ledger. Copy an exact work item into
 completed_work_items only when the current screenshot and trusted history establish that work.
-Set proposal_work_item to the exact work item that the proposed action advances. Inspect
+Set proposal_work_item to the exact work item that the proposed action advances. Set
+proposal_work_item to null when the context supplies no work items. Inspect
 progress_context.route_attempts before allowing the action. If the proposed route previously led
 to work that is now completed, refuse it and set restarts_completed_work_item to that exact item.
 Do not allow an action to restart completed work merely because its visible control is unexplored.
+Treat persisted output as completed work for its creation phase even when a later inspect, repeat,
+or update phase remains. Refuse an Add or Create route that would produce another item when the
+remaining work concerns the existing item. A later phase does not make the creation phase incomplete.
+Treat an accepted confirmation in progress_context.current_progress as an advanced workflow stage.
+Refuse a proposal that reopens that accepted stage unless newer trusted evidence shows rejection.
 
-Return visible_controls for relevant controls visible on the current screen. Include each
-control's short name, kind, and current state when visible. Include option labels when an open
-selector shows them. Set matches_proposal_target on at most one control. Set it only when that
-exact control is the proposal target. This is application knowledge, not proof that the task is
-complete.
-Return unresolved_controls as short descriptions of visible unresolved evidence. When you refuse
-for an unresolved control, return at least one unresolved control. When you refuse a route that
-restarts completed work, set restarts_completed_work_item instead. When you allow, return no
-unresolved controls and no restarted item. Return only allow or refuse. The runtime reserves
-unavailable for verifier failures. Copy the verification_id and proposal_id exactly. Return exactly
-one ActionReadinessAssessment payload.
+When current_screen_analysis is present, use it as the shared screen inventory. It is a
+model-authored hypothesis, not device truth. Do not recreate or return another visible-control
+inventory. Return each unresolved_controls item with the exact name of one interactive element in
+current_screen_analysis and a short reason. Plain text and headings
+cannot be unresolved controls. When you refuse for an unresolved control, return at least one
+unresolved control. When you refuse a route that restarts completed work, set
+restarts_completed_work_item instead. When you allow, return no unresolved controls and no
+restarted item. Return only allow or refuse. The runtime reserves unavailable for verifier
+failures. Return exactly one JSON object that matches the ActionReadinessDecision response schema.
+Do not wrap the object in Markdown or add prose before or after it.
 """
 ACTION_VERIFIER_USER_PROMPT = (
     "Decide whether Yewo may dispatch the proposed discovery action. Context JSON follows:"
@@ -95,18 +126,14 @@ class ActionReadinessDisposition(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-class ActionReadinessAssessment(BaseModel):
-    """One independent pre-dispatch assessment of a discovery action."""
+class ActionReadinessDecision(BaseModel):
+    """Model-authored readiness judgment without runtime-owned identity."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = 1
-    verification_id: RecordIdentifier
-    proposal_id: RecordIdentifier
     disposition: ActionReadinessDisposition
     reason: str = Field(min_length=1, max_length=2_000)
-    unresolved_controls: tuple[str, ...] = Field(default=(), max_length=30)
-    visible_controls: tuple[VisibleControl, ...] = Field(default=(), max_length=100)
+    unresolved_controls: tuple[UnresolvedControl, ...] = Field(default=(), max_length=30)
     completed_work_items: tuple[str, ...] = Field(max_length=100)
     proposal_work_item: str | None = Field(min_length=1, max_length=4_000)
     restarts_completed_work_item: str | None = Field(
@@ -115,7 +142,39 @@ class ActionReadinessAssessment(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_work_items(self, info: ValidationInfo) -> ActionReadinessAssessment:
+    def _validate_control_evidence(self, info: ValidationInfo) -> Self:
+        unresolved_names = [control.control_name for control in self.unresolved_controls]
+        if len(set(unresolved_names)) != len(unresolved_names):
+            raise ValueError("Each unresolved control must be reported once.")
+        context = info.context
+        if isinstance(context, dict):
+            interactive_names = context.get("interactive_control_names")
+            if isinstance(interactive_names, (tuple, list, frozenset, set)) and any(
+                unresolved.control_name not in interactive_names
+                for unresolved in self.unresolved_controls
+            ):
+                raise ValueError("Each unresolved control must reference an analyzed interactive control.")
+            trusted_evidence = context.get("required_control_evidence")
+            if isinstance(trusted_evidence, dict) and any(
+                control.requirement_evidence
+                not in trusted_evidence.get(control.control_name, {}).get(
+                    control.required_by.value,
+                    (),
+                )
+                for control in self.unresolved_controls
+            ):
+                raise ValueError(
+                    "Each unresolved control must cite trusted evidence that names that control."
+                )
+        if self.disposition is ActionReadinessDisposition.REFUSE:
+            if not self.unresolved_controls and self.restarts_completed_work_item is None:
+                raise ValueError("A refusal must identify unresolved evidence.")
+        elif self.unresolved_controls or self.restarts_completed_work_item is not None:
+            raise ValueError("Only a refusal can identify unresolved evidence.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_work_items(self, info: ValidationInfo) -> Self:
         context = info.context
         if not isinstance(context, dict):
             return self
@@ -141,11 +200,21 @@ class ActionReadinessAssessment(BaseModel):
             )
         return self
 
+
+class ActionReadinessAssessment(ActionReadinessDecision):
+    """One independent pre-dispatch assessment bound to a proposal."""
+
+    schema_version: Literal[4] = 4
+    verification_id: RecordIdentifier
+    proposal_id: RecordIdentifier
+
     def refusal(self) -> ActionRefusal | None:
         """Convert a refused assessment to the runtime's existing refusal contract."""
         if self.disposition is ActionReadinessDisposition.ALLOW:
             return None
-        details = list(self.unresolved_controls)
+        details = [
+            f"{control.control_name}: {control.reason}" for control in self.unresolved_controls
+        ]
         if self.restarts_completed_work_item is not None:
             details.append(
                 f"The proposal restarts completed work: {self.restarts_completed_work_item}"
@@ -210,24 +279,28 @@ class ModelActionVerifier:
             "known_facts": planning_request.known_facts,
         }
         context = {
-            "verification_id": verification_id,
-            "proposal_id": proposal.proposal_id,
             "open_work": planning_request.open_work,
             "screen_facts": [
                 planning_screen_fact_context(fact) for fact in planning_request.screen_facts
             ],
-            "recent_history": [
-                planning_history_context(entry, include_text=False)
-                for entry in planning_request.history[-RECENT_PLANNING_HISTORY_LIMIT:]
-            ],
             "progress_context": (
-                planning_request.progress_context.model_dump(mode="json")
+                planning_progress_context(planning_request.progress_context)
                 if planning_request.progress_context is not None
+                else None
+            ),
+            "planning_focus": (
+                planning_focus_context(planning_request.planning_focus)
+                if planning_request.planning_focus is not None
                 else None
             ),
             "current_observation_id": planning_request.observation.observation_id,
             "keyboard_visible": planning_request.observation.keyboard_visible,
             "proposal": proposal.model_dump(mode="json", exclude={"text"}),
+            "current_screen_analysis": (
+                screen_analysis_context(planning_request.current_screen_analysis)
+                if planning_request.current_screen_analysis is not None
+                else None
+            ),
         }
         progress_context = planning_request.progress_context
         known_work_items = tuple(
@@ -235,7 +308,6 @@ class ModelActionVerifier:
                 (
                     *planning_request.open_work,
                     *(progress_context.completed_work_items if progress_context else ()),
-                    *(progress_context.remaining_work if progress_context else ()),
                 )
             )
         )
@@ -260,10 +332,15 @@ class ModelActionVerifier:
                 ),
                 ModelMessage(
                     role=ModelMessageRole.USER,
+                    content=(TextModelContent(text=ACTION_VERIFIER_USER_PROMPT),),
+                    cache_prefix_end=True,
+                ),
+                ModelMessage(
+                    role=ModelMessageRole.USER,
                     content=(
+                        *trusted_history_content(planning_request.history, include_text=False),
                         TextModelContent(
-                            text=ACTION_VERIFIER_USER_PROMPT
-                            + "\n"
+                            text="Current verification context:\n"
                             + json.dumps(context, sort_keys=True, separators=(",", ":"))
                         ),
                         ImageModelContent(
@@ -273,19 +350,32 @@ class ModelActionVerifier:
                 ),
             ),
             response_contract=build_model_response_contract(
-                "action-readiness-assessment-v1",
-                ActionReadinessAssessment.model_json_schema(),
+                "action-readiness-decision-v3",
+                ActionReadinessDecision.model_json_schema(),
             ),
             sensitivity=planning_request.observation.redacted_screenshot.sensitivity,
             retention=planning_request.observation.redacted_screenshot.retention,
         )
+        validation_context = {
+            "allowed_work_items": known_work_items,
+            "completed_work_items": completed_work_items,
+            "required_control_evidence": _required_control_evidence(planning_request),
+            **(
+                {
+                    "interactive_control_names": tuple(
+                        element.name
+                        for element in planning_request.current_screen_analysis.elements
+                        if element_may_be_targeted(element)
+                    ),
+                }
+                if planning_request.current_screen_analysis is not None
+                else {}
+            ),
+        }
         response = self._model_client.complete(
             request,
-            ActionReadinessAssessment,
-            validation_context={
-                "allowed_work_items": known_work_items,
-                "completed_work_items": completed_work_items,
-            },
+            ActionReadinessDecision,
+            validation_context=validation_context,
         )
         if response.disposition is not ModelCallDisposition.COMPLETED:
             return _failed_assessment(
@@ -294,7 +384,9 @@ class ModelActionVerifier:
                 response.reason or "The action-verifier model call did not complete.",
             )
         try:
-            assessment = ActionReadinessAssessment.model_validate(response.structured_output)
+            decision = ActionReadinessDecision.model_validate(
+                response.structured_output, context=validation_context
+            )
         except ValidationError:
             return _failed_assessment(
                 verification_id,
@@ -302,35 +394,32 @@ class ModelActionVerifier:
                 "The action-verifier response was invalid.",
             )
         known_work_item_set = set(known_work_items)
-        reported_work_items = set(assessment.completed_work_items)
-        if assessment.proposal_work_item is not None:
-            reported_work_items.add(assessment.proposal_work_item)
-        if assessment.restarts_completed_work_item is not None:
-            reported_work_items.add(assessment.restarts_completed_work_item)
+        reported_work_items = set(decision.completed_work_items)
+        if decision.proposal_work_item is not None:
+            reported_work_items.add(decision.proposal_work_item)
+        if decision.restarts_completed_work_item is not None:
+            reported_work_items.add(decision.restarts_completed_work_item)
         completed_work_item_set = set(completed_work_items)
         if (
-            assessment.verification_id != verification_id
-            or assessment.proposal_id != proposal.proposal_id
-            or (
-                assessment.disposition is ActionReadinessDisposition.REFUSE
+            (
+                decision.disposition is ActionReadinessDisposition.REFUSE
                 and not (
-                    assessment.unresolved_controls
-                    or assessment.restarts_completed_work_item is not None
+                    decision.unresolved_controls
+                    or decision.restarts_completed_work_item is not None
                 )
             )
             or (
-                assessment.disposition is not ActionReadinessDisposition.REFUSE
-                and assessment.unresolved_controls
+                decision.disposition is not ActionReadinessDisposition.REFUSE
+                and decision.unresolved_controls
             )
-            or assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
-            or sum(control.matches_proposal_target for control in assessment.visible_controls) > 1
+            or decision.disposition is ActionReadinessDisposition.UNAVAILABLE
             or not reported_work_items.issubset(known_work_item_set)
-            or (known_work_item_set and assessment.proposal_work_item is None)
+            or (known_work_item_set and decision.proposal_work_item is None)
             or (
-                assessment.restarts_completed_work_item is not None
+                decision.restarts_completed_work_item is not None
                 and (
-                    assessment.disposition is not ActionReadinessDisposition.REFUSE
-                    or assessment.restarts_completed_work_item not in completed_work_item_set
+                    decision.disposition is not ActionReadinessDisposition.REFUSE
+                    or decision.restarts_completed_work_item not in completed_work_item_set
                 )
             )
         ):
@@ -339,7 +428,66 @@ class ModelActionVerifier:
                 proposal.proposal_id,
                 "The action-verifier response did not satisfy its evidence contract.",
             )
-        return assessment
+        return ActionReadinessAssessment(
+            verification_id=verification_id,
+            proposal_id=proposal.proposal_id,
+            **decision.model_dump(),
+        )
+
+
+def _required_control_evidence(
+    request: PlanningRequest,
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Bind exact trusted values to the analyzed controls that they identify."""
+    application_feedback = tuple(
+        entry.receipt.reason
+        for entry in request.history
+        if entry.receipt is not None and entry.receipt.reason is not None
+    )
+    evidence_by_basis = {
+        RequiredControlBasis.OBJECTIVE_OR_OPEN_WORK.value: (
+            request.objective,
+            *request.open_work,
+        ),
+        RequiredControlBasis.TRUSTED_INSTRUCTION.value: request.known_facts,
+        RequiredControlBasis.APPLICATION_REFUSAL.value: application_feedback,
+        RequiredControlBasis.INPUT_CONTRACT.value: request.declared_value_names,
+    }
+    if request.current_screen_analysis is None:
+        return {}
+    return {
+        element.name: {
+            basis: tuple(
+                evidence
+                for evidence in evidence_values
+                if evidence_identifies_control(element.name, evidence)
+            )
+            for basis, evidence_values in evidence_by_basis.items()
+        }
+        for element in request.current_screen_analysis.elements
+        if element_may_be_targeted(element)
+    }
+
+
+def evidence_identifies_control(control_name: str, evidence: str) -> bool:
+    """Match one visible identity without language-specific vocabulary."""
+    control_tokens = _identity_tokens(control_name)
+    evidence_tokens = _identity_tokens(evidence)
+    width = len(control_tokens)
+    token_match = bool(width) and any(
+        evidence_tokens[index : index + width] == control_tokens
+        for index in range(len(evidence_tokens) - width + 1)
+    )
+    return token_match or (
+        any(not token.isascii() for token in control_tokens)
+        and "".join(control_tokens) in "".join(evidence_tokens)
+    )
+
+
+def _identity_tokens(value: str) -> tuple[str, ...]:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    separated = "".join(character if character.isalnum() else " " for character in normalized)
+    return tuple(separated.split())
 
 
 def _failed_assessment(

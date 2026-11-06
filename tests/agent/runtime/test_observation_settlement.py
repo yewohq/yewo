@@ -7,8 +7,10 @@ from yewo.agent.runtime.observation_settlement import (
     capture_settled_observation,
     default_action_settlement_policy,
 )
+from yewo.agent.runtime.limits import AgentModePolicy
 from yewo.observations import Observation, ObservationService
 
+from agent.actuation.support import limits
 from agent.runtime.test_agent import NeverInterrupted, _mode_policy, _observation
 
 
@@ -23,7 +25,7 @@ class OrderedObservations:
         return next(self._observations)
 
 
-def test_settlement_waits_before_its_first_capture() -> None:
+def test_settlement_captures_immediately_then_waits_for_stability() -> None:
     events: list[str] = []
     source = _observation("obs_1", "0000000000000000")
     observations = OrderedObservations(
@@ -42,8 +44,18 @@ def test_settlement_waits_before_its_first_capture() -> None:
         lambda unused: events.append("sleep"),
     )
 
-    assert events == ["sleep", "capture", "sleep", "capture"]
+    assert events == ["capture", "sleep", "capture"]
     assert capture.settled
+
+
+def test_default_settlement_adds_the_immediate_capture_to_the_wait_window() -> None:
+    policy = default_action_settlement_policy(
+        AgentModePolicy(action_limits=limits(), maximum_grounding_requests=0)
+    )
+
+    assert policy.initial_delay_seconds == 0
+    assert policy.maximum_observations == 7
+    assert round(policy.interval_seconds * (policy.maximum_observations - 1), 2) == 2.1
 
 
 def test_settlement_detects_exact_change_when_phash_is_unchanged() -> None:
@@ -97,6 +109,30 @@ def test_settlement_accepts_minor_perceptual_variation_between_captures() -> Non
 
     assert capture.settled
     assert capture.observation_ids == ("obs_2", "obs_3")
+
+
+def test_settlement_accepts_an_exact_recurring_cursor_state() -> None:
+    events: list[str] = []
+    source = _observation("obs_1", "0000000000000000")
+    first = _observation("obs_2", "1000000000000000", offset_seconds=1)
+    alternate = _observation("obs_3", "7000000000000000", offset_seconds=2)
+    recurring = _observation("obs_4", "1000000000000000", offset_seconds=3)
+
+    capture = capture_settled_observation(
+        cast(
+            ObservationService,
+            OrderedObservations(events, [first, alternate, recurring]),
+        ),
+        source,
+        default_action_settlement_policy(
+            _mode_policy(maximum_settlement_observations=4)
+        ),
+        NeverInterrupted(),
+        lambda unused: None,
+    )
+
+    assert capture.settled
+    assert capture.observation_ids == ("obs_2", "obs_3", "obs_4")
 
 
 def test_action_policy_can_capture_immediately_then_use_its_interval() -> None:

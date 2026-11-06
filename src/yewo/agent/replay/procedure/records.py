@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from yewo.agent.actuation import ActionKind
 from yewo.agent.planning.goal_verifier import GoalVerification
 from yewo.agent.runtime.records import AgentResult
-from yewo.artifacts import EvidenceApplicationIdentity, RecordIdentifier
+from yewo.artifacts import EvidenceApplicationIdentity, RecordIdentifier, Sha256Digest
 from yewo.devices.application_lifecycle import TrustedSystemSurface
 from yewo.observations import DeviceOrientation, ScreenFingerprint
 from yewo.grounding import GroundedLocation, GroundingResolutionSource
@@ -31,6 +31,7 @@ class ProcedureReplaySetup(BaseModel):
     setup_id: RecordIdentifier
     method: ProcedureResetMethod
     application: EvidenceApplicationIdentity
+    setup_contract_sha256: Sha256Digest
 
 
 class ProcedureReplayTerminal(StrEnum):
@@ -151,8 +152,6 @@ class ProcedureRepairEvidence(BaseModel):
             raise ValueError("Successful procedure repair requires a rejoin observation.")
         if self.action_count > self.maximum_actions:
             raise ValueError("Procedure repair actions exceed the configured limit.")
-        if self.model_call_count > self.action_count:
-            raise ValueError("Procedure repair model calls exceed repair actions.")
         return self
 
 

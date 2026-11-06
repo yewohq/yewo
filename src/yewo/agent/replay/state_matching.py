@@ -6,13 +6,17 @@ from dataclasses import dataclass
 from collections.abc import Callable
 
 from yewo.agent.replay.reconciliation.records import EvidenceDocument, EvidenceState
-from yewo.agent.replay.visual_matching import state_visual_match_ratio
+from yewo.agent.replay.visual_matching import (
+    state_visual_match_is_exact,
+    state_visual_match_ratio,
+)
 from yewo.observations import (
     Observation,
     ObservationCaptureError,
     ScreenshotReference,
     fingerprint_distance,
 )
+from yewo.run_narration import current_narrator
 
 
 @dataclass(frozen=True)
@@ -24,6 +28,20 @@ class EvidenceStateMatch:
     competing_distance: int | None
     visual_match_ratio: float | None
     reason: str
+
+
+AMBIGUOUS_SOURCE_STATE = "source_state_ambiguous"
+
+
+def trace_repair_target_match(accepted: bool, reason: str) -> bool:
+    """Record why one repair-target comparison accepted or rejected a screen."""
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.trace(
+            "procedure-repair",
+            f"repair_target_match accepted={str(accepted).lower()} reason={reason}",
+        )
+    return accepted
 
 
 def match_evidence_state(
@@ -66,7 +84,7 @@ def match_evidence_state(
             expected_distance,
             competing_distance,
             None,
-            "source_state_ambiguous",
+            AMBIGUOUS_SOURCE_STATE,
         )
     visual_match_ratio = _visual_match_ratio(observation, expected, screenshot_loader)
     if expected.visual_signature is not None and (
@@ -108,6 +126,29 @@ def state_matches_observation(
         visual_match_ratio is not None
         and visual_match_ratio >= state.visual_signature.minimum_match_ratio
     )
+
+
+def repair_state_matches_observation(
+    observation: Observation,
+    state: EvidenceState,
+    maximum_phash_distance: int,
+    screenshot_loader: Callable[[ScreenshotReference], bytes] | None = None,
+) -> bool:
+    """Accept repair rejoin only when all compiler-stable content remains intact."""
+    if not _metadata_matches(observation, state):
+        return False
+    distance = _minimum_distance(observation, state)
+    if distance is None:
+        return False
+    if state.visual_signature is None:
+        return distance <= maximum_phash_distance
+    if screenshot_loader is None:
+        return False
+    try:
+        png = screenshot_loader(observation.redacted_screenshot)
+    except ObservationCaptureError:
+        return False
+    return state_visual_match_is_exact(png, state.visual_signature)
 
 
 def _visual_match_ratio(

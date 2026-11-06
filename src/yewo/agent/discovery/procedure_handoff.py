@@ -20,7 +20,10 @@ from yewo.agent.replay.procedure.records import (
     ProcedureResetMethod,
     ProcedureReplayTerminal,
 )
-from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.store import (
+    CompiledProcedureSchemaError,
+    CompiledProcedureStore,
+)
 from yewo.agent.replay.reconciliation.records import (
     CompilerReason,
     EvidenceTask,
@@ -62,6 +65,7 @@ def prepare_procedure_replay_entry(
     redaction_regions: Sequence[RedactionRegion],
     declared_value_resolver: Callable[[str], str] | None,
     preparation: DiscoveryPreparation | None = None,
+    screen_analyzer_profile_id: str | None = None,
 ) -> ProcedureReplayEntry:
     """Attempt one compatible compiled procedure before bounded discovery."""
     objective = request.objectives[0]
@@ -79,15 +83,20 @@ def prepare_procedure_replay_entry(
         planner_profile_id=planner_profile_id,
         recovery_profile_id=recovery_profile_id,
         action_verifier_profile_id=action_verifier_profile_id,
+        screen_analyzer_profile_id=screen_analyzer_profile_id,
         auditor_image_constraints=auditor_image_constraints,
         memory=memory,
         redaction_regions=redaction_regions,
         declared_value_resolver=declared_value_resolver,
         preparation=preparation,
-        verification_task=EvidenceTask(
-            objective_id=objective.objective_id,
-            objective=objective.statement,
-            completion_conditions=(objective.completion_conditions or (objective.statement,)),
+        verification_task=(
+            EvidenceTask(
+                objective_id=objective.objective_id,
+                objective=objective.statement,
+                completion_conditions=objective.completion_conditions,
+            )
+            if objective.completion_conditions
+            else None
         ),
     )
     if replay is None:
@@ -115,6 +124,7 @@ def replay_compiled_procedure_if_available(
     planner_profile_id: str | None = None,
     recovery_profile_id: str | None = None,
     action_verifier_profile_id: str | None = None,
+    screen_analyzer_profile_id: str | None = None,
     auditor_image_constraints: ModelImageConstraints | None = None,
     memory: AppMemory | None,
     redaction_regions: Sequence[RedactionRegion],
@@ -131,11 +141,14 @@ def replay_compiled_procedure_if_available(
     selection = preparation.procedure_selection if preparation is not None else None
     stored_objective_id = selection.stored_objective_id if selection is not None else objective_id
     stored_objective = selection.stored_objective if selection is not None else objective
-    bundle = procedure_store.load(
-        compatibility,
-        stored_objective_id,
-        stored_objective,
-    )
+    try:
+        bundle = procedure_store.load(
+            compatibility,
+            stored_objective_id,
+            stored_objective,
+        )
+    except CompiledProcedureSchemaError:
+        return None
     if bundle is None:
         return None
     if selection is not None and bundle.procedure.procedure_id != selection.procedure_id:
@@ -162,6 +175,7 @@ def replay_compiled_procedure_if_available(
         setup_id=new_record_identifier(),
         method=ProcedureResetMethod.FRESH_INSTALL,
         application=bundle.procedure.application,
+        setup_contract_sha256=bundle.procedure.setup_contract.content_sha256(),
     )
     narrate_compiled_procedure_selection(
         bundle.procedure.procedure_id,
@@ -180,6 +194,7 @@ def replay_compiled_procedure_if_available(
         recovery_profile_id=recovery_profile_id,
         auditor_profile_id=auditor_profile_id,
         action_verifier_profile_id=action_verifier_profile_id,
+        screen_analyzer_profile_id=screen_analyzer_profile_id,
         auditor_image_constraints=auditor_image_constraints,
         memory=memory,
         redaction_regions=redaction_regions,

@@ -142,6 +142,7 @@ class ProcedureGrounder:
             upstream_provider=stored.upstream_provider,
             cached_procedure_step_id=match.source_step_id,
             usage=ModelCallUsage(),
+            model_request_count=0,
             confidence=stored.confidence,
         )
         self._record_decision(request, match, resolution, result)

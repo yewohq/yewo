@@ -8,7 +8,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from yewo.agent.actuation import ActionKind, VisibleControlKind
+from yewo.agent.actuation import ActionKind
+from yewo.agent.screen_analysis import ScreenElementKind
 from yewo.artifacts import RecordIdentifier
 
 
@@ -217,7 +218,7 @@ class ControlKnowledge(BaseModel):
     control_id: RecordIdentifier
     screen_id: RecordIdentifier
     name: str = Field(min_length=1, max_length=200)
-    kind: VisibleControlKind
+    kind: ScreenElementKind
     state: str | None = Field(default=None, min_length=1, max_length=200)
     options: tuple[str, ...] = Field(default=(), max_length=100)
     exercised: bool = False

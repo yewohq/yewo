@@ -16,7 +16,7 @@ from yewo.agent.replay.procedure.action_risks import compiled_procedure_action_r
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 
 from agent.memory.test_store import _memory
-from agent.replay.test_procedure_compiler import _evidence, _response
+from agent.replay.support import evidence as _evidence, response as _response
 
 
 def memory_with_action_risk(tmp_path: Path, *, target: str | None = None) -> AppMemory:

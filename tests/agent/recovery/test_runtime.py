@@ -5,7 +5,9 @@ from pydantic import ValidationError
 
 from yewo.agent.actuation import ActionKind
 from yewo.agent.memory.records import ScreenComparisonPolicy
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.recovery.advisor import RecoveryAssessment, RecoveryDisposition
 from yewo.agent.recovery.records import RecoveryBudgetCredit
 from yewo.agent.recovery.runtime import RecoveryRunState
@@ -35,6 +37,7 @@ class ContinuingAdvisor:
             reason="The task can return to the recorded frontier.",
             remaining_work=("Restore the form state.",),
             planner_guidance=("Do not repeat the failed submission unchanged.",),
+            candidate_causes=("A stale internal value may have caused the failure.",),
             model_request_id="request_1",
             model_call_count=1,
         )
@@ -78,6 +81,7 @@ def test_recovery_credit_ends_when_the_recorded_frontier_matches() -> None:
         now=10,
     )
     state.credit_planning_requests(2)
+    state.credit_analysis_requests(1)
     state.credit_grounding_requests(1)
     state.credit_dispatched_action()
     state.observe(intermediate, completed_step_count=5, now=12)
@@ -91,6 +95,7 @@ def test_recovery_credit_ends_when_the_recorded_frontier_matches() -> None:
     assert not state.is_active
     assert credit.steps == 2
     assert credit.planning_requests == 3
+    assert credit.analysis_requests == 1
     assert credit.grounding_requests == 1
     assert credit.dispatched_actions == 1
     assert credit.duration_seconds == 4
@@ -150,3 +155,26 @@ def test_recovery_credit_cannot_exceed_gross_usage() -> None:
             recovery_budget_credit=RecoveryBudgetCredit(planning_requests=1),
             steps=(),
         )
+
+
+def test_advisor_text_reaches_the_planner_as_guidance_not_as_a_work_item() -> None:
+    frontier = observation("obs_frontier", "0000000000000000")
+    fresh = observation("obs_fresh", "1111111111111111", offset_seconds=1)
+    state = RecoveryRunState(ContinuingAdvisor(), ScreenComparisonPolicy())
+    state.assess(
+        _planning_request(frontier),
+        _failed_step(),
+        fresh,
+        completed_step_count=4,
+        now=10,
+    )
+
+    context = state.progress_context()
+
+    assert context is not None
+    assert context.remaining_work == ()
+    assert "Restore the form state." in context.recovery_guidance
+    assert "Do not repeat the failed submission unchanged." in context.recovery_guidance
+    assert "Unproven recovery cause: A stale internal value may have caused the failure." in (
+        context.recovery_guidance
+    )

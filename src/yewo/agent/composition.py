@@ -17,10 +17,17 @@ from yewo.agent.runtime.application_state import (
 )
 from yewo.agent.memory.records import AppMemory, ScreenComparisonPolicy
 from yewo.agent.memory.grounding import AppMemoryGrounder
-from yewo.agent.planning.planner import ActionProposalSource, TaskPlanner, TaskProgressContext
+from yewo.agent.planning.planner import (
+    ActionProposalSource,
+    TaskPlanner,
+)
+from yewo.agent.planning.records import (
+    TaskProgressContext,
+)
 from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.recovery.advisor import ModelRecoveryAdvisor
 from yewo.agent.runtime.agent import DeviceAgent
+from yewo.agent.screen_analysis import CurrentScreenAnalysisManager, ModelScreenAnalyzer
 from yewo.agent.runtime.records import AgentStepStore
 from yewo.agent.memory.screens import AppMemoryActionSource
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity, new_record_identifier
@@ -52,6 +59,7 @@ def build_device_agent(
     *,
     recovery_profile_id: str | None = None,
     action_verifier_profile_id: str | None = None,
+    screen_analyzer_profile_id: str | None = None,
     redaction_regions: Sequence[RedactionRegion] = (),
     declared_value_resolver: Callable[[str], str] | None = None,
     proposal_source: ActionProposalSource | None = None,
@@ -136,6 +144,13 @@ def build_device_agent(
             if action_verifier_profile_id is not None
             else None
         ),
+        screen_analysis=(
+            CurrentScreenAnalysisManager(
+                ModelScreenAnalyzer(model_client, screen_analyzer_profile_id)
+            )
+            if screen_analyzer_profile_id is not None
+            else None
+        ),
         initial_planning_requests=initial_planning_requests,
     )
 
@@ -166,4 +181,5 @@ def build_model_client(
         ModelImageReader(root),
         scrub_text,
         cache_affinity=run_id,
+        ai_session_id=run_id,
     )

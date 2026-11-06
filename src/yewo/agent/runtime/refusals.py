@@ -10,15 +10,19 @@ from yewo.agent.actuation import (
     DispatchDisposition,
     DispatchReceipt,
 )
-from yewo.agent.narration import narrate, narrate_no_progress, narrate_refusal
-from yewo.agent.runtime.no_progress import ActionNoProgressTracker, record_refusal_with_facts
+from yewo.agent.narration import narrate, narrate_no_progress_facts, narrate_refusal
 from yewo.agent.planning.evidence import PlannerDecisionMetadata
 from yewo.agent.planning.history import (
     PlanningHistoryEntry,
     build_dispatch_rejection_history_entry,
     build_refusal_history_entry,
 )
+from yewo.agent.runtime.failure import (
+    ModelServiceUnavailableError,
+    persist_model_service_failure,
+)
 from yewo.agent.runtime.records import AgentStep, AgentStepStore
+from yewo.agent.runtime.progress import RunProgressLedger
 from yewo.grounding import GroundingEvidence
 from yewo.observations import Observation
 
@@ -27,7 +31,7 @@ def record_action_refusal(
     step_store: AgentStepStore,
     steps: list[AgentStep],
     history: list[PlanningHistoryEntry],
-    no_progress: ActionNoProgressTracker,
+    progress_ledger: RunProgressLedger,
     step_index: int,
     observation: Observation,
     proposal: ActionProposal,
@@ -35,6 +39,10 @@ def record_action_refusal(
     refusal: ActionRefusal,
     target_grounding: GroundingEvidence | None = None,
     destination_grounding: GroundingEvidence | None = None,
+    *,
+    planning_requests: int,
+    grounding_requests: int,
+    dispatched_actions: int,
 ) -> str | None:
     """Persist one pre-dispatch refusal and record established no-progress evidence."""
     step = step_store.record(
@@ -49,22 +57,32 @@ def record_action_refusal(
     steps.append(step)
     narrate_refusal(step_index, refusal)
     history.append(build_refusal_history_entry(proposal, refusal, observation))
-    if refusal.code is ActionRefusalCode.VERIFICATION_UNAVAILABLE:
-        return None
-    return record_refusal_with_facts(
-        no_progress,
+    progress_facts, terminal_reason = progress_ledger.record_refusal(
         proposal,
         observation,
         refusal,
-        narrate_no_progress,
+        decision.source,
     )
+    narrate_no_progress_facts(progress_facts)
+    if terminal_reason is not None and progress_ledger.refusal_deadlock_is_transient:
+        summary = persist_model_service_failure(
+            step_store.root,
+            "A required model service remained unavailable. " + terminal_reason,
+            observation.observation_id,
+            steps,
+            planning_requests,
+            grounding_requests,
+            dispatched_actions,
+        )
+        raise ModelServiceUnavailableError(summary)
+    return terminal_reason
 
 
 def record_dispatch_rejection(
     step_store: AgentStepStore,
     steps: list[AgentStep],
     history: list[PlanningHistoryEntry],
-    no_progress: ActionNoProgressTracker,
+    progress_ledger: RunProgressLedger,
     step_index: int,
     observation: Observation,
     proposal: ActionProposal,
@@ -104,10 +122,11 @@ def record_dispatch_rejection(
         }[receipt.disposition],
         reason=reason,
     )
-    return record_refusal_with_facts(
-        no_progress,
+    progress_facts, terminal_reason = progress_ledger.record_refusal(
         proposal,
         observation,
         refusal,
-        narrate_no_progress,
+        decision.source,
     )
+    narrate_no_progress_facts(progress_facts)
+    return terminal_reason

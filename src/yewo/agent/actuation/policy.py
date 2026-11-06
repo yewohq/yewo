@@ -22,12 +22,10 @@ from yewo.grounding import (
     PixelPoint,
 )
 from yewo.observations import Observation, PixelRegion, ScreenRegion
+from yewo.agent.actuation.action_catalog import ACTION_DEFINITIONS, ActionHandling, ActionKind
 
 from yewo.agent.actuation.records import (
-    ACTION_DEFINITIONS,
     ActionBudget,
-    ActionHandling,
-    ActionKind,
     ActionPolicyLimits,
     ActionProposal,
     ActionRefusal,
@@ -405,6 +403,16 @@ class ActionPolicy:
                 None,
                 self._refuse(
                     proposal, ActionRefusalCode.STALE_GROUNDING, "Grounding screenshot is stale."
+                ),
+            )
+        if result.disposition is GroundingDisposition.PROVIDER_UNAVAILABLE:
+            return (
+                None,
+                None,
+                self._refuse(
+                    proposal,
+                    ActionRefusalCode.PROVIDER_UNAVAILABLE,
+                    result.reason or "The grounding provider was unavailable.",
                 ),
             )
         if result.disposition is not GroundingDisposition.ACCEPTED:

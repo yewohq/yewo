@@ -37,8 +37,8 @@ def _request() -> DiscoveryRequest:
         request_id="request_1",
         objectives=(
             DiscoveryObjective(
-                objective_id="account_form",
-                statement="The account form is reachable.",
+                objective_id="record_form",
+                statement="The record form is reachable.",
             ),
         ),
     )
@@ -83,7 +83,7 @@ def _promote(
         result,
         {before.observation_id: before, after.observation_id: after},
         _compatibility(),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
         compiled_procedure=compiled_procedure,
@@ -277,7 +277,7 @@ def test_application_exit_cannot_become_a_reusable_transition() -> None:
         result,
         {before.observation_id: before, after.observation_id: after},
         _compatibility(),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -335,7 +335,7 @@ def test_nearby_fingerprints_become_variants_of_one_logical_screen() -> None:
         result,
         {before.observation_id: before, after.observation_id: after},
         compatibility,
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -362,7 +362,7 @@ def test_incompatible_masks_cannot_be_grouped() -> None:
             result,
             {before.observation_id: before, after.observation_id: after},
             _compatibility(),
-            verified_objective_ids=frozenset({"account_form"}),
+            verified_objective_ids=frozenset({"record_form"}),
             source_run_id="run_1",
             updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
         )
@@ -421,7 +421,7 @@ def test_focus_then_literal_type_learns_a_targeted_input_contract() -> None:
         result,
         {item.observation_id: item for item in (first, focused, typed)},
         _compatibility(),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -448,7 +448,7 @@ def test_declared_type_and_clear_actions_can_be_reused_without_a_value(
         before,
         after,
         action=action,
-        declared_value_name="account_name" if action is ActionKind.TYPE else None,
+        declared_value_name="declared_name" if action is ActionKind.TYPE else None,
     )
 
     promotion = AppMemoryBuilder().promote(
@@ -456,7 +456,7 @@ def test_declared_type_and_clear_actions_can_be_reused_without_a_value(
         result,
         {before.observation_id: before, after.observation_id: after},
         _compatibility(),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )
@@ -466,7 +466,7 @@ def test_declared_type_and_clear_actions_can_be_reused_without_a_value(
     serialized = promotion.memory.model_dump_json()
     assert "hello" not in serialized
     if action is ActionKind.TYPE:
-        assert "account_name" in serialized
+        assert "declared_name" in serialized
 
 
 def test_literal_text_transition_retains_only_its_input_shape() -> None:
@@ -519,7 +519,7 @@ def test_literal_text_transition_retains_only_its_input_shape() -> None:
             destination.observation_id: destination,
         },
         _compatibility(),
-        verified_objective_ids=frozenset({"account_form"}),
+        verified_objective_ids=frozenset({"record_form"}),
         source_run_id="run_1",
         updated_at=datetime(2026, 10, 31, tzinfo=timezone.utc),
     )

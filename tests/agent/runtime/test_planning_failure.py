@@ -51,8 +51,8 @@ def test_runtime_returns_incomplete_agent_result_for_truncated_planning(tmp_path
         RuntimeDevice(),
     ).run(
         AgentTask(
-            objective="Add one exercise.",
-            completion_conditions=("The exercise is visible.",),
+            objective="Add one record.",
+            completion_conditions=("The record is visible.",),
         ),
         _mode_policy(),
         NeverInterrupted(),

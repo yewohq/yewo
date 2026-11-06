@@ -17,9 +17,9 @@ from yewo.artifacts import (
 from yewo.devices.application_lifecycle import ApplicationState, trusted_system_surface
 from yewo.devices.focus import FocusedFieldReading, TextFieldContextSource, TextFieldType
 from yewo.observations import Observation
+from yewo.agent.actuation.action_catalog import ActionKind, ActionOutcomeSignal
 
 from yewo.agent.actuation.records import (
-    ActionKind,
     AuthorizedAction,
     DispatchDisposition,
     DispatchReceipt,
@@ -33,27 +33,6 @@ class ActionOutcomeDisposition(StrEnum):
     NO_OBSERVABLE_CHANGE = "no_observable_change"
     AMBIGUOUS = "ambiguous"
     UNAVAILABLE = "unavailable"
-
-
-class ActionOutcomeSignal(StrEnum):
-    """One observed change associated with a dispatched action."""
-
-    PIXELS_CHANGED = "pixels_changed"
-    CONTEXT_CHANGED = "context_changed"
-    KEYBOARD_OPENED = "keyboard_opened"
-    KEYBOARD_CLOSED = "keyboard_closed"
-    FOCUS_CHANGED = "focus_changed"
-    TEXT_LANDED = "text_landed"
-    TEXT_NOT_LANDED = "text_not_landed"
-    APP_BACKGROUNDED = "app_backgrounded"
-    SYSTEM_SURFACE_OPENED = "system_surface_opened"
-    APP_EXITED = "app_exited"
-
-    @classmethod
-    def _missing_(cls, value: object) -> ActionOutcomeSignal | None:
-        if value == "screen_changed":
-            return cls.PIXELS_CHANGED
-        return None
 
 
 class TextDeliveryStatus(StrEnum):

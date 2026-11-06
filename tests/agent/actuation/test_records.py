@@ -32,7 +32,7 @@ def test_proposal_round_trip_preserves_every_field() -> None:
     "text",
     [
         LiteralText(value="hello"),
-        DeclaredValueReference(value_name="account_password"),
+        DeclaredValueReference(value_name="declared_secret"),
     ],
 )
 def test_text_input_round_trip_preserves_its_variant(text: object) -> None:
@@ -54,7 +54,7 @@ def test_authorization_round_trip_contains_only_a_declared_value_reference() -> 
         source=ActionSource.PLANNER,
         side_effect=ACTION_DEFINITIONS[ActionKind.TYPE].side_effect,
         expected_outcome="The password field contains the declared value.",
-        text=DeclaredValueReference(value_name="account_password"),
+        text=DeclaredValueReference(value_name="declared_secret"),
         sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
         retention=ArtifactRetention.RUN,
     )

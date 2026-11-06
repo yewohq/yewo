@@ -25,12 +25,16 @@ class CompiledProcedureStoreError(RuntimeError):
     """Compatible procedure evidence could not be read or persisted safely."""
 
 
+class CompiledProcedureSchemaError(CompiledProcedureStoreError):
+    """A stored procedure uses an unsupported persisted schema."""
+
+
 class StoredProcedureBundle(BaseModel):
     """One compiler-approved procedure and its complete source evidence."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 1
+    schema_version: int = 2
     compatibility: MemoryCompatibility
     evidence: EvidenceDocument
     procedure: ReplayProcedure
@@ -47,7 +51,7 @@ class StoredProcedureBundle(BaseModel):
 class _StoredProcedureEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 1
+    schema_version: int = 2
     bundle_sha256: Sha256Digest
     bundle: StoredProcedureBundle
 
@@ -139,7 +143,10 @@ class CompiledProcedureStore:
                 path = objective_root / "procedure.json"
                 if not path.exists():
                     continue
-                bundle = _read_bundle(path)
+                try:
+                    bundle = _read_bundle(path)
+                except CompiledProcedureSchemaError:
+                    continue
                 if bundle.compatibility != compatibility:
                     raise CompiledProcedureStoreError(
                         "A stored procedure candidate is incompatible."
@@ -250,6 +257,7 @@ def _read_bundle(path: Path) -> StoredProcedureBundle:
         if path.is_symlink() or not path.is_file():
             raise CompiledProcedureStoreError("The compiled procedure must be a regular file.")
         payload = json.loads(path.read_bytes())
+        _validate_supported_schema(payload)
         envelope = _StoredProcedureEnvelope.model_validate(payload)
         content = _canonical_bytes(payload["bundle"])
     except CompiledProcedureStoreError:
@@ -259,6 +267,23 @@ def _read_bundle(path: Path) -> StoredProcedureBundle:
     if sha256(content).hexdigest() != envelope.bundle_sha256:
         raise CompiledProcedureStoreError("The compiled procedure snapshot digest does not match.")
     return envelope.bundle
+
+
+def _validate_supported_schema(payload: object) -> None:
+    if not isinstance(payload, dict):
+        raise CompiledProcedureStoreError("The compiled procedure snapshot is invalid.")
+    bundle = payload.get("bundle")
+    procedure = bundle.get("procedure") if isinstance(bundle, dict) else None
+    envelope_version = payload.get("schema_version")
+    bundle_version = bundle.get("schema_version") if isinstance(bundle, dict) else None
+    procedure_version = (
+        procedure.get("schema_version") if isinstance(procedure, dict) else None
+    )
+    if envelope_version != 2 or bundle_version != 2 or procedure_version != 2:
+        raise CompiledProcedureSchemaError(
+            "The compiled procedure schema is unsupported. "
+            "Rebuild the procedure with this Yewo version."
+        )
 
 
 def _compatibility_key(compatibility: MemoryCompatibility) -> str:

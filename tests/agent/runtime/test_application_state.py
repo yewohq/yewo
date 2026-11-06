@@ -9,7 +9,9 @@ from yewo.agent.runtime.application_state import (
     restart_and_rebaseline_application,
 )
 from yewo.agent.actuation import ActionKind, ActionOutcomeSignal
-from yewo.agent.planning.planner import PlanningRequest
+from yewo.agent.planning.records import (
+    PlanningRequest,
+)
 from yewo.agent.recovery.advisor import RecoveryAssessment, RecoveryDisposition
 from yewo.agent.runtime.records import AgentStep
 from yewo.devices.diagnostics import (

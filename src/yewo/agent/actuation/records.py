@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
@@ -17,125 +16,14 @@ from yewo.devices.interaction import (
 )
 from yewo.grounding import GroundingTargetOperation, PixelPoint
 from yewo.observations import PixelRegion
+from yewo.agent.actuation.action_catalog import (
+    ACTION_DEFINITIONS,
+    ActionKind,
+    SideEffectClass,
+)
 
 
-class ActionKind(StrEnum):
-    """Actions understood by the planner-facing runtime contract."""
-
-    TAP = "tap"
-    FOCUS = "focus"
-    TYPE = "type"
-    CLEAR = "clear"
-    DOUBLE_TAP = "double_tap"
-    LONG_PRESS = "long_press"
-    DRAG = "drag"
-    SCROLL = "scroll"
-    BACK = "back"
-    DISMISS_KEYBOARD = "dismiss_keyboard"
-    WAIT = "wait"
-    SET_DEVICE_CAPABILITY = "set_device_capability"
-    DONE = "done"
-    CANNOT_PROGRESS = "cannot_progress"
-
-
-class SideEffectClass(StrEnum):
-    """Conservative side effects used by mode policy."""
-
-    NONE = "none"
-    NAVIGATION = "navigation"
-    APPLICATION_MUTATION = "application_mutation"
-    UNCLASSIFIED_INTERACTION = "unclassified_interaction"
-    DEVICE_CONFIGURATION = "device_configuration"
-
-
-class ActionHandling(StrEnum):
-    """The runtime boundary that owns an action."""
-
-    EXECUTE = "execute"
-    TERMINAL = "terminal"
-    CAPABILITY = "capability"
-
-
-@dataclass(frozen=True)
-class ActionDefinition:
-    """Stable classification and grounding rules for one action."""
-
-    handling: ActionHandling
-    side_effect: SideEffectClass
-    target_operation: GroundingTargetOperation | None = None
-    destination_operation: GroundingTargetOperation | None = None
-    blocked_when_keyboard_visible: bool = False
-    requires_keyboard_visible: bool = False
-
-
-ACTION_DEFINITIONS = {
-    ActionKind.TAP: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
-        target_operation=GroundingTargetOperation.TAP,
-        blocked_when_keyboard_visible=True,
-    ),
-    ActionKind.FOCUS: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
-        target_operation=GroundingTargetOperation.TEXT_FIELD,
-    ),
-    ActionKind.TYPE: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.APPLICATION_MUTATION,
-        target_operation=GroundingTargetOperation.TEXT_FIELD,
-        requires_keyboard_visible=True,
-    ),
-    ActionKind.CLEAR: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.APPLICATION_MUTATION,
-        requires_keyboard_visible=True,
-    ),
-    ActionKind.DOUBLE_TAP: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
-        target_operation=GroundingTargetOperation.TAP,
-        blocked_when_keyboard_visible=True,
-    ),
-    ActionKind.LONG_PRESS: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
-        target_operation=GroundingTargetOperation.TAP,
-        blocked_when_keyboard_visible=True,
-    ),
-    ActionKind.DRAG: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
-        target_operation=GroundingTargetOperation.DRAG_SOURCE,
-        destination_operation=GroundingTargetOperation.DRAG_DESTINATION,
-        blocked_when_keyboard_visible=True,
-    ),
-    ActionKind.SCROLL: ActionDefinition(
-        handling=ActionHandling.EXECUTE,
-        side_effect=SideEffectClass.NAVIGATION,
-        target_operation=GroundingTargetOperation.SCROLL_REGION,
-        blocked_when_keyboard_visible=True,
-    ),
-    ActionKind.BACK: ActionDefinition(
-        ActionHandling.EXECUTE,
-        SideEffectClass.NAVIGATION,
-        blocked_when_keyboard_visible=True,
-    ),
-    ActionKind.DISMISS_KEYBOARD: ActionDefinition(
-        ActionHandling.EXECUTE,
-        SideEffectClass.NAVIGATION,
-    ),
-    ActionKind.WAIT: ActionDefinition(ActionHandling.EXECUTE, SideEffectClass.NONE),
-    ActionKind.SET_DEVICE_CAPABILITY: ActionDefinition(
-        ActionHandling.CAPABILITY,
-        SideEffectClass.DEVICE_CONFIGURATION,
-    ),
-    ActionKind.DONE: ActionDefinition(ActionHandling.TERMINAL, SideEffectClass.NONE),
-    ActionKind.CANNOT_PROGRESS: ActionDefinition(
-        ActionHandling.TERMINAL,
-        SideEffectClass.NONE,
-    ),
-}
+MAXIMUM_ACTION_TARGET_EXPRESSION_LENGTH = 1_000
 
 
 class ActionSource(StrEnum):
@@ -183,19 +71,26 @@ TextInput = Annotated[
 ]
 
 
-class ActionProposal(BaseModel):
-    """A planner proposal tied to its source observation."""
+class ActionProposalDecision(BaseModel):
+    """Model-authored action content without runtime-owned identity."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = 1
-    proposal_id: RecordIdentifier
-    source_observation_id: RecordIdentifier
     action: ActionKind
     grounding_correction_for_proposal_id: RecordIdentifier | None = None
     interaction_refinement_for_proposal_id: RecordIdentifier | None = None
-    target_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
-    destination_expression: str | None = Field(default=None, min_length=1, max_length=1_000)
+    target_element_ref: RecordIdentifier | None = None
+    destination_element_ref: RecordIdentifier | None = None
+    target_expression: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAXIMUM_ACTION_TARGET_EXPRESSION_LENGTH,
+    )
+    destination_expression: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAXIMUM_ACTION_TARGET_EXPRESSION_LENGTH,
+    )
     text: TextInput | None = None
     duration_seconds: float | None = Field(default=None, ge=0)
     direction: ScrollDirection | None = None
@@ -226,8 +121,6 @@ class ActionProposal(BaseModel):
             )
         ):
             raise ValueError("A grounding correction requires one visual point target.")
-        if self.grounding_correction_for_proposal_id == self.proposal_id:
-            raise ValueError("A grounding correction cannot reference its own proposal.")
         if self.interaction_refinement_for_proposal_id is not None and (
             self.target_expression is None
             or definition.target_operation is None
@@ -235,8 +128,6 @@ class ActionProposal(BaseModel):
             or definition.destination_operation is not None
         ):
             raise ValueError("An interaction refinement requires one visual point target.")
-        if self.interaction_refinement_for_proposal_id == self.proposal_id:
-            raise ValueError("An interaction refinement cannot reference its own proposal.")
         if (
             self.grounding_correction_for_proposal_id is not None
             and self.interaction_refinement_for_proposal_id is not None
@@ -244,37 +135,9 @@ class ActionProposal(BaseModel):
             raise ValueError(
                 "A proposal cannot be both a grounding correction and an interaction refinement."
             )
-        required: dict[ActionKind, frozenset[str]] = {
-            ActionKind.TAP: frozenset({"target_expression", "expected_outcome", "reason"}),
-            ActionKind.FOCUS: frozenset({"target_expression", "expected_outcome", "reason"}),
-            ActionKind.TYPE: frozenset({"text", "expected_outcome", "reason"}),
-            ActionKind.CLEAR: frozenset({"expected_outcome", "reason"}),
-            ActionKind.DOUBLE_TAP: frozenset({"target_expression", "expected_outcome", "reason"}),
-            ActionKind.LONG_PRESS: frozenset(
-                {"target_expression", "duration_seconds", "expected_outcome", "reason"}
-            ),
-            ActionKind.DRAG: frozenset(
-                {
-                    "target_expression",
-                    "destination_expression",
-                    "duration_seconds",
-                    "expected_outcome",
-                    "reason",
-                }
-            ),
-            ActionKind.SCROLL: frozenset({"direction", "distance", "expected_outcome", "reason"}),
-            ActionKind.BACK: frozenset({"expected_outcome", "reason"}),
-            ActionKind.DISMISS_KEYBOARD: frozenset({"expected_outcome", "reason"}),
-            ActionKind.WAIT: frozenset({"duration_seconds", "expected_outcome", "reason"}),
-            ActionKind.SET_DEVICE_CAPABILITY: frozenset({"reason"}),
-            ActionKind.DONE: frozenset({"reason"}),
-            ActionKind.CANNOT_PROGRESS: frozenset({"reason"}),
-        }
-        optional: dict[ActionKind, frozenset[str]] = {
-            ActionKind.SCROLL: frozenset({"target_expression"}),
-            ActionKind.TYPE: frozenset({"target_expression"}),
-        }
         action_fields = {
+            "target_element_ref": self.target_element_ref,
+            "destination_element_ref": self.destination_element_ref,
             "target_expression": self.target_expression,
             "destination_expression": self.destination_expression,
             "text": self.text,
@@ -285,14 +148,23 @@ class ActionProposal(BaseModel):
             "reason": self.reason,
         }
         present = {name for name, value in action_fields.items() if value is not None}
-        expected = required[self.action]
+        expected = definition.required_fields
         if not expected.issubset(present):
             missing = ", ".join(sorted(expected - present))
             raise ValueError(f"{self.action.value} requires: {missing}.")
-        unexpected = present - expected - optional.get(self.action, frozenset())
+        unexpected = present - expected - definition.optional_fields
         if unexpected:
             names = ", ".join(sorted(unexpected))
             raise ValueError(f"{self.action.value} does not accept: {names}.")
+        target_fields = {"target_expression", "target_element_ref"}
+        target_required = (
+            definition.target_operation is not None
+            and not target_fields.intersection(definition.optional_fields)
+        )
+        if target_required and self.target_expression is None and self.target_element_ref is None:
+            raise ValueError(f"{self.action.value} requires a target.")
+        if definition.destination_operation is not None and self.destination_expression is None and self.destination_element_ref is None:
+            raise ValueError(f"{self.action.value} requires a destination.")
         return self
 
     @model_validator(mode="after")
@@ -301,15 +173,6 @@ class ActionProposal(BaseModel):
         context = info.context
         if not isinstance(context, dict):
             return self
-        expected_proposal_id = context.get("expected_proposal_id")
-        if isinstance(expected_proposal_id, str) and self.proposal_id != expected_proposal_id:
-            raise ValueError("Copy the proposal_id from the planning context exactly.")
-        expected_observation_id = context.get("expected_observation_id")
-        if (
-            isinstance(expected_observation_id, str)
-            and self.source_observation_id != expected_observation_id
-        ):
-            raise ValueError("Copy the source_observation_id from the planning context exactly.")
         available_actions = context.get("available_actions")
         if isinstance(available_actions, (tuple, list, frozenset, set)) and (
             self.action.value not in available_actions
@@ -326,6 +189,48 @@ class ActionProposal(BaseModel):
             and self.text.value_name not in declared_value_names
         ):
             raise ValueError("Use only a declared value name listed in the planning context.")
+        available_element_refs = context.get("available_element_refs")
+        if isinstance(available_element_refs, (tuple, list, frozenset, set)):
+            allowed_refs = set(available_element_refs)
+            for reference in (self.target_element_ref, self.destination_element_ref):
+                if reference is not None and reference not in allowed_refs:
+                    raise ValueError("Use only an interactive element_ref from current_screen_analysis.")
+        if self.target_element_ref is not None and self.target_expression is not None:
+            raise ValueError("Choose target_element_ref or target_expression, not both.")
+        if self.destination_element_ref is not None and self.destination_expression is not None:
+            raise ValueError("Choose destination_element_ref or destination_expression, not both.")
+        correctable = context.get("correctable_grounding_proposals")
+        failed_id = self.grounding_correction_for_proposal_id
+        if failed_id is None or not isinstance(correctable, dict):
+            return self
+        failed = correctable.get(failed_id)
+        if failed is None:
+            raise ValueError(
+                "Correct only a proposal whose grounded target failed and has no correction "
+                "yet. When the target was grounded but the action had the wrong effect, use "
+                "interaction_refinement_for_proposal_id instead."
+            )
+        failed_action, failed_target = failed
+        if self.action.value != failed_action:
+            raise ValueError(f"A grounding correction must repeat action '{failed_action}'.")
+        if self.target_expression == failed_target:
+            raise ValueError("A grounding correction must change the failed target expression.")
+        return self
+
+
+class ActionProposal(ActionProposalDecision):
+    """A validated planner decision bound to one runtime observation."""
+
+    schema_version: Literal[1] = 1
+    proposal_id: RecordIdentifier
+    source_observation_id: RecordIdentifier
+
+    @model_validator(mode="after")
+    def _validate_runtime_identity_references(self) -> Self:
+        if self.grounding_correction_for_proposal_id == self.proposal_id:
+            raise ValueError("A grounding correction cannot reference its own proposal.")
+        if self.interaction_refinement_for_proposal_id == self.proposal_id:
+            raise ValueError("An interaction refinement cannot reference its own proposal.")
         return self
 
 
@@ -383,6 +288,7 @@ class ActionRefusalCode(StrEnum):
 
     STALE_OBSERVATION = "stale_observation"
     STALE_GROUNDING = "stale_grounding"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
     INVALID_GROUNDING = "invalid_grounding"
     INVALID_INPUT = "invalid_input"
     ACTION_NOT_ALLOWED = "action_not_allowed"
