@@ -1,6 +1,7 @@
 """Tests for provider-neutral model records and profiles."""
 
 from datetime import datetime, timezone
+import os
 
 import pytest
 from pydantic import ValidationError
@@ -211,3 +212,14 @@ def test_credential_preflight_uses_litellm_without_printing_provider_output(
 
     assert missing_model_credentials(build_model_profile()) == ("EXAMPLE_API_KEY",)
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("credential", ("", "   "))
+def test_credential_preflight_treats_a_blank_key_as_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    credential: str,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", credential)
+
+    assert missing_model_credentials(build_model_profile()) == ("OPENROUTER_API_KEY",)
+    assert os.environ["OPENROUTER_API_KEY"] == credential

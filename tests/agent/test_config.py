@@ -1,11 +1,11 @@
 """Strict Yewo-run configuration tests."""
 
-import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from yewo.agent import YewoRunConfigurationError, load_yewo_run_configuration
+from yewo.agent import YewoRunConfiguration
 
 
 def _configuration() -> dict[str, object]:
@@ -117,14 +117,8 @@ def _configuration() -> dict[str, object]:
     }
 
 
-def _write_configuration(tmp_path: Path, payload: dict[str, object]) -> Path:
-    path = tmp_path / "normal-run.json"
-    path.write_text(json.dumps(payload))
-    return path
-
-
-def test_loads_explicit_profiles_without_a_default_model(tmp_path: Path) -> None:
-    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, _configuration()))
+def test_validates_explicit_profiles_without_a_default_model() -> None:
+    configuration = YewoRunConfiguration.model_validate(_configuration())
 
     assert configuration.planner_profile_id == "planner-primary"
     assert configuration.recovery_profile_id == "recovery-primary"
@@ -142,46 +136,44 @@ def test_loads_explicit_profiles_without_a_default_model(tmp_path: Path) -> None
     ]
 
 
-def test_objective_only_task_preserves_absent_discovery_conditions(
-    tmp_path: Path,
-) -> None:
+def test_objective_only_task_preserves_absent_discovery_conditions() -> None:
     payload = _configuration()
     payload["task"] = {"objective": "Create and reopen one record."}
 
-    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    configuration = YewoRunConfiguration.model_validate(payload)
 
     assert configuration.task.known_facts == ()
     assert configuration.task.open_work == ()
     assert configuration.task.completion_conditions == ()
 
 
-def test_normal_configuration_requires_the_screen_analyzer(tmp_path: Path) -> None:
+def test_normal_configuration_requires_the_screen_analyzer() -> None:
     payload = _configuration()
     del payload["screen_analyzer_profile_id"]
 
-    with pytest.raises(YewoRunConfigurationError, match="screen_analyzer_profile_id"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError, match="screen_analyzer_profile_id"):
+        YewoRunConfiguration.model_validate(payload)
 
 
-def test_loads_an_optional_reusable_memory_root(tmp_path: Path) -> None:
+def test_loads_an_optional_reusable_memory_root() -> None:
     payload = _configuration()
     payload["memory_root"] = "shared-app-memory"
 
-    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    configuration = YewoRunConfiguration.model_validate(payload)
 
     assert configuration.memory_root == Path("shared-app-memory")
 
 
-def test_configuration_accepts_an_optional_memory_root(tmp_path: Path) -> None:
+def test_configuration_accepts_an_optional_memory_root() -> None:
     configured = _configuration()
     configured["memory_root"] = "shared-app-memory"
 
-    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, configured))
+    configuration = YewoRunConfiguration.model_validate(configured)
 
     assert configuration.memory_root == Path("shared-app-memory")
 
 
-def test_loads_the_recommended_discovery_budgets(tmp_path: Path) -> None:
+def test_loads_the_recommended_discovery_budgets() -> None:
     payload = _configuration()
     mode_policy = payload["mode_policy"]
     assert isinstance(mode_policy, dict)
@@ -197,7 +189,7 @@ def test_loads_the_recommended_discovery_budgets(tmp_path: Path) -> None:
         }
     )
 
-    configuration = load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    configuration = YewoRunConfiguration.model_validate(payload)
 
     assert configuration.mode_policy.maximum_steps == 100
     assert configuration.mode_policy.action_limits.maximum_actions == 90
@@ -214,7 +206,6 @@ def test_loads_the_recommended_discovery_budgets(tmp_path: Path) -> None:
     ),
 )
 def test_rejects_agent_budgets_above_the_supported_ceiling(
-    tmp_path: Path,
     field: str,
     value: int,
 ) -> None:
@@ -223,21 +214,21 @@ def test_rejects_agent_budgets_above_the_supported_ceiling(
     assert isinstance(mode_policy, dict)
     mode_policy[field] = value
 
-    with pytest.raises(YewoRunConfigurationError, match="invalid"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError):
+        YewoRunConfiguration.model_validate(payload)
 
 
-def test_rejects_declared_values_until_the_cli_has_a_secret_boundary(tmp_path: Path) -> None:
+def test_rejects_declared_values_until_the_cli_has_a_secret_boundary() -> None:
     payload = _configuration()
     task = payload["task"]
     assert isinstance(task, dict)
     task["declared_value_names"] = ["password"]
 
-    with pytest.raises(YewoRunConfigurationError, match="invalid"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError):
+        YewoRunConfiguration.model_validate(payload)
 
 
-def test_rejects_a_profile_with_the_wrong_role(tmp_path: Path) -> None:
+def test_rejects_a_profile_with_the_wrong_role() -> None:
     payload = _configuration()
     profiles = payload["model_profiles"]
     assert isinstance(profiles, dict)
@@ -247,11 +238,11 @@ def test_rejects_a_profile_with_the_wrong_role(tmp_path: Path) -> None:
     assert isinstance(planner_profile, dict)
     planner_profile["role"] = "grounder"
 
-    with pytest.raises(YewoRunConfigurationError, match="invalid"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError):
+        YewoRunConfiguration.model_validate(payload)
 
 
-def test_rejects_a_recovery_profile_with_the_wrong_role(tmp_path: Path) -> None:
+def test_rejects_a_recovery_profile_with_the_wrong_role() -> None:
     payload = _configuration()
     profiles = payload["model_profiles"]
     assert isinstance(profiles, dict)
@@ -261,13 +252,11 @@ def test_rejects_a_recovery_profile_with_the_wrong_role(tmp_path: Path) -> None:
     assert isinstance(recovery_profile, dict)
     recovery_profile["role"] = "task_planner"
 
-    with pytest.raises(YewoRunConfigurationError, match="invalid"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError):
+        YewoRunConfiguration.model_validate(payload)
 
 
-def test_rejects_a_recovery_profile_that_cannot_receive_both_screenshots(
-    tmp_path: Path,
-) -> None:
+def test_rejects_a_recovery_profile_that_cannot_receive_both_screenshots() -> None:
     payload = _configuration()
     profiles = payload["model_profiles"]
     assert isinstance(profiles, dict)
@@ -279,11 +268,11 @@ def test_rejects_a_recovery_profile_that_cannot_receive_both_screenshots(
     assert isinstance(images, dict)
     images["max_images"] = 1
 
-    with pytest.raises(YewoRunConfigurationError, match="invalid"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError):
+        YewoRunConfiguration.model_validate(payload)
 
 
-def test_rejects_a_grounding_fallback_whose_profile_is_not_a_grounder(tmp_path: Path) -> None:
+def test_rejects_a_grounding_fallback_whose_profile_is_not_a_grounder() -> None:
     payload = _configuration()
     grounding_profile = payload["grounding_profile"]
     assert isinstance(grounding_profile, dict)
@@ -294,5 +283,5 @@ def test_rejects_a_grounding_fallback_whose_profile_is_not_a_grounder(tmp_path: 
         }
     ]
 
-    with pytest.raises(YewoRunConfigurationError, match="invalid"):
-        load_yewo_run_configuration(_write_configuration(tmp_path, payload))
+    with pytest.raises(ValidationError):
+        YewoRunConfiguration.model_validate(payload)

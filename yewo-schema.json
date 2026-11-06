@@ -1054,6 +1054,7 @@
         "max_steps": {
           "anyOf": [
             {
+              "maximum": 500,
               "minimum": 1,
               "type": "integer"
             },
@@ -1067,6 +1068,7 @@
         "settle_time": {
           "anyOf": [
             {
+              "maximum": 5,
               "minimum": 0,
               "type": "number"
             },
@@ -1488,6 +1490,7 @@
     "max_steps": {
       "anyOf": [
         {
+          "maximum": 500,
           "minimum": 1,
           "type": "integer"
         },
@@ -1501,6 +1504,7 @@
     "settle_time": {
       "anyOf": [
         {
+          "maximum": 5,
           "minimum": 0,
           "type": "number"
         },

@@ -1,0 +1,241 @@
+"""Compilation tests for the public YAML run interface."""
+
+from pathlib import Path
+
+import pytest
+
+from yewo.devices import DevicePlatform
+from yewo.grounding import GroundingCoordinateConvention
+from yewo.models import ModelRole
+from yewo.project_config import (
+    RunConfigurationOverrides,
+    YewoProjectCompileError,
+    compile_yewo_run_configuration,
+    load_yewo_project,
+)
+
+
+def _project(tmp_path: Path, body: str = ""):
+    path = tmp_path / "yewo.yaml"
+    path.write_text(
+        """
+device:
+  name: Pixel_8
+  platform: android
+app: build/app.apk
+model: openrouter/example/semantic
+grounder:
+  model: openrouter/example/grounder
+  protocol: normalized_1000
+max_steps: 12
+journey: Open the app.
+"""
+        + body
+    )
+    return load_yewo_project(path)
+
+
+def test_compiles_old_shaped_yaml_and_plain_english_goal(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+
+    configuration = compile_yewo_run_configuration(
+        project,
+        "Find the account screen and explain what is available.",
+    )
+
+    assert configuration.task.objective == (
+        "Find the account screen and explain what is available."
+    )
+    assert configuration.run.device.target_id == "Pixel_8"
+    assert configuration.run.application.artifact_path == tmp_path / "build/app.apk"
+    assert configuration.run.output_root == tmp_path / "assets"
+    assert configuration.memory_root == tmp_path / ".yewo"
+    assert configuration.mode_policy.maximum_steps == 12
+    assert configuration.mode_policy.maximum_grounding_requests == 24
+    assert configuration.grounding_profile.coordinate_convention is (
+        GroundingCoordinateConvention.NORMALIZED_1000
+    )
+
+
+def test_compiles_the_controlled_app_without_selecting_a_workflow() -> None:
+    path = Path(__file__).parents[2] / "eval" / "controlled_app" / "yewo.yaml"
+
+    configuration = compile_yewo_run_configuration(
+        load_yewo_project(path),
+        "Open the restaurant list.",
+    )
+
+    assert configuration.run.device.target_id == "Pixel_8"
+    grounder = configuration.model_profiles.resolve("yaml-grounder", ModelRole.GROUNDER)
+    assert grounder.model == "openrouter/bytedance/ui-tars-1.5-7b"
+    assert configuration.grounding_profile.coordinate_convention is (
+        GroundingCoordinateConvention.SOURCE_PIXELS
+    )
+
+
+def test_one_model_defaults_each_semantic_role_but_not_grounding(tmp_path: Path) -> None:
+    configuration = compile_yewo_run_configuration(_project(tmp_path), "Open settings.")
+    profiles = configuration.model_profiles.profiles
+
+    semantic_profiles = tuple(
+        profile for profile in profiles if profile.role is not ModelRole.GROUNDER
+    )
+    grounder = next(profile for profile in profiles if profile.role is ModelRole.GROUNDER)
+
+    assert {profile.model for profile in semantic_profiles} == {"openrouter/example/semantic"}
+    assert grounder.model == "openrouter/example/grounder"
+
+
+def test_compiled_profiles_accept_the_supported_mobile_screenshot_envelope(
+    tmp_path: Path,
+) -> None:
+    configuration = compile_yewo_run_configuration(_project(tmp_path), "Open settings.")
+    profiles = configuration.model_profiles.profiles
+
+    for profile in profiles:
+        assert profile.images.max_width_px == 4_096
+        assert profile.images.max_height_px == 4_096
+        assert profile.images.max_image_bytes == (
+            8_000_000 if profile.role is ModelRole.GROUNDER else 20_000_000
+        )
+
+
+def test_role_overrides_replace_only_the_named_semantic_models(tmp_path: Path) -> None:
+    path = tmp_path / "yewo.yaml"
+    path.write_text(
+        """
+device: Pixel_8
+platform: android
+app: app.apk
+model: openrouter/example/default
+models:
+  planner: anthropic/claude-planner
+  auditor: openrouter/example/auditor
+grounder:
+  model: openrouter/example/grounder
+  protocol: source_pixels
+journey: Open the app.
+"""
+    )
+
+    configuration = compile_yewo_run_configuration(
+        load_yewo_project(path),
+        "Open settings.",
+    )
+
+    by_role = {profile.role: profile for profile in configuration.model_profiles.profiles}
+    assert by_role[ModelRole.TASK_PLANNER].model == "anthropic/claude-planner"
+    assert by_role[ModelRole.TASK_PLANNER].provider == "anthropic"
+    assert by_role[ModelRole.AUDITOR].model == "openrouter/example/auditor"
+    assert by_role[ModelRole.RECOVERY_ADVISOR].model == "openrouter/example/default"
+
+
+def test_requires_explicit_grounder_instead_of_reusing_the_model(tmp_path: Path) -> None:
+    path = tmp_path / "yewo.yaml"
+    path.write_text(
+        """
+device: Pixel_8
+platform: android
+app: app.apk
+model: openrouter/example/semantic
+journey: Open the app.
+"""
+    )
+
+    with pytest.raises(YewoProjectCompileError, match="cannot be assumed"):
+        compile_yewo_run_configuration(load_yewo_project(path), "Open settings.")
+
+
+@pytest.mark.parametrize("objective", ("", "   ", "x" * 4_001))
+def test_rejects_an_invalid_plain_english_goal(tmp_path: Path, objective: str) -> None:
+    with pytest.raises(YewoProjectCompileError, match="objective"):
+        compile_yewo_run_configuration(_project(tmp_path), objective)
+
+
+def test_standalone_run_uses_top_level_settings_not_workflow_targets(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "yewo.yaml"
+    path.write_text(
+        """
+model: openrouter/example/semantic
+device: Standalone_Pixel
+platform: android
+app: standalone.apk
+grounder:
+  model: openrouter/example/grounder
+  protocol: source_pixels
+workflows:
+  matrix:
+    targets:
+      - id: android_phone
+        platform: android
+        device: Pixel_8
+        app: android.apk
+      - id: ios_phone
+        platform: ios
+        device: iPhone 17
+        app: ios.app
+    journey: Open the app.
+"""
+    )
+    project = load_yewo_project(path)
+
+    configuration = compile_yewo_run_configuration(project, "Open settings.")
+
+    assert configuration.run.device.platform is DevicePlatform.ANDROID
+    assert configuration.run.device.target_id == "Standalone_Pixel"
+    assert configuration.run.application.artifact_path == tmp_path / "standalone.apk"
+    assert configuration.grounding_profile.coordinate_convention is (
+        GroundingCoordinateConvention.SOURCE_PIXELS
+    )
+
+
+def test_command_line_overrides_replace_supported_top_level_settings(
+    tmp_path: Path,
+) -> None:
+    configuration = compile_yewo_run_configuration(
+        _project(tmp_path),
+        "Open settings.",
+        overrides=RunConfigurationOverrides(
+            platform="ios",
+            device_name="iPhone 17",
+            app_path=tmp_path / "Runner.app",
+            model="anthropic/claude-override",
+            max_steps=20,
+            settle_time=0.5,
+            output_dir=tmp_path / "run-output",
+        ),
+    )
+
+    assert configuration.run.device.platform is DevicePlatform.IOS
+    assert configuration.run.device.target_id == "iPhone 17"
+    assert configuration.run.application.artifact_path == tmp_path / "Runner.app"
+    assert configuration.run.output_root == tmp_path / "run-output"
+    assert configuration.mode_policy.maximum_steps == 20
+    assert configuration.mode_policy.settlement_interval_seconds == 0.5
+    assert {
+        profile.model
+        for profile in configuration.model_profiles.profiles
+        if profile.role is not ModelRole.GROUNDER
+    } == {"anthropic/claude-override"}
+
+
+@pytest.mark.parametrize(
+    ("setting", "message"),
+    (
+        ("headless: true", "headless"),
+        ("record: true", "record"),
+        ("record: false", "record"),
+        ("allow_secret_exposure: true", "allow_secret_exposure"),
+    ),
+)
+def test_rejects_yaml_settings_the_runtime_cannot_honour(
+    tmp_path: Path,
+    setting: str,
+    message: str,
+) -> None:
+    project = _project(tmp_path, setting + "\n")
+
+    with pytest.raises(YewoProjectCompileError, match=message):
+        compile_yewo_run_configuration(project, "Open settings.")

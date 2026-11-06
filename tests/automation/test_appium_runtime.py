@@ -8,7 +8,11 @@ import subprocess
 import pytest
 
 from yewo.automation import AppiumRuntimeError, resolve_appium_runtime
-from yewo.automation.appium_runtime import APPIUM_BINARY_ENV, NODE_BINARY_ENV
+from yewo.automation.appium_runtime import (
+    APPIUM_BINARY_ENV,
+    NODE_BINARY_ENV,
+    parse_installed_appium_drivers,
+)
 
 
 class _RuntimeRunnerStub:
@@ -103,3 +107,16 @@ def test_runtime_resolver_rejects_an_empty_appium_version(tmp_path: Path) -> Non
             },
             runner=runner,
         )
+
+
+def test_driver_listing_parser_requires_exact_installed_driver_names() -> None:
+    installed = parse_installed_appium_drivers(
+        '{"uiautomator2-extra":{"installed":true},"uiautomator2":{"installed":false}}'
+    )
+
+    assert installed == frozenset({"uiautomator2-extra"})
+
+
+@pytest.mark.parametrize("output", ("", "Appium says uiautomator2 is installed", "[]"))
+def test_driver_listing_parser_rejects_non_object_json(output: str) -> None:
+    assert parse_installed_appium_drivers(output) is None

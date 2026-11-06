@@ -18,6 +18,7 @@ from yewo.models.profiles import (
     ModelRetryPolicy,
     StructuredOutputMode,
     build_model_selections,
+    minimum_image_count_for_role,
     validate_model_credentials,
 )
 from yewo.models.records import (
@@ -71,5 +72,6 @@ __all__ = [
     "TextModelContent",
     "build_model_response_contract",
     "build_model_selections",
+    "minimum_image_count_for_role",
     "validate_model_credentials",
 ]

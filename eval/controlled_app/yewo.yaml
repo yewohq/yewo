@@ -4,6 +4,9 @@ device:
   platform: android
   headless: false
 model: openrouter/deepseek/deepseek-v4.1-flash
+grounder:
+  model: openrouter/bytedance/ui-tars-1.5-7b
+  protocol: source_pixels
 app: build/app/outputs/flutter-apk/app-debug.apk
 policy:
   waive:

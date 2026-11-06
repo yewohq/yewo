@@ -5,16 +5,19 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from importlib.metadata import version
-from pathlib import Path
+
+from dotenv import find_dotenv, load_dotenv
 
 from yewo.agent import (
     YewoAgent,
     YewoRunConfiguration,
-    YewoRunConfigurationError,
-    load_yewo_run_configuration,
 )
+from yewo.cli import doctor as doctor_command
+from yewo.cli import run as run_command
+from yewo.cli import setup as setup_command
 from yewo.devices.logs import DeclaredValueDeviceLogScrubber
 from yewo.models import ModelInputError, build_model_selections, validate_model_credentials
+from yewo.project_config import YewoProjectCompileError, YewoProjectError
 from yewo.runs import RunMode, RunTerminalCategory, build_default_run_coordinator
 from yewo.telemetry import TelemetryEvent, record_event, record_new_installation
 
@@ -23,12 +26,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yewo", description="Test a mobile application.")
     parser.add_argument("--version", action="version", version=version("yewo"))
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="Ask Yewo to perform one mobile task.")
-    run.add_argument(
-        "configuration",
-        type=Path,
-        help="Path to a Yewo run JSON file.",
-    )
+    run_command.register(commands)
+    doctor_command.register(commands)
+    setup_command.register(commands)
     return parser
 
 
@@ -36,13 +36,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Validate and dispatch one explicit product command."""
     parser = _parser()
     arguments = parser.parse_args(argv)
+    load_dotenv(find_dotenv(usecwd=True))
     record_new_installation()
+    if arguments.command == "doctor":
+        return doctor_command.run(arguments)
+    if arguments.command == "setup":
+        return setup_command.run(arguments)
     try:
-        configuration = load_yewo_run_configuration(arguments.configuration)
+        configuration = run_command.configuration(arguments)
         validate_model_credentials(configuration.model_profiles)
-    except (YewoRunConfigurationError, ModelInputError) as error:
+    except (YewoProjectError, YewoProjectCompileError, ModelInputError) as error:
         parser.error(str(error))
-    return _run_yewo(configuration)
+    try:
+        return _run_yewo(configuration)
+    except KeyboardInterrupt:
+        return 130
 
 
 def _run_yewo(configuration: YewoRunConfiguration) -> int:

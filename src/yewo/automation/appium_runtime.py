@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import shutil
@@ -32,6 +33,23 @@ class AppiumRuntime:
     appium_script: Path
     appium_version: str
     environment: dict[str, str]
+
+
+def parse_installed_appium_drivers(output: str) -> frozenset[str] | None:
+    """Parse Appium's JSON driver listing without accepting decorated text."""
+    try:
+        payload = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    installed: set[str] = set()
+    for name, details in payload.items():
+        if not isinstance(name, str) or not isinstance(details, dict):
+            return None
+        if details.get("installed") is True:
+            installed.add(name)
+    return frozenset(installed)
 
 
 class _RuntimeRunner(Protocol):

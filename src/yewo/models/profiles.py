@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 from enum import StrEnum
 import io
+import os
+from threading import Lock
 from typing import Self
 from urllib.parse import urlsplit
 
@@ -102,6 +104,12 @@ _MINIMUM_ROLE_IMAGES = {
     ModelRole.SCREEN_ANALYZER: 1,
     ModelRole.TASK_PLANNER: 2,
 }
+_CREDENTIAL_ENVIRONMENT_LOCK = Lock()
+
+
+def minimum_image_count_for_role(role: ModelRole) -> int:
+    """Return the image capacity required by one model role."""
+    return _MINIMUM_ROLE_IMAGES.get(role, 1)
 
 
 class ModelImageConstraints(BaseModel):
@@ -189,8 +197,16 @@ def build_model_selections(profiles: ModelProfileRegistry) -> dict[str, str]:
 
 def missing_model_credentials(profile: ModelProfile) -> tuple[str, ...]:
     """Return credential names LiteLLM requires for one profile."""
-    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-        result = validate_environment(profile.model)
+    with _CREDENTIAL_ENVIRONMENT_LOCK:
+        # LiteLLM treats key membership as sufficient. Hide blank values during this startup probe.
+        blank_values = {name: value for name, value in os.environ.items() if not value.strip()}
+        try:
+            for name in blank_values:
+                del os.environ[name]
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                result = validate_environment(profile.model)
+        finally:
+            os.environ.update(blank_values)
     missing = result.get("missing_keys") if isinstance(result, dict) else None
     return tuple(str(name) for name in missing or ())
 

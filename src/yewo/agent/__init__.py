@@ -30,8 +30,6 @@ from yewo.agent.planning.planner import ActionProposalSource
 from yewo.agent.composition import build_device_agent, build_model_client
 from yewo.agent.config import (
     YewoRunConfiguration,
-    YewoRunConfigurationError,
-    load_yewo_run_configuration,
     validate_agent_configuration,
 )
 from yewo.agent.runtime.records import (
@@ -93,12 +91,10 @@ __all__ = [
     "UnsuccessfulAttemptDisposition",
     "YewoAgent",
     "YewoRunConfiguration",
-    "YewoRunConfigurationError",
     "build_device_agent",
     "build_memory_compatibility",
     "build_model_client",
     "derived_memory_identifier",
-    "load_yewo_run_configuration",
     "observation_matches_screen",
     "validate_agent_configuration",
 ]

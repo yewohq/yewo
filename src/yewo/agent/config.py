@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -25,10 +23,6 @@ from yewo.grounding import (
 from yewo.models import ModelProfileRegistry, ModelRole
 from yewo.observations import RedactionRegion
 from yewo.runs import RunMode, RunRequest
-
-
-class YewoRunConfigurationError(ValueError):
-    """A Yewo run configuration could not be loaded safely."""
 
 
 class YewoRunConfiguration(BaseModel):
@@ -92,9 +86,7 @@ def validate_agent_configuration(
     try:
         model_profiles.resolve(planner_profile_id, ModelRole.TASK_PLANNER)
         model_profiles.resolve(auditor_profile_id, ModelRole.AUDITOR)
-        recovery_profile = model_profiles.resolve(
-            recovery_profile_id, ModelRole.RECOVERY_ADVISOR
-        )
+        recovery_profile = model_profiles.resolve(recovery_profile_id, ModelRole.RECOVERY_ADVISOR)
         model_profiles.resolve(action_verifier_profile_id, ModelRole.ACTION_VERIFIER)
         model_profiles.resolve(screen_analyzer_profile_id, ModelRole.SCREEN_ANALYZER)
         model_profiles.resolve(replay_preparation_profile_id, ModelRole.REPLAY_PREPARER)
@@ -122,24 +114,3 @@ def validate_agent_configuration(
             )
             if operation is not None and required_shape not in grounding_profile.supported_shapes:
                 raise ValueError("The grounding profile does not cover every allowed shape.")
-
-
-def load_yewo_run_configuration(path: Path) -> YewoRunConfiguration:
-    """Load one strict Yewo configuration without exposing its content in errors."""
-    try:
-        payload = json.loads(path.read_text())
-    except OSError as error:
-        raise YewoRunConfigurationError("Could not read the Yewo run configuration.") from error
-    except json.JSONDecodeError as error:
-        raise YewoRunConfigurationError("The Yewo run configuration is not valid JSON.") from error
-    try:
-        return YewoRunConfiguration.model_validate(payload)
-    except ValidationError as error:
-        if any(
-            issue["type"] == "missing" and issue["loc"] == ("screen_analyzer_profile_id",)
-            for issue in error.errors(include_input=False, include_url=False)
-        ):
-            raise YewoRunConfigurationError(
-                "The Yewo run configuration is missing screen_analyzer_profile_id."
-            ) from error
-        raise YewoRunConfigurationError("The Yewo run configuration is invalid.") from error
