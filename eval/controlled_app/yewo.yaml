@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/Becca-Saka/yewo/master/yewo-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/yewohq/yewo/master/yewo-schema.json
 device:
   name: Pixel_8
   platform: android

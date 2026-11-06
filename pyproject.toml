@@ -27,6 +27,11 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
 ]
 
+[project.urls]
+Homepage = "https://tryyewo.dev"
+Repository = "https://github.com/yewohq/yewo"
+Issues = "https://github.com/yewohq/yewo/issues"
+
 [project.optional-dependencies]
 # Pulls torch (127MB on macOS arm64, 555MB on linux x86_64), so it is kept
 # out of the base install and fetched on demand. See yewo.utils.vision_deps.

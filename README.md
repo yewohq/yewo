@@ -4,6 +4,8 @@ Yewo is an AI testing agent for Android and iOS apps. Describe a user journey
 in plain language and Yewo operates the real app, checks what happened, and
 produces an evidence-backed report.
 
+Home page: [tryyewo.dev](https://tryyewo.dev)
+
 It uses visual perception rather than app-specific selectors and keeps test
 generation separate from the model that judges the result.
 

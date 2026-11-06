@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/Becca-Saka/yewo/master/yewo-schema.json",
+  "$id": "https://raw.githubusercontent.com/yewohq/yewo/master/yewo-schema.json",
   "$defs": {
     "AccessibilityCapability": {
       "additionalProperties": false,
