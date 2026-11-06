@@ -62,3 +62,8 @@ def narration_scope(narrator: RunNarrator) -> Generator[None, None, None]:
         yield
     finally:
         _current_narrator.reset(token)
+
+
+def elapsed_milliseconds(started: float, completed: float) -> float:
+    """Return a non-negative elapsed span in milliseconds."""
+    return max(0.0, completed - started) * 1_000

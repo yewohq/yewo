@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from io import BytesIO
+import time
 from typing import Protocol
 
 from PIL import Image, ImageStat, UnidentifiedImageError
 
 from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
+from yewo.run_narration import current_narrator, elapsed_milliseconds
 
 
 class ScreenDriver(Protocol):
@@ -95,24 +97,53 @@ class ScreenCalibration:
         return self.driver_height_px / self.screenshot_height_px
 
 
+def _exception_detail(error: Exception, *, maximum_length: int = 1_000) -> str:
+    """Retain bounded external-driver detail for run diagnostics."""
+    driver_message = getattr(error, "msg", None)
+    detail = driver_message if isinstance(driver_message, str) else str(error)
+    normalized = detail.replace("\r", "\\r").replace("\n", "\\n").strip()
+    if not normalized:
+        return "No exception message was provided."
+    if len(normalized) <= maximum_length:
+        return normalized
+    return f"{normalized[: maximum_length - 3]}..."
+
+
 class ScreenGeometry:
     """Map screenshot pixels to the Appium gesture viewport."""
 
-    def __init__(self, driver: ScreenDriver) -> None:
+    def __init__(
+        self,
+        driver: ScreenDriver,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        maximum_screenshot_attempts: int = 3,
+        screenshot_retry_interval_seconds: float = 0.25,
+    ) -> None:
+        if maximum_screenshot_attempts < 1:
+            raise ValueError("The maximum screenshot attempt count must be positive.")
+        if screenshot_retry_interval_seconds < 0:
+            raise ValueError("The screenshot retry interval cannot be negative.")
         self._driver = driver
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._maximum_screenshot_attempts = maximum_screenshot_attempts
+        self._screenshot_retry_interval_seconds = screenshot_retry_interval_seconds
         self._screenshot_size: tuple[int, int] | None = None
         self._driver_size: tuple[int, int] | None = None
 
     def capture(self) -> bytes:
         """Capture PNG bytes and update coordinate calibration."""
-        try:
-            png = self._driver.get_screenshot_as_png()
-        except Exception as error:  # noqa: BLE001 - external driver boundary
-            raise DeviceInteractionError("Could not capture a device screenshot.") from error
+        png = self._capture_png()
         size = png_size(png)
         if size is None:
             raise DeviceInteractionError("The driver returned an invalid PNG screenshot.")
-        window = self._driver.get_window_size()
+        window_started = self._monotonic()
+        try:
+            window = self._driver.get_window_size()
+        finally:
+            self._trace_duration("window-size", window_started)
         width = window.get("width")
         height = window.get("height")
         if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
@@ -120,6 +151,44 @@ class ScreenGeometry:
         self._screenshot_size = size
         self._driver_size = (width, height)
         return png
+
+    def _capture_png(self) -> bytes:
+        """Retry one read-only screenshot operation without redispatching an action."""
+        last_error: Exception | None = None
+        for attempt_number in range(1, self._maximum_screenshot_attempts + 1):
+            if attempt_number > 1 and self._screenshot_retry_interval_seconds:
+                self._sleep(self._screenshot_retry_interval_seconds)
+            try:
+                return self._capture_png_once(attempt_number)
+            except Exception as error:  # noqa: BLE001 - external driver boundary
+                last_error = error
+        raise DeviceInteractionError("Could not capture a device screenshot.") from last_error
+
+    def _capture_png_once(self, attempt_number: int) -> bytes:
+        screenshot_started = self._monotonic()
+        try:
+            return self._driver.get_screenshot_as_png()
+        except Exception as error:  # noqa: BLE001 - external driver boundary
+            narrator = current_narrator()
+            if narrator is not None:
+                narrator.trace(
+                    "appium-command",
+                    "operation=screenshot state=failed "
+                    f"attempt={attempt_number}/{self._maximum_screenshot_attempts} "
+                    f"error={type(error).__name__} detail={_exception_detail(error)}",
+                )
+            raise
+        finally:
+            self._trace_duration("screenshot", screenshot_started)
+
+    def _trace_duration(self, operation: str, started: float) -> None:
+        narrator = current_narrator()
+        if narrator is not None:
+            duration_ms = elapsed_milliseconds(started, self._monotonic())
+            narrator.trace(
+                "appium-command",
+                f"operation={operation} duration_ms={duration_ms:.1f}",
+            )
 
     def screenshot_size(self) -> tuple[int, int]:
         if self._screenshot_size is None:

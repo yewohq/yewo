@@ -9,6 +9,7 @@ from yewo.agent.actuation import ActionExecutor, AuthorizedAction, DispatchRecei
 from yewo.agent.narration import trace, trace_dispatch
 from yewo.agent.runtime.settlement import read_focused_field
 from yewo.devices.focus import FocusedFieldReading
+from yewo.run_narration import elapsed_milliseconds
 
 
 @dataclass(frozen=True)
@@ -59,4 +60,4 @@ def trace_settlement_start(
 
 
 def _duration_ms(started_at: float, completed_at: float) -> float:
-    return max(0.0, completed_at - started_at) * 1_000
+    return elapsed_milliseconds(started_at, completed_at)

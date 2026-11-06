@@ -7,11 +7,15 @@ from typing import Protocol
 
 from appium import webdriver
 from appium.options.common.base import AppiumOptions
+from appium.webdriver.client_config import AppiumClientConfig
 
 from yewo.automation.appium_server import AppiumServerLease
 from yewo.automation.errors import DriverSessionError
 from yewo.run_narration import current_narrator
 from yewo.resources import ResourceLease, ResourceOwnership
+
+
+APPIUM_COMMAND_TIMEOUT_SECONDS = 60
 
 
 class DriverClient(Protocol):
@@ -46,7 +50,15 @@ class DriverFactory(Protocol):
 
 
 def _create_driver(server_url: str, options: AppiumOptions) -> DriverClient:
-    return webdriver.Remote(command_executor=server_url, options=options)
+    client_config = AppiumClientConfig(
+        remote_server_addr=server_url,
+        timeout=APPIUM_COMMAND_TIMEOUT_SECONDS,
+    )
+    return webdriver.Remote(
+        command_executor=server_url,
+        options=options,
+        client_config=client_config,
+    )
 
 
 class DriverSessionLease(ResourceLease):

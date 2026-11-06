@@ -33,6 +33,7 @@ from yewo.observations import (
     ScreenshotStore,
 )
 from yewo.observations.service import ObservationSource
+from yewo.run_narration import RunNarrator, narration_scope
 
 
 CAPTURE_TIME = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
@@ -179,6 +180,31 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
     assert (
         observation.model_validate_json(observation_path.read_text().splitlines()[0]) == observation
     )
+
+
+def test_service_traces_active_capture_duration(tmp_path: Path) -> None:
+    source = _SourceStub()
+    moments = iter((10.0, 10.125))
+    service = ObservationService(
+        source,
+        _device(),
+        _application(),
+        ScreenshotStore(
+            tmp_path,
+            identifier_factory=_identifier_factory(iter(("raw_1", "redacted_1"))),
+        ),
+        ObservationStore(tmp_path),
+        RegionScreenshotRedactor(()),
+        identifier_factory=lambda: "obs_1",
+        time_factory=lambda: CAPTURE_TIME,
+        monotonic=lambda: next(moments),
+    )
+
+    with narration_scope(RunNarrator(tmp_path)):
+        service.capture()
+
+    trace = (tmp_path / "runtime/trace.log").read_text()
+    assert "device-observation: capture=completed duration_ms=125.0" in trace
 
 
 def test_service_rejects_calibration_mismatch_without_writing(tmp_path: Path) -> None:

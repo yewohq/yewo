@@ -188,7 +188,6 @@ class _NumericInputReader:
         del connection_id, args, timeout_seconds
         return "mCurAttribute=EditorInfo{packageName=com.example, inputType=0x2, imeOptions=5}"
 
-
 def test_numeric_focused_field_rejects_text_before_delivery() -> None:
     driver = _DriverStub()
     interaction = DeviceInteraction(
@@ -198,10 +197,11 @@ def test_numeric_focused_field_rejects_text_before_delivery() -> None:
         AndroidInteractionBackend(_NumericInputReader(), "emulator-5554"),
     )
 
-    with pytest.raises(DeviceInputRejectedError, match="numeric input"):
+    with pytest.raises(DeviceInputRejectedError, match="whole digits only"):
         interaction.type_focused_text("medium")
 
     assert driver.element.value == ""
+
 
 
 def test_text_operation_uses_the_in_bounds_appium_element_without_active_focus() -> None:

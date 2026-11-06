@@ -4,6 +4,7 @@ from appium.options.android import UiAutomator2Options
 from appium.options.common.base import AppiumOptions
 import pytest
 
+from yewo.automation import driver_session
 from yewo.automation import (
     AppiumServerLease,
     DriverClient,
@@ -79,6 +80,27 @@ def test_manager_opens_and_owns_only_the_driver_session() -> None:
     assert driver.quit_calls == 1
     assert not server.closed
     assert factory.calls == [("http://127.0.0.1:4723", options)]
+
+
+def test_default_driver_uses_a_bounded_appium_command_timeout(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    driver = _DriverStub()
+
+    def remote(**arguments):
+        captured.update(arguments)
+        return driver
+
+    monkeypatch.setattr(driver_session.webdriver, "Remote", remote)
+
+    created = driver_session._create_driver(
+        "http://127.0.0.1:4723",
+        UiAutomator2Options(),
+    )
+
+    assert created is driver
+    client_config = captured["client_config"]
+    assert isinstance(client_config, driver_session.AppiumClientConfig)
+    assert client_config.timeout == driver_session.APPIUM_COMMAND_TIMEOUT_SECONDS
 
 
 def test_manager_rejects_a_closed_server_lease() -> None:

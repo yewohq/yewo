@@ -48,3 +48,16 @@ class TextInputConstraint:
         sign = "-?" if self.allows_sign else ""
         number = r"(?:\d+(?:[.,]\d*)?|[.,]\d+)" if self.allows_decimal else r"\d+"
         return re.fullmatch(sign + number, value) is not None
+
+    def describe(self) -> str:
+        """Describe the accepted value shape so a planner can satisfy it."""
+        if not self.is_numeric:
+            return "The focused field accepts text."
+        allowed = "a decimal number" if self.allows_decimal else "whole digits only"
+        refused = "" if self.allows_decimal else " A decimal point is not accepted."
+        sign = (
+            " A leading minus sign is accepted."
+            if self.allows_sign
+            else " A leading sign is not accepted."
+        )
+        return f"The focused field accepts {allowed}.{refused}{sign}"

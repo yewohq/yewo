@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import ceil, floor
+import time
 from typing import Protocol
 
 from pydantic import ValidationError
@@ -39,6 +40,7 @@ from yewo.observations.records import (
 )
 from yewo.observations.redaction import ScreenshotRedactor
 from yewo.observations.store import ObservationStore, ScreenshotStore
+from yewo.run_narration import current_narrator, elapsed_milliseconds
 
 
 def _utc_now() -> datetime:
@@ -89,6 +91,7 @@ class ObservationService:
         policy: ObservationCapturePolicy | None = None,
         identifier_factory: Callable[[], str] = new_record_identifier,
         time_factory: Callable[[], datetime] = _utc_now,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if device.platform is not application.platform:
             raise ValueError("The observation device and application must use the same platform.")
@@ -103,6 +106,7 @@ class ObservationService:
         self._policy = policy or ObservationCapturePolicy()
         self._identifier_factory = identifier_factory
         self._time_factory = time_factory
+        self._monotonic = monotonic
 
     def capture(
         self,
@@ -110,6 +114,26 @@ class ObservationService:
         predecessor_observation_id: str | None = None,
     ) -> Observation:
         """Return screenshot evidence with one platform foreground reading."""
+        started = self._monotonic()
+        disposition = "failed"
+        try:
+            observation = self._capture(predecessor_observation_id)
+            disposition = "completed"
+            return observation
+        finally:
+            narrator = current_narrator()
+            if narrator is not None:
+                duration_ms = elapsed_milliseconds(started, self._monotonic())
+                narrator.trace(
+                    "device-observation",
+                    f"capture={disposition} duration_ms={duration_ms:.1f}",
+                )
+
+    def _capture(
+        self,
+        predecessor_observation_id: str | None,
+    ) -> Observation:
+        """Capture and persist one observation."""
         observation_id, predecessor_id = self._validated_identifiers(predecessor_observation_id)
         png = self._source.screenshot()
         foreground_application_id = self._source.active_application_id()

@@ -336,7 +336,7 @@ class DeviceInteraction:
         constraint = self._backend.focused_text_constraint(self._driver)
         if constraint is not None and not constraint.accepts(text):
             raise DeviceInputRejectedError(
-                "The focused field accepts numeric input. Choose a compatible numeric value."
+                f"{constraint.describe()} Choose a compatible value."
             )
         field_context = text_field_context(field)
         before = None if field_context.is_secure is True else self._text_value(field)
