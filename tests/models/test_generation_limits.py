@@ -13,6 +13,7 @@ from yewo.models import (
 )
 from yewo.models.client import _RETRYABLE_RESPONSE_DISPOSITIONS
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.models.attribution import YEWO_USER_AGENT
 from yewo.models.profiles import ModelGenerationSettings
 from yewo.models.records import ModelMessage, ModelMessageRole, ModelRequest, TextModelContent
 
@@ -150,8 +151,14 @@ def test_disabled_reasoning_reaches_each_provider_in_its_own_shape(tmp_path: Pat
         if provider == "anthropic":
             assert arguments["thinking"] == {"type": "disabled"}
             assert "extra_body" not in arguments
+            assert arguments["extra_headers"] == {"User-Agent": YEWO_USER_AGENT}
         else:
             router_body = arguments["extra_body"]
             assert isinstance(router_body, dict)
             assert router_body["reasoning"] == {"enabled": False}
             assert "thinking" not in arguments
+            assert arguments["extra_headers"] == {
+                "User-Agent": YEWO_USER_AGENT,
+                "HTTP-Referer": "https://tryyewo.dev",
+                "X-Title": "Yewo",
+            }

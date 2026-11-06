@@ -7,19 +7,21 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import time
-from typing import Protocol
 
 import litellm
 from litellm.cost_calculator import completion_cost
 from pydantic import BaseModel
 
 from yewo.models.artifacts import ModelArtifactStore, ModelImageReader, ModelResponseEvidence
+from yewo.models.attribution import build_model_attribution
 from yewo.models.errors import ModelInputError
 from yewo.models.message_encoding import ModelMessageEncoder
 from yewo.models.narration import (
     narrate_model_request,
     narrate_model_response,
     trace_model_call,
+    trace_model_clock_gap,
+    trace_model_retry_wait,
 )
 from yewo.models._litellm_response import (
     CostCalculator,
@@ -38,6 +40,8 @@ from yewo.models.profiles import (
     missing_model_credentials,
     validate_model_credentials,
 )
+from yewo.models.response_retry import correction_messages
+from yewo.models.protocols import ModelClient as ModelClient
 from yewo.models.records import (
     ImageModelContent,
     ModelCallDisposition,
@@ -63,17 +67,6 @@ CompletionCall = Callable[..., object]
 CredentialCheck = Callable[[ModelProfile], tuple[str, ...]]
 
 
-class ModelClient(Protocol):
-    """Complete provider-neutral model requests."""
-
-    def complete(
-        self,
-        request: ModelRequest,
-        response_model: type[BaseModel] | None = None,
-        validation_context: dict[str, object] | None = None,
-    ) -> ModelResponse: ...
-
-
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -92,6 +85,7 @@ class LiteLLMModelClient:
         calculate_cost: CostCalculator = completion_cost,
         credential_check: CredentialCheck = missing_model_credentials,
         cache_affinity: str | None = None,
+        ai_session_id: str | None = None,
         wait: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         time_factory: Callable[[], datetime] = _utc_now,
@@ -106,6 +100,7 @@ class LiteLLMModelClient:
         self._wait = wait
         self._monotonic = monotonic
         self._time_factory = time_factory
+        self._ai_session_id = ai_session_id
         self._cache_affinity = (
             f"yewo-{sha256(cache_affinity.encode('utf-8')).hexdigest()}" if cache_affinity else None
         )
@@ -143,6 +138,7 @@ class LiteLLMModelClient:
                 request,
                 provider_messages,
                 response_format,
+                messages,
             )
             prompt_artifact = self._artifacts.persist_request(
                 request,
@@ -157,7 +153,11 @@ class LiteLLMModelClient:
                 try:
                     provider_response = self._completion(**completion_arguments)
                 except Exception as error:  # noqa: BLE001 - provider boundary
-                    latency_ms = max(0, (self._monotonic() - started) * 1000)
+                    latency_ms = self._provider_latency_ms(
+                        request.request_id,
+                        started_at,
+                        started,
+                    )
                     reason = describe_provider_error(error)
                     response_evidence = self._artifacts.prepare_response(
                         request_id=request.request_id,
@@ -188,9 +188,24 @@ class LiteLLMModelClient:
                             reason=reason,
                         )
                     provider_delay = provider_retry_after_seconds(error, now=started_at) or 0
-                    self._wait(min(max(profile.retry.backoff_seconds[provider_attempt - 1], provider_delay), profile.retry.maximum_retry_delay_seconds))
+                    retry_delay = min(
+                        max(profile.retry.backoff_seconds[provider_attempt - 1], provider_delay),
+                        profile.retry.maximum_retry_delay_seconds,
+                    )
+                    trace_model_retry_wait(
+                        request,
+                        profile,
+                        provider_attempt,
+                        retry_delay,
+                        reason,
+                    )
+                    self._wait(retry_delay)
                     continue
-                latency_ms = max(0, (self._monotonic() - started) * 1000)
+                latency_ms = self._provider_latency_ms(
+                    request.request_id,
+                    started_at,
+                    started,
+                )
                 normalized = normalize_litellm_completion(
                     provider_response,
                     response_model,
@@ -222,7 +237,7 @@ class LiteLLMModelClient:
                     and normalized.disposition in _RETRYABLE_RESPONSE_DISPOSITIONS
                     and validation_attempt < validation_attempts
                 ):
-                    corrections = self._correction_messages(normalized)
+                    corrections = correction_messages(normalized, self._scrub_input_text)
                     break
                 return self._response(
                     request,
@@ -233,6 +248,18 @@ class LiteLLMModelClient:
                     reason=normalized.reason,
                 )
         raise RuntimeError("The model validation policy allowed no final response.")
+
+    def _provider_latency_ms(
+        self,
+        request_id: str,
+        started_at: datetime,
+        started: float,
+    ) -> float:
+        active_seconds = max(0, self._monotonic() - started)
+        completed_at = self._time_factory()
+        wall_seconds = max(0, (completed_at - started_at).total_seconds())
+        trace_model_clock_gap(request_id, wall_seconds, active_seconds)
+        return active_seconds * 1_000
 
     @staticmethod
     def _validate_response_contract(
@@ -355,6 +382,7 @@ class LiteLLMModelClient:
         request: ModelRequest,
         messages: list[dict[str, object]],
         response_format: dict[str, object] | None,
+        logical_messages: tuple[ModelMessage, ...],
     ) -> dict[str, object]:
         arguments: dict[str, object] = {
             "model": profile.model,
@@ -365,6 +393,11 @@ class LiteLLMModelClient:
                 MINIMUM_COMPLETION_TOKENS,
             ),
         }
+        if self._ai_session_id is not None:
+            arguments["metadata"] = {
+                "$ai_session_id": self._ai_session_id,
+                "$ai_trace_id": request.request_id,
+            }
         optional_generation_settings = {
             "temperature": profile.generation.temperature,
             "top_p": profile.generation.top_p,
@@ -377,12 +410,19 @@ class LiteLLMModelClient:
                 arguments[field_name] = value
         if profile.endpoint is not None:
             arguments["base_url"] = profile.endpoint.base_url
+        arguments.update(build_model_attribution(profile))
         if response_format is not None:
             arguments["response_format"] = response_format
+        cache_points: list[dict[str, object]] = []
         if profile.cache_control_role is not None:
-            arguments["cache_control_injection_points"] = [
-                {"location": "message", "role": profile.cache_control_role.value}
-            ]
+            cache_points.append({"location": "message", "role": profile.cache_control_role.value})
+        cache_points.extend(
+            {"location": "message", "index": index}
+            for index, message in enumerate(logical_messages)
+            if message.cache_prefix_end and message.role is not profile.cache_control_role
+        )
+        if cache_points:
+            arguments["cache_control_injection_points"] = cache_points
         disabled = (
             profile.generation.reasoning is ModelReasoningMode.DISABLED
             and request.reasoning_effort is None
@@ -406,52 +446,6 @@ class LiteLLMModelClient:
         if router_options:
             arguments["extra_body"] = router_options
         return arguments
-
-    def _correction_messages(
-        self,
-        normalized: NormalizedModelCompletion,
-    ) -> tuple[ModelMessage, ...]:
-        if normalized.disposition is ModelCallDisposition.TRUNCATED:
-            text = self._scrub_input_text(
-                "Your previous reply reached its output limit before returning a complete "
-                "answer. Return only one concise JSON object that matches the schema."
-            )
-            return (
-                ModelMessage(
-                    role=ModelMessageRole.USER,
-                    content=(TextModelContent(text=text),),
-                ),
-            )
-        if normalized.disposition is ModelCallDisposition.EMPTY:
-            text = self._scrub_input_text(
-                "Your previous reply contained no answer. Return one JSON object that "
-                "matches the schema. Keep any private reasoning short."
-            )
-            return (
-                ModelMessage(
-                    role=ModelMessageRole.USER,
-                    content=(TextModelContent(text=text),),
-                ),
-            )
-        if normalized.rejected_text is None:
-            raise ModelInputError("A malformed structured response has no rejected text.")
-        rejected_text = self._scrub_input_text(normalized.rejected_text)
-        errors = json.dumps(normalized.validation_errors, default=str, separators=(",", ":"))
-        text = self._scrub_input_text(
-            "Your previous reply did not match the required JSON schema:\n"
-            f"{errors}\n"
-            "Answer again as JSON matching the schema exactly."
-        )
-        return (
-            ModelMessage(
-                role=ModelMessageRole.ASSISTANT,
-                content=(TextModelContent(text=rejected_text),),
-            ),
-            ModelMessage(
-                role=ModelMessageRole.USER,
-                content=(TextModelContent(text=text),),
-            ),
-        )
 
     def _persist_call(
         self,

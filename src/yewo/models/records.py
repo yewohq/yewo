@@ -29,6 +29,7 @@ class ModelRole(StrEnum):
     AUDITOR = "auditor"
     RECOVERY_ADVISOR = "recovery_advisor"
     ACTION_VERIFIER = "action_verifier"
+    SCREEN_ANALYZER = "screen_analyzer"
     REPLAY_PREPARER = "replay_preparer"
 
 
@@ -136,6 +137,7 @@ class ModelMessage(BaseModel):
 
     role: ModelMessageRole
     content: tuple[ModelContent, ...] = Field(min_length=1)
+    cache_prefix_end: bool = False
 
 
 class ModelResponseContract(BaseModel):

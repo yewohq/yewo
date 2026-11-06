@@ -8,6 +8,7 @@ from yewo.run_narration import current_narrator
 
 
 _SOURCE = "model-transport"
+_CLOCK_GAP_THRESHOLD_SECONDS = 5
 
 
 def narrate_model_request(request: ModelRequest, profile: ModelProfile) -> None:
@@ -51,6 +52,52 @@ def trace_model_call(call: ModelCallRecord) -> None:
         f"cached_tokens={usage.cached_tokens if usage.cached_tokens is not None else 'unknown'} "
         f"cost_usd={usage.cost_usd if usage.cost_usd is not None else 'unknown'} "
         f"request_artifact={request_artifact} call_artifact={call_artifact}",
+    )
+
+
+def trace_model_clock_gap(
+    request_id: str,
+    wall_seconds: float,
+    active_seconds: float,
+) -> None:
+    """Record a likely host suspension without changing provider evidence."""
+    gap_seconds = wall_seconds - active_seconds
+    if gap_seconds < _CLOCK_GAP_THRESHOLD_SECONDS:
+        return
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.trace(
+            _SOURCE,
+            f"request={request_id} wall_seconds={wall_seconds:.3f} "
+            f"active_seconds={active_seconds:.3f} clock_gap_seconds={gap_seconds:.3f}",
+        )
+
+
+def trace_model_retry_wait(
+    request: ModelRequest,
+    profile: ModelProfile,
+    failed_attempt: int,
+    delay_seconds: float,
+    reason: str,
+) -> None:
+    """Report one bounded provider retry delay without provider response text."""
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    delay_text = f"{delay_seconds:g} second"
+    if delay_seconds != 1:
+        delay_text += "s"
+    narrator.record(
+        _SOURCE,
+        f"{request.role.value} provider attempt {failed_attempt} of "
+        f"{profile.retry.max_attempts} failed: {reason}. Waiting {delay_text} before "
+        f"attempt {failed_attempt + 1}.",
+    )
+    narrator.trace(
+        _SOURCE,
+        f"request={request.request_id} failed_provider_attempt={failed_attempt} "
+        f"next_provider_attempt={failed_attempt + 1} "
+        f"provider_retry_delay_seconds={delay_seconds:.3f} reason={reason}",
     )
 
 

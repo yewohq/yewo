@@ -88,6 +88,8 @@ def test_structured_response_is_validated_locally() -> None:
         lambda _: None,
     )
     assert malformed.disposition is ModelCallDisposition.MALFORMED
+    assert malformed.reason is not None
+    assert "confidence: Field required" in malformed.reason
 
 
 def test_usage_normalization_preserves_attribution_and_unknown_cost() -> None:

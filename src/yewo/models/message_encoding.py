@@ -31,7 +31,13 @@ class ModelMessageEncoder:
             content: object = (
                 parts[0]["text"] if len(parts) == 1 and parts[0].get("type") == "text" else parts
             )
-            prepared.append({"role": message.role.value, "content": content})
+            prepared_message: dict[str, object] = {
+                "role": message.role.value,
+                "content": content,
+            }
+            if message.cache_prefix_end:
+                prepared_message["cache_prefix_end"] = True
+            prepared.append(prepared_message)
         return prepared
 
     def _provider_message(self, message: ModelMessage) -> dict[str, object]:

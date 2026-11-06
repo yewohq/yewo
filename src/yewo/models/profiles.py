@@ -57,7 +57,7 @@ class ModelEndpoint(BaseModel):
 class ModelReasoningMode(StrEnum):
     """Reasoning control a provider accepts through the LiteLLM boundary.
 
-    Anthropic models reject an explicit thinking budget, so a profile can only
+    Some providers reject an explicit thinking budget, so a profile can only
     keep the provider default or turn reasoning off.
     """
 
@@ -99,6 +99,7 @@ class ModelRetryPolicy(BaseModel):
 
 _MINIMUM_ROLE_IMAGES = {
     ModelRole.RECOVERY_ADVISOR: 2,
+    ModelRole.SCREEN_ANALYZER: 1,
 }
 
 

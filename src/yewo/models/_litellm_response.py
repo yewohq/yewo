@@ -136,7 +136,7 @@ def normalize_litellm_completion(
             disposition=ModelCallDisposition.MALFORMED,
             text=None,
             structured_output=None,
-            reason="The model response did not match the required schema.",
+            reason=_structured_output_failure_reason(validation_errors),
             finish_reason=finish_reason,
             validation_errors=validation_errors,
             rejected_text=content,
@@ -150,6 +150,26 @@ def normalize_litellm_completion(
         finish_reason=finish_reason,
         **identity,
     )
+
+
+def _structured_output_failure_reason(
+    validation_errors: tuple[dict[str, object], ...],
+) -> str:
+    """Retain bounded schema diagnostics without retaining rejected model content."""
+    prefix = "The model response did not match the required schema."
+    if not validation_errors:
+        return prefix
+    details: list[str] = []
+    for error in validation_errors[:3]:
+        location = error.get("loc")
+        if isinstance(location, tuple | list):
+            field = ".".join(str(part) for part in location) or "<root>"
+        else:
+            field = "<root>"
+        message = error.get("msg")
+        if isinstance(message, str) and message:
+            details.append(f"{field}: {message}")
+    return prefix if not details else f"{prefix} {' | '.join(details)}"
 
 
 def provider_error_status(error: BaseException) -> int | None:

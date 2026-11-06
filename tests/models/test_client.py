@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from importlib.metadata import version
 from io import BytesIO
 import json
 from pathlib import Path
@@ -171,6 +172,11 @@ def test_client_sends_explicit_settings_and_records_attribution(tmp_path: Path) 
     assert calls[0]["model"] == "openrouter/example/grounder"
     assert calls[0]["timeout"] == 20 and calls[0]["max_tokens"] == 8_192
     assert calls[0]["temperature"] == 0
+    assert calls[0]["extra_headers"] == {
+        "User-Agent": f"Yewo/{version('yewo')} (+https://tryyewo.dev)",
+        "HTTP-Referer": "https://tryyewo.dev",
+        "X-Title": "Yewo",
+    }
     assert calls[0]["cache_control_injection_points"] == [{"location": "message", "role": "system"}]
     extra_body = calls[0]["extra_body"]
     assert isinstance(extra_body, dict)
@@ -192,6 +198,27 @@ def test_client_sends_explicit_settings_and_records_attribution(tmp_path: Path) 
     assert usage_payload["total_tokens"] == 12
 
 
+def test_empty_provider_choices_finish_as_malformed_instead_of_escaping_client(
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def complete(**arguments: object) -> object:
+        nonlocal calls
+        del arguments
+        calls += 1
+        return {"choices": [], "usage": {}}
+
+    response = _client(tmp_path, complete).complete(
+        _request(tmp_path, structured=True),
+        StructuredAnswer,
+    )
+
+    assert response.disposition is ModelCallDisposition.MALFORMED
+    assert response.structured_output is None
+    assert calls == 4
+
+
 def test_client_scrubs_declared_values_before_provider_call(tmp_path: Path) -> None:
     calls: list[dict[str, object]] = []
 
@@ -204,7 +231,7 @@ def test_client_scrubs_declared_values_before_provider_call(tmp_path: Path) -> N
             "messages": (
                 ModelMessage(
                     role=ModelMessageRole.USER,
-                    content=(TextModelContent(text="Select hunter2 account."),),
+                    content=(TextModelContent(text="Submit hunter2 value."),),
                 ),
             )
         }
@@ -237,34 +264,6 @@ def test_prompt_schema_mode_validates_locally_without_provider_grammar(tmp_path:
     assert "confidence" in str(messages[-1])
     assert "response_format" not in calls[0]
     assert response.structured_output == {"target": "Save", "confidence": 0.9}
-
-
-def test_prompt_schema_joins_the_cacheable_system_prefix(tmp_path: Path) -> None:
-    calls: list[dict[str, object]] = []
-
-    def complete(**arguments: object) -> object:
-        calls.append(arguments)
-        return _response('{"target":"Save","confidence":0.9}')
-
-    request = _request(tmp_path, structured=True).model_copy(
-        update={
-            "messages": (
-                ModelMessage(role=ModelMessageRole.SYSTEM, content=(
-                    TextModelContent(text="Stable planner instructions."),
-                )),
-                ModelMessage(role=ModelMessageRole.USER, content=(
-                    TextModelContent(text="Changing task context."),
-                )),
-            )
-        }
-    )
-    _client(tmp_path, complete).complete(request, StructuredAnswer)
-    messages = calls[0]["messages"]
-    assert isinstance(messages, list)
-    assert [message["role"] for message in messages] == ["system", "user"]
-    assert "confidence" in str(messages[0]["content"])
-    assert "Changing task context." not in str(messages[0]["content"])
-    assert messages[1]["content"] == "Changing task context."
 
 
 def test_native_schema_mode_uses_shared_litellm_argument(tmp_path: Path) -> None:

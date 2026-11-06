@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from yewo.models import ModelRole
+from yewo.models import ModelProfile, ModelRole
 
 from models.support import build_model_profile
 
@@ -22,6 +22,17 @@ def test_other_roles_keep_the_single_image_default() -> None:
     profile = build_model_profile(role=ModelRole.GROUNDER)
 
     assert profile.images.max_images == 1
+
+
+def test_a_screen_analyzer_profile_must_accept_one_screenshot() -> None:
+    payload = build_model_profile(
+        profile_id="screen-analyzer-primary",
+        role=ModelRole.SCREEN_ANALYZER,
+    ).model_dump()
+    payload["images"]["max_images"] = 0
+
+    with pytest.raises(ValidationError, match="at least 1 images"):
+        ModelProfile.model_validate(payload)
 
 
 def test_a_replay_preparer_profile_keeps_the_single_image_default() -> None:

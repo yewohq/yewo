@@ -58,7 +58,7 @@ def _request(tmp_path: Path) -> ModelRequest:
             ModelMessage(
                 role=ModelMessageRole.USER,
                 content=(
-                    TextModelContent(text="Select hunter2 account"),
+                    TextModelContent(text="Submit hunter2 value"),
                     ImageModelContent(screenshot=_screenshot(tmp_path)),
                 ),
             ),
@@ -95,7 +95,7 @@ def _prepared_messages(request: ModelRequest) -> list[dict[str, object]]:
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Select {{password}} account"},
+                {"type": "text", "text": "Submit {{password}} value"},
                 {
                     "type": "image_ref",
                     "artifact_id": screenshot.artifact_id,
@@ -159,7 +159,7 @@ def test_request_body_retention_can_be_disabled(tmp_path: Path) -> None:
     assert payload["body_retained"] is False
     assert payload["messages"][0]["content"][0] == {
         "type": "text",
-        "text_sha256": sha256(b"Select {{password}} account").hexdigest(),
+        "text_sha256": sha256(b"Submit {{password}} value").hexdigest(),
     }
     assert payload["messages"][0]["content"][1]["artifact_id"] == "shot-1"
     assert "hunter2" not in content.decode()
@@ -179,7 +179,7 @@ def test_request_and_call_bodies_are_retained_and_scrubbed_by_default(
         store,
         request,
         request_reference,
-        text="The hunter2 account is selected.",
+        text="The hunter2 value is submitted.",
         provider_payload={"choices": [{"message": {"content": "hunter2"}}]},
     )
 
@@ -207,7 +207,7 @@ def test_call_response_is_retained_when_request_body_is_disabled(tmp_path: Path)
         store,
         request,
         request_reference,
-        text="The hunter2 account is selected.",
+        text="The hunter2 value is submitted.",
         provider_payload={"content": "hunter2"},
     )
 
@@ -217,7 +217,7 @@ def test_call_response_is_retained_when_request_body_is_disabled(tmp_path: Path)
     assert call_reference.body_retained is True
     response_payload = call_payload["response"]
     assert isinstance(response_payload, dict)
-    assert response_payload["text"] == "The {{password}} account is selected."
+    assert response_payload["text"] == "The {{password}} value is submitted."
     assert response_payload["provider_payload"] == {"content": "{{password}}"}
 
 
