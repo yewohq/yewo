@@ -10,7 +10,12 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from yewo.artifacts import AtomicArtifactWriter, ArtifactWriteError, new_record_identifier
+from yewo.artifacts import (
+    RUN_RECORDS_DIRECTORY,
+    AtomicArtifactWriter,
+    ArtifactWriteError,
+    new_record_identifier,
+)
 from yewo.run_narration import RunNarrator
 from yewo.runs.errors import RunCoordinationError
 from yewo.runs.records import RunRequest, RunStart, RunTerminal
@@ -38,7 +43,7 @@ class RunStore:
 
     def persist_start(self, start: RunStart) -> Path:
         """Persist the invocation start before mutable resources open."""
-        path = Path("run") / "start.json"
+        path = RUN_RECORDS_DIRECTORY / "start.json"
         self._write(path, start.model_dump_json(indent=2))
         return path
 
@@ -48,7 +53,7 @@ class RunStore:
             raise RunCoordinationError("A run terminal must match its start record.")
         if terminal.completed_at < start.started_at:
             raise RunCoordinationError("A run cannot complete before it starts.")
-        path = Path("run") / "terminal.json"
+        path = RUN_RECORDS_DIRECTORY / "terminal.json"
         self._write(path, terminal.model_dump_json(indent=2))
         return path
 
@@ -109,8 +114,10 @@ class RunWorkspaceFactory:
 
 
 def _discard_empty_workspace(run_root: Path) -> None:
-    run_directory = run_root / "run"
-    with suppress(OSError):
-        run_directory.rmdir()
+    directory = run_root / RUN_RECORDS_DIRECTORY
+    while directory != run_root:
+        with suppress(OSError):
+            directory.rmdir()
+        directory = directory.parent
     with suppress(OSError):
         run_root.rmdir()

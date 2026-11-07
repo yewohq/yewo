@@ -1,7 +1,13 @@
 """Shared contracts and persistence for immutable run artifacts."""
 
 from yewo.artifacts.errors import ArtifactWriteError
-from yewo.artifacts.paths import ARTIFACTS_DIRECTORY
+from yewo.artifacts.paths import (
+    ARTIFACTS_DIRECTORY,
+    DEFAULT_OUTPUT_DIRECTORY,
+    REPORTS_DIRECTORY,
+    RUN_RECORDS_DIRECTORY,
+    RUNTIME_DIRECTORY,
+)
 from yewo.artifacts.redaction_mask import (
     YEWO_REDACTION_POLICY_ID,
     draw_yewo_redaction_mask,
@@ -20,6 +26,10 @@ from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
 
 __all__ = [
     "ARTIFACTS_DIRECTORY",
+    "DEFAULT_OUTPUT_DIRECTORY",
+    "REPORTS_DIRECTORY",
+    "RUN_RECORDS_DIRECTORY",
+    "RUNTIME_DIRECTORY",
     "ArtifactRetention",
     "ArtifactSensitivity",
     "ArtifactWriteError",

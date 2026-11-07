@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 
+from yewo.artifacts import RUNTIME_DIRECTORY
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -18,8 +20,8 @@ class RunNarrator:
     """Append non-authoritative operator messages beneath one run root."""
 
     def __init__(self, root: Path, *, time_factory: Callable[[], datetime] = _utc_now) -> None:
-        self._session_path = root / "runtime" / "yewo-session.log"
-        self._trace_path = root / "runtime" / "trace.log"
+        self._session_path = root / RUNTIME_DIRECTORY / "yewo-session.log"
+        self._trace_path = root / RUNTIME_DIRECTORY / "trace.log"
         self._time_factory = time_factory
 
     def record(self, source: str, message: str) -> None:

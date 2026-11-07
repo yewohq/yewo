@@ -10,7 +10,7 @@ from yewo.artifacts.store import AtomicArtifactWriter
 
 
 def test_shared_artifact_directory_is_run_relative() -> None:
-    assert Path("assets") == ARTIFACTS_DIRECTORY
+    assert Path() == ARTIFACTS_DIRECTORY
     assert not ARTIFACTS_DIRECTORY.is_absolute()
 
 
@@ -42,11 +42,11 @@ def test_writer_rejects_a_symlinked_artifact_directory(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     artifact_root.mkdir()
     outside.mkdir()
-    (artifact_root / "assets").symlink_to(outside, target_is_directory=True)
+    (artifact_root / "linked").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(ArtifactWriteError, match="outside the artifact root"):
         AtomicArtifactWriter(artifact_root).write(
-            ARTIFACTS_DIRECTORY / "evidence.bin",
+            Path("linked/evidence.bin"),
             b"evidence",
         )
 
