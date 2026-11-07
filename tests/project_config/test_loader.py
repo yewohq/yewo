@@ -109,6 +109,34 @@ grounder:
     assert project.workflows == ()
 
 
+def test_loads_role_specific_model_reasoning(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "yewo.yaml",
+        """
+device: Pixel_8
+platform: android
+app: app.apk
+model: openrouter/example/default
+models:
+  screen_analyzer:
+    model: openrouter/google/gemini-2.5-flash
+    reasoning: disabled
+grounder:
+  model: openrouter/example/grounder
+  protocol: source_pixels
+""",
+    )
+
+    project = load_yewo_project(path)
+
+    assert project.settings.models is not None
+    screen_analyzer = project.settings.models.screen_analyzer
+    assert screen_analyzer is not None
+    assert not isinstance(screen_analyzer, str)
+    assert screen_analyzer.model == "openrouter/google/gemini-2.5-flash"
+    assert screen_analyzer.reasoning.value == "disabled"
+
+
 def test_resolves_environment_values_without_substituting_journey_text(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -133,6 +161,47 @@ journeys:
     assert journey.declared_values["password"].value == "not-for-prose"
     assert journey.declared_values["password"].secret is True
     assert "not-for-prose" not in repr(journey)
+
+
+def test_inherits_plain_language_checks_without_translating_them(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "yewo.yaml",
+        """
+checks:
+  - The user's work must remain after the app restarts.
+workflows:
+  editing:
+    checks:
+      - Repeating save must not create duplicates.
+    journeys:
+      - id: edit_work
+        journey: A user creates and edits some work.
+        checks:
+          - Cancelling an edit must preserve the previous version.
+""",
+    )
+
+    journey = load_yewo_project(path).workflows[0].journeys[0]
+
+    assert journey.checks == (
+        "The user's work must remain after the app restarts.",
+        "Repeating save must not create duplicates.",
+        "Cancelling an edit must preserve the previous version.",
+    )
+
+
+def test_rejects_an_undeclared_value_in_a_plain_language_check(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "yewo.yaml",
+        """
+journey: A user saves some work.
+checks:
+  - The saved result must contain {{missing_value}}.
+""",
+    )
+
+    with pytest.raises(YewoProjectError, match="missing_value"):
+        load_yewo_project(path)
 
 
 def test_reports_an_unset_environment_reference_without_its_value(tmp_path: Path) -> None:
@@ -305,4 +374,14 @@ def test_yaml_and_command_line_share_the_same_settlement_limit(tmp_path: Path) -
     path = _write(tmp_path / "yewo.yaml", "settle_time: 6\n")
 
     with pytest.raises(YewoProjectError, match="settle_time.*less than or equal to 5"):
+        load_yewo_project(path)
+
+
+def test_yaml_rejects_a_duration_above_the_runtime_limit(tmp_path: Path) -> None:
+    path = _write(tmp_path / "yewo.yaml", "max_duration_seconds: 14401\n")
+
+    with pytest.raises(
+        YewoProjectError,
+        match="max_duration_seconds.*less than or equal to 14400",
+    ):
         load_yewo_project(path)

@@ -8,6 +8,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from yewo.models import ModelReasoningMode
 from yewo.project_config.capabilities import ScenarioPreconditionsSpec
 
 
@@ -15,6 +16,7 @@ Identifier = Annotated[
     str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 ]
 ValueName = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+UserCheck = Annotated[str, Field(min_length=1, max_length=4_000)]
 
 
 class StrictRecord(BaseModel):
@@ -109,17 +111,30 @@ class PolicySpec(StrictRecord):
 
 
 class CoverageCategory(StrEnum):
+    """A general QA lens applied to a discovered application surface."""
+
     FUNCTIONAL = "functional"
+    DATA_CONSISTENCY = "data_consistency"
+    STATE = "state"
     INPUT = "input"
+    NAVIGATION = "navigation"
+    ERROR_HANDLING = "error_handling"
+    UI_VISUAL = "ui_visual"
     SECURITY = "security"
     ACCESSIBILITY = "accessibility"
     PERFORMANCE = "performance"
     NETWORK = "network"
     LIFECYCLE = "lifecycle"
     PERMISSION = "permission"
+    COMPATIBILITY = "compatibility"
+    INSTALLATION = "installation"
+    LOCALIZATION = "localization"
+    REGRESSION = "regression"
 
 
 class ScenarioType(StrEnum):
+    """The variation strategy used within one testing category."""
+
     HAPPY_PATH = "happy_path"
     NEGATIVE = "negative"
     BOUNDARY = "boundary"
@@ -154,13 +169,22 @@ class GrounderSelectionSpec(StrictRecord):
     protocol: GroundingProtocol
 
 
+class ModelSelectionSpec(StrictRecord):
+    model: str = Field(min_length=1)
+    reasoning: ModelReasoningMode = ModelReasoningMode.PROVIDER_DEFAULT
+
+
+ModelSelection = str | ModelSelectionSpec
+
+
 class ModelOverridesSpec(StrictRecord):
-    planner: str | None = Field(default=None, min_length=1)
-    auditor: str | None = Field(default=None, min_length=1)
-    recovery: str | None = Field(default=None, min_length=1)
-    action_verifier: str | None = Field(default=None, min_length=1)
-    screen_analyzer: str | None = Field(default=None, min_length=1)
-    replay_preparer: str | None = Field(default=None, min_length=1)
+    planner: ModelSelection | None = None
+    auditor: ModelSelection | None = None
+    recovery: ModelSelection | None = None
+    action_verifier: ModelSelection | None = None
+    screen_analyzer: ModelSelection | None = None
+    replay_preparer: ModelSelection | None = None
+    test_designer: ModelSelection | None = None
 
 
 class SettingsSpec(StrictRecord):
@@ -174,6 +198,7 @@ class SettingsSpec(StrictRecord):
     models: ModelOverridesSpec | None = None
     grounder: GrounderSelectionSpec | None = None
     max_steps: int | None = Field(default=None, ge=1, le=500)
+    max_duration_seconds: float | None = Field(default=None, gt=0, le=14_400)
     settle_time: float | None = Field(default=None, ge=0, le=5)
     output_dir: str | None = Field(default=None, min_length=1)
     memory_root: str | None = Field(default=None, min_length=1)
@@ -200,6 +225,7 @@ class JourneySpec(StrictRecord):
     journey: str | None = Field(default=None, min_length=1)
     description: str | None = Field(default=None, min_length=1)
     security_rules: tuple[str, ...] = ()
+    checks: tuple[UserCheck, ...] = ()
     env: dict[ValueName, EnvironmentValue] = Field(default_factory=dict)
     preconditions: ScenarioPreconditionsSpec | None = None
 
@@ -219,6 +245,7 @@ class WorkflowSpec(SettingsSpec):
     name: str | None = Field(default=None, min_length=1)
     description: str | None = Field(default=None, min_length=1)
     security_rules: tuple[str, ...] = ()
+    checks: tuple[UserCheck, ...] = ()
     coverage: tuple[CoverageSpec, ...] | None = None
     actors: dict[ValueName, dict[ValueName, EnvironmentValue]] | None = None
     policy: PolicySpec | None = None
@@ -249,6 +276,7 @@ class YewoFileSpec(SettingsSpec):
     name: str | None = Field(default=None, min_length=1)
     description: str | None = Field(default=None, min_length=1)
     security_rules: tuple[str, ...] = ()
+    checks: tuple[UserCheck, ...] = ()
     coverage: tuple[CoverageSpec, ...] | None = None
     actors: dict[ValueName, dict[ValueName, EnvironmentValue]] | None = None
     policy: PolicySpec | None = None
@@ -312,6 +340,7 @@ class ResolvedSettings(StrictRecord):
     models: ModelOverridesSpec | None = None
     grounder: GrounderSelectionSpec | None = None
     max_steps: int | None = Field(default=None, ge=1, le=500)
+    max_duration_seconds: float | None = Field(default=None, gt=0, le=14_400)
     settle_time: float | None = Field(default=None, ge=0, le=5)
     output_dir: Path | None = None
     memory_root: Path | None = None
@@ -325,6 +354,7 @@ class ResolvedJourney(StrictRecord):
     name: str
     objective: str = Field(min_length=1)
     security_rules: tuple[str, ...] = ()
+    checks: tuple[UserCheck, ...] = ()
     declared_values: dict[ValueName, ResolvedValue] = Field(default_factory=dict)
     actors: dict[ValueName, dict[ValueName, ResolvedValue]] = Field(default_factory=dict)
     coverage: tuple[CoverageCell, ...]

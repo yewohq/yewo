@@ -181,6 +181,7 @@ def _resolve_workflow(
         declaration.preconditions or project.preconditions or ScenarioPreconditionsSpec()
     )
     security_rules = _unique((*project.security_rules, *declaration.security_rules))
+    checks = _unique((*project.checks, *declaration.checks))
     journeys = _journey_specs(declaration)
     resolved_journeys = tuple(
         _resolve_journey(
@@ -192,6 +193,7 @@ def _resolve_workflow(
             coverage,
             preconditions,
             security_rules,
+            checks,
             base_path,
         )
         for index, journey in enumerate(journeys, start=1)
@@ -224,6 +226,7 @@ def _journey_specs(workflow: WorkflowSpec) -> tuple[JourneySpec, ...]:
             journey=workflow.journey,
             description=workflow.description,
             security_rules=(),
+            checks=(),
             env={},
             preconditions=None,
         ),
@@ -239,6 +242,7 @@ def _resolve_journey(
     coverage_specs: tuple[CoverageSpec, ...] | None,
     inherited_preconditions: ScenarioPreconditionsSpec,
     inherited_security_rules: tuple[str, ...],
+    inherited_checks: tuple[str, ...],
     base_path: Path,
 ) -> ResolvedJourney:
     all_declared_values = {**shared_env, **declaration.env}
@@ -275,7 +279,8 @@ def _resolve_journey(
         for value_name in values
     )
     security_rules = _unique((*inherited_security_rules, *declaration.security_rules))
-    _validate_references(objective, security_rules, available_names)
+    checks = _unique((*inherited_checks, *declaration.checks))
+    _validate_references(objective, (*security_rules, *checks), available_names)
     preconditions = _anchor_preconditions(
         declaration.preconditions or inherited_preconditions,
         base_path,
@@ -285,6 +290,7 @@ def _resolve_journey(
         name=declaration.name or "User Journey",
         objective=objective,
         security_rules=security_rules,
+        checks=checks,
         declared_values=declared_values,
         actors=actors,
         coverage=_coverage_cells(coverage_specs),
@@ -340,11 +346,11 @@ def _expand_environment(name: str, value: str, location: str) -> str:
 
 def _validate_references(
     objective: str,
-    security_rules: tuple[str, ...],
+    requirements: tuple[str, ...],
     available_names: set[str],
 ) -> None:
     referenced = {
-        name for text in (objective, *security_rules) for name in _VALUE_REFERENCE.findall(text)
+        name for text in (objective, *requirements) for name in _VALUE_REFERENCE.findall(text)
     }
     missing = sorted(referenced - available_names)
     if missing:

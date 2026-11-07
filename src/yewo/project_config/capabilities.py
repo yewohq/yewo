@@ -172,5 +172,5 @@ class ScenarioPreconditionsSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    app_state: Literal["clear_data", "restart", "preserve"] | None = None
+    app_state: Literal["clear_data", "restart", "preserve"] = "clear_data"
     capabilities: tuple[DeviceCapabilitySpec, ...] = ()

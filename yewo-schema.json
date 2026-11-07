@@ -134,13 +134,22 @@
       "description": "What a scenario looks for.",
       "enum": [
         "functional",
+        "data_consistency",
+        "state",
         "input",
+        "navigation",
+        "error_handling",
+        "ui_visual",
         "security",
         "accessibility",
         "performance",
         "network",
         "lifecycle",
-        "permission"
+        "permission",
+        "compatibility",
+        "installation",
+        "localization",
+        "regression"
       ],
       "title": "Category",
       "type": "string"
@@ -463,6 +472,16 @@
             "type": "string"
           },
           "title": "Security Rules",
+          "type": "array"
+        },
+        "checks": {
+          "description": "Plain-language product behaviour or testing concerns.",
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Checks",
           "type": "array"
         },
         "env": {
@@ -1065,6 +1084,20 @@
           "default": null,
           "title": "Max Steps"
         },
+        "max_duration_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 14400,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Duration Seconds"
+        },
         "settle_time": {
           "anyOf": [
             {
@@ -1249,6 +1282,16 @@
             "type": "string"
           },
           "title": "Security Rules",
+          "type": "array"
+        },
+        "checks": {
+          "description": "Plain-language product behaviour or testing concerns.",
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Checks",
           "type": "array"
         },
         "coverage": {
@@ -1501,6 +1544,20 @@
       "default": null,
       "title": "Max Steps"
     },
+    "max_duration_seconds": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 14400,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Duration Seconds"
+    },
     "settle_time": {
       "anyOf": [
         {
@@ -1700,6 +1757,16 @@
         "type": "string"
       },
       "title": "Security Rules",
+      "type": "array"
+    },
+    "checks": {
+      "description": "Plain-language product behaviour or testing concerns.",
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Checks",
       "type": "array"
     },
     "coverage": {

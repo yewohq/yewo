@@ -9,6 +9,7 @@ from yewo.project_config.compiler import (
     RunConfigurationOverrides,
     YewoProjectCompileError,
     compile_yewo_run_configuration,
+    compile_yewo_test_configurations,
 )
 from yewo.project_config.defaults import DEFAULT_PLATFORM
 from yewo.project_config.loader import (
@@ -62,6 +63,7 @@ __all__ = [
     "YewoProjectError",
     "YewoProjectCompileError",
     "compile_yewo_run_configuration",
+    "compile_yewo_test_configurations",
     "find_yewo_project",
     "load_nearest_yewo_project",
     "load_yewo_project",

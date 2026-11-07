@@ -14,8 +14,12 @@ from yewo.agent.actuation import (
     ActionPolicyLimits,
     SideEffectClass,
 )
-from yewo.agent.runtime.limits import AgentModePolicy
+from yewo.agent.runtime.limits import (
+    DEFAULT_MAXIMUM_DURATION_SECONDS,
+    AgentModePolicy,
+)
 from yewo.agent.runtime.records import AgentTask
+from yewo.artifacts import DEFAULT_OUTPUT_DIRECTORY
 from yewo.applications import ApplicationInstallMode, ApplicationRequest
 from yewo.devices import DevicePlatform, DeviceQuery
 from yewo.grounding import (
@@ -28,6 +32,7 @@ from yewo.models import (
     MINIMUM_COMPLETION_TOKENS,
     ModelGenerationSettings,
     ModelImageConstraints,
+    ModelMessageRole,
     ModelProfile,
     ModelProfileRegistry,
     ModelRetryPolicy,
@@ -39,9 +44,17 @@ from yewo.project_config.records import (
     GroundingProtocol,
     LoadedYewoProject,
     ModelOverridesSpec,
+    ModelSelectionSpec,
     ResolvedSettings,
+    ResolvedTarget,
+    ResolvedWorkflow,
 )
+from yewo.project_config.loader import select_workflows
 from yewo.runs import RunMode, RunRequest
+from yewo.test_config import YewoTestConfiguration
+
+
+_SCREEN_ANALYZER_COMPLETION_TOKENS = 16_384
 
 
 _PROFILE_IDS = {
@@ -52,6 +65,7 @@ _PROFILE_IDS = {
     ModelRole.ACTION_VERIFIER: "yaml-action-verifier",
     ModelRole.SCREEN_ANALYZER: "yaml-screen-analyzer",
     ModelRole.REPLAY_PREPARER: "yaml-replay-preparer",
+    ModelRole.TEST_DESIGNER: "yaml-test-designer",
 }
 _SEMANTIC_MODELS = (
     (ModelRole.TASK_PLANNER, "planner"),
@@ -60,6 +74,7 @@ _SEMANTIC_MODELS = (
     (ModelRole.ACTION_VERIFIER, "action_verifier"),
     (ModelRole.SCREEN_ANALYZER, "screen_analyzer"),
     (ModelRole.REPLAY_PREPARER, "replay_preparer"),
+    (ModelRole.TEST_DESIGNER, "test_designer"),
 )
 _PROTOCOL_CONVENTIONS = {
     GroundingProtocol.SOURCE_PIXELS: GroundingCoordinateConvention.SOURCE_PIXELS,
@@ -112,7 +127,7 @@ def compile_yewo_run_configuration(
     profiles = _model_profiles(settings)
     maximum_steps = settings.max_steps or 100
     project_root = project.source_path.parent
-    output_root = settings.output_dir or project_root / "assets"
+    output_root = settings.output_dir or project_root / DEFAULT_OUTPUT_DIRECTORY
     memory_root = _memory_root(settings, project_root)
     device_platform = DevicePlatform(platform)
     profile_ids = _PROFILE_IDS
@@ -129,7 +144,11 @@ def compile_yewo_run_configuration(
             ),
         ),
         task=AgentTask(objective=objective),
-        mode_policy=_mode_policy(maximum_steps, settings.settle_time),
+        mode_policy=_mode_policy(
+            maximum_steps,
+            settings.settle_time,
+            settings.max_duration_seconds,
+        ),
         model_profiles=ModelProfileRegistry(profiles=profiles),
         grounding_profile=GroundingProfile(
             profile_id="yaml-visual-grounder",
@@ -144,8 +163,79 @@ def compile_yewo_run_configuration(
         action_verifier_profile_id=profile_ids[ModelRole.ACTION_VERIFIER],
         replay_preparation_profile_id=profile_ids[ModelRole.REPLAY_PREPARER],
         screen_analyzer_profile_id=profile_ids[ModelRole.SCREEN_ANALYZER],
+        test_designer_profile_id=profile_ids[ModelRole.TEST_DESIGNER],
         memory_root=memory_root,
     )
+
+
+def compile_yewo_test_configurations(
+    project: LoadedYewoProject,
+    *,
+    workflow_selector: str | None = None,
+    target_selector: str | None = None,
+) -> tuple[YewoTestConfiguration, ...]:
+    """Compile every selected journey-target pair into an isolated test run."""
+    workflows = select_workflows(project, workflow_selector)
+    selected = tuple(
+        (workflow, target) for workflow in workflows for target in _selected_targets(workflow)
+    )
+    selected = _filter_targets(selected, target_selector)
+    configurations: list[YewoTestConfiguration] = []
+    for workflow, target in selected:
+        target_project = project.model_copy(update={"settings": target.settings})
+        for journey in workflow.journeys:
+            base = compile_yewo_run_configuration(target_project, journey.objective)
+            if base.memory_root is None:
+                raise YewoProjectCompileError(
+                    "yewo test requires durable replay. Remove durable_replay: false."
+                )
+            configurations.append(
+                YewoTestConfiguration(
+                    run=base.run.model_copy(update={"mode": RunMode.SCENARIO}),
+                    workflow_name=workflow.name,
+                    target_id=target.target_id,
+                    journey=journey,
+                    discovery_mode_policy=base.mode_policy,
+                    scenario_mode_policy=base.mode_policy.model_copy(),
+                    model_profiles=base.model_profiles,
+                    grounding_profile=base.grounding_profile,
+                    planner_profile_id=base.planner_profile_id,
+                    auditor_profile_id=base.auditor_profile_id,
+                    recovery_profile_id=base.recovery_profile_id,
+                    action_verifier_profile_id=base.action_verifier_profile_id,
+                    replay_preparation_profile_id=base.replay_preparation_profile_id,
+                    screen_analyzer_profile_id=base.screen_analyzer_profile_id,
+                    test_designer_profile_id=base.test_designer_profile_id,
+                    memory_root=base.memory_root,
+                    redaction_regions=base.redaction_regions,
+                )
+            )
+    return tuple(configurations)
+
+
+def _selected_targets(workflow: ResolvedWorkflow) -> tuple[ResolvedTarget, ...]:
+    if workflow.targets:
+        return workflow.targets
+    return (ResolvedTarget(target_id="default", settings=workflow.settings),)
+
+
+def _filter_targets(
+    selected: tuple[tuple[ResolvedWorkflow, ResolvedTarget], ...],
+    selector: str | None,
+) -> tuple[tuple[ResolvedWorkflow, ResolvedTarget], ...]:
+    if selector is None:
+        return selected
+    names = tuple(name.strip() for name in selector.split(",") if name.strip())
+    if not names:
+        raise YewoProjectCompileError("The target selector is empty.")
+    available = {target.target_id for _, target in selected}
+    missing = tuple(name for name in names if name not in available)
+    if missing:
+        raise YewoProjectCompileError(
+            f"Unknown target(s): {', '.join(missing)}. Available targets: "
+            f"{', '.join(sorted(available)) or 'default'}."
+        )
+    return tuple(item for name in names for item in selected if item[1].target_id == name)
 
 
 def _apply_overrides(
@@ -181,15 +271,20 @@ def _model_profiles(settings: ResolvedSettings) -> tuple[ModelProfile, ...]:
     semantic_models = _resolve_semantic_models(settings.model, settings.models)
     grounder = _required(settings.grounder, "grounder")
     profiles = [_model_profile(role, semantic_models[field]) for role, field in _SEMANTIC_MODELS]
-    profiles.append(_model_profile(ModelRole.GROUNDER, grounder.model))
+    profiles.append(
+        _model_profile(
+            ModelRole.GROUNDER,
+            ModelSelectionSpec(model=grounder.model),
+        )
+    )
     return tuple(profiles)
 
 
 def _resolve_semantic_models(
     default: str | None,
     overrides: ModelOverridesSpec | None,
-) -> dict[str, str]:
-    resolved: dict[str, str] = {}
+) -> dict[str, ModelSelectionSpec]:
+    resolved: dict[str, ModelSelectionSpec] = {}
     missing: list[str] = []
     for _, field in _SEMANTIC_MODELS:
         override = getattr(overrides, field) if overrides is not None else None
@@ -197,7 +292,7 @@ def _resolve_semantic_models(
         if selected is None:
             missing.append(field)
         else:
-            resolved[field] = selected
+            resolved[field] = _model_selection(selected)
     if missing:
         raise YewoProjectCompileError(
             "Configure model or explicit models for: " + ", ".join(missing) + "."
@@ -205,19 +300,31 @@ def _resolve_semantic_models(
     return resolved
 
 
-def _model_profile(role: ModelRole, model: str) -> ModelProfile:
-    provider = _provider(model)
+def _model_selection(selection: str | ModelSelectionSpec) -> ModelSelectionSpec:
+    if isinstance(selection, ModelSelectionSpec):
+        return selection
+    return ModelSelectionSpec(model=selection)
+
+
+def _model_profile(role: ModelRole, selection: ModelSelectionSpec) -> ModelProfile:
+    provider = _provider(selection.model)
+    uses_openrouter = provider == "openrouter"
     minimum_images = minimum_image_count_for_role(role)
     maximum_image_bytes = 8_000_000 if role is ModelRole.GROUNDER else 20_000_000
     return ModelProfile(
         profile_id=_PROFILE_IDS[role],
         role=role,
         provider=provider,
-        model=model,
+        model=selection.model,
         structured_output_mode=StructuredOutputMode.PROMPT_SCHEMA,
         generation=ModelGenerationSettings(
             temperature=0,
-            max_completion_tokens=MINIMUM_COMPLETION_TOKENS,
+            max_completion_tokens=(
+                _SCREEN_ANALYZER_COMPLETION_TOKENS
+                if role is ModelRole.SCREEN_ANALYZER
+                else MINIMUM_COMPLETION_TOKENS
+            ),
+            reasoning=selection.reasoning,
         ),
         retry=ModelRetryPolicy(
             timeout_seconds=60,
@@ -231,6 +338,8 @@ def _model_profile(role: ModelRole, model: str) -> ModelProfile:
             max_width_px=4_096,
             max_height_px=4_096,
         ),
+        cache_control_role=(ModelMessageRole.SYSTEM if uses_openrouter else None),
+        router_cache_affinity=uses_openrouter,
     )
 
 
@@ -243,7 +352,11 @@ def _provider(model: str) -> str:
     return provider
 
 
-def _mode_policy(maximum_steps: int, settle_time: float | None) -> AgentModePolicy:
+def _mode_policy(
+    maximum_steps: int,
+    settle_time: float | None,
+    maximum_duration_seconds: float | None,
+) -> AgentModePolicy:
     executable_actions = frozenset(
         action
         for action, definition in ACTION_DEFINITIONS.items()
@@ -267,6 +380,11 @@ def _mode_policy(maximum_steps: int, settle_time: float | None) -> AgentModePoli
         maximum_steps=maximum_steps,
         maximum_grounding_requests=min(1_000, maximum_steps * 2),
         maximum_model_requests=min(2_001, maximum_steps * 3),
+        maximum_duration_seconds=(
+            maximum_duration_seconds
+            if maximum_duration_seconds is not None
+            else DEFAULT_MAXIMUM_DURATION_SECONDS
+        ),
         settlement_interval_seconds=settle_time if settle_time is not None else 0.35,
     )
 

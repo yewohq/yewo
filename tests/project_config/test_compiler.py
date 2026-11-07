@@ -6,11 +6,12 @@ import pytest
 
 from yewo.devices import DevicePlatform
 from yewo.grounding import GroundingCoordinateConvention
-from yewo.models import ModelRole
+from yewo.models import ModelMessageRole, ModelReasoningMode, ModelRole
 from yewo.project_config import (
     RunConfigurationOverrides,
     YewoProjectCompileError,
     compile_yewo_run_configuration,
+    compile_yewo_test_configurations,
     load_yewo_project,
 )
 
@@ -48,9 +49,10 @@ def test_compiles_old_shaped_yaml_and_plain_english_goal(tmp_path: Path) -> None
     )
     assert configuration.run.device.target_id == "Pixel_8"
     assert configuration.run.application.artifact_path == tmp_path / "build/app.apk"
-    assert configuration.run.output_root == tmp_path / "assets"
+    assert configuration.run.output_root == tmp_path / "assets/yewo"
     assert configuration.memory_root == tmp_path / ".yewo"
     assert configuration.mode_policy.maximum_steps == 12
+    assert configuration.mode_policy.maximum_duration_seconds == 1_200
     assert configuration.mode_policy.maximum_grounding_requests == 24
     assert configuration.grounding_profile.coordinate_convention is (
         GroundingCoordinateConvention.NORMALIZED_1000
@@ -98,6 +100,11 @@ def test_compiled_profiles_accept_the_supported_mobile_screenshot_envelope(
         assert profile.images.max_image_bytes == (
             8_000_000 if profile.role is ModelRole.GROUNDER else 20_000_000
         )
+        assert profile.generation.max_completion_tokens == (
+            16_384 if profile.role is ModelRole.SCREEN_ANALYZER else 8_192
+        )
+        assert profile.cache_control_role is ModelMessageRole.SYSTEM
+        assert profile.router_cache_affinity
 
 
 def test_role_overrides_replace_only_the_named_semantic_models(tmp_path: Path) -> None:
@@ -111,6 +118,10 @@ model: openrouter/example/default
 models:
   planner: anthropic/claude-planner
   auditor: openrouter/example/auditor
+  test_designer: openrouter/example/test-designer
+  screen_analyzer:
+    model: openrouter/google/gemini-2.5-flash
+    reasoning: disabled
 grounder:
   model: openrouter/example/grounder
   protocol: source_pixels
@@ -126,8 +137,17 @@ journey: Open the app.
     by_role = {profile.role: profile for profile in configuration.model_profiles.profiles}
     assert by_role[ModelRole.TASK_PLANNER].model == "anthropic/claude-planner"
     assert by_role[ModelRole.TASK_PLANNER].provider == "anthropic"
+    assert by_role[ModelRole.TASK_PLANNER].cache_control_role is None
+    assert not by_role[ModelRole.TASK_PLANNER].router_cache_affinity
     assert by_role[ModelRole.AUDITOR].model == "openrouter/example/auditor"
+    assert by_role[ModelRole.AUDITOR].cache_control_role is ModelMessageRole.SYSTEM
+    assert by_role[ModelRole.AUDITOR].router_cache_affinity
     assert by_role[ModelRole.RECOVERY_ADVISOR].model == "openrouter/example/default"
+    assert by_role[ModelRole.TEST_DESIGNER].model == "openrouter/example/test-designer"
+    assert by_role[ModelRole.SCREEN_ANALYZER].model == ("openrouter/google/gemini-2.5-flash")
+    assert by_role[ModelRole.SCREEN_ANALYZER].generation.reasoning is ModelReasoningMode.DISABLED
+    assert by_role[ModelRole.AUDITOR].generation.reasoning is ModelReasoningMode.PROVIDER_DEFAULT
+    assert configuration.test_designer_profile_id == "yaml-test-designer"
 
 
 def test_requires_explicit_grounder_instead_of_reusing_the_model(tmp_path: Path) -> None:
@@ -189,6 +209,73 @@ workflows:
     assert configuration.grounding_profile.coordinate_convention is (
         GroundingCoordinateConvention.SOURCE_PIXELS
     )
+
+
+def test_compiles_each_selected_journey_and_target_for_yewo_test(tmp_path: Path) -> None:
+    path = tmp_path / "yewo.yaml"
+    path.write_text(
+        """
+model: openrouter/example/semantic
+grounder:
+  model: openrouter/example/grounder
+  protocol: source_pixels
+workflows:
+  checkout:
+    targets:
+      - id: pixel
+        platform: android
+        device: Pixel_8
+        app: app.apk
+      - id: iphone
+        platform: ios
+        device: iPhone 17
+        app: Runner.app
+    journeys:
+      - id: browse
+        journey: Browse the catalogue.
+      - id: basket
+        journey: Add an item to the basket.
+"""
+    )
+
+    configurations = compile_yewo_test_configurations(
+        load_yewo_project(path),
+        workflow_selector="checkout",
+        target_selector="iphone",
+    )
+
+    assert [(item.journey.journey_id, item.target_id) for item in configurations] == [
+        ("browse", "iphone"),
+        ("basket", "iphone"),
+    ]
+    assert all(item.run.mode.value == "scenario" for item in configurations)
+    assert all(item.run.device.target_id == "iPhone 17" for item in configurations)
+    assert all(item.discovery_mode_policy.maximum_steps == 100 for item in configurations)
+    assert all(item.scenario_mode_policy.maximum_steps == 100 for item in configurations)
+    assert all(
+        item.discovery_mode_policy.maximum_duration_seconds == 1_200 for item in configurations
+    )
+    assert all(
+        item.scenario_mode_policy.maximum_duration_seconds == 1_200 for item in configurations
+    )
+    assert all(
+        item.discovery_mode_policy is not item.scenario_mode_policy for item in configurations
+    )
+
+
+def test_yewo_test_requires_durable_replay(tmp_path: Path) -> None:
+    project = _project(tmp_path, "durable_replay: false\n")
+
+    with pytest.raises(YewoProjectCompileError, match="durable replay"):
+        compile_yewo_test_configurations(project)
+
+
+def test_compiles_an_explicit_yaml_duration_budget(tmp_path: Path) -> None:
+    project = _project(tmp_path, "max_duration_seconds: 900\n")
+
+    configuration = compile_yewo_run_configuration(project, "Open settings.")
+
+    assert configuration.mode_policy.maximum_duration_seconds == 900
 
 
 def test_command_line_overrides_replace_supported_top_level_settings(
