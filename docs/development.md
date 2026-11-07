@@ -55,7 +55,7 @@ The JSON and JSONL artifacts remain authoritative. Appium and device logs keep f
 output in their dedicated files. The readable logs do not copy prompts, model response bodies,
 typed values, credentials, or raw device content.
 
-Replay evidence is structured under `assets/agent/replay/`. `attempt.json` preserves the initial
+Replay evidence is structured under `agent/replay/`. `attempt.json` preserves the initial
 replay before repair. `evidence.json` links the concluded run to the stored flow, transitions, and
 canonical agent steps it used. `report.json` is a rebuildable summary
 of attempts, completed replays, divergences, and downstream rejoins across unique run identifiers

@@ -83,6 +83,7 @@ class PaymentMethodScreen extends StatelessWidget {
 class CheckoutScreen extends StatefulWidget {
   final double fontScale;
   final String selectedPaymentMethod;
+  final double subtotal;
   final TextEditingController addressController;
   final TextEditingController cardNumberController;
   final TextEditingController cvvController;
@@ -96,6 +97,7 @@ class CheckoutScreen extends StatefulWidget {
     super.key,
     required this.fontScale,
     required this.selectedPaymentMethod,
+    required this.subtotal,
     required this.addressController,
     required this.cardNumberController,
     required this.cvvController,
@@ -143,6 +145,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     final isCard = widget.selectedPaymentMethod == 'card';
+    const discount = 1.00;
+    final displayedTotal = widget.subtotal - discount + 0.01;
 
     return Scaffold(
       appBar: AppBar(
@@ -157,6 +161,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                border: Border.all(color: Colors.deepOrange.shade100),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'Order Summary',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 12),
+                  _PriceRow(
+                    label: 'Subtotal',
+                    value: '\$${widget.subtotal.toStringAsFixed(2)}',
+                  ),
+                  const _PriceRow(label: 'Discount', value: '-\$1.00'),
+                  const Divider(),
+                  _PriceRow(
+                    label: 'Total',
+                    value: '\$${displayedTotal.toStringAsFixed(2)}',
+                    emphasized: true,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
             const Text(
               'Delivery Address',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -339,6 +372,37 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PriceRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool emphasized;
+
+  const _PriceRow({
+    required this.label,
+    required this.value,
+    this.emphasized = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(
+      fontSize: emphasized ? 17 : 15,
+      fontWeight: emphasized ? FontWeight.bold : FontWeight.normal,
+      color: emphasized ? Colors.deepOrange : null,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: style),
+          Text(value, style: style),
+        ],
       ),
     );
   }

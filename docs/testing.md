@@ -218,10 +218,11 @@ Appium command duration is not an application first-frame measurement.
 
 ## Reports and run records
 
-Yewo writes artifacts under `assets/` unless `output_dir` or `--output-dir`
-selects another location. Every run has one `run.json`; Markdown, HTML, and
-JUnit outputs are views over that record. Reports are checkpointed during a run
-so an interruption still leaves the evidence reached so far.
+Yewo writes each run under `assets/yewo/<run-id>/` unless `output_dir` or
+`--output-dir` selects another output root. Every run has one `run.json`;
+Markdown, HTML, and JUnit outputs are views over that record. Reports are
+checkpointed during a run so an interruption still leaves the evidence reached
+so far.
 
 A target-matrix execution also writes an `executions/<execution-id>/index.html`
 summary that links to the independent reports. It combines JSON and JUnit

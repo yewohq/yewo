@@ -34,6 +34,13 @@ void main() {
     await tester.tap(find.text('Continue'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Subtotal'), findsOneWidget);
+    expect(find.text('\$9.99'), findsOneWidget);
+    expect(find.text('Discount'), findsOneWidget);
+    expect(find.text('-\$1.00'), findsOneWidget);
+    expect(find.text('Total'), findsOneWidget);
+    expect(find.text('\$9.00'), findsOneWidget);
+
     await tester.enterText(find.byType(TextField).at(0), '123 Test Street');
     await tester.enterText(find.byType(TextField).at(1), '4111222233334444');
     await tester.enterText(find.byType(TextField).at(2), '123');

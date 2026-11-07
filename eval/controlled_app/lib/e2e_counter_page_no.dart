@@ -76,6 +76,13 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
     return null;
   }
 
+  double _cartSubtotal() {
+    return _cart.entries.fold(0, (subtotal, entry) {
+      final item = _findMenuItem(entry.key);
+      return subtotal + (item?.price ?? 0) * entry.value;
+    });
+  }
+
   void _placeOrder() {
     final now = DateTime.now();
     setState(() {
@@ -314,6 +321,7 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
         return CheckoutScreen(
           fontScale: _fontScale,
           selectedPaymentMethod: _selectedPaymentMethod,
+          subtotal: _cartSubtotal(),
           addressController: _addressController,
           cardNumberController: _cardNumberController,
           cvvController: _cvvController,

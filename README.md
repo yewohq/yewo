@@ -6,69 +6,85 @@ produces an evidence-backed report.
 
 Home page: [tryyewo.dev](https://tryyewo.dev)
 
-It uses visual perception rather than app-specific selectors and keeps test
-generation separate from the model that judges the result.
+Yewo looks at the same app screenshots a user sees. Visual models identify
+controls and locate where to tap, so tests do not depend on accessibility IDs,
+test IDs, or other app-specific selectors. During a journey test, the agent
+that operates the app does not decide whether the test passed. After execution,
+a separate auditor compares the saved evidence with the expected outcomes.
 
 > Yewo is alpha software. Expect breaking changes while its public interface is
 > being established.
 
 ## What it does
 
-- Runs plain-language journeys against Android and iOS builds.
-- Detects and interacts with visible controls without requiring test IDs.
-- Generates repeatable scenario suites that can be reviewed and locked for CI.
+- Runs plain-language goals and journeys against Android and iOS builds.
+- Finds and interacts with visible controls without requiring test IDs.
+- Discovers a journey before generating evidence-grounded test scenarios.
 - Checks functional, security, and supported device-level outcomes.
-- Saves screenshots, actions, model calls, measurements, and verdict evidence.
+- Saves screenshots, actions, model calls, usage, and verdict evidence.
 - Masks declared secrets in stored text and redacts them from saved screenshots.
+- Produces JSON, HTML, Markdown, and JUnit reports for journey tests.
 
 ## Quick start
 
-You need Python 3.12+, Node.js 18+, and the SDK for the platform you want to
-test:
+You need Python 3.12+, a Node.js runtime compatible with Appium, and the SDK for
+the platform you want to test:
 
 - Android Studio and the Android SDK for Android.
 - Xcode and its command-line tools for iOS on macOS.
 
 Install Yewo from [PyPI](https://pypi.org/project/yewo/) with
-[uv](https://docs.astral.sh/uv/) and include its vision dependencies:
+[uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv tool install "yewo[vision]"
+uv tool install yewo
 ```
 
 If you prefer an existing virtual environment, use
-`python -m pip install "yewo[vision]"` instead. You only need to clone the
-repository when contributing to Yewo itself.
+`python -m pip install yewo` instead. You only need to clone the repository
+when contributing to Yewo itself.
 
-Install the runtime dependencies, download the perception model, and check the
-machine:
+From the app project you want to test, create a starter configuration and
+prepare Appium for one platform:
 
 ```bash
-yewo setup
-yewo doctor
-yewo devices
+yewo setup --platform android
 ```
 
-Add the API key for your chosen
-[LiteLLM-supported model](https://docs.litellm.ai/docs/providers) to `.env` or
-your shell environment. The default model uses OpenRouter:
+Use `--platform ios` for an iOS project. Setup previews each required change
+and asks before creating files or installing tools. It does not overwrite an
+existing `yewo.yaml`. Run `yewo setup --dry-run --platform android` to inspect
+the plan without changing anything.
+
+Add the credentials required by the models in `yewo.yaml` to the generated
+`.env` file or to your shell environment. The starter configuration uses
+OpenRouter:
 
 ```env
 OPENROUTER_API_KEY=your_key_here
 ```
 
-Now point Yewo at an APK, `.app`, or `.ipa` and give it a goal:
+Check the project and host environment:
+
+```bash
+yewo doctor
+```
+
+Then give Yewo one exploratory goal. Settings come from the nearest
+`yewo.yaml`, and command-line options can override its app, device, platform,
+model, output directory, and execution limits:
 
 ```bash
 yewo run "Open the app and sign in" --app-path path/to/app.apk
 ```
 
-`yewo run` is useful for exploration. Use a journey when the flow must produce
-a test verdict and a reusable report.
+Use `yewo run` for one goal. Use `yewo test` when a declared journey must
+produce generated scenarios, independent verdicts, and reusable reports.
 
-## Run a repeatable journey
+## Run journey tests
 
-Create `yewo.yaml` beside your app project:
+Create `yewo.yaml` in the app project. A minimal Android project looks like
+this:
 
 ```yaml
 device:
@@ -76,6 +92,12 @@ device:
   platform: android
 
 app: build/app-release.apk
+
+model: openrouter/deepseek/deepseek-v4.1-flash
+
+grounder:
+  model: openrouter/bytedance/ui-tars-1.5-7b
+  protocol: source_pixels
 
 workflows:
   smoke:
@@ -86,80 +108,93 @@ workflows:
           Open the app, sign in with the test account, and open Settings.
 ```
 
-Run it:
+Run every workflow and target declared by the nearest `yewo.yaml`:
 
 ```bash
-yewo test yewo.yaml
+yewo test
 ```
 
-Yewo generates scenarios, drives the app, and writes the run record and reports
-under `assets/` by default. The CLI prints the paths it created.
-
-When the generated scenarios are ready for review, lock them and commit
-`yewo.lock` with the journey file:
+Select workflows or targets with comma-separated identifiers:
 
 ```bash
-yewo lock yewo.yaml
-yewo test yewo.yaml --locked
+yewo test --workflow smoke
+yewo test --target pixel,ios_simulator
 ```
 
-Locked runs execute the reviewed suite and fail if its inputs are missing or
-stale. This is the mode intended for CI.
+Each selected journey-target pair gets its own device session. Yewo discovers
+the journey, records reusable app knowledge, generates scenarios grounded in
+that evidence, executes them, and audits each scenario independently.
+
+Each run stores its output under `assets/yewo/<run-id>/` by default. A
+completed journey test includes:
+
+- `reports/run.json`, the canonical machine-readable run record;
+- `reports/report.html`, an interactive report;
+- `reports/report.md`, a Markdown summary; and
+- `reports/junit.xml`, a CI-compatible test report.
+
+Set `output_dir` in `yewo.yaml` to replace `assets/yewo` with another output root.
 
 ## How Yewo works
 
 ```text
-journey -> scenarios -> observe -> plan -> act -> verify -> report
+journey -> discover -> generate scenarios -> execute -> audit -> report
 ```
 
-Yewo reads each screen with a detector and OCR, asks a planner for the next
-action, validates the selected target, and then acts through the platform
-driver. A separate judge evaluates captured evidence without seeing the plan's
-claim that it succeeded.
+During discovery, Yewo analyzes screenshots with a configured visual model,
+asks a planner for the next action, grounds visual targets, validates the
+action, and acts through Appium. It records verified app knowledge and compiles
+a reusable procedure for the journey.
 
-Only visible or measured evidence can prove an outcome. If the app does not
-provide the required evidence, Yewo reports that explicitly instead of turning
-the planner's confidence into a pass.
+For a journey test, Yewo generates scenarios only after discovery provides the
+required evidence. Each scenario is executed from declared preconditions. A
+separate auditor evaluates the captured evidence against the expected outcomes.
 
-## Verdicts
+Only visible or measured evidence can prove an outcome. A planner's claim of
+completion is not sufficient evidence for a passing verdict.
+
+## Scenario verdicts
 
 | Verdict | Meaning |
 |---|---|
-| `PASSED` | Every required outcome was evidenced. |
-| `FAILED` | The app crashed, broke a rule, or showed a critical defect. |
-| `UNVERIFIED` | The run finished without enough evidence. |
-| `SKIPPED` | The scenario could not be carried out in this context. |
-| `UNSUPPORTED` | The target cannot provide a required state or measurement. |
-| `ERROR` | Yewo, a device, or an external service failed. |
-| `ABORTED` | The run was interrupted before a verdict was possible. |
+| `passed` | Every expected outcome was independently evidenced. |
+| `failed` | At least one expected outcome was contradicted by the evidence. |
+| `unverified` | Execution did not provide enough evidence for a pass or failure. |
+| `error` | A capability, device, model provider, or Yewo failed. |
+| `aborted` | The run was interrupted before a verdict was possible. |
 
-Only `PASSED` is a verified success. Only `FAILED` assigns the failure to the
-app. See [Testing with Yewo](docs/testing.md) for journeys, secrets, coverage,
-target matrices, measurements, evidence, and report semantics.
+Only `passed` is a verified success. Only `failed` assigns the failure to the
+application. Conditions such as an unsupported capability, insufficient
+discovery, a policy block, or an exhausted budget are recorded as execution
+classifications and produce an `unverified` verdict rather than a false pass.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `yewo setup` | Install and configure runtime dependencies. |
-| `yewo doctor` | Check the local environment and explain failures. |
-| `yewo devices` | List, create, and select test devices. |
-| `yewo config` | Inspect or change saved settings. |
-| `yewo run <goal>` | Drive an app toward one exploratory goal. |
-| `yewo test [file]` | Generate and run a journey-based test suite. |
-| `yewo lock [file]` | Generate and save the suite without running a device. |
-| `yewo eval setup` | Materialize pinned evaluation apps. |
+| `yewo setup` | Create missing project files and prepare Appium tools. |
+| `yewo doctor` | Check the project and host environment and explain failures. |
+| `yewo run <goal>` | Drive the configured app toward one exploratory goal. |
+| `yewo test` | Discover and test journeys from the nearest `yewo.yaml`. |
 
 Run `yewo <command> --help` for complete options. When working from a source
 checkout, use `uv run yewo` in place of the installed `yewo` command.
 
-## Learn more
+## Project configuration
 
-- [Testing with Yewo](docs/testing.md)
-- [Evaluation corpus and maintained test apps](eval/README.md)
+Yewo finds the nearest `yewo.yaml` at or above the current directory. Settings
+can be declared for the whole project or overridden by a workflow or target.
+The configuration supports multiple workflows, journeys, target devices,
+declared values and secrets, security rules, coverage categories, actors,
+preconditions, model roles, execution budgets, and artifact settings.
+
+See the [Yewo configuration schema](yewo-schema.json) for the complete public
+configuration contract.
+
+## Development
+
 - [Development and quality gates](docs/development.md)
-- [Yewo configuration schema](yewo-schema.json)
-- [Development learnings](docs/development_learnings/README.md)
+- [Controlled evaluation app](eval/controlled_app/README.md)
 
 ## License
 
