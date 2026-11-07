@@ -8,6 +8,7 @@ import pytest
 
 from yewo.agent import YewoRunConfiguration
 from yewo.cli.main import main
+from yewo.test_config import YewoTestConfiguration
 
 
 def test_cli_requires_a_command(
@@ -18,7 +19,7 @@ def test_cli_requires_a_command(
 
     assert captured.value.code == 2
     output = capsys.readouterr()
-    assert "{run,doctor,setup}" in output.err
+    assert "{run,test,doctor,setup}" in output.err
 
 
 def test_cli_dispatches_an_explicit_yewo_run(
@@ -39,6 +40,28 @@ def test_cli_dispatches_an_explicit_yewo_run(
 
     assert main(["run", "Open the notifications screen."]) == 0
     assert selected == ["Open the notifications screen."]
+
+
+def test_cli_dispatches_selected_yewo_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configuration = cast(
+        YewoTestConfiguration,
+        SimpleNamespace(model_profiles=object()),
+    )
+    selected: list[tuple[str | None, str | None]] = []
+    monkeypatch.setattr(
+        "yewo.cli.main.test_command.configurations",
+        lambda arguments: (
+            selected.append((arguments.workflow, arguments.target)) or (configuration,)
+        ),
+    )
+    monkeypatch.setattr("yewo.cli.main.validate_model_credentials", lambda profiles: None)
+    monkeypatch.setattr("yewo.cli.main._run_yewo_tests", lambda values: 0)
+    monkeypatch.setattr("yewo.cli.main.record_new_installation", lambda: None)
+
+    assert main(["test", "--workflow", "suite", "--target", "pixel"]) == 0
+    assert selected == [("suite", "pixel")]
 
 
 def test_cli_returns_130_when_a_run_is_interrupted(

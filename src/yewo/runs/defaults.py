@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import sys
 
+from yewo.artifacts import RUNTIME_DIRECTORY
 from yewo.applications import RequestedApplicationResolver
 from yewo.automation import AppiumServerConfig, AppiumServerManager, AutomationSessionManager
 from yewo.devices import DevicePlatform
-from yewo.devices.android import AdbDeviceInventory, AndroidDeviceLifecycle
+from yewo.devices.android import (
+    AdbDeviceInventory,
+    AndroidDeviceLifecycle,
+    MacOsAndroidEmulatorEnvironment,
+)
 from yewo.devices.android.adb import AdbClient
 from yewo.devices.android.apk import ApkInspector
 from yewo.devices.ios import (
@@ -44,6 +50,9 @@ def build_default_run_coordinator(
             DevicePlatform.ANDROID: AndroidDeviceLifecycle(
                 android_inventory,
                 android_control,
+                host_environment=(
+                    MacOsAndroidEmulatorEnvironment() if sys.platform == "darwin" else None
+                ),
             ),
             DevicePlatform.IOS: IosDeviceLifecycle(SimctlClient()),
         },
@@ -64,7 +73,7 @@ def build_default_run_coordinator(
 def _server_config(workspace: RunWorkspace) -> AppiumServerConfig:
     settings = workspace.start.request.automation_server
     return AppiumServerConfig(
-        log_path=workspace.root / "runtime/appium.log",
+        log_path=workspace.root / RUNTIME_DIRECTORY / "appium.log",
         server_url=settings.server_url,
         start_if_unavailable=settings.start_if_unavailable,
         startup_timeout_seconds=settings.startup_timeout_seconds,

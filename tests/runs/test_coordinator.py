@@ -18,6 +18,7 @@ from yewo.runs.errors import (
     RunCoordinationError,
     RunTerminalPersistenceError,
     RunWorkflowEvidenceError,
+    RunWorkflowInfrastructureError,
     RunWorkflowInterrupted,
 )
 from .coordinator_support import (
@@ -238,6 +239,19 @@ def test_failed_partial_evidence_is_infrastructure_with_interruption_precedence(
     assert terminal.reason == "Yewo could not persist partial workflow evidence."
     trace_log = (tmp_path / "runs/run_1/runtime/trace.log").read_text()
     assert "RunWorkflowInterrupted with evidence persistence failure" in trace_log
+
+
+def test_workflow_infrastructure_reason_reaches_the_terminal(tmp_path: Path) -> None:
+    events: list[str] = []
+    workflow = WorkflowStub(
+        events,
+        failure=RunWorkflowInfrastructureError("Yewo could not restore the original device state."),
+    )
+
+    terminal = build_coordinator(events, workflow).run(run_request(tmp_path))
+
+    assert terminal.category is RunTerminalCategory.INFRASTRUCTURE_FAILURE
+    assert terminal.reason == "Yewo could not restore the original device state."
 
 
 def test_terminal_write_failure_preserves_the_computed_terminal(tmp_path: Path) -> None:

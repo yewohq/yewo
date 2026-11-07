@@ -24,6 +24,17 @@ class RunWorkflowInterrupted(RuntimeError):
     """A workflow observed cooperative interruption between owned operations."""
 
 
+class RunWorkflowInfrastructureError(RuntimeError):
+    """A workflow identified a safe infrastructure failure reason."""
+
+    def __init__(self, reason: str) -> None:
+        normalized_reason = reason.strip()
+        if not normalized_reason:
+            raise ValueError("A workflow infrastructure failure requires a reason.")
+        super().__init__(normalized_reason)
+        self.reason = normalized_reason
+
+
 class RunWorkflowEvidenceError(RuntimeError):
     """A workflow could not preserve partial evidence while propagating a failure."""
 

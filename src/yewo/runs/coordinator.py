@@ -10,6 +10,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from yewo.artifacts import ARTIFACTS_DIRECTORY
 from yewo.applications import (
     ApplicationDescriptor,
     ApplicationInspectionError,
@@ -37,6 +38,7 @@ from yewo.runs.errors import (
     RunCoordinationError,
     RunTerminalPersistenceError,
     RunWorkflowEvidenceError,
+    RunWorkflowInfrastructureError,
     RunWorkflowInterrupted,
 )
 from yewo.runs.records import (
@@ -347,6 +349,13 @@ class RunCoordinator:
                     f"{type(error.original_error).__name__} with evidence persistence failure "
                     f"during {stage.value} chain={_error_chain(error.original_error)}",
                 )
+            except RunWorkflowInfrastructureError as error:
+                category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                reason = error.reason
+                narrator.trace(
+                    _NARRATION_SOURCE,
+                    f"{type(error).__name__} during {stage.value}",
+                )
             except (
                 _SetupBlock,
                 DeviceSelectionError,
@@ -413,7 +422,10 @@ class RunCoordinator:
             )
             try:
                 store.persist_terminal(workspace.start, terminal)
-                narrator.trace(_NARRATION_SOURCE, "terminal_artifact=run/terminal.json")
+                narrator.trace(
+                    _NARRATION_SOURCE,
+                    "terminal_artifact=run/terminal.json",
+                )
             except RunCoordinationError as error:
                 raise RunTerminalPersistenceError(terminal) from error
             return terminal
@@ -527,7 +539,7 @@ def _validation_detail(error: BaseException) -> str:
 
 
 def _has_partial_evidence(root: Path) -> bool:
-    assets = root / "assets"
+    assets = root / ARTIFACTS_DIRECTORY
     try:
         return assets.is_dir() and any(path.is_file() for path in assets.rglob("*"))
     except OSError:

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
+from yewo.artifacts import ARTIFACTS_DIRECTORY
 from yewo.applications import (
     ApplicationDescriptor,
     ApplicationInstallationChange,
@@ -244,8 +245,8 @@ class WorkflowStub:
         assert preparation == "prepared"
         self.events.append("workflow.execute")
         if self.write_evidence:
-            evidence = context.workspace.root / "assets/evidence.txt"
-            evidence.parent.mkdir(parents=True)
+            evidence = context.workspace.root / ARTIFACTS_DIRECTORY / "evidence.txt"
+            evidence.parent.mkdir(parents=True, exist_ok=True)
             evidence.write_text("partial")
         if self.failure is not None:
             raise self.failure
