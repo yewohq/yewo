@@ -17,9 +17,32 @@ class DeviceLease(ResourceLease):
         descriptor: DeviceDescriptor,
         ownership: ResourceOwnership,
         release: Callable[[], None] | None = None,
+        restore_environment: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(ownership, release)
         self.descriptor = descriptor
+        self._restore_environment = restore_environment
+
+    def close(self) -> None:
+        """Restore run-owned state, then release an owned device."""
+        if self.closed:
+            return
+        restore_error: Exception | None = None
+        if self._restore_environment is not None:
+            try:
+                self._restore_environment()
+            except Exception as error:  # noqa: BLE001 - device cleanup must continue
+                restore_error = error
+        try:
+            super().close()
+        except Exception as release_error:
+            if restore_error is not None:
+                release_error.add_note(
+                    f"Device environment restoration also failed: {restore_error}"
+                )
+            raise
+        if restore_error is not None:
+            raise restore_error
 
 
 class DeviceLifecycle(Protocol):

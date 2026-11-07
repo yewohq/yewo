@@ -59,10 +59,7 @@ def trusted_system_surface(
         and foreground_application_id in _ANDROID_PERMISSION_CONTROLLER_IDS
     ):
         return TrustedSystemSurface.RUNTIME_PERMISSION
-    if (
-        platform is DevicePlatform.ANDROID
-        and foreground_application_id in _ANDROID_SYSTEM_UI_IDS
-    ):
+    if platform is DevicePlatform.ANDROID and foreground_application_id in _ANDROID_SYSTEM_UI_IDS:
         return TrustedSystemSurface.SYSTEM_UI
     return None
 

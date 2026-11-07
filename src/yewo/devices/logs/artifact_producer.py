@@ -349,9 +349,7 @@ class DeviceLogArtifactProducer:
 
 def _diagnostic_hints(batch: DeviceLogBatch, application_id: str) -> tuple[str, ...]:
     """Extract bounded code identifiers without retaining exception messages."""
-    text = "\n".join(
-        item.text for item in batch.items if isinstance(item, DeviceLogTextEntry)
-    )
+    text = "\n".join(item.text for item in batch.items if isinstance(item, DeviceLogTextEntry))
     hints: list[str] = []
     for frame in _STACK_FRAME_PATTERN.finditer(text):
         owner, source_file, line_number = frame.groups()

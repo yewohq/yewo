@@ -39,9 +39,7 @@ def test_store_persists_one_immutable_log_segment(tmp_path: Path) -> None:
 
     reference = _persist(store)
 
-    assert reference.path == Path(
-        "assets/device-logs/boundary_1/000001-drain_1-logcat-log_1.log"
-    )
+    assert reference.path == Path("device-logs/boundary_1/000001-drain_1-logcat-log_1.log")
     assert reference.sha256 == sha256(b"one\ntwo\n").hexdigest()
     assert reference.redaction_policy_id == "test-policy"
     assert reference.source_redaction_count == 1
@@ -55,7 +53,7 @@ def test_store_discards_an_unchanged_incomplete_artifact(tmp_path: Path) -> None
     store.discard(reference)
 
     assert not (tmp_path / reference.path).exists()
-    assert not (tmp_path / "assets/device-logs/boundary_1").exists()
+    assert not (tmp_path / "device-logs/boundary_1").exists()
 
 
 def test_store_refuses_to_discard_a_changed_artifact(tmp_path: Path) -> None:
@@ -73,4 +71,4 @@ def test_store_rejects_unsafe_boundary_before_writing(tmp_path: Path) -> None:
     with pytest.raises(DeviceLogCaptureError, match="persist"):
         _persist(store, boundary_id="../outside")
 
-    assert not (tmp_path / "assets").exists()
+    assert not (tmp_path / "device-logs").exists()

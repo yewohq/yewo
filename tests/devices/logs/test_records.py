@@ -53,7 +53,7 @@ def _artifact(*, boundary_id: str = "boundary_1") -> DeviceLogArtifactReference:
         log_type="logcat",
         kind=DeviceLogArtifactKind.TEXT_STREAM,
         sha256="0" * 64,
-        path=Path(f"assets/device-logs/{boundary_id}/log.log"),
+        path=Path(f"device-logs/{boundary_id}/log.log"),
         byte_count=1,
         entry_count=1,
         redaction_policy_id="test-policy",
@@ -202,6 +202,7 @@ def test_drain_rejects_repeated_sources() -> None:
     ("checkpoint_kind", "checkpoint_id"),
     [
         (DeviceLogCheckpointKind.ACTION, None),
+        (DeviceLogCheckpointKind.APPLICATION_SETUP, None),
         (DeviceLogCheckpointKind.SCENARIO, None),
         (DeviceLogCheckpointKind.SESSION_END, "scenario_1"),
         (DeviceLogCheckpointKind.SESSION_START, "action_1"),

@@ -86,9 +86,7 @@ def test_action_drain_records_sequence_and_completion_time(tmp_path: Path) -> No
     assert receipt.drain_index == 1
     assert receipt.started_at == CAPTURE_TIME + timedelta(seconds=2)
     assert receipt.completed_at == CAPTURE_TIME + timedelta(seconds=3)
-    ledger = (
-        tmp_path / "assets/device-logs" / started.boundary.boundary_id / "drains.jsonl"
-    )
+    ledger = tmp_path / "device-logs" / started.boundary.boundary_id / "drains.jsonl"
     persisted = [json.loads(line) for line in ledger.read_text().splitlines()]
     assert persisted[-1]["drain_id"] == receipt.drain_id
 
@@ -298,7 +296,7 @@ def test_startup_receipt_failure_rolls_back_boundary_and_artifact(
 
     assert tuple(tmp_path.rglob("*.json")) == ()
     assert tuple(tmp_path.rglob("*.log")) == ()
-    assert not (tmp_path / "assets/device-logs/record_1").exists()
+    assert not (tmp_path / "device-logs/record_1").exists()
 
 
 class _FailBoundaryStore(DeviceLogStore):

@@ -39,9 +39,7 @@ def test_reader_normalizes_available_sources_and_entries() -> None:
     batch = reader.begin("logcat")
 
     assert batch is not None
-    assert batch.items == (
-        DeviceLogTextEntry("1970-01-01T00:00:00.000+00:00 INFO ready"),
-    )
+    assert batch.items == (DeviceLogTextEntry("1970-01-01T00:00:00.000+00:00 INFO ready"),)
     assert batch.observed_item_count == 1
     assert not batch.may_have_omitted_earlier_items
     assert reader.begin("safariConsole") is None

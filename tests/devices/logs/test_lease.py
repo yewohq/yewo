@@ -12,7 +12,7 @@ from yewo.devices.logs.lease import DeviceLogCaptureLease
 from yewo.devices.logs.service import DeviceLogCaptureService
 
 
-def test_recovery_drain_consumes_its_own_checkpoint() -> None:
+def test_application_setup_drain_consumes_its_own_checkpoint() -> None:
     service = Mock(spec=DeviceLogCaptureService)
     receipt = Mock(spec=DeviceLogDrainReceipt)
     service.drain.return_value = receipt
@@ -22,12 +22,12 @@ def test_recovery_drain_consumes_its_own_checkpoint() -> None:
         cast(DeviceLogDrainReceipt, Mock()),
     )
 
-    returned = lease.drain_recovery("recovery_1")
+    returned = lease.drain_application_setup("setup_1")
 
     assert returned is receipt
     service.drain.assert_called_once_with(
         lease.boundary,
-        DeviceLogCheckpointKind.RECOVERY,
-        "recovery_1",
+        DeviceLogCheckpointKind.APPLICATION_SETUP,
+        "setup_1",
     )
     assert lease.receipts[-1] is receipt

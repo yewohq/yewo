@@ -53,6 +53,7 @@ class DeviceLogCheckpointKind(StrEnum):
     """The execution boundary that requested one log drain."""
 
     SESSION_START = "session_start"
+    APPLICATION_SETUP = "application_setup"
     ACTION = "action"
     RECOVERY = "recovery"
     SCENARIO = "scenario"
@@ -88,7 +89,7 @@ def validate_device_log_checkpoint(
             raise ValueError("A session boundary log drain cannot have a checkpoint ID.")
         return None
     if checkpoint_id is None:
-        raise ValueError("An action, recovery, or scenario log drain requires a checkpoint ID.")
+        raise ValueError("A non-session log drain requires a checkpoint ID.")
     return validate_record_identifier(checkpoint_id)
 
 
