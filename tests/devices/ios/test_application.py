@@ -126,7 +126,7 @@ def test_ios_simulator_presence_reads_listapps_output() -> None:
 
 def test_ios_simulator_presence_reads_current_openstep_output() -> None:
     runner = CommandRunnerStub(
-        stdout='''{
+        stdout="""{
     "com.example.app" =     {
         ApplicationType = User;
         CFBundleIdentifier = "com.example.app";
@@ -135,7 +135,7 @@ def test_ios_simulator_presence_reads_current_openstep_output() -> None:
         ApplicationType = System;
         CFBundleIdentifier = "com.apple.Preferences";
     };
-}'''
+}"""
     )
 
     installed = IosApplicationPresence(SimctlClient(runner)).is_installed(

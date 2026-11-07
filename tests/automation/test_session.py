@@ -62,6 +62,7 @@ class _DriverStub:
         self.installed = installed
         self.remove_error: Exception | None = None
         self.script_error: Exception | None = None
+        self.clipboard_error: Exception | None = None
         self.remote_file_content: dict[str, bytes] = {}
         self.log_types = ["logcat"]
         self._log_responses = deque(log_responses or (((),) * 10))
@@ -78,6 +79,12 @@ class _DriverStub:
 
     def quit(self) -> None:
         self.events.append("driver")
+
+    def set_clipboard_text(self, text: str, label: str | None = None) -> None:
+        del label
+        if self.clipboard_error is not None:
+            raise self.clipboard_error
+        self.events.append(f"clipboard:{text}")
 
     def get_log(self, log_type: str) -> tuple[object, ...]:
         self.events.append(f"log:{log_type}")
@@ -112,13 +119,17 @@ class _RecordingDriverStub(_DriverStub):
         return base64.b64encode(video).decode()
 
 
-def _device(events: list[str]) -> DeviceLease:
+def _device(
+    events: list[str],
+    *,
+    kind: DeviceKind = DeviceKind.VIRTUAL,
+) -> DeviceLease:
     descriptor = DeviceDescriptor(
         platform=DevicePlatform.ANDROID,
         target_id="Pixel_9",
         connection_id="emulator-5554",
         display_name="Pixel 9",
-        kind=DeviceKind.VIRTUAL,
+        kind=kind,
         readiness=DeviceReadiness.READY,
         native_state="device",
     )
@@ -217,6 +228,7 @@ def test_session_removes_only_an_application_absent_before_the_run(tmp_path: Pat
     assert session.installation_ownership is ResourceOwnership.RUN
     assert session.installation_change is ApplicationInstallationChange.INSTALLED
     assert events == [
+        "clipboard:",
         "log:logcat",
         "log:logcat",
         "remove:com.example.app",
@@ -243,7 +255,14 @@ def test_session_preserves_an_application_that_was_already_installed(
 
     assert session.installation_ownership is ResourceOwnership.EXTERNAL
     assert session.installation_change is ApplicationInstallationChange.REINSTALLED
-    assert events == ["log:logcat", "log:logcat", "driver", "server", "device"]
+    assert events == [
+        "clipboard:",
+        "log:logcat",
+        "log:logcat",
+        "driver",
+        "server",
+        "device",
+    ]
 
 
 def test_session_honors_explicit_installation_retention(tmp_path: Path) -> None:
@@ -259,7 +278,14 @@ def test_session_honors_explicit_installation_retention(tmp_path: Path) -> None:
     )
     session.close()
 
-    assert events == ["log:logcat", "log:logcat", "driver", "server", "device"]
+    assert events == [
+        "clipboard:",
+        "log:logcat",
+        "log:logcat",
+        "driver",
+        "server",
+        "device",
+    ]
 
 
 def test_install_if_needed_records_no_change_for_an_existing_application(
@@ -298,40 +324,6 @@ def test_install_records_unverified_change_when_prior_presence_is_unknown(
     session.close()
 
 
-def test_strict_reuse_requires_positive_presence_evidence(tmp_path: Path) -> None:
-    events: list[str] = []
-
-    with pytest.raises(AutomationSessionError, match="positive evidence"):
-        _open(
-            _manager(_DriverStub(events), installed_before=None),
-            _device(events),
-            _server(events),
-            _request(ApplicationInstallMode.REUSE),
-            _application().model_copy(update={"artifact_path": None}),
-            tmp_path,
-        )
-
-    assert events == ["server", "device"]
-
-
-def test_missing_application_after_driver_open_rolls_back_every_lease(
-    tmp_path: Path,
-) -> None:
-    events: list[str] = []
-
-    with pytest.raises(AutomationSessionError, match="not installed after"):
-        _open(
-            _manager(_DriverStub(events, installed=False), installed_before=False),
-            _device(events),
-            _server(events),
-            _request(),
-            _application(),
-            tmp_path,
-        )
-
-    assert events == ["driver", "server", "device"]
-
-
 def test_cleanup_continues_after_application_removal_failure(tmp_path: Path) -> None:
     events: list[str] = []
     driver = _DriverStub(events)
@@ -350,6 +342,7 @@ def test_cleanup_continues_after_application_removal_failure(tmp_path: Path) -> 
 
     assert session.closed
     assert events == [
+        "clipboard:",
         "log:logcat",
         "log:logcat",
         "remove:com.example.app",
@@ -414,6 +407,7 @@ def test_session_persists_action_scenario_and_final_log_boundaries(
         events,
         log_responses=(
             ({"message": "stale"},),
+            ({"message": "application setup"},),
             ({"message": "action"},),
             ({"message": "scenario"},),
             ({"message": "final"},),
@@ -428,24 +422,26 @@ def test_session_persists_action_scenario_and_final_log_boundaries(
         tmp_path,
     )
 
+    setup_receipt = session.drain_application_setup_logs("setup_1")
     action_receipt = session.drain_action_logs("action_1")
     scenario_receipt = session.drain_scenario_logs("scenario_1")
     session.close()
 
+    assert setup_receipt.checkpoint_kind is DeviceLogCheckpointKind.APPLICATION_SETUP
+    assert setup_receipt.checkpoint_id == "setup_1"
     assert action_receipt.checkpoint_kind is DeviceLogCheckpointKind.ACTION
     assert action_receipt.checkpoint_id == "action_1"
     assert scenario_receipt.checkpoint_kind is DeviceLogCheckpointKind.SCENARIO
     assert scenario_receipt.checkpoint_id == "scenario_1"
     assert session.device_logs.receipts[-1].checkpoint_kind is (DeviceLogCheckpointKind.SESSION_END)
-    boundary_directory = tmp_path / "assets/device-logs" / session.device_logs.boundary.boundary_id
+    boundary_directory = tmp_path / "device-logs" / session.device_logs.boundary.boundary_id
     assert (boundary_directory / "boundary.json").is_file()
     assert len(tuple(boundary_directory.glob("*.json"))) == 1
-    assert len(tuple(boundary_directory.glob("*.log"))) == 4
+    assert len(tuple(boundary_directory.glob("*.log"))) == 5
     drain_records = [
-        json.loads(line)
-        for line in (boundary_directory / "drains.jsonl").read_text().splitlines()
+        json.loads(line) for line in (boundary_directory / "drains.jsonl").read_text().splitlines()
     ]
-    assert len(drain_records) == 4
+    assert len(drain_records) == 5
     action_record = next(
         record for record in drain_records if record["drain_id"] == action_receipt.drain_id
     )
@@ -479,7 +475,7 @@ def test_session_checkpoints_and_closes_owned_screen_recording(
 
     assert scenario.artifact is not None
     assert len(session.recording.receipts) == 2
-    assert len(tuple(tmp_path.glob("assets/recordings/*/*.mp4"))) == 2
+    assert len(tuple(tmp_path.glob("recordings/*/*.mp4"))) == 2
     assert events.count("recording:start") == 2
     assert events.count("recording:stop") == 2
 

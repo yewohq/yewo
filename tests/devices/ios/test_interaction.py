@@ -23,10 +23,7 @@ def test_backend_derives_system_regions_from_the_application_viewport() -> None:
     )
 
     assert regions is not None
-    assert all(
-        item.coordinate_space is ScreenCoordinateSpace.SCREENSHOT
-        for item in regions
-    )
+    assert all(item.coordinate_space is ScreenCoordinateSpace.SCREENSHOT for item in regions)
     assert [item.kind.value for item in regions] == ["status_bar", "navigation_bar"]
     assert [(item.left, item.top, item.right, item.bottom) for item in regions] == [
         (0, 0, 200, 40),

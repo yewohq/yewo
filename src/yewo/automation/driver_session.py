@@ -38,6 +38,10 @@ class DriverClient(Protocol):
         """Remove one installed application."""
         ...
 
+    def set_clipboard_text(self, text: str, label: str | None = None) -> object:
+        """Replace the target pasteboard text."""
+        ...
+
 
 class DriverFactory(Protocol):
     """Create one driver against a healthy Appium endpoint."""

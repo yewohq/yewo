@@ -76,6 +76,7 @@ def test_ios_install_options_target_the_prepared_connection() -> None:
         "appium:udid": "IOS-UDID",
         "appium:newCommandTimeout": 240,
         "appium:useNewWDA": True,
+        "appium:connectHardwareKeyboard": False,
         "appium:app": "build/Example.app",
         "appium:enforceAppInstall": True,
     }
@@ -121,9 +122,7 @@ def test_ios_physical_options_include_platform_version_and_injected_wda_signing(
     assert capabilities["appium:platformVersion"] == "18.2"
     assert capabilities["appium:xcodeOrgId"] == "A1B2C3D4E5"
     assert capabilities["appium:xcodeSigningId"] == "Apple Development"
-    assert capabilities["appium:updatedWDABundleId"] == (
-        "com.example.yewo.WebDriverAgentRunner"
-    )
+    assert capabilities["appium:updatedWDABundleId"] == ("com.example.yewo.WebDriverAgentRunner")
     assert capabilities["appium:showXcodeLog"] is True
     assert capabilities["appium:allowProvisioningDeviceRegistration"] is True
 

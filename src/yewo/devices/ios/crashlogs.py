@@ -143,6 +143,7 @@ class DevicectlCrashLogReader:
         if log_type != _CRASH_LOG_TYPE:
             raise DeviceLogCaptureError("CoreDevice does not own this device-log source.")
         return checkpoint_kind in {
+            DeviceLogCheckpointKind.APPLICATION_SETUP,
             DeviceLogCheckpointKind.SCENARIO,
             DeviceLogCheckpointKind.SESSION_END,
         }

@@ -39,6 +39,9 @@ class _DriverStub:
         self.removed.append(application_id)
         return self
 
+    def set_clipboard_text(self, text: str, label: str | None = None) -> None:
+        del text, label
+
 
 class _DriverFactoryStub:
     def __init__(self, driver: DriverClient) -> None:

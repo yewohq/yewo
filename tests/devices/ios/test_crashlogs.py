@@ -158,6 +158,7 @@ def test_reader_scans_crashes_only_at_coarse_checkpoints() -> None:
     )
 
     assert not reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.ACTION)
+    assert reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.APPLICATION_SETUP)
     assert reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.SCENARIO)
     assert reader.captures_checkpoint("crashlog", DeviceLogCheckpointKind.SESSION_END)
 

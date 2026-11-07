@@ -19,7 +19,7 @@ from yewo.automation.driver_options import DriverOptionsBuilder
 from yewo.automation.driver_session import DriverSessionLease, DriverSessionManager
 from yewo.automation.errors import AutomationSessionError
 from yewo.automation.recording_masks import build_initial_recording_masks
-from yewo.devices.inventory import DeviceDescriptor, DevicePlatform
+from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
 from yewo.devices.lifecycle import DeviceLease
 from yewo.devices.logs import (
     DeviceLogCaptureLease,
@@ -184,6 +184,10 @@ class AutomationSession:
     def drain_action_logs(self, action_id: str) -> DeviceLogDrainReceipt:
         """Persist logs produced through one completed action."""
         return self.device_logs.drain_action(action_id)
+
+    def drain_application_setup_logs(self, setup_id: str) -> DeviceLogDrainReceipt:
+        """Persist logs produced while establishing application state."""
+        return self.device_logs.drain_application_setup(setup_id)
 
     def drain_recovery_logs(self, recovery_id: str) -> DeviceLogDrainReceipt:
         """Persist and consume logs produced by one Yewo-owned recovery."""
@@ -406,6 +410,13 @@ class AutomationSessionManager:
                 )
             options = builder.build(device.descriptor, request, application)
             driver = self._driver_sessions.open(server, options)
+            if device.descriptor.kind is DeviceKind.VIRTUAL:
+                try:
+                    driver.driver.set_clipboard_text("")
+                except Exception as clipboard_error:  # noqa: BLE001 - Appium boundary
+                    raise AutomationSessionError(
+                        "Could not clear the virtual device pasteboard."
+                    ) from clipboard_error
             try:
                 installed_after = driver.driver.is_app_installed(application.application_id)
             except Exception as inspection_error:  # noqa: BLE001 - external driver boundary

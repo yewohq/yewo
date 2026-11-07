@@ -39,4 +39,4 @@ def test_session_narrates_recording_and_device_log_boundaries(tmp_path: Path) ->
     assert "checkpoint=session_start" in trace
     assert "checkpoint=session_end" in trace
     assert "screen-recording: recording=" in trace
-    assert "artifact=assets/recordings/" in trace
+    assert "artifact=recordings/" in trace

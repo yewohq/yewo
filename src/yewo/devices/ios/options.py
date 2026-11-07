@@ -66,6 +66,8 @@ class IosDriverOptionsBuilder:
             options.platform_version = device.operating_system_version
         options.new_command_timeout = self._new_command_timeout_seconds
         options.set_capability("appium:useNewWDA", self._use_new_wda)
+        if device.kind is DeviceKind.VIRTUAL:
+            options.set_capability("appium:connectHardwareKeyboard", False)
         if device.kind is DeviceKind.PHYSICAL and self._wda_signing is not None:
             options.set_capability("appium:xcodeOrgId", self._wda_signing.team_id)
             options.set_capability(

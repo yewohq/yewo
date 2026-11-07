@@ -99,6 +99,7 @@ class IosAppiumCrashLogReader:
         if log_type != _CRASH_LOG_TYPE:
             raise DeviceLogCaptureError("Appium does not own this diagnostic source.")
         return checkpoint_kind in {
+            DeviceLogCheckpointKind.APPLICATION_SETUP,
             DeviceLogCheckpointKind.ACTION,
             DeviceLogCheckpointKind.RECOVERY,
             DeviceLogCheckpointKind.SCENARIO,
