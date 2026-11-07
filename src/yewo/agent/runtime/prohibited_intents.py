@@ -31,16 +31,8 @@ def collect_prohibited_intents(
             for proposal, unused_code, screen, unused_count in refusals
             if matches(observation, screen)
         ),
-        *(
-            proposal
-            for proposal, screen in exhausted_transitions
-            if matches(observation, screen)
-        ),
-        *(
-            proposal
-            for proposal, screen in focus_prohibitions
-            if matches(observation, screen)
-        ),
+        *(proposal for proposal, screen in exhausted_transitions if matches(observation, screen)),
+        *(proposal for proposal, screen in focus_prohibitions if matches(observation, screen)),
         *ambiguous.prohibited_proposals(observation),
     )
     keys = tuple(

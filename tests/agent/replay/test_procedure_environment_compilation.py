@@ -23,9 +23,7 @@ def _permission_evidence():
             "presentations": tuple(
                 presentation.model_copy(
                     update={
-                        "foreground_application_id": (
-                            "com.google.android.permissioncontroller"
-                        ),
+                        "foreground_application_id": ("com.google.android.permissioncontroller"),
                         "platform_context": (
                             "com.android.permissioncontroller.permission.ui."
                             "GrantPermissionsActivity"
@@ -90,9 +88,7 @@ def test_compiler_refuses_generic_system_surface() -> None:
             )
         }
     )
-    evidence = evidence.model_copy(
-        update={"states": {**evidence.states, state_id: system_state}}
-    )
+    evidence = evidence.model_copy(update={"states": {**evidence.states, state_id: system_state}})
 
     outcome = compile_replay_procedure(evidence, _response())
 

@@ -248,7 +248,7 @@ def test_procedure_grounder_reuses_authorized_nonidentical_pixels() -> None:
         update={
             "artifact_id": "live_screenshot",
             "sha256": "1" * 64,
-            "path": Path("assets/screenshots/live_screenshot.png"),
+            "path": Path("screenshots/live_screenshot.png"),
         }
     )
     live_fingerprint = recorded.screen_fingerprint.model_copy(

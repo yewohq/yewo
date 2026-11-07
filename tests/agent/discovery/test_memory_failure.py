@@ -59,7 +59,7 @@ def test_memory_write_failure_persists_unresolved_discovery_evidence(
     with pytest.raises(AppMemoryStoreError):
         workflow.execute(_context(tmp_path), NeverInterrupted())
 
-    result_path = tmp_path / "run/assets/agent/discovery/result.json"
+    result_path = tmp_path / "run/agent/discovery/result.json"
     result = DiscoveryResult.model_validate_json(result_path.read_text())
     assert result.memory_persistence_error == "Yewo could not update app memory."
     assert result.coverage.entries[0].state is DiscoveryObjectiveState.UNRESOLVED

@@ -44,6 +44,7 @@ from yewo.agent.runtime.records import (
     AgentTask,
     AgentTerminalReason,
 )
+from yewo.agent.screen_analysis import ScreenAnalysisFailureLedger
 from yewo.applications import ApplicationInstallationChange
 from yewo.artifacts import EvidenceApplicationIdentity, EvidenceDeviceIdentity
 from yewo.grounding import GroundingProfile, GroundingService, VisualGrounder
@@ -71,6 +72,7 @@ def execute_compiled_procedure(
     auditor_profile_id: str,
     action_verifier_profile_id: str | None = None,
     screen_analyzer_profile_id: str | None = None,
+    screen_analysis_failures: ScreenAnalysisFailureLedger | None = None,
     auditor_image_constraints: ModelImageConstraints | None = None,
     memory: AppMemory | None = None,
     redaction_regions: Sequence[RedactionRegion] = (),
@@ -137,6 +139,7 @@ def execute_compiled_procedure(
         recover_application=recovery_profile_id is not None,
         action_verifier_profile_id=action_verifier_profile_id,
         screen_analyzer_profile_id=screen_analyzer_profile_id,
+        screen_analysis_failures=screen_analysis_failures,
         screen_comparison=comparison,
         planner_decision_source=PlannerDecisionSource.COMPILED_PROCEDURE,
         reused_flow_id=procedure.procedure_id,

@@ -3,7 +3,14 @@
 import pytest
 
 from yewo.agent import AgentTask, AgentTerminalReason
-from yewo.agent.actuation import ActionKind, ActionOutcomeSignal
+from yewo.agent.actuation import (
+    ActionKind,
+    ActionOutcomeSignal,
+    TextDeliveryEvidence,
+    TextDeliveryReason,
+    TextDeliveryStatus,
+)
+from yewo.devices.focus import TextFieldContextSource, TextFieldType
 from yewo.agent.replay import (
     EvidenceStepKind,
     ProcedureEffect,
@@ -21,6 +28,7 @@ from yewo.agent.replay.reconciliation.compiler import procedure_effect
 
 from agent.discovery.support import agent_result, observation
 from yewo.agent.replay.procedure.source import CompiledProcedureActionSource
+from yewo.agent.planning.history import PlanningHistoryEntry
 
 from agent.replay.support import (
     evidence as _evidence,
@@ -190,4 +198,127 @@ def test_a_stale_repair_target_cannot_rewind_the_procedure_cursor() -> None:
     # A target kept past its rejoin would resume at its own index, so a later
     # match rewinds the cursor and redispatches work the run already completed.
     assert source.rejoin(screens[2]) is False
+
+
+def test_verified_focus_contract_accepts_keyboard_visual_reflow() -> None:
+    evidence = _procedure_evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    first_step = procedure.steps[0]
+    focus_step = first_step.model_copy(
+        update={"proposal": first_step.proposal.model_copy(update={"action": ActionKind.FOCUS})}
+    )
+    procedure = procedure.model_copy(update={"steps": (focus_step, *procedure.steps[1:])})
+    source = CompiledProcedureActionSource(procedure, evidence)
+    before = _observations()[0]
+    expected = _observations()[2]
+    reflowed = expected.model_copy(
+        update={
+            "observation_id": "obs_focus_reflowed",
+            "screen_fingerprint": expected.screen_fingerprint.model_copy(
+                update={"value": "3333333333333333"}
+            ),
+        }
+    )
+    proposal = source.plan(_request(before))
+    history = _outcome(proposal, before, reflowed)
+    assert history.outcome is not None
+    history = PlanningHistoryEntry(
+        proposal=history.proposal,
+        outcome=history.outcome.model_copy(
+            update={
+                "signals": frozenset(
+                    {
+                        ActionOutcomeSignal.PIXELS_CHANGED,
+                        ActionOutcomeSignal.FOCUS_CHANGED,
+                    }
+                )
+            }
+        ),
+    )
+
+    resumed = source.plan(_request(reflowed, (history,)))
+
+    assert resumed.action is ActionKind.TYPE
+    assert source.divergence is None
+    assert source.next_procedure_index == 1
+
+
+def test_verified_secure_text_contract_accepts_transient_input_pixels() -> None:
+    evidence = _procedure_evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    final_step = procedure.steps[2]
+    keyboard_step = final_step.model_copy(
+        update={
+            "proposal": final_step.proposal.model_copy(
+                update={
+                    "action": ActionKind.DISMISS_KEYBOARD,
+                    "target_element_ref": None,
+                    "target_expression": None,
+                }
+            )
+        }
+    )
+    procedure = procedure.model_copy(update={"steps": (*procedure.steps[:2], keyboard_step)})
+    source = CompiledProcedureActionSource(procedure, evidence)
+    screens = _observations()
+    first = source.plan(_request(screens[0]))
+    first_history = _outcome(first, screens[0], screens[2])
+    typed = source.plan(_request(screens[2], (first_history,)))
+    assert typed.action is ActionKind.TYPE
+    transient = screens[3].model_copy(
+        update={
+            "observation_id": "obs_secure_text_transient",
+            "screen_fingerprint": screens[3].screen_fingerprint.model_copy(
+                update={"value": "3333333333333333"}
+            ),
+        }
+    )
+    typed_history = _outcome(typed, screens[2], transient)
+    assert typed_history.outcome is not None
+    typed_history = PlanningHistoryEntry(
+        proposal=typed_history.proposal,
+        outcome=typed_history.outcome.model_copy(
+            update={
+                "text_delivery": TextDeliveryEvidence(
+                    status=TextDeliveryStatus.UNVERIFIABLE,
+                    reason=TextDeliveryReason.SECURE_FIELD,
+                    is_secure=True,
+                    field_type=TextFieldType.PASSWORD,
+                    context_source=TextFieldContextSource.PLATFORM_METADATA,
+                )
+            }
+        ),
+    )
+
+    resumed = source.plan(_request(transient, (first_history, typed_history)))
+
+    assert resumed.action is ActionKind.DISMISS_KEYBOARD
+    assert source.active_divergence is None
     assert source.next_procedure_index == 2
+
+
+def test_unverified_non_secure_text_keeps_the_visual_destination_guard() -> None:
+    evidence = _procedure_evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    source = CompiledProcedureActionSource(procedure, evidence)
+    screens = _observations()
+    first = source.plan(_request(screens[0]))
+    first_history = _outcome(first, screens[0], screens[2])
+    typed = source.plan(_request(screens[2], (first_history,)))
+    transient = screens[3].model_copy(
+        update={
+            "observation_id": "obs_unverified_text_transient",
+            "screen_fingerprint": screens[3].screen_fingerprint.model_copy(
+                update={"value": "3333333333333333"}
+            ),
+        }
+    )
+    typed_history = _outcome(typed, screens[2], transient)
+
+    rejected = source.plan(_request(transient, (first_history, typed_history)))
+
+    assert rejected.action is ActionKind.CANNOT_PROGRESS
+    assert source.active_divergence is not None

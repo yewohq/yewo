@@ -106,3 +106,24 @@ def test_packer_fails_closed_when_readable_panels_exceed_profile_capacity(
 
     with pytest.raises(ModelInputError, match="cannot fit"):
         AdaptiveGoalEvidencePacker(tmp_path, _constraints(max_images=1)).pack(sources)
+
+
+def test_capacity_probe_does_not_persist_a_derived_panel(tmp_path: Path) -> None:
+    sources = _sources(tmp_path, 6)
+    screenshots = tmp_path / "screenshots"
+    before = set(screenshots.iterdir())
+    packer = AdaptiveGoalEvidencePacker(tmp_path, _constraints(max_images=1))
+
+    fits = packer.fits(sources)
+
+    assert fits
+    assert set(screenshots.iterdir()) == before
+
+
+def test_capacity_probe_rejects_an_unreadable_source_set(tmp_path: Path) -> None:
+    sources = _sources(tmp_path, 11)
+
+    assert not AdaptiveGoalEvidencePacker(
+        tmp_path,
+        _constraints(max_images=1),
+    ).fits(sources)

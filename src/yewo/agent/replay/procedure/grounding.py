@@ -333,9 +333,7 @@ def build_keyboard_reflow_step(
             if step.source_step_id in evidence_steps
             and evidence_steps[step.source_step_id].control.identity_key
             == reset_evidence.control.identity_key
-            and evidence.states[
-                step.source_state_id
-            ].representative_presentation.keyboard_visible
+            and evidence.states[step.source_state_id].representative_presentation.keyboard_visible
             is True
             and _target_point(step) is not None
         ),

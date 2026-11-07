@@ -300,7 +300,7 @@ def test_satisfied_compiled_procedure_finishes_before_discovery(
     outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
 
     assert outcome.category is RunTerminalCategory.COMPLETED
-    result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
+    result = json.loads((tmp_path / "run/agent/discovery/result.json").read_bytes())
     assert result["procedure_replay"]["terminal"] == "completed"
 
 
@@ -340,13 +340,17 @@ def test_replay_complete_continues_with_remaining_discovery_budget(
         "yewo.agent.discovery.workflow.ObservationStore.load_selected",
         lambda unused, observation_ids: (before, after),
     )
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: None,
+    )
 
     outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
 
     assert outcome.category is RunTerminalCategory.COMPLETED
     assert discovery_agent.task is not None
     assert tuple(item.completion_condition_index for item in verifier.milestone_evidence) == (None,)
-    result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
+    result = json.loads((tmp_path / "run/agent/discovery/result.json").read_bytes())
     assert result["procedure_replay"]["terminal"] == "replay_complete"
 
 
@@ -411,3 +415,6 @@ def test_repaired_completed_replay_stops_before_general_discovery() -> None:
     assert conclusion.terminal_reason is AgentTerminalReason.DONE_REQUESTED
     assert conclusion.procedure_replay == replay
     assert conclusion.verification == verification
+    assert conclusion.compiled_procedure_id == replay.procedure_id
+    assert conclusion.compiled_procedure_step_count == replay.procedure_step_count
+    assert conclusion.coverage.entries[0].state.value == "supported"

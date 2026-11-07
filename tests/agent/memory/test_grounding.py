@@ -138,9 +138,7 @@ def test_fallback_model_grounding_remains_reusable(tmp_path: Path) -> None:
     )
     memory = memory.model_copy(
         update={
-            "transitions": (
-                transition.model_copy(update={"target_grounding": fallback_grounding}),
-            )
+            "transitions": (transition.model_copy(update={"target_grounding": fallback_grounding}),)
         }
     )
     profile = _profile().model_copy(

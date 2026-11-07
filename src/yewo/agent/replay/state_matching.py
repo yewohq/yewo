@@ -128,6 +128,14 @@ def state_matches_observation(
     )
 
 
+def state_metadata_matches_observation(
+    observation: Observation,
+    state: EvidenceState,
+) -> bool:
+    """Match the application, keyboard, orientation, and viewport state."""
+    return _metadata_matches(observation, state)
+
+
 def repair_state_matches_observation(
     observation: Observation,
     state: EvidenceState,

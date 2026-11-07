@@ -33,6 +33,7 @@ from yewo.agent.runtime.observation_settlement import (
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingRequest
 from yewo.devices.application_lifecycle import TrustedSystemSurface, trusted_system_surface
+from yewo.observations import Observation
 
 
 PROCEDURE_REPAIR_MAXIMUM_ACTIONS_PER_ATTEMPT = 8
@@ -219,9 +220,9 @@ class BoundedProcedureRepairActionSource:
         """Decline focus while repairing: the focus prompt drops repair history."""
         return self._repair_active
 
-    def requires_screen_analysis(self) -> bool:
-        """Use semantic perception only during bounded procedure repair."""
-        return self._repair_active
+    def requires_screen_analysis(self, observation: Observation) -> bool:
+        """Use semantic perception only when deterministic repair cannot rejoin."""
+        return self._repair_active and not self._procedure_source.matches_repair_target(observation)
 
     def action_verification_context(
         self,
@@ -271,6 +272,11 @@ class BoundedProcedureRepairActionSource:
         if proposal.action in {ActionKind.DONE, ActionKind.CANNOT_PROGRESS}:
             self._repair_reason = "The repair planner did not provide another device action."
             return self._stop(request, self._repair_reason)
+        if self._proposal_erases_uncompiled_input(proposal):
+            self._repair_reason = (
+                "Procedure repair refused to clear established input without a compiled clear step."
+            )
+            return self._stop(request, self._repair_reason)
         if self._procedure_source.repair_would_repeat_failed_action(proposal):
             self._repair_reason = (
                 "Procedure repair refused to repeat the failed non-navigation action."
@@ -279,6 +285,14 @@ class BoundedProcedureRepairActionSource:
         self._repair_action_count += 1
         self._last_metadata = resolve_planner_decision_metadata(self._repair_source)
         return proposal
+
+    def _proposal_erases_uncompiled_input(self, proposal: ActionProposal) -> bool:
+        if proposal.action is not ActionKind.CLEAR:
+            return False
+        target = self._target
+        return target is None or not any(
+            step.action is ActionKind.CLEAR for step in target.remaining_step_summaries
+        )
 
     def _keyboard_repair_pending(self, request: PlanningRequest) -> bool:
         target = self._target
@@ -357,12 +371,12 @@ class BoundedProcedureRepairActionSource:
         return request.model_copy(
             update={
                 "objective": (
-                    "Restore the application to the expected source state for the remaining "
-                    "compiled procedure."
+                    "Rejoin the remaining compiled procedure without undoing established progress."
                 ),
                 "known_facts": (
                     retry_fact,
                     "Do not claim completion. Deterministic code decides whether repair rejoins.",
+                    "Do not clear established input unless a remaining compiled step clears it.",
                     *target_facts,
                 ),
                 "open_work": (f"Reach compiled procedure state {target.expected_state_id}.",),

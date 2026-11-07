@@ -136,11 +136,15 @@ def test_permission_surface_replays_compiled_choice() -> None:
         }
     )
     trigger = repair.plan(_request(before))
-    trigger_outcome = agent_result(
-        before,
-        permission,
-        action=ActionKind.TAP,
-    ).steps[0].outcome
+    trigger_outcome = (
+        agent_result(
+            before,
+            permission,
+            action=ActionKind.TAP,
+        )
+        .steps[0]
+        .outcome
+    )
     assert trigger_outcome is not None
 
     permission_action = repair.plan(

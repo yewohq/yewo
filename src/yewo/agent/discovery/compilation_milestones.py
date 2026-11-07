@@ -14,6 +14,7 @@ from yewo.agent.planning.goal_verifier import (
     build_goal_transition_evidence,
 )
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
+from yewo.agent.replay.procedure.records import ProcedureReplayResult
 from yewo.agent.replay.reconciliation.records import (
     EvidenceDocument,
     EvidenceStep,
@@ -224,7 +225,7 @@ def compile_discovery_milestones(
 
 
 def compile_completed_discovery(
-    has_procedure_replay: bool,
+    procedure_replay: ProcedureReplayResult | None,
     root: Path,
     run_id: str,
     request: DiscoveryRequest,
@@ -235,16 +236,14 @@ def compile_completed_discovery(
     memory: AppMemory | None = None,
 ) -> DiscoveryCompilationMilestones | None:
     """Compile one newly discovered completed path before its final audit."""
-    if (
-        has_procedure_replay
-        or agent_result.terminal_reason is not AgentTerminalReason.DONE_REQUESTED
-    ):
+    if agent_result.terminal_reason is not AgentTerminalReason.DONE_REQUESTED:
         return None
     provisional_result = DiscoveryResult(
         request=request,
         terminal_reason=agent_result.terminal_reason,
         coverage=budget_coverage(request),
         agent_result=agent_result,
+        procedure_replay=procedure_replay,
     )
     return compile_discovery_milestones(
         root=root,
@@ -262,6 +261,7 @@ def save_verified_compilation(
     verification: GoalVerification | None,
     store: CompiledProcedureStore | None,
     compatibility: MemoryCompatibility,
+    source_run_root: Path,
 ) -> None:
     """Promote a compiled procedure only after independent goal verification."""
     if (
@@ -273,7 +273,12 @@ def save_verified_compilation(
         or store is None
     ):
         return
-    store.save(compatibility, compilation.evidence, compilation.procedure)
+    store.save(
+        compatibility,
+        compilation.evidence,
+        compilation.procedure,
+        source_run_root=source_run_root,
+    )
 
 
 def verified_compiled_procedure(

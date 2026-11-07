@@ -43,6 +43,7 @@ from yewo.agent.discovery.replay_handoff import (
 from yewo.agent.discovery.task import build_discovery_agent_task
 from yewo.agent.planning.goal_evidence import AdaptiveGoalEvidencePacker
 from yewo.agent.planning.goal_verifier import GoalVerifier
+from yewo.agent.screen_analysis import ScreenAnalysisFailureLedger
 from yewo.agent.discovery import preparation as discovery_preparation
 from yewo.agent.discovery.outcome import persist_discovery_outcome_and_compile
 
@@ -170,7 +171,9 @@ class DiscoveryWorkflow:
             self._scrub_text,
             bool(self._redaction_regions),
         )
+        screen_analysis_failures = ScreenAnalysisFailureLedger()
         compilation: DiscoveryCompilationMilestones | None = None
+
         def persist_outcome(result: DiscoveryResult) -> RunWorkflowOutcome:
             return persist_discovery_outcome_and_compile(
                 context,
@@ -184,6 +187,7 @@ class DiscoveryWorkflow:
                 compilation.report if compilation is not None else None,
                 self._memory_store,
             )
+
         objective = self._request.objectives[0]
         prepared = discovery_preparation.matching_preparation(preparation, existing)
         replay_entry = prepare_procedure_replay_entry(
@@ -205,6 +209,7 @@ class DiscoveryWorkflow:
             self._declared_value_resolver,
             prepared,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
+            screen_analysis_failures=screen_analysis_failures,
         )
         procedure_replay = replay_entry.replay
         if replay_entry.conclusion is not None:
@@ -234,6 +239,7 @@ class DiscoveryWorkflow:
             redaction_regions=self._redaction_regions,
             action_verifier_profile_id=self._action_verifier_profile_id,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
+            screen_analysis_failures=screen_analysis_failures,
             recover_application=True,
             declared_value_resolver=self._declared_value_resolver,
             screen_comparison=compatibility.screen_comparison,
@@ -251,7 +257,7 @@ class DiscoveryWorkflow:
             interruption,
         )
         compilation = compile_completed_discovery(
-            procedure_replay is not None,
+            procedure_replay,
             context.workspace.root,
             context.workspace.start.run_id,
             self._request,
@@ -288,11 +294,15 @@ class DiscoveryWorkflow:
                 self._model_profiles.resolve(self._auditor_profile_id, ModelRole.AUDITOR).images,
             ),
         )
-        save_verified_compilation(compilation, verification, self._procedure_store, compatibility)
-        compiled_procedure = verified_compiled_procedure(compilation, verification)
-        milestone_evidence_ids = tuple(
-            sorted(milestone_ids | {agent_result.final_observation_id})
+        save_verified_compilation(
+            compilation,
+            verification,
+            self._procedure_store,
+            compatibility,
+            context.workspace.root,
         )
+        compiled_procedure = verified_compiled_procedure(compilation, verification)
+        milestone_evidence_ids = tuple(sorted(milestone_ids | {agent_result.final_observation_id}))
         promotion = self._memory_builder.promote(
             self._request,
             agent_result,

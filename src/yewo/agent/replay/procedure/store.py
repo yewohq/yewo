@@ -16,9 +16,12 @@ from yewo.agent.replay.reconciliation.records import EvidenceDocument, ReplayPro
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
+    ArtifactWriteError,
     AtomicArtifactWriter,
     Sha256Digest,
 )
+from yewo.devices.screen import png_size
+from yewo.observations import ScreenshotReference
 
 
 class CompiledProcedureStoreError(RuntimeError):
@@ -162,6 +165,8 @@ class CompiledProcedureStore:
         compatibility: MemoryCompatibility,
         evidence: EvidenceDocument,
         procedure: ReplayProcedure,
+        *,
+        source_run_root: Path | None = None,
     ) -> StoredProcedureBundle:
         """Atomically replace the current compatible procedure."""
         bundle = StoredProcedureBundle(
@@ -175,8 +180,45 @@ class CompiledProcedureStore:
             evidence.task.objective,
         )
         with self._locked(procedure_root):
+            if source_run_root is not None:
+                _promote_evidence_screenshots(procedure_root, source_run_root, evidence)
             _write_bundle(procedure_root, bundle)
         return bundle
+
+    def stage_screenshots(
+        self,
+        bundle: StoredProcedureBundle,
+        destination_root: Path,
+    ) -> None:
+        """Materialize procedure-owned screenshots beneath one run workspace."""
+        procedure_root = self._procedure_root(
+            bundle.compatibility,
+            bundle.evidence.task.objective_id,
+            bundle.evidence.task.objective,
+        )
+        writer = AtomicArtifactWriter(destination_root)
+        with self._locked(procedure_root):
+            for reference in _evidence_screenshot_references(bundle.evidence):
+                source = procedure_root / "screenshots" / f"{reference.artifact_id}.png"
+                content = _read_verified_screenshot(source, procedure_root, reference)
+                destination = destination_root / reference.path
+                if destination.exists():
+                    staged = _read_verified_screenshot(
+                        destination,
+                        destination_root,
+                        reference,
+                    )
+                    if staged != content:
+                        raise CompiledProcedureStoreError(
+                            "A staged compiled procedure screenshot does not match its source."
+                        )
+                    continue
+                try:
+                    writer.write(reference.path, content)
+                except (ArtifactWriteError, ValueError) as error:
+                    raise CompiledProcedureStoreError(
+                        "Could not stage a compiled procedure screenshot."
+                    ) from error
 
     def _procedure_root(
         self,
@@ -253,6 +295,70 @@ def _write_bundle(root: Path, bundle: StoredProcedureBundle) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def _promote_evidence_screenshots(
+    procedure_root: Path,
+    source_run_root: Path,
+    evidence: EvidenceDocument,
+) -> None:
+    writer = AtomicArtifactWriter(procedure_root)
+    for reference in _evidence_screenshot_references(evidence):
+        source = source_run_root / reference.path
+        content = _read_verified_screenshot(source, source_run_root, reference)
+        destination = procedure_root / "screenshots" / f"{reference.artifact_id}.png"
+        if destination.exists():
+            retained = _read_verified_screenshot(destination, procedure_root, reference)
+            if retained != content:
+                raise CompiledProcedureStoreError(
+                    "A retained compiled procedure screenshot does not match its source."
+                )
+            continue
+        try:
+            writer.write(Path("screenshots") / f"{reference.artifact_id}.png", content)
+        except (ArtifactWriteError, ValueError) as error:
+            raise CompiledProcedureStoreError(
+                "Could not retain a compiled procedure screenshot."
+            ) from error
+
+
+def _evidence_screenshot_references(
+    evidence: EvidenceDocument,
+) -> tuple[ScreenshotReference, ...]:
+    references = tuple(state.representative_screenshot for state in evidence.states.values())
+    by_artifact = {reference.artifact_id: reference for reference in references}
+    if len(by_artifact) != len(references):
+        for reference in references:
+            if by_artifact[reference.artifact_id] != reference:
+                raise CompiledProcedureStoreError(
+                    "Compiled evidence reuses a screenshot identity inconsistently."
+                )
+    return tuple(by_artifact.values())
+
+
+def _read_verified_screenshot(
+    path: Path,
+    root: Path,
+    reference: ScreenshotReference,
+) -> bytes:
+    try:
+        path.resolve().relative_to(root.resolve())
+        if path.is_symlink() or not path.is_file():
+            raise CompiledProcedureStoreError(
+                "A compiled procedure screenshot must be a regular file."
+            )
+        content = path.read_bytes()
+    except CompiledProcedureStoreError:
+        raise
+    except (OSError, ValueError) as error:
+        raise CompiledProcedureStoreError(
+            "A compiled procedure screenshot is unavailable."
+        ) from error
+    if sha256(content).hexdigest() != reference.sha256:
+        raise CompiledProcedureStoreError("A compiled procedure screenshot digest does not match.")
+    if png_size(content) != (reference.width_px, reference.height_px):
+        raise CompiledProcedureStoreError("A compiled procedure screenshot has invalid dimensions.")
+    return content
 
 
 def _read_bundle(path: Path) -> StoredProcedureBundle:

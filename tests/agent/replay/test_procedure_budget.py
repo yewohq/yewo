@@ -60,4 +60,4 @@ def test_practical_policy_defaults_remain_bounded() -> None:
     )
 
     assert policy.maximum_steps == 100
-    assert policy.maximum_duration_seconds == 300
+    assert policy.maximum_duration_seconds == 1_200

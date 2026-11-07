@@ -1,9 +1,11 @@
 """Compiled-procedure snapshot integrity."""
 
 from hashlib import sha256
+from io import BytesIO
 import json
 from pathlib import Path
 
+from PIL import Image
 import pytest
 from pydantic import ValidationError
 
@@ -19,6 +21,26 @@ from yewo.agent.replay.procedure.store import (
 )
 
 from agent.replay.support import evidence as _evidence, response as _response
+
+
+def _evidence_with_screenshots(source_root: Path):
+    evidence = _evidence()
+    states = {}
+    for index, (state_id, state) in enumerate(evidence.states.items(), start=1):
+        reference = state.representative_screenshot
+        stream = BytesIO()
+        Image.new(
+            "RGB",
+            (reference.width_px, reference.height_px),
+            color=(index * 20, 40, 80),
+        ).save(stream, format="PNG")
+        content = stream.getvalue()
+        reference = reference.model_copy(update={"sha256": sha256(content).hexdigest()})
+        path = source_root / reference.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        states[state_id] = state.model_copy(update={"representative_screenshot": reference})
+    return evidence.model_copy(update={"states": states})
 
 
 def _rewrite_as_previous_schema(path: Path) -> None:
@@ -65,6 +87,78 @@ def test_compiled_procedure_store_rejects_tampered_snapshot(tmp_path: Path) -> N
             compatibility,
             evidence.task.objective_id,
             evidence.task.objective,
+        )
+
+
+def test_compiled_procedure_store_owns_and_stages_evidence_screenshots(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source-run"
+    evidence = _evidence_with_screenshots(source_root)
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    compatibility = MemoryCompatibility(application=evidence.run.application)
+    store = CompiledProcedureStore(tmp_path / "durable")
+
+    bundle = store.save(
+        compatibility,
+        evidence,
+        procedure,
+        source_run_root=source_root,
+    )
+    destination_root = tmp_path / "replay-run"
+    store.stage_screenshots(bundle, destination_root)
+    store.stage_screenshots(bundle, destination_root)
+
+    references = tuple(state.representative_screenshot for state in evidence.states.values())
+    assert all(
+        (destination_root / reference.path).read_bytes()
+        == (source_root / reference.path).read_bytes()
+        for reference in references
+    )
+
+
+def test_compiled_procedure_store_repeated_save_reuses_identical_screenshots(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source-run"
+    evidence = _evidence_with_screenshots(source_root)
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    compatibility = MemoryCompatibility(application=evidence.run.application)
+    store = CompiledProcedureStore(tmp_path / "durable")
+
+    first = store.save(
+        compatibility,
+        evidence,
+        procedure,
+        source_run_root=source_root,
+    )
+    second = store.save(
+        compatibility,
+        evidence,
+        procedure,
+        source_run_root=source_root,
+    )
+
+    assert second == first
+
+
+def test_compiled_procedure_store_rejects_missing_source_screenshot(
+    tmp_path: Path,
+) -> None:
+    evidence = _evidence()
+    procedure = compile_replay_procedure(evidence, _response())
+    assert isinstance(procedure, ReplayProcedure)
+    compatibility = MemoryCompatibility(application=evidence.run.application)
+    store = CompiledProcedureStore(tmp_path / "durable")
+
+    with pytest.raises(CompiledProcedureStoreError, match="regular file"):
+        store.save(
+            compatibility,
+            evidence,
+            procedure,
+            source_run_root=tmp_path / "missing-run",
         )
 
 

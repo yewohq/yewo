@@ -6,8 +6,10 @@ from typing import cast
 import pytest
 
 from yewo.observations import ScreenComparisonPolicy
+from yewo.agent import AgentTerminalReason
 from yewo.agent.discovery.compilation_milestones import (
     DiscoveryCompilationMilestones,
+    compile_completed_discovery,
 )
 from yewo.agent.replay import (
     ReplayProcedure,
@@ -24,6 +26,8 @@ from yewo.models import ModelCallDisposition, ModelClient
 from yewo.agent.discovery.records import DiscoveryResult
 
 from agent.discovery.support import observation
+from agent.discovery.test_procedure_workflow import _procedure_replay
+from agent.discovery.test_workflow import _discovery_request
 from agent.replay.support import evidence as _evidence, response as _response
 
 
@@ -55,6 +59,47 @@ def test_compiled_capture_becomes_goal_verification_milestone() -> None:
     assert milestones[0].source_observation is source
     assert milestones[0].observation is captured
     assert tuple(action.procedure_index for action in milestones[0].supporting_actions) == (0, 1, 2)
+
+
+def test_repaired_replay_prefix_is_included_in_provisional_compilation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yewo.agent.discovery import compilation_milestones as module
+
+    before = observation("replay_before", "0000000000000000")
+    after = observation(
+        "replay_after",
+        "1111111111111111",
+        predecessor_observation_id=before.observation_id,
+        offset_seconds=1,
+    )
+    replay = _procedure_replay(before, after, satisfied=False)
+    repair_result = replay.agent_result.model_copy(
+        update={"terminal_reason": AgentTerminalReason.DONE_REQUESTED}
+    )
+    captured: dict[str, DiscoveryResult] = {}
+
+    def compile_milestones(**kwargs):
+        captured["result"] = kwargs["result"]
+        return cast(DiscoveryCompilationMilestones, object())
+
+    monkeypatch.setattr(module, "compile_discovery_milestones", compile_milestones)
+
+    compilation = compile_completed_discovery(
+        replay,
+        tmp_path,
+        "run_1",
+        _discovery_request(),
+        repair_result,
+        cast(ModelClient, object()),
+        "replay-preparer",
+        ScreenComparisonPolicy(),
+    )
+
+    assert compilation is not None
+    assert captured["result"].procedure_replay is replay
+    assert captured["result"].agent_result is repair_result
 
 
 def test_valid_milestone_survives_unrelated_procedure_refusal() -> None:

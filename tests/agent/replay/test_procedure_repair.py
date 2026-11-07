@@ -25,7 +25,7 @@ from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.grounding import GroundingRequest
 from yewo.observations import Observation
 
-from agent.discovery.support import agent_result
+from agent.discovery.support import agent_result, observation
 from agent.replay.support import (
     evidence as _evidence,
     observations as _observations,
@@ -181,6 +181,10 @@ def _request(
     )
 
 
+def _unknown_observation() -> Observation:
+    return observation("obs_unknown", "3333333333333333")
+
+
 def _outcome(
     proposal: ActionProposal,
     before: Observation,
@@ -202,14 +206,14 @@ def _outcome(
 
 def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     source, planner = _repair_source()
-    wrong = _observations()[-1]
+    wrong = _unknown_observation()
 
-    assert not source.requires_screen_analysis()
+    assert not source.requires_screen_analysis(wrong)
     assert source.required_model_requests(_request(wrong)) == 0
     boundary = source.plan(_request(wrong))
     assert boundary.action is ActionKind.WAIT
     assert source.divergence is not None
-    assert source.requires_screen_analysis()
+    assert source.requires_screen_analysis(wrong)
 
     outer_request = _request(wrong).model_copy(
         update={
@@ -221,7 +225,7 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     assert source.required_model_requests(outer_request) == 1
     repair_action = source.plan(outer_request)
     assert repair_action.action is ActionKind.WAIT
-    assert planner.requests[0].objective.startswith("Restore the application")
+    assert planner.requests[0].objective.startswith("Rejoin the remaining")
     assert planner.requests[0].reference_screenshot is not None
     assert any(
         fact.startswith("Expected repair state metadata:")
@@ -240,7 +244,7 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     )
     assert source.last_planning_model_request_count() == 1
     verification = source.action_verification_context(outer_request)
-    assert verification.request.objective.startswith("Restore the application")
+    assert verification.request.objective.startswith("Rejoin the remaining")
     assert verification.request.progress_context is None
     assert verification.request.screen_facts == ()
     assert verification.request.open_work == ()
@@ -249,7 +253,7 @@ def test_source_divergence_repairs_only_to_the_same_compiled_index() -> None:
     launch = _observations()[0]
     assert source.required_model_requests(_request(launch)) == 0
     replay_action = source.plan(_request(launch))
-    assert not source.requires_screen_analysis()
+    assert not source.requires_screen_analysis(launch)
 
     assert replay_action.action is ActionKind.TAP
     assert source.decision_metadata().reused_segment_index == 0
@@ -262,7 +266,7 @@ def test_expectation_divergence_does_not_repeat_the_dispatched_action() -> None:
     source, unused_planner = _repair_source()
     before = _observations()[0]
     expected_destination = _observations()[2]
-    wrong_destination = _observations()[-1]
+    wrong_destination = _unknown_observation()
 
     dispatched = source.plan(_request(before))
     boundary = source.plan(
@@ -273,6 +277,7 @@ def test_expectation_divergence_does_not_repeat_the_dispatched_action() -> None:
     )
     assert boundary.action is ActionKind.WAIT
     assert source.completed_step_count == 0
+    assert not source.requires_screen_analysis(expected_destination)
 
     resumed = source.plan(_request(expected_destination))
 
@@ -300,12 +305,12 @@ def test_expectation_divergence_does_not_repeat_the_dispatched_action() -> None:
 
 def test_two_divergences_produce_two_independent_repairs() -> None:
     source, unused_planner = _repair_source()
-    launch, first_destination, second_destination, wrong = (
+    launch, first_destination, second_destination = (
         _observations()[0],
         _observations()[2],
         _observations()[3],
-        _observations()[-1],
     )
+    wrong = _unknown_observation()
 
     assert source.plan(_request(wrong)).action is ActionKind.WAIT
     first_action = source.plan(_request(launch))
@@ -404,7 +409,7 @@ def test_repair_refuses_exact_retry_of_failed_non_navigation_action() -> None:
         planner,
     )
     before = _observations()[0]
-    wrong = _observations()[-1]
+    wrong = _unknown_observation()
     dispatched = source.plan(_request(before))
     boundary = source.plan(_request(wrong, (_outcome(dispatched, before, wrong),)))
 
@@ -420,7 +425,7 @@ def test_repair_refuses_exact_retry_of_failed_non_navigation_action() -> None:
 
 def test_repair_action_limit_stops_without_general_task_completion() -> None:
     source, planner = _repair_source(maximum_actions=2)
-    wrong = _observations()[-1]
+    wrong = _unknown_observation()
 
     boundary = source.plan(_request(wrong))
     assert boundary.action is ActionKind.WAIT
@@ -445,7 +450,7 @@ def test_completed_attempt_does_not_disable_later_environment_recovery() -> None
         maximum_total_actions=32,
     )
     expected_source = _observations()[0]
-    wrong = _observations()[-1]
+    wrong = _unknown_observation()
 
     boundary = source.plan(_request(wrong))
     assert boundary.action is ActionKind.WAIT
@@ -470,7 +475,7 @@ def test_completed_attempt_does_not_disable_later_environment_recovery() -> None
 
 def test_task_completion_after_repair_remains_a_diverged_procedure() -> None:
     source, unused_planner = _repair_source()
-    wrong = _observations()[-1]
+    wrong = _unknown_observation()
     source.plan(_request(wrong))
     divergence = source.divergence
     assert divergence is not None

@@ -101,6 +101,8 @@ def test_procedure_replay_narration_separates_task_and_objective_coverage(
         agent_result=replay.agent_result,
         procedure_replay=replay,
         verification=replay.verification,
+        compiled_procedure_id=replay.procedure_id,
+        compiled_procedure_step_count=replay.procedure_step_count,
         memory_id="memory_1",
     )
 
@@ -111,13 +113,13 @@ def test_procedure_replay_narration_separates_task_and_objective_coverage(
     assert "Compiled procedure replay finished as completed." in narration
     assert "Task verification was satisfied." in narration
     assert "Compiled-procedure reuse is available." in narration
-    assert "Reusable objective coverage is separate: 0 of 1" in narration
+    assert "Reusable objective coverage is separate: 1 of 1" in narration
     trace = (tmp_path / "runtime/trace.log").read_text()
     assert "task_verification=satisfied" in trace
     assert "procedure_replay=completed" in trace
     assert "compiled_procedure_reusable=true" in trace
-    assert "objectives_supported=0" in trace
-    assert "objective=record_form coverage_state=unresolved" in trace
+    assert "objectives_supported=1" in trace
+    assert "objective=record_form coverage_state=supported" in trace
 
 
 def test_compiled_discovery_narration_does_not_call_procedure_reuse_unresolved(
@@ -148,5 +150,5 @@ def test_compiled_discovery_narration_does_not_call_procedure_reuse_unresolved(
 
     narration = (tmp_path / "runtime/yewo-session.log").read_text()
     assert "Discovery compiled a reusable procedure." in narration
-    assert "Reusable objective coverage is separate: 0 of 1" in narration
+    assert "Reusable objective coverage is separate: 1 of 1" in narration
     assert "Discovery finished with 0 of 1" not in narration

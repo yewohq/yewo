@@ -191,7 +191,12 @@ def compile_completed_discovery_run(
     if isinstance(attempt.outcome, ReplayProcedure) and procedure_store is not None:
         if compatibility is None:
             raise ValueError("Durable procedure storage requires compatibility evidence.")
-        procedure_store.save(compatibility, evidence, attempt.outcome)
+        procedure_store.save(
+            compatibility,
+            evidence,
+            attempt.outcome,
+            source_run_root=root,
+        )
     return report
 
 

@@ -30,9 +30,7 @@ def referenced_memory_observation_ids(
     for transition in transitions:
         for grounding in (transition.target_grounding, transition.destination_grounding):
             if grounding is not None:
-                referenced.add(
-                    grounding.source_observation_id or transition.source_observation_id
-                )
+                referenced.add(grounding.source_observation_id or transition.source_observation_id)
     return referenced
 
 

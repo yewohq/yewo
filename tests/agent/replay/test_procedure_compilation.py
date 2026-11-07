@@ -1,6 +1,7 @@
 """Post-discovery replay-procedure compilation integration tests."""
 
 from decimal import Decimal
+from hashlib import sha256
 import json
 from pathlib import Path
 from collections.abc import Callable
@@ -52,7 +53,7 @@ from yewo.observations import Observation
 
 from agent.discovery.support import agent_result, observation
 from agent.planning.support import StubPlannerModel
-from agent.memory.test_store import _memory
+from agent.memory.test_store import _memory, _png, _write_screenshot
 
 
 GENERATED_CONDITION = "The requested result is visibly established."
@@ -84,7 +85,7 @@ class MeasuredReconciler(StubPlannerModel):
                     sha256="a" * 64,
                     body_sha256="b" * 64,
                     content_sha256="c" * 64,
-                    path=Path("assets/models/calls.jsonl"),
+                    path=Path("models/calls.jsonl"),
                     body_retained=True,
                     sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
                     retention=ArtifactRetention.RUN,
@@ -183,6 +184,11 @@ def test_completed_result_builds_calls_compiles_and_measures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result, before, after = _result()
+    screenshot = _png()
+    screenshot_sha256 = sha256(screenshot).hexdigest()
+    before = _write_screenshot(tmp_path, before, screenshot, screenshot_sha256)
+    after = _write_screenshot(tmp_path, after, screenshot, screenshot_sha256)
+    result = result.model_copy(update={"agent_result": agent_result(before, after)})
     model = MeasuredReconciler(
         {
             "completion_conditions": [GENERATED_CONDITION],

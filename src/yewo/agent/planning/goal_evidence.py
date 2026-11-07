@@ -33,6 +33,12 @@ class GoalEvidenceSource:
     observation_id: str
     labels: tuple[str, ...]
     screenshot: ScreenshotReference
+    related_observation_ids: tuple[str, ...] = ()
+
+    @property
+    def observation_ids(self) -> tuple[str, ...]:
+        """Return every observation represented by this screenshot."""
+        return (self.observation_id, *self.related_observation_ids)
 
 
 @dataclass(frozen=True)
@@ -57,7 +63,7 @@ def direct_goal_evidence_images(
     return tuple(
         GoalEvidenceImage(
             screenshot=source.screenshot,
-            observation_ids=(source.observation_id,),
+            observation_ids=source.observation_ids,
             labels=source.labels,
         )
         for source in sources
@@ -114,6 +120,32 @@ class AdaptiveGoalEvidencePacker:
             )
         return tuple(packed)
 
+    def fits(self, sources: tuple[GoalEvidenceSource, ...]) -> bool:
+        """Return whether sources fit without persisting derived panels."""
+        try:
+            batches = _panel_batches(sources, self._constraints)
+            image_count = sum(self._packed_batch_count(batch) for batch in batches)
+        except ModelInputError:
+            return False
+        return image_count <= self._constraints.max_images
+
+    def _packed_batch_count(self, sources: tuple[GoalEvidenceSource, ...]) -> int:
+        if len(sources) == 1 and _fits_directly(sources[0], self._constraints):
+            return 1
+        png, unused_references = _render_panel(
+            sources,
+            self._store,
+            self._constraints,
+        )
+        if len(png) <= self._constraints.max_image_bytes:
+            return 1
+        if len(sources) == 1:
+            raise ModelInputError("A goal evidence image exceeds the auditor byte budget.")
+        midpoint = len(sources) // 2
+        return self._packed_batch_count(sources[:midpoint]) + self._packed_batch_count(
+            sources[midpoint:]
+        )
+
     def _pack_batch(
         self,
         sources: tuple[GoalEvidenceSource, ...],
@@ -139,7 +171,11 @@ class AdaptiveGoalEvidencePacker:
         return (
             GoalEvidenceImage(
                 screenshot=screenshot,
-                observation_ids=tuple(source.observation_id for source in sources),
+                observation_ids=tuple(
+                    observation_id
+                    for source in sources
+                    for observation_id in source.observation_ids
+                ),
                 labels=tuple(label for source in sources for label in source.labels),
             ),
         )

@@ -43,8 +43,7 @@ def narrate_compiled_procedure_selection(procedure_id: str, step_count: int) -> 
     narrator.record(_SOURCE, "Replaying a compatible compiled procedure.")
     narrator.trace(
         _SOURCE,
-        f"flow_lookup=hit flow_kind=compiled_procedure flow={procedure_id} "
-        f"steps={step_count}",
+        f"flow_lookup=hit flow_kind=compiled_procedure flow={procedure_id} steps={step_count}",
     )
 
 

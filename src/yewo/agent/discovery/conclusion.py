@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.memory.store import AppMemoryStore, AppMemoryStoreError
 from yewo.agent.runtime.records import AgentResult, AgentTerminalReason, agent_terminal_category
@@ -23,6 +25,20 @@ from yewo.agent.planning.goal_verifier import GoalVerification
 
 class DiscoveryEvidenceError(RuntimeError):
     """The discovery workflow could not persist its canonical conclusion."""
+
+
+DISCOVERY_RESULT_PATH = ARTIFACTS_DIRECTORY / "agent" / "discovery" / "result.json"
+
+
+def load_discovery_result(run_root: Path) -> DiscoveryResult:
+    """Load one regular, schema-valid discovery result from a run workspace."""
+    path = run_root / DISCOVERY_RESULT_PATH
+    if path.is_symlink() or not path.is_file():
+        raise DiscoveryEvidenceError("The discovery result is unavailable.")
+    try:
+        return DiscoveryResult.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as error:
+        raise DiscoveryEvidenceError("Could not read the discovery result.") from error
 
 
 def build_discovery_result(
@@ -52,10 +68,9 @@ def build_discovery_result(
 
 def persist_discovery_result(workspace: RunWorkspace, result: DiscoveryResult) -> None:
     """Persist and narrate one canonical discovery result."""
-    relative_path = ARTIFACTS_DIRECTORY / "agent" / "discovery" / "result.json"
     content = result.model_dump_json(indent=2).encode("utf-8") + b"\n"
     try:
-        AtomicArtifactWriter(workspace.root).write(relative_path, content)
+        AtomicArtifactWriter(workspace.root).write(DISCOVERY_RESULT_PATH, content)
         narrate_discovery_result(result)
     except ArtifactWriteError as error:
         raise DiscoveryEvidenceError("Could not persist the discovery result.") from error

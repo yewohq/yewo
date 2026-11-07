@@ -7,7 +7,6 @@ from typing import Literal
 
 from yewo.agent.actuation import ActionKind, ActionProposal
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
-from yewo.agent.planning.history import PlanningHistoryEntry
 from yewo.agent.planning.records import (
     PlanningRequest,
 )
@@ -28,17 +27,20 @@ from yewo.agent.replay.procedure.system_surfaces import expected_system_surface_
 from yewo.agent.replay.procedure.repair_targets import (
     build_procedure_repair_preparation,
 )
+from yewo.agent.replay.procedure.rejoin import (
+    forward_rejoin_index,
+    repair_target_matches,
+)
+from yewo.agent.replay.procedure.expectation import evaluate_procedure_expectation
 from yewo.agent.replay.procedure.entry import select_procedure_entry_index
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingRequest
 from yewo.agent.replay.state_matching import (
-    AMBIGUOUS_SOURCE_STATE,
-    trace_repair_target_match,
+    EvidenceStateMatch,
     match_evidence_state,
-    repair_state_matches_observation,
-    state_matches_observation,
 )
 from yewo.observations import Observation, ScreenshotReference
+
 
 class CompiledProcedureActionSource:
     """Supply stored actions only while current-run guards pass."""
@@ -69,6 +71,7 @@ class CompiledProcedureActionSource:
         self._pending_proposal_id: str | None = None
         self._pending_step: ReplayProcedureStep | None = None
         self._grounding_authorization: ProcedureGroundingAuthorization | None = None
+        self._keyboard_equivalent_source: tuple[str, str] | None = None
         self._repair_grounding_match: ProcedureGroundingMatch | None = None
         self._repair_grounding_steps_by_expression: dict[str, ReplayProcedureStep] = {}
         self._failed_index: int | None = None
@@ -154,13 +157,21 @@ class CompiledProcedureActionSource:
         )
 
     def rejoin(self, observation: Observation) -> bool:
-        """Resume at the repair target only after its compiled guard accepts."""
+        """Resume at the earliest safe point at or beyond the repair target."""
         target = self._repair_target
-        if target is None or not self._repair_target_matches(observation):
+        resume_index = forward_rejoin_index(
+            observation,
+            target,
+            self._procedure,
+            self._evidence,
+            self._screenshot_loader,
+            self._repair_target_matches,
+        )
+        if target is None or resume_index is None:
             return False
-        repaired_step_count = max(0, target.resume_procedure_index - self._next_index)
+        repaired_step_count = max(0, resume_index - self._next_index)
         if repaired_step_count:
-            repaired_step = self._procedure.steps[target.resume_procedure_index - 1]
+            repaired_step = self._procedure.steps[resume_index - 1]
             for condition_index in repaired_step.captures_completion_conditions:
                 self._milestones.append(
                     MilestoneEvidence(
@@ -173,15 +184,24 @@ class CompiledProcedureActionSource:
                     )
                 )
         previous_index = self._next_index
-        self._next_index = target.resume_procedure_index
-        self._completed_indexes.update(range(previous_index, target.resume_procedure_index))
+        self._next_index = resume_index
+        self._completed_indexes.update(range(previous_index, resume_index))
         self._clear_repair_state()
         return True
 
     def matches_repair_target(self, observation: Observation) -> bool:
-        """Return whether the current repair target accepts an observation."""
-        target = self._repair_target
-        return target is not None and self._repair_target_matches(observation)
+        """Return whether the observation matches the forward rejoin frontier."""
+        return (
+            forward_rejoin_index(
+                observation,
+                self._repair_target,
+                self._procedure,
+                self._evidence,
+                self._screenshot_loader,
+                self._repair_target_matches,
+            )
+            is not None
+        )
 
     def _clear_repair_state(self) -> None:
         self._repair_target = None
@@ -192,27 +212,13 @@ class CompiledProcedureActionSource:
         self._active_divergence = None
 
     def _repair_target_matches(self, observation: Observation) -> bool:
-        target = self._repair_target
-        if target is None:
-            return False
-        source_match = match_evidence_state(
+        return repair_target_matches(
             observation,
-            target.expected_state_id,
+            self._repair_target,
             self._evidence,
             self._screenshot_loader,
+            self._repair_requires_exact_content_match,
         )
-        exact = self._repair_requires_exact_content_match
-        if not exact or (
-            not source_match.accepted and source_match.reason != AMBIGUOUS_SOURCE_STATE
-        ):
-            return trace_repair_target_match(source_match.accepted, source_match.reason)
-        accepted = repair_state_matches_observation(
-            observation,
-            self._evidence.states[target.expected_state_id],
-            self._evidence.state_grouping_maximum_phash_distance,
-            self._screenshot_loader,
-        )
-        return trace_repair_target_match(accepted, "exact_content_match")
 
     def repair_would_repeat_failed_action(self, proposal: ActionProposal) -> bool:
         """Reject an exact retry of a dispatched non-navigation action."""
@@ -247,11 +253,29 @@ class CompiledProcedureActionSource:
                 "Every compiled procedure expectation passed. Final audit is still required.",
             )
         step = self._procedure.steps[self._next_index]
-        source_match = match_evidence_state(
-            request.observation,
+        keyboard_equivalent_source = self._keyboard_equivalent_source == (
             step.source_state_id,
-            self._evidence,
-            self._screenshot_loader,
+            request.observation.observation_id,
+        ) and step.proposal.action in {
+            ActionKind.TYPE,
+            ActionKind.CLEAR,
+            ActionKind.DISMISS_KEYBOARD,
+        }
+        source_match = (
+            EvidenceStateMatch(
+                accepted=True,
+                expected_distance=0,
+                competing_distance=None,
+                visual_match_ratio=None,
+                reason="verified_focus_contract_matched",
+            )
+            if keyboard_equivalent_source
+            else match_evidence_state(
+                request.observation,
+                step.source_state_id,
+                self._evidence,
+                self._screenshot_loader,
+            )
         )
         if not source_match.accepted:
             return self._diverged(
@@ -280,6 +304,7 @@ class CompiledProcedureActionSource:
         )
         self._pending_proposal_id = proposal_id
         self._pending_step = step
+        self._keyboard_equivalent_source = None
         if source_match.expected_distance is None:
             raise AssertionError("An accepted source state requires a perceptual distance.")
         screenshot = request.observation.redacted_screenshot
@@ -382,9 +407,15 @@ class CompiledProcedureActionSource:
             self._milestones.clear()
             self._entry_selected = False
             return None
-        failure = self._settlement_failure(request, step, feedback)
-        if failure is not None:
-            guard, expected_state_id, reason = failure
+        settlement = evaluate_procedure_expectation(
+            request.observation,
+            step,
+            feedback,
+            self._evidence,
+            self._screenshot_loader,
+        )
+        if settlement.failure is not None:
+            guard, expected_state_id, reason = settlement.failure
             return self._diverged(
                 request,
                 step,
@@ -392,49 +423,15 @@ class CompiledProcedureActionSource:
                 expected_state_id,
                 reason,
             )
+        if settlement.keyboard_equivalent_state_id is not None:
+            self._keyboard_equivalent_source = (
+                settlement.keyboard_equivalent_state_id,
+                request.observation.observation_id,
+            )
         self._record_step_milestones(step, request.observation)
         self._next_index += 1
         self._completed_indexes.add(step.procedure_index)
         self._clear_pending_action()
-        return None
-
-    def _settlement_failure(
-        self,
-        request: PlanningRequest,
-        step: ReplayProcedureStep,
-        feedback: PlanningHistoryEntry,
-    ) -> tuple[Literal["runtime", "expectation"], str | None, str] | None:
-        expected_state_id = step.expects.destination_state_id
-        if feedback.refusal is not None or feedback.receipt is not None:
-            return (
-                "runtime",
-                expected_state_id,
-                "The procedure action was refused before accepted settlement.",
-            )
-        outcome = feedback.outcome
-        if outcome is None:
-            return (
-                "expectation",
-                expected_state_id,
-                "The procedure action has no settled outcome evidence.",
-            )
-        if step.expects.required_signals - outcome.signals:
-            return (
-                "expectation",
-                expected_state_id,
-                "The procedure action did not produce every required outcome signal.",
-            )
-        if expected_state_id is not None and not state_matches_observation(
-            request.observation,
-            self._evidence.states[expected_state_id],
-            self._evidence.state_grouping_maximum_phash_distance,
-            self._screenshot_loader,
-        ):
-            return (
-                "expectation",
-                expected_state_id,
-                "The current observation does not match the procedure expectation.",
-            )
         return None
 
     def _record_step_milestones(

@@ -107,8 +107,11 @@ def procedure_replay_coverage(
     replay: ProcedureReplayResult,
 ) -> DiscoveryCoverage:
     """Report task proof separately from reusable discovery coverage."""
+    completed = replay.terminal is ProcedureReplayTerminal.COMPLETED
     state = (
-        DiscoveryObjectiveState.BLOCKED
+        DiscoveryObjectiveState.SUPPORTED
+        if completed
+        else DiscoveryObjectiveState.BLOCKED
         if replay.terminal
         in {
             ProcedureReplayTerminal.APPLICATION_FAILURE,
@@ -116,15 +119,24 @@ def procedure_replay_coverage(
         }
         else DiscoveryObjectiveState.UNRESOLVED
     )
+    evidence_ids = tuple(
+        dict.fromkeys(
+            (
+                *(item.observation_id for item in replay.milestones),
+                replay.agent_result.final_observation_id,
+            )
+        )
+    )
     return DiscoveryCoverage(
         entries=(
             DiscoveryCoverageEntry(
                 objective_id=request.objectives[0].objective_id,
                 state=state,
+                procedure_id=replay.procedure_id if completed else None,
+                evidence_observation_ids=evidence_ids if completed else (),
                 reason=(
-                    "Compiled procedure replay completed the task, but it did not compile "
-                    "a new reusable procedure."
-                    if replay.terminal is ProcedureReplayTerminal.COMPLETED
+                    "Verified compiled procedure replay supports reusable objective coverage."
+                    if completed
                     else f"Compiled procedure replay stopped: {replay.reason}"
                 ),
             ),

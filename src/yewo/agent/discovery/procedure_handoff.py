@@ -30,6 +30,7 @@ from yewo.agent.replay.reconciliation.records import (
     ReplayProcedure,
 )
 from yewo.agent.runtime.records import AgentModePolicy
+from yewo.agent.screen_analysis import ScreenAnalysisFailureLedger
 from yewo.applications import ApplicationInstallationChange
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingProfile
@@ -66,6 +67,7 @@ def prepare_procedure_replay_entry(
     declared_value_resolver: Callable[[str], str] | None,
     preparation: DiscoveryPreparation | None = None,
     screen_analyzer_profile_id: str | None = None,
+    screen_analysis_failures: ScreenAnalysisFailureLedger | None = None,
 ) -> ProcedureReplayEntry:
     """Attempt one compatible compiled procedure before bounded discovery."""
     objective = request.objectives[0]
@@ -84,6 +86,7 @@ def prepare_procedure_replay_entry(
         recovery_profile_id=recovery_profile_id,
         action_verifier_profile_id=action_verifier_profile_id,
         screen_analyzer_profile_id=screen_analyzer_profile_id,
+        screen_analysis_failures=screen_analysis_failures,
         auditor_image_constraints=auditor_image_constraints,
         memory=memory,
         redaction_regions=redaction_regions,
@@ -125,6 +128,7 @@ def replay_compiled_procedure_if_available(
     recovery_profile_id: str | None = None,
     action_verifier_profile_id: str | None = None,
     screen_analyzer_profile_id: str | None = None,
+    screen_analysis_failures: ScreenAnalysisFailureLedger | None = None,
     auditor_image_constraints: ModelImageConstraints | None = None,
     memory: AppMemory | None,
     redaction_regions: Sequence[RedactionRegion],
@@ -171,6 +175,7 @@ def replay_compiled_procedure_if_available(
         return None
     if planner_profile_id is None:
         raise ValueError("Compiled procedure repair requires a planner profile.")
+    procedure_store.stage_screenshots(bundle, context.workspace.root)
     setup = ProcedureReplaySetup(
         setup_id=new_record_identifier(),
         method=ProcedureResetMethod.FRESH_INSTALL,
@@ -195,6 +200,7 @@ def replay_compiled_procedure_if_available(
         auditor_profile_id=auditor_profile_id,
         action_verifier_profile_id=action_verifier_profile_id,
         screen_analyzer_profile_id=screen_analyzer_profile_id,
+        screen_analysis_failures=screen_analysis_failures,
         auditor_image_constraints=auditor_image_constraints,
         memory=memory,
         redaction_regions=redaction_regions,
@@ -257,6 +263,14 @@ def procedure_terminal_discovery_result(
         procedure_replay=replay,
         verification=(
             replay.verification if replay.terminal is ProcedureReplayTerminal.COMPLETED else None
+        ),
+        compiled_procedure_id=(
+            replay.procedure_id if replay.terminal is ProcedureReplayTerminal.COMPLETED else None
+        ),
+        compiled_procedure_step_count=(
+            replay.procedure_step_count
+            if replay.terminal is ProcedureReplayTerminal.COMPLETED
+            else None
         ),
         memory_id=memory_id,
     )

@@ -285,7 +285,7 @@ def test_workflow_uses_shared_agent_and_promotes_supported_memory(
     assert "Exercise each relevant control when policy permits" in agent.task.open_work[-1]
     assert memory_store.saved is not None
     assert memory_store.saved.transitions
-    result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
+    result = json.loads((tmp_path / "run/agent/discovery/result.json").read_bytes())
     assert result["coverage"]["entries"][0]["state"] == "supported"
     assert result["coverage"]["entries"][0]["procedure_id"] == result["compiled_procedure_id"]
 
@@ -332,7 +332,7 @@ def test_unsatisfied_verification_never_reports_success(
     assert outcome.category is RunTerminalCategory.INCOMPLETE
     assert memory_store.saved is not None
     assert memory_store.saved.transitions
-    result = json.loads((tmp_path / "run/assets/agent/discovery/result.json").read_bytes())
+    result = json.loads((tmp_path / "run/agent/discovery/result.json").read_bytes())
     assert result["coverage"]["entries"][0]["state"] == "unresolved"
 
 
@@ -425,4 +425,4 @@ def test_workflow_preserves_each_non_success_terminal(
     outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
 
     assert outcome.category is expected_category
-    assert (tmp_path / "run/assets/agent/discovery/result.json").is_file()
+    assert (tmp_path / "run/agent/discovery/result.json").is_file()

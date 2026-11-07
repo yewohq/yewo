@@ -47,12 +47,17 @@ def test_semantic_selection_loads_stored_identity_and_audits_requested_objective
     replay = cast(ProcedureReplayResult, object())
     loaded: list[tuple[str, str]] = []
     captured: dict[str, object] = {}
+    staged: list[Path] = []
 
     class StoredProcedure:
         def load(self, compatibility, objective_id, objective):
             del compatibility
             loaded.append((objective_id, objective))
             return SimpleNamespace(evidence=evidence, procedure=procedure)
+
+        def stage_screenshots(self, bundle, destination_root):
+            del bundle
+            staged.append(destination_root)
 
     def execute(*args, **kwargs):
         captured.update(kwargs)
@@ -69,9 +74,8 @@ def test_semantic_selection_loads_stored_identity_and_audits_requested_objective
     context = cast(
         RunExecutionContext,
         SimpleNamespace(
-            session=SimpleNamespace(
-                installation_change=ApplicationInstallationChange.REINSTALLED
-            )
+            session=SimpleNamespace(installation_change=ApplicationInstallationChange.REINSTALLED),
+            workspace=SimpleNamespace(root=Path("run-root")),
         ),
     )
     preparation = DiscoveryPreparation(
@@ -112,6 +116,7 @@ def test_semantic_selection_loads_stored_identity_and_audits_requested_objective
 
     assert result is replay
     assert loaded == [(evidence.task.objective_id, evidence.task.objective)]
+    assert staged == [Path("run-root")]
     assert captured["initial_model_requests"] == 1
     verification_task = cast(EvidenceTask, captured["verification_task"])
     assert verification_task.objective_id == requested.objective_id
@@ -128,9 +133,7 @@ def test_preparation_uses_llm_equivalent_procedure_after_exact_lookup_misses(
                 update={
                     "objective_id": "stored_objective",
                     "objective": "Open the form used to add a record.",
-                    "completion_conditions": (
-                        "The form used to add a record is visible.",
-                    ),
+                    "completion_conditions": ("The form used to add a record is visible.",),
                 }
             )
         }

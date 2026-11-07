@@ -52,9 +52,7 @@ class WorkflowRouteExhaustion:
         if task_advanced:
             work_item = route.work_item or ""
             self._attempts = [
-                attempt
-                for attempt in self._attempts
-                if (attempt.work_item or "") != work_item
+                attempt for attempt in self._attempts if (attempt.work_item or "") != work_item
             ]
             self._cycle_counts = {
                 key: count for key, count in self._cycle_counts.items() if key[0] != work_item
@@ -80,9 +78,7 @@ class WorkflowRouteExhaustion:
             return False
         cycle = self._attempts[start_index : current_index + 1]
         intents = tuple(
-            item.interaction_intent_key
-            for item in cycle
-            if item.interaction_intent_key is not None
+            item.interaction_intent_key for item in cycle if item.interaction_intent_key is not None
         )
         if not intents:
             return False

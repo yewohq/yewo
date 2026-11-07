@@ -19,10 +19,6 @@ def retain_transitions(
     retained_ids = {item.transition_id for item in retained}
     narrate_memory_eviction(
         "transition",
-        tuple(
-            item.transition_id
-            for item in transitions
-            if item.transition_id not in retained_ids
-        ),
+        tuple(item.transition_id for item in transitions if item.transition_id not in retained_ids),
     )
     return retained

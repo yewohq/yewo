@@ -128,8 +128,6 @@ def test_planner_rejects_a_correction_of_a_correction() -> None:
         _planner(model).plan(_planning_request(history=(corrected_entry,)))
 
 
-
-
 def _entry(
     proposal_id: str,
     *,

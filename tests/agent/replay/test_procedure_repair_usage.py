@@ -2,8 +2,12 @@
 
 from yewo.agent.planning.records import PlanningRequest
 
-from agent.replay.support import observations as _observations
-from agent.replay.test_procedure_repair import RepairPlanner, _repair_source, _request
+from agent.replay.test_procedure_repair import (
+    RepairPlanner,
+    _repair_source,
+    _request,
+    _unknown_observation,
+)
 
 
 class RetryingRepairPlanner(RepairPlanner):
@@ -19,7 +23,7 @@ class RetryingRepairPlanner(RepairPlanner):
 
 def test_repair_evidence_counts_consumed_calls_instead_of_reserved_retries() -> None:
     source, unused_planner = _repair_source(planner=RetryingRepairPlanner())
-    wrong = _observations()[-1]
+    wrong = _unknown_observation()
     request = _request(wrong)
     source.plan(request)
 
