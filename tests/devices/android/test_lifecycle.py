@@ -136,7 +136,7 @@ class _ClockStub:
         self.now += seconds
 
 
-def test_running_avd_is_external_and_is_not_stopped() -> None:
+def test_running_avd_restores_keyboard_environment_without_stopping_device() -> None:
     device = _android_device(
         readiness=DeviceReadiness.READY,
         connection_id="emulator-5554",
@@ -150,8 +150,14 @@ def test_running_avd_is_external_and_is_not_stopped() -> None:
     assert lease.ownership is ResourceOwnership.EXTERNAL
     assert lease.descriptor is device
     assert adb.killed == []
-    assert adb.keyboard_changes == []
-    assert adb.handwriting_changes == []
+    assert adb.keyboard_changes == [
+        ("emulator-5554", True),
+        ("emulator-5554", False),
+    ]
+    assert adb.handwriting_changes == [
+        ("emulator-5554", False),
+        ("emulator-5554", True),
+    ]
 
 
 def test_stopped_avd_is_started_waited_for_and_stopped_once() -> None:

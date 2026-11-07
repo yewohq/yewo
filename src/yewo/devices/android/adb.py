@@ -169,7 +169,8 @@ class AdbClient:
 
     def system_services_ready(self, connection_id: str) -> bool:
         """Return whether Appium's required Android services are available."""
-        outputs = (self.ask(connection_id, "service", "check", item) for item in ("activity", "settings"))
+        services = ("activity", "settings")
+        outputs = (self.ask(connection_id, "service", "check", item) for item in services)
         return all(
             output is not None and output.strip().lower().endswith(": found") for output in outputs
         )

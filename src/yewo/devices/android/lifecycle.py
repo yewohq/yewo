@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 import subprocess
 import time
@@ -63,6 +63,10 @@ class _SystemClock:
     sleep = staticmethod(time.sleep)
 
 
+class _HostEnvironmentControl(Protocol):
+    def isolate_clipboard(self) -> Callable[[], None]: ...
+
+
 def _start_process(command: Sequence[str]) -> _Process:
     return subprocess.Popen(  # noqa: S603 - the command is an argument list
         list(command),
@@ -97,6 +101,7 @@ class AndroidDeviceLifecycle:
         headless: bool = False,
         process_starter: _ProcessStarter = _start_process,
         clock: _Clock | None = None,
+        host_environment: _HostEnvironmentControl | None = None,
     ) -> None:
         self._inventory = inventory
         self._adb = adb
@@ -105,21 +110,34 @@ class AndroidDeviceLifecycle:
         self._headless = headless
         self._process_starter = process_starter
         self._clock = clock or _SystemClock()
+        self._host_environment = host_environment
 
     def prepare(self, device: DeviceDescriptor) -> DeviceLease:
         """Return a ready Android target and stop only an AVD started here."""
         self._validate(device)
-        if device.readiness is DeviceReadiness.STARTABLE:
-            return self._start_avd(device)
-        if device.readiness not in {
-            DeviceReadiness.READY,
-            DeviceReadiness.TRANSITIONING,
-        }:
-            raise DeviceLifecycleError(
-                f"Android target '{device.target_id}' is {device.native_state}."
+        restore_host = self._isolate_host_clipboard(device)
+        try:
+            if device.readiness is DeviceReadiness.STARTABLE:
+                return self._start_avd(device, restore_host)
+            if device.readiness not in {
+                DeviceReadiness.READY,
+                DeviceReadiness.TRANSITIONING,
+            }:
+                raise DeviceLifecycleError(
+                    f"Android target '{device.target_id}' is {device.native_state}."
+                )
+            ready, connection_id = self._wait_until_ready(device)
+            restore_device = self._prepare_virtual_environment(ready, connection_id)
+            return DeviceLease(
+                ready,
+                ResourceOwnership.EXTERNAL,
+                restore_environment=_combine_restorations(restore_device, restore_host),
             )
-        ready, _ = self._wait_until_ready(device)
-        return DeviceLease(ready, ResourceOwnership.EXTERNAL)
+        except BaseException:
+            if restore_host is not None:
+                with suppress(Exception):
+                    restore_host()
+            raise
 
     @staticmethod
     def _validate(device: DeviceDescriptor) -> None:
@@ -128,7 +146,11 @@ class AndroidDeviceLifecycle:
         if device.readiness is DeviceReadiness.STARTABLE and device.kind is not DeviceKind.VIRTUAL:
             raise DeviceLifecycleError("Only a virtual Android target can be started.")
 
-    def _start_avd(self, device: DeviceDescriptor) -> DeviceLease:
+    def _start_avd(
+        self,
+        device: DeviceDescriptor,
+        restore_host: Callable[[], None] | None,
+    ) -> DeviceLease:
         executable = self._adb.emulator_executable()
         if executable is None:
             raise DeviceLifecycleError("The Android emulator executable is not available.")
@@ -143,40 +165,82 @@ class AndroidDeviceLifecycle:
             ) from error
         try:
             ready, connection_id = self._wait_until_ready(device, process=process)
-            prior_keyboard_setting = self._adb.read_show_ime_with_hard_keyboard(connection_id)
-            prior_handwriting_setting = self._adb.read_stylus_handwriting_enabled(connection_id)
-            self._adb.set_show_ime_with_hard_keyboard(connection_id, True)
-            self._adb.set_stylus_handwriting_enabled(connection_id, False)
+            restore_environment = self._prepare_virtual_environment(ready, connection_id)
         except BaseException:
             with suppress(Exception):
                 _stop_process(process)
             raise
 
         def release() -> None:
-            restore_errors: list[Exception] = []
-            for restore in (
+            try:
+                self._adb.kill_emulator(connection_id)
+            except Exception:  # noqa: BLE001 - process fallback must still run
+                _stop_process(process)
+                raise
+
+        return DeviceLease(
+            ready,
+            ResourceOwnership.RUN,
+            release,
+            restore_environment=_combine_restorations(
+                restore_environment,
+                restore_host,
+            ),
+        )
+
+    def _isolate_host_clipboard(
+        self,
+        device: DeviceDescriptor,
+    ) -> Callable[[], None] | None:
+        if device.kind is not DeviceKind.VIRTUAL or self._host_environment is None:
+            return None
+        return self._host_environment.isolate_clipboard()
+
+    def _prepare_virtual_environment(
+        self,
+        device: DeviceDescriptor,
+        connection_id: str,
+    ) -> Callable[[], None] | None:
+        if device.kind is not DeviceKind.VIRTUAL:
+            return None
+        prior_keyboard_setting = self._adb.read_show_ime_with_hard_keyboard(connection_id)
+        prior_handwriting_setting = self._adb.read_stylus_handwriting_enabled(connection_id)
+        try:
+            self._adb.set_show_ime_with_hard_keyboard(connection_id, True)
+            self._adb.set_stylus_handwriting_enabled(connection_id, False)
+        except BaseException:
+            with suppress(Exception):
+                self._adb.set_show_ime_with_hard_keyboard(
+                    connection_id,
+                    prior_keyboard_setting,
+                )
+            with suppress(Exception):
+                self._adb.set_stylus_handwriting_enabled(
+                    connection_id,
+                    prior_handwriting_setting,
+                )
+            raise
+
+        def restore() -> None:
+            errors: list[Exception] = []
+            for operation in (
                 lambda: self._adb.set_show_ime_with_hard_keyboard(
-                    connection_id, prior_keyboard_setting
+                    connection_id,
+                    prior_keyboard_setting,
                 ),
                 lambda: self._adb.set_stylus_handwriting_enabled(
-                    connection_id, prior_handwriting_setting
+                    connection_id,
+                    prior_handwriting_setting,
                 ),
             ):
                 try:
-                    restore()
-                except Exception as error:  # noqa: BLE001 - cleanup must continue
-                    restore_errors.append(error)
-            try:
-                self._adb.kill_emulator(connection_id)
-            except Exception as error:  # noqa: BLE001 - process fallback must still run
-                _stop_process(process)
-                for restore_error in restore_errors:
-                    error.add_note(f"Keyboard setting restoration also failed: {restore_error}")
-                raise
-            if restore_errors:
-                raise restore_errors[0]
+                    operation()
+                except Exception as error:  # noqa: BLE001 - restoration must continue
+                    errors.append(error)
+            if errors:
+                raise errors[0]
 
-        return DeviceLease(ready, ResourceOwnership.RUN, release)
+        return restore
 
     def _wait_until_ready(
         self, initial: DeviceDescriptor, *, process: _Process | None = None
@@ -213,3 +277,23 @@ class AndroidDeviceLifecycle:
             ),
             None,
         )
+
+
+def _combine_restorations(
+    *operations: Callable[[], None] | None,
+) -> Callable[[], None] | None:
+    restorations = tuple(operation for operation in operations if operation is not None)
+    if not restorations:
+        return None
+
+    def restore() -> None:
+        errors: list[Exception] = []
+        for operation in restorations:
+            try:
+                operation()
+            except Exception as error:  # noqa: BLE001 - restoration must continue
+                errors.append(error)
+        if errors:
+            raise errors[0]
+
+    return restore

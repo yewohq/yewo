@@ -99,6 +99,7 @@ class AdbApplicationExitReader:
         if log_type != _EXIT_INFO_LOG_TYPE:
             raise DeviceLogCaptureError("ADB does not own this diagnostic source.")
         return checkpoint_kind in {
+            DeviceLogCheckpointKind.APPLICATION_SETUP,
             DeviceLogCheckpointKind.ACTION,
             DeviceLogCheckpointKind.RECOVERY,
             DeviceLogCheckpointKind.SCENARIO,
