@@ -6,8 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from yewo.agent.actuation import ActionKind
 from yewo.agent.planning.evidence import (
     PlannerDecisionMetadata,
     first_source_of,
@@ -44,6 +45,14 @@ class ActionSettlementPolicy(BaseModel):
     initial_delay_seconds: float = Field(ge=0, le=5)
     interval_seconds: float = Field(ge=0, le=5)
     required_stable_observations: int = Field(default=2, ge=1, le=2)
+    minimum_observations: int = Field(default=1, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_observation_bounds(self) -> ActionSettlementPolicy:
+        """Keep the minimum capture count within the hard observation cap."""
+        if self.minimum_observations > self.maximum_observations:
+            raise ValueError("The minimum observation count cannot exceed the maximum.")
+        return self
 
 
 @runtime_checkable
@@ -77,15 +86,18 @@ def resolve_action_settlement_policy(
     mode_policy: AgentModePolicy,
     source: object,
     decision: PlannerDecisionMetadata,
+    action: ActionKind,
 ) -> ActionSettlementPolicy:
     """Resolve one policy without allowing evidence to weaken hard bounds."""
     default = default_action_settlement_policy(mode_policy)
     policy_source = first_source_of(source, ActionSettlementPolicySource)
-    if policy_source is None:
-        return default
-    resolved = policy_source.resolve(default, decision)
+    resolved = default if policy_source is None else policy_source.resolve(default, decision)
     if resolved.maximum_observations > default.maximum_observations:
         raise ValueError("An action settlement policy cannot raise the observation cap.")
+    if action is ActionKind.FOCUS:
+        return resolved.model_copy(
+            update={"minimum_observations": min(3, resolved.maximum_observations)}
+        )
     return resolved
 
 
@@ -116,6 +128,7 @@ def capture_settled_observation(
                 source,
                 captured,
                 policy.required_stable_observations,
+                minimum_observations=policy.minimum_observations,
                 final_attempt=final_attempt,
             )
             is not None
@@ -131,20 +144,15 @@ def latest_settlement_candidate(
     captured: list[Observation] | tuple[Observation, ...],
     required_stable_observations: int = 2,
     *,
+    minimum_observations: int = 1,
     final_attempt: bool = False,
 ) -> Observation | None:
     """Accept a stable adjacent state or an exact recurring application image."""
-    if not captured:
+    if len(captured) < minimum_observations:
         return None
     current = captured[-1]
-    adjacent = (
-        len(captured) >= 2
-        and observations_are_compatible(captured[-2], current)
-    )
-    recurring = any(
-        observations_are_identical(previous, current)
-        for previous in captured[:-1]
-    )
+    adjacent = len(captured) >= 2 and observations_are_compatible(captured[-2], current)
+    recurring = any(observations_are_identical(previous, current) for previous in captured[:-1])
     stable = required_stable_observations == 1 or adjacent or recurring
     changed_from_source = not observations_are_identical(source, current)
     return current if stable and (changed_from_source or final_attempt) else None

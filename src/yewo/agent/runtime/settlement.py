@@ -168,12 +168,14 @@ def settle_dispatched_action(
             mode_policy,
             settlement_policy_source,
             decision,
+            proposal.action,
         )
         trace(
             f"step={step_index} settlement_initial_ms="
             f"{settlement_policy.initial_delay_seconds * 1_000:.1f} "
             f"settlement_interval_ms={settlement_policy.interval_seconds * 1_000:.1f} "
             f"settlement_maximum_observations={settlement_policy.maximum_observations} "
+            f"settlement_minimum_observations={settlement_policy.minimum_observations} "
             f"settlement_required_observations="
             f"{settlement_policy.required_stable_observations}"
         )

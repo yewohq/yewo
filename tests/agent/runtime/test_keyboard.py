@@ -184,12 +184,8 @@ def test_rejected_input_returns_to_planner_and_allows_one_corrected_value(
     observations = ObservationSequence(
         [
             _observation("obs_1", "0000000000000000", keyboard_visible=True),
-            _observation(
-                "obs_2", "1111111111111111", keyboard_visible=True, offset_seconds=1
-            ),
-            _observation(
-                "obs_3", "1111111111111111", keyboard_visible=True, offset_seconds=2
-            ),
+            _observation("obs_2", "1111111111111111", keyboard_visible=True, offset_seconds=1),
+            _observation("obs_3", "1111111111111111", keyboard_visible=True, offset_seconds=2),
         ]
     )
     device = _RejectIncompatibleInput()

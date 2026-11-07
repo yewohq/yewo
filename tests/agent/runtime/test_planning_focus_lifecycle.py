@@ -348,7 +348,7 @@ def test_the_agent_never_claims_a_focus_a_declining_source_cannot_receive(
         planner = planner_type([proposal() for _ in range(5)])
         runtime = _runtime(root, planner, ObservationSequence(stuck), RuntimeDevice())
         runtime.run(_task(), _mode_policy(), NeverInterrupted())
-        ledger = root / "assets/agent/progress-ledger.jsonl"
+        ledger = root / "agent/progress-ledger.jsonl"
         if not ledger.is_file():
             return []
         return [

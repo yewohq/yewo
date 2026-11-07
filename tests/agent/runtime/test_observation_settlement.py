@@ -2,10 +2,13 @@
 
 from typing import cast
 
+from yewo.agent.actuation import ActionKind
+from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.runtime.observation_settlement import (
     ActionSettlementPolicy,
     capture_settled_observation,
     default_action_settlement_policy,
+    resolve_action_settlement_policy,
 )
 from yewo.agent.runtime.limits import AgentModePolicy
 from yewo.observations import Observation, ObservationService
@@ -56,6 +59,18 @@ def test_default_settlement_adds_the_immediate_capture_to_the_wait_window() -> N
     assert policy.initial_delay_seconds == 0
     assert policy.maximum_observations == 7
     assert round(policy.interval_seconds * (policy.maximum_observations - 1), 2) == 2.1
+
+
+def test_focus_actions_capture_a_third_frame_in_discovery_and_replay() -> None:
+    policy = resolve_action_settlement_policy(
+        _mode_policy(maximum_settlement_observations=6),
+        object(),
+        PlannerDecisionMetadata(source=PlannerDecisionSource.MODEL),
+        ActionKind.FOCUS,
+    )
+
+    assert policy.minimum_observations == 3
+    assert policy.maximum_observations == 6
 
 
 def test_settlement_detects_exact_change_when_phash_is_unchanged() -> None:
@@ -124,15 +139,44 @@ def test_settlement_accepts_an_exact_recurring_cursor_state() -> None:
             OrderedObservations(events, [first, alternate, recurring]),
         ),
         source,
-        default_action_settlement_policy(
-            _mode_policy(maximum_settlement_observations=4)
-        ),
+        default_action_settlement_policy(_mode_policy(maximum_settlement_observations=4)),
         NeverInterrupted(),
         lambda unused: None,
     )
 
     assert capture.settled
     assert capture.observation_ids == ("obs_2", "obs_3", "obs_4")
+
+
+def test_focus_settlement_captures_past_two_identical_caret_frames() -> None:
+    events: list[str] = []
+    source = _observation("obs_1", "0000000000000000")
+    caret_hidden = _observation("obs_2", "1000000000000000", offset_seconds=1)
+    still_hidden = caret_hidden.model_copy(update={"observation_id": "obs_3"})
+    caret_visible = _observation("obs_4", "1000000000000003", offset_seconds=3)
+    hidden_again = caret_hidden.model_copy(update={"observation_id": "obs_5"})
+
+    capture = capture_settled_observation(
+        cast(
+            ObservationService,
+            OrderedObservations(
+                events,
+                [caret_hidden, still_hidden, caret_visible, hidden_again],
+            ),
+        ),
+        source,
+        ActionSettlementPolicy(
+            maximum_observations=4,
+            initial_delay_seconds=0,
+            interval_seconds=0.2,
+            minimum_observations=3,
+        ),
+        NeverInterrupted(),
+        lambda unused: None,
+    )
+
+    assert capture.settled
+    assert capture.observation_ids == ("obs_2", "obs_3", "obs_4", "obs_5")
 
 
 def test_action_policy_can_capture_immediately_then_use_its_interval() -> None:
