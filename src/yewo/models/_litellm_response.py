@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 import math
+import socket
 from typing import cast
 
 from litellm import exceptions
@@ -27,6 +28,12 @@ _RETRYABLE_EXCEPTION_TYPES = (
     exceptions.ServiceUnavailableError,
     ConnectionError,
     TimeoutError,
+)
+_DNS_FAILURE_MARKERS = (
+    "getaddrinfo failed",
+    "name or service not known",
+    "nodename nor servname provided, or not known",
+    "temporary failure in name resolution",
 )
 
 
@@ -192,7 +199,41 @@ def describe_provider_error(error: BaseException) -> str:
     """Describe a provider failure without copying its message or prompt."""
     error_name = type(error).__name__
     status = provider_error_status(error)
-    return f"{error_name} (HTTP {status})" if status is not None else error_name
+    description = f"{error_name} (HTTP {status})" if status is not None else error_name
+    classification = _safe_transport_failure_classification(error)
+    return f"{description}: {classification}" if classification is not None else description
+
+
+def _safe_transport_failure_classification(error: BaseException) -> str | None:
+    exception_chain = _exception_chain(error)
+    if any(isinstance(item, socket.gaierror) for item in exception_chain) or any(
+        marker in _exception_text(item).casefold()
+        for item in exception_chain
+        for marker in _DNS_FAILURE_MARKERS
+    ):
+        return "Provider network name resolution failed"
+    if any(isinstance(item, (exceptions.Timeout, TimeoutError)) for item in exception_chain):
+        return "Provider request timed out"
+    if any(
+        isinstance(item, (exceptions.APIConnectionError, ConnectionError))
+        for item in exception_chain
+    ):
+        return "Provider connection failed"
+    return None
+
+
+def _exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and all(current is not item for item in chain):
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return tuple(chain)
+
+
+def _exception_text(error: BaseException) -> str:
+    message = getattr(error, "message", None)
+    return message if isinstance(message, str) else str(error)
 
 
 def provider_retry_after_seconds(

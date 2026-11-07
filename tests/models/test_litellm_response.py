@@ -1,17 +1,20 @@
 """Tests for normalization of untrusted LiteLLM response envelopes."""
 
 from decimal import Decimal
+from pathlib import Path
 
 from pydantic import BaseModel, ValidationInfo, field_validator
 import pytest
 
-from yewo.models import ModelCallDisposition
+from yewo.models import ModelCallDisposition, build_model_response_contract
 from yewo.models._litellm_response import (
     describe_provider_error,
     is_retryable_provider_error,
     normalize_litellm_completion,
     provider_error_status,
 )
+
+from models.test_client import _client, _request
 
 
 class StructuredAnswer(BaseModel):
@@ -158,6 +161,45 @@ def test_structured_response_accepts_json_fences_and_validation_context() -> Non
     assert normalized.structured_output == {"target": "Save"}
 
 
+def test_validation_context_failure_enters_the_correction_loop(tmp_path: Path) -> None:
+    responses = [
+        _response('{"target":"Cancel"}'),
+        _response('{"target":"Save"}'),
+    ]
+    provider_calls: list[dict[str, object]] = []
+
+    def complete(**arguments: object) -> object:
+        provider_calls.append(arguments)
+        return responses.pop(0)
+
+    request = _request(tmp_path, structured=True).model_copy(
+        update={
+            "response_contract": build_model_response_contract(
+                "context-answer", ContextAnswer.model_json_schema()
+            )
+        }
+    )
+    response = _client(tmp_path, complete).complete(
+        request,
+        ContextAnswer,
+        {"required_target": "Save"},
+    )
+
+    assert response.disposition is ModelCallDisposition.COMPLETED
+    assert response.structured_output == {"target": "Save"}
+    assert [call.disposition for call in response.calls] == [
+        ModelCallDisposition.MALFORMED,
+        ModelCallDisposition.COMPLETED,
+    ]
+    correction_messages = provider_calls[1]["messages"]
+    assert isinstance(correction_messages, list)
+    assert correction_messages[1] == {
+        "role": "assistant",
+        "content": '{"target":"Cancel"}',
+    }
+    assert "validation context" in str(correction_messages[2]).lower()
+
+
 class ProviderFailure(RuntimeError):
     def __init__(self, status_code: int, message: str = "sensitive provider message") -> None:
         super().__init__(message)
@@ -179,4 +221,26 @@ def test_terminal_provider_error_is_not_retried_or_quoted() -> None:
 
 def test_transport_failures_without_status_are_retryable() -> None:
     assert is_retryable_provider_error(TimeoutError("request body"))
-    assert describe_provider_error(TimeoutError("request body")) == "TimeoutError"
+    assert describe_provider_error(TimeoutError("request body")) == (
+        "TimeoutError: Provider request timed out"
+    )
+
+
+def test_provider_dns_failure_is_classified_without_copying_sensitive_details() -> None:
+    error = ProviderFailure(
+        500,
+        "OpenrouterException for private.example: "
+        "[Errno 8] nodename nor servname provided, or not known",
+    )
+
+    description = describe_provider_error(error)
+
+    assert description == ("ProviderFailure (HTTP 500): Provider network name resolution failed")
+    assert "private.example" not in description
+
+
+def test_provider_connection_failure_is_classified_without_copying_its_message() -> None:
+    description = describe_provider_error(ConnectionError("private endpoint and request body"))
+
+    assert description == "ConnectionError: Provider connection failed"
+    assert "private endpoint" not in description

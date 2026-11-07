@@ -50,7 +50,8 @@ def test_model_transport_traces_provider_retry_delay(tmp_path: Path) -> None:
 
     session = (tmp_path / "runtime/yewo-session.log").read_text()
     assert (
-        "grounder provider attempt 1 of 3 failed: TimeoutError. "
+        "grounder provider attempt 1 of 3 failed: "
+        "TimeoutError: Provider request timed out. "
         "Waiting 1 second before attempt 2."
     ) in session
     trace = (tmp_path / "runtime/trace.log").read_text()

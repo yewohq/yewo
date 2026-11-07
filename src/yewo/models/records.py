@@ -13,6 +13,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yewo.artifacts import (
+    ARTIFACTS_DIRECTORY,
     ArtifactRetention,
     ArtifactSensitivity,
     RecordIdentifier,
@@ -31,6 +32,7 @@ class ModelRole(StrEnum):
     ACTION_VERIFIER = "action_verifier"
     SCREEN_ANALYZER = "screen_analyzer"
     REPLAY_PREPARER = "replay_preparer"
+    TEST_DESIGNER = "test_designer"
 
 
 class ModelMessageRole(StrEnum):
@@ -94,9 +96,10 @@ class ModelArtifactReference(BaseModel):
             or ".." in value.parts
             or value.name in {"", "."}
             or value.suffix != ".jsonl"
-            or value.parts[:2] != ("assets", "models")
+            or value.parts[: len(ARTIFACTS_DIRECTORY.parts) + 1]
+            != (*ARTIFACTS_DIRECTORY.parts, "models")
         ):
-            raise ValueError("A model artifact must use a safe JSONL path under assets/models.")
+            raise ValueError("A model artifact must use a safe JSONL path under models.")
         return value
 
 
@@ -178,6 +181,7 @@ class ModelRequest(BaseModel):
     role: ModelRole
     max_completion_tokens: int | None = Field(default=None, gt=0)
     reasoning_effort: ModelReasoningEffort | None = None
+    retry_reasoning_exhaustion: bool = True
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     response_contract: ModelResponseContract | None = None
     sensitivity: ArtifactSensitivity

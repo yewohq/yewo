@@ -41,6 +41,7 @@ class YewoRunConfiguration(BaseModel):
     action_verifier_profile_id: RecordIdentifier
     replay_preparation_profile_id: RecordIdentifier
     screen_analyzer_profile_id: RecordIdentifier
+    test_designer_profile_id: RecordIdentifier
     memory_root: Path | None = None
     redaction_regions: tuple[RedactionRegion, ...] = ()
 
@@ -67,6 +68,7 @@ class YewoRunConfiguration(BaseModel):
             self.action_verifier_profile_id,
             self.replay_preparation_profile_id,
             self.screen_analyzer_profile_id,
+            self.test_designer_profile_id,
         )
         return self
 
@@ -81,6 +83,7 @@ def validate_agent_configuration(
     action_verifier_profile_id: RecordIdentifier,
     replay_preparation_profile_id: RecordIdentifier,
     screen_analyzer_profile_id: RecordIdentifier,
+    test_designer_profile_id: RecordIdentifier,
 ) -> None:
     """Validate model roles and grounding coverage shared by agent workflows."""
     try:
@@ -90,6 +93,7 @@ def validate_agent_configuration(
         model_profiles.resolve(action_verifier_profile_id, ModelRole.ACTION_VERIFIER)
         model_profiles.resolve(screen_analyzer_profile_id, ModelRole.SCREEN_ANALYZER)
         model_profiles.resolve(replay_preparation_profile_id, ModelRole.REPLAY_PREPARER)
+        model_profiles.resolve(test_designer_profile_id, ModelRole.TEST_DESIGNER)
         for candidate in grounding_profile.candidates:
             model_profiles.resolve(candidate.model_profile_id, ModelRole.GROUNDER)
     except LookupError as error:

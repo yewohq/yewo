@@ -16,13 +16,8 @@ from yewo.models.artifacts import ModelArtifactStore, ModelImageReader, ModelRes
 from yewo.models.attribution import build_model_attribution
 from yewo.models.errors import ModelInputError
 from yewo.models.message_encoding import ModelMessageEncoder
-from yewo.models.narration import (
-    narrate_model_request,
-    narrate_model_response,
-    trace_model_call,
-    trace_model_clock_gap,
-    trace_model_retry_wait,
-)
+from yewo.models.narration import narrate_model_request, narrate_model_response, trace_model_call
+from yewo.models.narration import trace_model_clock_gap, trace_model_retry_wait
 from yewo.models._litellm_response import (
     CostCalculator,
     NormalizedModelCompletion,
@@ -60,6 +55,7 @@ _RETRYABLE_RESPONSE_DISPOSITIONS = frozenset(
         ModelCallDisposition.MALFORMED,
         ModelCallDisposition.TRUNCATED,
         ModelCallDisposition.EMPTY,
+        ModelCallDisposition.REASONING_EXHAUSTED,
     }
 )
 
@@ -123,6 +119,7 @@ class LiteLLMModelClient:
         validation_attempts = (
             profile.retry.max_validation_attempts if response_model is not None else 1
         )
+        reasoning_recovery_used = False
         actual_attempt = 0
         for validation_attempt in range(1, validation_attempts + 1):
             messages = self._attempt_messages(
@@ -232,11 +229,18 @@ class LiteLLMModelClient:
                     normalized,
                 )
                 calls.append(self._persist_call(call, response_evidence))
-                if (
+                retryable_response = (
                     response_model is not None
                     and normalized.disposition in _RETRYABLE_RESPONSE_DISPOSITIONS
                     and validation_attempt < validation_attempts
+                )
+                if normalized.disposition is ModelCallDisposition.REASONING_EXHAUSTED and (
+                    reasoning_recovery_used or not request.retry_reasoning_exhaustion
                 ):
+                    retryable_response = False
+                if retryable_response:
+                    if normalized.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
+                        reasoning_recovery_used = True
                     corrections = correction_messages(normalized, self._scrub_input_text)
                     break
                 return self._response(

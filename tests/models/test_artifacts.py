@@ -279,4 +279,4 @@ def test_model_artifact_store_surfaces_scrubbing_failure(tmp_path: Path) -> None
             reason=None,
         )
 
-    assert not (tmp_path / "assets/models").exists()
+    assert not (tmp_path / "models").exists()

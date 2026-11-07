@@ -17,6 +17,13 @@ def correction_messages(
     scrub_text: Callable[[str], str],
 ) -> tuple[ModelMessage, ...]:
     """Build bounded correction messages for one retryable response."""
+    if normalized.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
+        text = scrub_text(
+            "Your previous attempt used its completion budget before producing an answer. "
+            "Return only one concise JSON object matching the schema. Keep private reasoning "
+            "brief and omit commentary."
+        )
+        return (_user_message(text),)
     if normalized.disposition is ModelCallDisposition.TRUNCATED:
         text = scrub_text(
             "Your previous reply reached its output limit before returning a complete "

@@ -40,6 +40,7 @@ def test_an_empty_reply_is_retried_like_a_malformed_one() -> None:
     assert ModelCallDisposition.EMPTY in _RETRYABLE_RESPONSE_DISPOSITIONS
     assert ModelCallDisposition.MALFORMED in _RETRYABLE_RESPONSE_DISPOSITIONS
     assert ModelCallDisposition.TRUNCATED in _RETRYABLE_RESPONSE_DISPOSITIONS
+    assert ModelCallDisposition.REASONING_EXHAUSTED in _RETRYABLE_RESPONSE_DISPOSITIONS
 
 
 def test_openrouter_reasoning_effort_uses_the_router_body(tmp_path: Path) -> None:

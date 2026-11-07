@@ -417,7 +417,7 @@ def test_contract_mismatch_fails_before_provider_or_artifact_work(tmp_path: Path
         )
 
     assert provider_called is False
-    assert not (tmp_path / "assets/models").exists()
+    assert not (tmp_path / "models").exists()
 
 
 def test_prompt_artifact_matches_prepared_request_and_has_stable_identity(
@@ -545,4 +545,4 @@ def test_missing_credentials_fail_during_client_construction(tmp_path: Path) -> 
         )
 
     assert provider_called is False
-    assert not (tmp_path / "assets/models").exists()
+    assert not (tmp_path / "models").exists()

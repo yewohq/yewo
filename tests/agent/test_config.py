@@ -99,6 +99,13 @@ def _configuration() -> dict[str, object]:
                     "model": "openrouter/configured/reconciler",
                     "images": {**profile["images"], "max_images": 4},
                 },
+                {
+                    **profile,
+                    "profile_id": "test-designer-primary",
+                    "role": "test_designer",
+                    "model": "openrouter/configured/test-designer",
+                    "images": {**profile["images"], "max_images": 2},
+                },
             ]
         },
         "grounding_profile": {
@@ -114,6 +121,7 @@ def _configuration() -> dict[str, object]:
         "action_verifier_profile_id": "action-verifier-primary",
         "screen_analyzer_profile_id": "screen-analyzer-primary",
         "replay_preparation_profile_id": "reconciler-primary",
+        "test_designer_profile_id": "test-designer-primary",
     }
 
 
@@ -125,6 +133,7 @@ def test_validates_explicit_profiles_without_a_default_model() -> None:
     assert configuration.action_verifier_profile_id == "action-verifier-primary"
     assert configuration.screen_analyzer_profile_id == "screen-analyzer-primary"
     assert configuration.replay_preparation_profile_id == "reconciler-primary"
+    assert configuration.test_designer_profile_id == "test-designer-primary"
     assert [profile.model for profile in configuration.model_profiles.profiles] == [
         "openrouter/configured/planner",
         "openrouter/configured/grounder",
@@ -133,6 +142,7 @@ def test_validates_explicit_profiles_without_a_default_model() -> None:
         "openrouter/configured/action-verifier",
         "openrouter/configured/screen-analyzer",
         "openrouter/configured/reconciler",
+        "openrouter/configured/test-designer",
     ]
 
 
