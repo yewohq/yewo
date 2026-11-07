@@ -1,0 +1,1 @@
+"""Canonical reporting contract tests."""
