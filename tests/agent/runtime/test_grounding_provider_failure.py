@@ -112,7 +112,7 @@ def test_repeated_grounding_provider_outage_is_an_infrastructure_terminal(
     assert summary.usage.dispatched_actions == 0
     assert summary.usage.steps == MAXIMUM_CONSECUTIVE_REFUSALS
     persisted = AgentFailureSummary.model_validate_json(
-        (tmp_path / "assets/agent/failure-summary.json").read_text()
+        (tmp_path / "agent/failure-summary.json").read_text()
     )
     assert persisted == summary
 

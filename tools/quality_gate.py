@@ -19,9 +19,7 @@ def _python_files(targets: list[Path]) -> list[Path]:
     files: set[Path] = set()
     for target in targets:
         if target.is_dir():
-            files.update(
-                path for path in target.rglob("*.py") if "__pycache__" not in path.parts
-            )
+            files.update(path for path in target.rglob("*.py") if "__pycache__" not in path.parts)
         elif target.is_file() and target.suffix == ".py":
             files.add(target)
     return sorted(files)
@@ -49,23 +47,17 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     requested_paths = args.paths or list(DEFAULT_TARGETS)
-    targets = [
-        path if path.is_absolute() else REPOSITORY_ROOT / path
-        for path in requested_paths
-    ]
+    targets = [path if path.is_absolute() else REPOSITORY_ROOT / path for path in requested_paths]
     python_files = _python_files(targets)
     measured_files = [(path, _line_count(path)) for path in python_files]
     oversized_files = [
-        (path, line_count)
-        for path, line_count in measured_files
-        if line_count > MAX_FILE_LINES
+        (path, line_count) for path, line_count in measured_files if line_count > MAX_FILE_LINES
     ]
 
     if oversized_files:
         for path, line_count in oversized_files:
             print(
-                f"{_display_path(path)}: {line_count} lines exceeds limit of "
-                f"{MAX_FILE_LINES}",
+                f"{_display_path(path)}: {line_count} lines exceeds limit of {MAX_FILE_LINES}",
                 file=sys.stderr,
             )
         return 1

@@ -220,7 +220,7 @@ def test_direct_done_requires_independent_goal_verification(
         outcome = _workflow().execute(_context(tmp_path), NeverInterrupted())
 
     assert outcome.category is expected
-    assert (tmp_path / "assets/agent/goal-verification.json").is_file()
+    assert (tmp_path / "agent/goal-verification.json").is_file()
     narration = (tmp_path / "runtime/yewo-session.log").read_text()
     verdict = "satisfied" if satisfied else "not satisfied"
     assert f"Independent goal verification {verdict}" in narration
@@ -255,7 +255,7 @@ def test_direct_done_fails_closed_when_auditor_budget_is_exhausted(
 
     assert outcome.category is RunTerminalCategory.INCOMPLETE
     assert outcome.reason == "The model-request budget ended before final verification."
-    assert (tmp_path / "assets/agent/goal-verification.json").is_file()
+    assert (tmp_path / "agent/goal-verification.json").is_file()
 
 
 def test_yewo_agent_routes_memory_backed_tasks_through_discovery(

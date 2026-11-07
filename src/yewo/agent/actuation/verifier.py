@@ -153,7 +153,9 @@ class ActionReadinessDecision(BaseModel):
                 unresolved.control_name not in interactive_names
                 for unresolved in self.unresolved_controls
             ):
-                raise ValueError("Each unresolved control must reference an analyzed interactive control.")
+                raise ValueError(
+                    "Each unresolved control must reference an analyzed interactive control."
+                )
             trusted_evidence = context.get("required_control_evidence")
             if isinstance(trusted_evidence, dict) and any(
                 control.requirement_evidence

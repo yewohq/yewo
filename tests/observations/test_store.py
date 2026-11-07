@@ -67,14 +67,12 @@ def test_store_persists_verified_png_under_relative_path(tmp_path: Path) -> None
         retention=ArtifactRetention.RUN,
     )
 
-    assert reference.path == Path("assets/screenshots/shot_1.png")
+    assert reference.path == Path("screenshots/shot_1.png")
     assert reference.width_px == 3
     assert reference.height_px == 2
     assert reference.sha256 == sha256(png).hexdigest()
     assert (tmp_path / reference.path).read_bytes() == png
-    assert tuple((tmp_path / "assets" / "screenshots").iterdir()) == (
-        tmp_path / "assets" / "screenshots/shot_1.png",
-    )
+    assert tuple((tmp_path / "screenshots").iterdir()) == (tmp_path / "screenshots/shot_1.png",)
 
 
 def test_store_rejects_invalid_png_without_writing(tmp_path: Path) -> None:
@@ -87,7 +85,7 @@ def test_store_rejects_invalid_png_without_writing(tmp_path: Path) -> None:
             retention=ArtifactRetention.RUN,
         )
 
-    assert not (tmp_path / "assets").exists()
+    assert not (tmp_path / "screenshots").exists()
 
 
 def test_store_marks_processed_screenshot_as_redacted(tmp_path: Path) -> None:
@@ -116,7 +114,7 @@ def test_store_does_not_overwrite_an_existing_artifact(tmp_path: Path) -> None:
     with pytest.raises(ObservationCaptureError, match="already exists"):
         store.persist_raw(_png(), **arguments)
 
-    assert (tmp_path / "assets/screenshots/shot_1.png").read_bytes() == _png()
+    assert (tmp_path / "screenshots/shot_1.png").read_bytes() == _png()
 
 
 def test_store_rejects_an_unsafe_generated_identifier(tmp_path: Path) -> None:
@@ -129,7 +127,7 @@ def test_store_rejects_an_unsafe_generated_identifier(tmp_path: Path) -> None:
             retention=ArtifactRetention.RUN,
         )
 
-    assert not (tmp_path / "assets").exists()
+    assert not (tmp_path / "screenshots").exists()
 
 
 def test_store_rejects_screenshot_directory_outside_artifact_root(
@@ -139,7 +137,7 @@ def test_store_rejects_screenshot_directory_outside_artifact_root(
     outside = tmp_path / "outside"
     artifact_root.mkdir()
     outside.mkdir()
-    (artifact_root / "assets").symlink_to(outside, target_is_directory=True)
+    (artifact_root / "screenshots").symlink_to(outside, target_is_directory=True)
     store = ScreenshotStore(artifact_root, identifier_factory=lambda: "shot_1")
 
     with pytest.raises(ObservationCaptureError, match="outside the artifact root"):
@@ -158,8 +156,10 @@ def test_observation_store_persists_round_trippable_json(tmp_path: Path) -> None
     store = ObservationStore(tmp_path)
     relative_path = store.persist(observation)
 
-    assert relative_path == Path("assets/observations.jsonl")
-    restored = observation.model_validate_json((tmp_path / relative_path).read_text().splitlines()[0])
+    assert relative_path == Path("observations.jsonl")
+    restored = observation.model_validate_json(
+        (tmp_path / relative_path).read_text().splitlines()[0]
+    )
     assert restored == observation
     assert store.load_all() == (observation,)
 
@@ -178,8 +178,8 @@ def test_observation_store_loads_only_requested_evidence(tmp_path: Path) -> None
 
 
 def test_observation_store_rejects_an_invalid_ledger(tmp_path: Path) -> None:
-    path = tmp_path / "assets/observations.jsonl"
-    path.parent.mkdir(parents=True)
+    path = tmp_path / "observations.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("not-json\n")
 
     with pytest.raises(ObservationCaptureError, match="ledger is invalid"):
@@ -215,7 +215,7 @@ def test_observation_store_rejects_missing_screenshot(tmp_path: Path) -> None:
     with pytest.raises(ObservationCaptureError, match="verify observation screenshot"):
         ObservationStore(tmp_path).persist(observation)
 
-    assert not (tmp_path / "assets/observations.jsonl").exists()
+    assert not (tmp_path / "observations.jsonl").exists()
 
 
 def test_observation_store_rejects_screenshot_digest_mismatch(tmp_path: Path) -> None:
@@ -226,4 +226,4 @@ def test_observation_store_rejects_screenshot_digest_mismatch(tmp_path: Path) ->
     with pytest.raises(ObservationCaptureError, match="digest mismatch"):
         ObservationStore(tmp_path).persist(observation)
 
-    assert not (tmp_path / "assets/observations.jsonl").exists()
+    assert not (tmp_path / "observations.jsonl").exists()

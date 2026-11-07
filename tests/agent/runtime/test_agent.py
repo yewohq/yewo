@@ -285,7 +285,7 @@ def _runtime(
 
 
 def _stored_steps(tmp_path: Path) -> list[dict[str, object]]:
-    path = tmp_path / "assets/agent/steps.jsonl"
+    path = tmp_path / "agent/steps.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
@@ -471,7 +471,7 @@ def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Pat
 
     assert result.steps[0].outcome is not None
     assert ActionOutcomeSignal.TEXT_LANDED in result.steps[0].outcome.signals
-    assert secret not in (tmp_path / "assets/agent/steps.jsonl").read_text()
+    assert secret not in (tmp_path / "agent/steps.jsonl").read_text()
 
 
 def test_device_refusal_is_a_distinct_terminal_without_settlement(tmp_path: Path) -> None:
@@ -487,7 +487,7 @@ def test_device_refusal_is_a_distinct_terminal_without_settlement(tmp_path: Path
     assert result.terminal_reason is AgentTerminalReason.DEVICE_REFUSED
     assert result.usage.dispatched_actions == 0
     assert observations.capture_count == 1
-    assert "private detail" not in (tmp_path / "assets/agent/steps.jsonl").read_text()
+    assert "private detail" not in (tmp_path / "agent/steps.jsonl").read_text()
 
 
 def test_grounding_budget_stops_before_an_unrecorded_model_request(tmp_path: Path) -> None:

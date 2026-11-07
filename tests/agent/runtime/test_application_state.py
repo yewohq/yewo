@@ -47,7 +47,7 @@ def test_application_exit_before_planning_is_a_distinct_terminal(tmp_path: Path)
     assert result.usage.planning_requests == 0
     assert result.steps == ()
     assert planner.requests == []
-    assert not (tmp_path / "assets/agent/steps.jsonl").exists()
+    assert not (tmp_path / "agent/steps.jsonl").exists()
 
 
 def test_background_application_stops_before_planning(tmp_path: Path) -> None:

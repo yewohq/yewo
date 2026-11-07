@@ -35,7 +35,7 @@ def build_screenshot(
         sha256="a" * 64,
         width_px=200,
         height_px=400,
-        path=Path(f"assets/screenshots/{artifact_id}.png"),
+        path=Path(f"screenshots/{artifact_id}.png"),
         redaction_state=redaction_state,
         redaction=(
             RedactionProvenance(

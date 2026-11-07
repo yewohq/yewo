@@ -166,7 +166,7 @@ def test_remote_capture_records_cleanup_release_after_durable_receipt(
 
     assert receipt.remote_cleanup_state is ScreenRecordingRemoteCleanupState.RELEASED
     assert recorder.acknowledgement_count == 1
-    events_path = next(tmp_path.glob("assets/recordings/*/events.jsonl"))
+    events_path = next(tmp_path.glob("recordings/*/events.jsonl"))
     events = [json.loads(line) for line in events_path.read_text().splitlines()]
     assert [event["event_type"] for event in events].count("remote_cleanup") == 1
 
@@ -183,7 +183,7 @@ def test_remote_capture_records_pending_cleanup_when_release_fails(
 
     assert receipt.remote_cleanup_state is ScreenRecordingRemoteCleanupState.PENDING
     assert recorder.acknowledgement_count == 1
-    events_path = next(tmp_path.glob("assets/recordings/*/events.jsonl"))
+    events_path = next(tmp_path.glob("recordings/*/events.jsonl"))
     events = [json.loads(line) for line in events_path.read_text().splitlines()]
     assert all(event["event_type"] != "remote_cleanup" for event in events)
 

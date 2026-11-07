@@ -331,7 +331,7 @@ def test_completed_work_regression_is_recorded_and_blocked_before_grounding(
     assert device.calls == []
     events = [
         json.loads(line)
-        for line in (tmp_path / "assets/agent/progress-ledger.jsonl").read_text().splitlines()
+        for line in (tmp_path / "agent/progress-ledger.jsonl").read_text().splitlines()
     ]
     assert [event["kind"] for event in events] == ["initialized", "assessment", "refusal"]
     assert events[-1]["refusal_code"] == "completed_work_regression"

@@ -34,7 +34,7 @@ def test_action_crash_becomes_concise_planner_safe_evidence() -> None:
         platform_reason="APP CRASH(EXCEPTION)",
         platform_code="reason=4,status=0",
         sha256="0" * 64,
-        path=Path("assets/device-logs/boundary_1/exit-info.txt"),
+        path=Path("device-logs/boundary_1/exit-info.txt"),
         byte_count=10,
         entry_count=1,
         redaction_policy_id="test-policy",

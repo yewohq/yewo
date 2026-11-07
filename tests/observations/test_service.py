@@ -175,7 +175,7 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
     assert observation.raw_screenshot is not None
     assert (tmp_path / observation.raw_screenshot.path).is_file()
     assert (tmp_path / observation.redacted_screenshot.path).is_file()
-    observation_path = tmp_path / "assets/observations.jsonl"
+    observation_path = tmp_path / "observations.jsonl"
     assert observation_path.is_file()
     assert (
         observation.model_validate_json(observation_path.read_text().splitlines()[0]) == observation
@@ -214,7 +214,7 @@ def test_service_rejects_calibration_mismatch_without_writing(tmp_path: Path) ->
     with pytest.raises(ObservationCaptureError, match="coordinate calibration"):
         _service(source, tmp_path).capture()
 
-    assert not (tmp_path / "assets").exists()
+    assert not (tmp_path / "screenshots").exists()
 
 
 def test_service_clamps_a_platform_region_to_the_screenshot(
@@ -279,7 +279,7 @@ def test_service_wraps_invalid_clamped_region_as_capture_error(
     with pytest.raises(ObservationCaptureError, match="system-region geometry"):
         _service(source, tmp_path).capture()
 
-    assert not (tmp_path / "assets").exists()
+    assert not (tmp_path / "screenshots").exists()
 
 
 def test_service_can_retain_only_the_redacted_screenshot(tmp_path: Path) -> None:
@@ -287,7 +287,7 @@ def test_service_can_retain_only_the_redacted_screenshot(tmp_path: Path) -> None
 
     assert observation.raw_screenshot is None
     assert observation.redacted_screenshot.path.name == "raw_1.png"
-    assert tuple((tmp_path / "assets/screenshots").iterdir()) == (
+    assert tuple((tmp_path / "screenshots").iterdir()) == (
         tmp_path / observation.redacted_screenshot.path,
     )
 
@@ -295,14 +295,14 @@ def test_service_can_retain_only_the_redacted_screenshot(tmp_path: Path) -> None
 def test_failed_record_write_removes_screenshots_from_that_capture(
     tmp_path: Path,
 ) -> None:
-    observation_path = tmp_path / "assets/observations.jsonl"
-    observation_path.parent.mkdir(parents=True)
+    observation_path = tmp_path / "observations.jsonl"
+    observation_path.parent.mkdir(parents=True, exist_ok=True)
     observation_path.write_text('{"observation_id":"obs_1"}\n')
 
     with pytest.raises(ObservationCaptureError, match="already exists"):
         _service(_SourceStub(), tmp_path).capture()
 
-    screenshot_directory = tmp_path / "assets/screenshots"
+    screenshot_directory = tmp_path / "screenshots"
     assert tuple(screenshot_directory.iterdir()) == ()
     assert observation_path.read_text() == '{"observation_id":"obs_1"}\n'
 

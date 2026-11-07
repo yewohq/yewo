@@ -335,9 +335,7 @@ class DeviceInteraction:
     def _type_in_field(self, field: TextElement, text: str) -> bool | None:
         constraint = self._backend.focused_text_constraint(self._driver)
         if constraint is not None and not constraint.accepts(text):
-            raise DeviceInputRejectedError(
-                f"{constraint.describe()} Choose a compatible value."
-            )
+            raise DeviceInputRejectedError(f"{constraint.describe()} Choose a compatible value.")
         field_context = text_field_context(field)
         before = None if field_context.is_secure is True else self._text_value(field)
         field.send_keys(text)
@@ -353,6 +351,7 @@ class DeviceInteraction:
 
     def clear_focused_text(self) -> bool | None:
         return self._clear_field(self._focus.focused_field())
+
     def _clear_field(self, field: TextElement) -> bool | None:
         self._backend.clear_text(self._driver, field)
         value = self._text_value(field)

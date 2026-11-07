@@ -300,9 +300,7 @@ def _matched_delivery_evidence(
         )
     return TextDeliveryEvidence(
         status=TextDeliveryStatus.MATCHED if matched else TextDeliveryStatus.NOT_LANDED,
-        reason=(
-            TextDeliveryReason.VALUE_MATCHED if matched else TextDeliveryReason.VALUE_MISMATCH
-        ),
+        reason=(TextDeliveryReason.VALUE_MATCHED if matched else TextDeliveryReason.VALUE_MISMATCH),
         is_secure=context.is_secure,
         field_type=context.field_type,
         context_source=context.source,

@@ -104,9 +104,7 @@ class ScreenshotStore:
                 f"Could not load screenshot: {reference.artifact_id}"
             ) from error
         if sha256(content).hexdigest() != reference.sha256:
-            raise ObservationCaptureError(
-                f"Screenshot digest mismatch: {reference.artifact_id}"
-            )
+            raise ObservationCaptureError(f"Screenshot digest mismatch: {reference.artifact_id}")
         if png_size(content) != (reference.width_px, reference.height_px):
             raise ObservationCaptureError(
                 f"Screenshot dimensions mismatch: {reference.artifact_id}"

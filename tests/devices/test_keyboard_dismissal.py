@@ -18,7 +18,9 @@ class _InputReader:
 _CLOSABLE_KEYBOARD = "mInputShown=true mIsInputViewShown=true"
 
 
-def _interaction(driver: DriverStub, input_output: str | None = _CLOSABLE_KEYBOARD) -> DeviceInteraction:
+def _interaction(
+    driver: DriverStub, input_output: str | None = _CLOSABLE_KEYBOARD
+) -> DeviceInteraction:
     reader = _InputReader(input_output) if input_output is not None else None
     return DeviceInteraction(
         driver,

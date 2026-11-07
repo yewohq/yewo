@@ -42,11 +42,7 @@ def _python_files(targets: list[Path]) -> list[Path]:
 
 
 def _is_prose(text: str) -> bool:
-    words = [
-        word
-        for word in text.split()
-        if any(character.isalpha() for character in word)
-    ]
+    words = [word for word in text.split() if any(character.isalpha() for character in word)]
     return len(words) >= 3
 
 
@@ -161,10 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     requested = args.paths or list(DEFAULT_TARGETS)
-    targets = [
-        path if path.is_absolute() else REPOSITORY_ROOT / path
-        for path in requested
-    ]
+    targets = [path if path.is_absolute() else REPOSITORY_ROOT / path for path in requested]
     checked = 0
     failed = False
     for path in _python_files(targets):

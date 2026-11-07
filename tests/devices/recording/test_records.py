@@ -45,7 +45,7 @@ def _artifact() -> ScreenRecordingArtifactReference:
         checkpoint_kind=ScreenRecordingCheckpointKind.SCENARIO,
         checkpoint_id="scenario_1",
         sha256="0" * 64,
-        path=Path("assets/recordings/recording_1/segment.mp4"),
+        path=Path("recordings/recording_1/segment.mp4"),
         byte_count=1,
         duration_seconds=1.0,
         requested_maximum_seconds=1_800,

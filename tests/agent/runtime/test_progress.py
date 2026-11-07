@@ -114,7 +114,7 @@ def test_progress_ledger_retains_completed_work_and_routes(tmp_path: Path) -> No
     assert route.destination_screen_fingerprint == "1111111111111111"
     events = [
         json.loads(line)
-        for line in (tmp_path / "assets/agent/progress-ledger.jsonl").read_text().splitlines()
+        for line in (tmp_path / "agent/progress-ledger.jsonl").read_text().splitlines()
     ]
     assert [event["kind"] for event in events] == ["initialized", "assessment", "route"]
 
@@ -198,7 +198,7 @@ def test_observed_non_english_workflow_role_advances_stage_without_completing_ta
     assert "advanced one workflow stage" in context.current_progress[0]
     events = [
         json.loads(line)
-        for line in (tmp_path / "assets/agent/progress-ledger.jsonl").read_text().splitlines()
+        for line in (tmp_path / "agent/progress-ledger.jsonl").read_text().splitlines()
     ]
     assert [event["kind"] for event in events] == ["initialized", "stage", "route"]
 
@@ -241,7 +241,7 @@ def test_progress_ledger_persists_refusal_and_projects_screen_facts(tmp_path: Pa
     assert ledger.screen_facts(screen, history) == ()
     events = [
         json.loads(line)
-        for line in (tmp_path / "assets/agent/progress-ledger.jsonl").read_text().splitlines()
+        for line in (tmp_path / "agent/progress-ledger.jsonl").read_text().splitlines()
     ]
     assert events[-1]["kind"] == "refusal"
     assert events[-1]["interaction_intent_key"] == "tap|the saved record||||"
@@ -348,7 +348,7 @@ def test_progress_ledger_persists_a_bounded_planning_focus(tmp_path: Path) -> No
     assert focus.unresolved_work == (REOPEN,)
     events = [
         json.loads(line)
-        for line in (tmp_path / "assets/agent/progress-ledger.jsonl").read_text().splitlines()
+        for line in (tmp_path / "agent/progress-ledger.jsonl").read_text().splitlines()
     ]
     assert events[-1]["kind"] == "planning_focus"
     assert events[-1]["planning_focus"]["focus_id"] == "focus-1"
@@ -540,7 +540,7 @@ def test_an_over_long_verifier_refusal_reaches_the_ledger_truncated(tmp_path: Pa
     assert len(reason) > MAXIMUM_FEEDBACK_CHARACTERS
     events = [
         json.loads(line)
-        for line in (tmp_path / "assets/agent/progress-ledger.jsonl").read_text().splitlines()
+        for line in (tmp_path / "agent/progress-ledger.jsonl").read_text().splitlines()
     ]
     assert events[-1]["feedback"] == reason[:MAXIMUM_FEEDBACK_CHARACTERS]
 

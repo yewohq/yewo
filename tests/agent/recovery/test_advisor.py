@@ -172,7 +172,7 @@ def test_advisor_persists_validated_continue_decision(tmp_path: Path) -> None:
     assert "do-not-send" not in text.text
     assert "failed-secret" not in text.text
     assert context["failed_step"]["proposal"]["reason"] == ("Type [typed value] into the field.")
-    stored = tmp_path / "assets/agent/recovery-assessments.jsonl"
+    stored = tmp_path / "agent/recovery-assessments.jsonl"
     assert json.loads(stored.read_text().strip())["assessment_id"] == "assessment_1"
 
 

@@ -114,6 +114,7 @@ class RecoveryDecision(BaseModel):
     remaining_work: tuple[TaskText, ...] = Field(default=(), max_length=100)
     planner_guidance: tuple[TaskText, ...] = Field(default=(), max_length=20)
     candidate_causes: tuple[TaskText, ...] = Field(default=(), max_length=20)
+
     @model_validator(mode="after")
     def _validate_continue_guidance(self) -> Self:
         if self.disposition is RecoveryDisposition.CONTINUE and not self.remaining_work:

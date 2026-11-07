@@ -51,9 +51,7 @@ def test_assessment_accepts_control_evidence() -> None:
         context={
             "interactive_control_names": ("Quantity",),
             "required_control_evidence": {
-                "Quantity": {
-                    "objective_or_open_work": ("Complete Quantity before saving.",)
-                }
+                "Quantity": {"objective_or_open_work": ("Complete Quantity before saving.",)}
             },
         },
     )

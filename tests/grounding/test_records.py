@@ -39,6 +39,7 @@ def test_grounding_request_rejects_raw_pixels_and_incompatible_region_output() -
 
 def test_rejected_result_cannot_contain_a_location() -> None:
     from yewo.grounding import GroundedPoint, GroundingResult, NormalizedPoint, PixelPoint
+
     with pytest.raises(ValidationError, match="reason and no location"):
         GroundingResult(
             grounding_id="grounding-1",
