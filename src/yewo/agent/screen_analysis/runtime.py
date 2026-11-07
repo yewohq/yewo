@@ -44,7 +44,7 @@ class ScreenAnalysisBudget:
 class ScreenAnalysisRequirementSource(Protocol):
     """Declare whether the active action source needs semantic perception."""
 
-    def requires_screen_analysis(self) -> bool: ...
+    def requires_screen_analysis(self, observation: Observation) -> bool: ...
 
 
 @dataclass
@@ -69,7 +69,7 @@ class ScreenAnalysisRunState:
         budget: ScreenAnalysisBudget,
     ) -> ScreenAnalysisAttempt:
         """Analyze one observation and retain its current result once."""
-        if not self._is_required():
+        if not self._is_required(observation):
             return ScreenAnalysisAttempt()
         attempt = _analyze_current_screen(
             self.manager,
@@ -90,12 +90,12 @@ class ScreenAnalysisRunState:
         outcome: ActionOutcome,
     ) -> None:
         """Update structural reuse after one verified device outcome."""
-        if self.manager is not None and self._is_required():
+        if self.manager is not None and self._is_required(after):
             self.manager.observe_outcome(proposal, before, after, outcome)
 
     def invalidate(self, observation: Observation, reason: str) -> None:
         """Invalidate one cached hypothesis after contradictory runtime evidence."""
-        if self.manager is not None and self._is_required():
+        if self.manager is not None and self._is_required(observation):
             self.manager.invalidate(observation, reason)
 
     def observe_dispatch_rejection(
@@ -107,13 +107,13 @@ class ScreenAnalysisRunState:
         if disposition is DispatchDisposition.TARGET_REJECTED:
             self.invalidate(observation, "interaction_contradicted_screen_analysis")
 
-    def _is_required(self) -> bool:
+    def _is_required(self, observation: Observation) -> bool:
         requirement = (
             first_source_of(self.requirement_source, ScreenAnalysisRequirementSource)
             if self.requirement_source is not None
             else None
         )
-        return requirement is None or requirement.requires_screen_analysis()
+        return requirement is None or requirement.requires_screen_analysis(observation)
 
 
 def _analyze_current_screen(
@@ -145,6 +145,7 @@ def _analyze_current_screen(
     if budget_reason is not None:
         return ScreenAnalysisAttempt(budget_reason=budget_reason)
     analysis = manager.analyze(observation)
+    capacity_reason = manager.capacity_failure_reason(observation)
     if recovery_active:
         recovery.credit_analysis_requests(request_count)
     if request_count:
@@ -153,7 +154,11 @@ def _analyze_current_screen(
             + ("completed" if analysis else "unavailable")
             + f"; reason={request_reason}."
         )
-    return ScreenAnalysisAttempt(analysis=analysis, request_count=request_count)
+    return ScreenAnalysisAttempt(
+        analysis=analysis,
+        request_count=request_count,
+        budget_reason=capacity_reason,
+    )
 
 
 def resolve_proposal_element_refs(

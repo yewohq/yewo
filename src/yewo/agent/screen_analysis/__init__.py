@@ -24,10 +24,14 @@ from yewo.agent.screen_analysis.records import (
     interactive_element_references,
     screen_analysis_grounding_candidate,
 )
-from yewo.agent.screen_analysis.manager import CurrentScreenAnalysisManager
+from yewo.agent.screen_analysis.manager import (
+    CurrentScreenAnalysisManager,
+    ScreenAnalysisFailureLedger,
+)
 from yewo.agent.screen_analysis.store import ScreenAnalysisStore, ScreenAnalysisStoreError
 from yewo.agent.screen_analysis.service import (
     ModelScreenAnalyzer,
+    ScreenAnalysisCapacityError,
     ScreenAnalysisError,
     ScreenAnalysisHypothesis,
     ScreenAnalysisSource,
@@ -37,6 +41,7 @@ from yewo.agent.screen_analysis.service import (
 __all__ = [
     "CurrentScreenAnalysis",
     "CurrentScreenAnalysisManager",
+    "ScreenAnalysisFailureLedger",
     "ScreenAnalysisStore",
     "ScreenAnalysisStoreError",
     "ModelScreenAnalyzer",
@@ -51,6 +56,7 @@ __all__ = [
     "ScreenSemanticRoleDefinition",
     "ScreenVisualKindDefinition",
     "ScreenAnalysisError",
+    "ScreenAnalysisCapacityError",
     "ScreenAnalysisHypothesis",
     "ScreenAnalysisSource",
     "ScreenElementHypothesis",

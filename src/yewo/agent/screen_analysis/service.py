@@ -47,6 +47,18 @@ class ScreenAnalysisError(RuntimeError):
     """A screen-analysis request did not yield a usable hypothesis."""
 
 
+class ScreenAnalysisCapacityError(ScreenAnalysisError):
+    """The selected profile exhausted capacity before producing its contract."""
+
+    def __init__(self, profile_id: str, response_contract_id: str) -> None:
+        super().__init__("Screen analysis exhausted its reasoning capacity.")
+        self.profile_id = profile_id
+        self.response_contract_id = response_contract_id
+
+
+SCREEN_ANALYSIS_RESPONSE_CONTRACT_ID = "screen-analysis-hypothesis-v2"
+
+
 _PARENT_SCOPED_ROLES = frozenset(
     {
         ScreenSemanticRole.NAVIGATION_ITEM,
@@ -230,6 +242,10 @@ class ModelScreenAnalyzer:
         del observation
         return 1
 
+    def capacity_identity(self) -> tuple[str, str]:
+        """Return the profile and validated response contract used by this source."""
+        return self._model_profile_id, SCREEN_ANALYSIS_RESPONSE_CONTRACT_ID
+
     def analyze(self, observation: Observation) -> CurrentScreenAnalysis:
         request = ModelRequest(
             request_id=self._identifier_factory(),
@@ -258,13 +274,15 @@ class ModelScreenAnalyzer:
                 ),
             ),
             response_contract=build_model_response_contract(
-                "screen-analysis-hypothesis-v2",
+                SCREEN_ANALYSIS_RESPONSE_CONTRACT_ID,
                 ScreenAnalysisHypothesis.model_json_schema(),
             ),
             sensitivity=observation.redacted_screenshot.sensitivity,
             retention=observation.redacted_screenshot.retention,
         )
         response = self._model_client.complete(request, ScreenAnalysisHypothesis)
+        if response.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
+            raise ScreenAnalysisCapacityError(*self.capacity_identity())
         if response.disposition is not ModelCallDisposition.COMPLETED:
             raise ScreenAnalysisError(response.reason or "Screen analysis did not complete.")
         if response.structured_output is None:

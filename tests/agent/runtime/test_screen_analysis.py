@@ -6,8 +6,15 @@ from typing import cast
 from yewo.agent.actuation import ActionKind, ActionOutcome, DispatchDisposition
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.recovery.runtime import RecoveryRunState
-from yewo.agent.screen_analysis import CurrentScreenAnalysis, CurrentScreenAnalysisManager
-from yewo.agent.screen_analysis.runtime import ScreenAnalysisRunState
+from yewo.agent.screen_analysis import (
+    CurrentScreenAnalysis,
+    CurrentScreenAnalysisManager,
+    ScreenAnalysisCapacityError,
+)
+from yewo.agent.screen_analysis.runtime import (
+    ScreenAnalysisBudget,
+    ScreenAnalysisRunState,
+)
 from yewo.observations import Observation
 
 from agent.actuation.support import proposal
@@ -44,8 +51,24 @@ class _Analyzer:
 
 
 class _AnalysisOptionalPlanner(SequencePlanner):
-    def requires_screen_analysis(self) -> bool:
+    def requires_screen_analysis(self, observation: Observation) -> bool:
+        del observation
         return False
+
+
+class _ObservationAwareAnalysisSource:
+    def requires_screen_analysis(self, observation: Observation) -> bool:
+        return observation.observation_id != "obs_rejoined"
+
+
+class _CapacityExhaustedAnalyzer(_Analyzer):
+    def capacity_identity(self) -> tuple[str, str]:
+        return "screen-analyzer-primary", "screen-analysis-hypothesis-v2"
+
+    def analyze(self, observation: Observation) -> CurrentScreenAnalysis:
+        del observation
+        self.calls += 1
+        raise ScreenAnalysisCapacityError(*self.capacity_identity())
 
 
 class _RecordingManager(CurrentScreenAnalysisManager):
@@ -95,6 +118,49 @@ def test_runtime_skips_analysis_when_the_action_source_does_not_require_it(
     assert source.calls == 0
     assert result.usage.planning_requests == 1
     assert result.screen_analysis_ids == ()
+
+
+def test_runtime_stops_before_planning_after_analyzer_capacity_exhaustion(
+    tmp_path: Path,
+) -> None:
+    source = _CapacityExhaustedAnalyzer()
+    observation = _observation("obs_1", "0000000000000000")
+    result = _runtime(
+        tmp_path,
+        SequencePlanner([]),
+        ObservationSequence([observation]),
+        RuntimeDevice(),
+        screen_analysis=CurrentScreenAnalysisManager(source),
+    ).run(_task(), _mode_policy(), NeverInterrupted())
+
+    assert source.calls == 1
+    assert result.reason.startswith("screen_analysis_capacity_exhausted:")
+    assert result.usage.planning_requests == 1
+
+
+def test_deterministic_rejoin_skips_analyzer_capacity_failure() -> None:
+    analyzer = _CapacityExhaustedAnalyzer()
+    state = ScreenAnalysisRunState(
+        manager=CurrentScreenAnalysisManager(analyzer),
+        recovery=RecoveryRunState(None, ScreenComparisonPolicy()),
+        policy=_mode_policy(),
+        started_at=0.0,
+        requirement_source=_ObservationAwareAnalysisSource(),
+    )
+    observation = _observation("obs_rejoined", "0000000000000000")
+
+    attempt = state.analyze(
+        observation,
+        ScreenAnalysisBudget(
+            completed_steps=0,
+            planning_requests=0,
+            grounding_requests=0,
+            budget_time=0.0,
+        ),
+    )
+
+    assert analyzer.calls == 0
+    assert attempt.budget_reason is None
 
 
 def test_optional_analysis_source_skips_manager_callbacks() -> None:

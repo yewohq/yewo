@@ -31,6 +31,7 @@ from yewo.agent.runtime.agent import DeviceAgent
 from yewo.agent.screen_analysis import (
     CurrentScreenAnalysisManager,
     ModelScreenAnalyzer,
+    ScreenAnalysisFailureLedger,
     ScreenAnalysisStore,
 )
 from yewo.agent.runtime.records import AgentStepStore
@@ -77,6 +78,7 @@ def build_device_agent(
     progress_context: TaskProgressContext | None = None,
     initial_planning_requests: int = 0,
     visual_grounder: VisualGrounder | None = None,
+    screen_analysis_failures: ScreenAnalysisFailureLedger | None = None,
 ) -> DeviceAgent:
     """Connect the shared runtime to one coordinator-owned automation session."""
     if recover_application and recovery_profile_id is None:
@@ -152,6 +154,7 @@ def build_device_agent(
             CurrentScreenAnalysisManager(
                 ModelScreenAnalyzer(model_client, screen_analyzer_profile_id),
                 store=ScreenAnalysisStore(root),
+                failure_ledger=screen_analysis_failures,
             )
             if screen_analyzer_profile_id is not None
             else None

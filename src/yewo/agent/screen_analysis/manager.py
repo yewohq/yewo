@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from yewo.agent.actuation import (
     ActionOutcome,
@@ -15,12 +16,37 @@ from yewo.agent.actuation import (
 from yewo.artifacts import new_record_identifier
 from yewo.agent.screen_analysis.catalog import ScreenSemanticRole, ScreenWorkflowRole
 from yewo.agent.screen_analysis.records import CurrentScreenAnalysis, ScreenElement
-from yewo.agent.screen_analysis.service import ScreenAnalysisError, ScreenAnalysisSource
+from yewo.agent.screen_analysis.service import (
+    ScreenAnalysisCapacityError,
+    ScreenAnalysisError,
+    ScreenAnalysisSource,
+)
 from yewo.agent.screen_analysis.store import ScreenAnalysisStore
-from yewo.models import ModelInputError
+from yewo.models import ModelInputError, ModelRole
 from yewo.observations import Observation, ScreenMatcher
 
 ScreenSignature = tuple[object, ...]
+CapacityFailureKey = tuple[ModelRole, str, str, str]
+
+
+@runtime_checkable
+class _CapacityIdentifiedSource(Protocol):
+    def capacity_identity(self) -> tuple[str, str]: ...
+
+
+class ScreenAnalysisFailureLedger:
+    """Share capacity failures across agent phases in one workflow run."""
+
+    def __init__(self) -> None:
+        self._failures: set[CapacityFailureKey] = set()
+
+    def record(self, key: CapacityFailureKey) -> None:
+        """Record one exhausted profile-contract-screen combination."""
+        self._failures.add(key)
+
+    def contains(self, key: CapacityFailureKey | None) -> bool:
+        """Return whether an identical analyzer request already exhausted."""
+        return key is not None and key in self._failures
 
 
 @dataclass(frozen=True)
@@ -31,6 +57,17 @@ class _AnalysisCacheEntry:
 
 def _signature(observation: Observation) -> ScreenSignature:
     return ScreenMatcher.analysis_cache_key(observation.presentation_key)
+
+
+def _fingerprint_identity(observation: Observation) -> str:
+    fingerprint = observation.screen_fingerprint
+    return ":".join(
+        (
+            fingerprint.value,
+            fingerprint.masked_pixels_sha256,
+            fingerprint.system_region_mask_sha256 or "none",
+        )
+    )
 
 
 class CurrentScreenAnalysisManager:
@@ -44,6 +81,7 @@ class CurrentScreenAnalysisManager:
         maximum_attempts_per_variant: int = 1,
         identifier_factory: Callable[[], str] = new_record_identifier,
         store: ScreenAnalysisStore | None = None,
+        failure_ledger: ScreenAnalysisFailureLedger | None = None,
     ) -> None:
         if maximum_variants < 1 or maximum_attempts_per_variant < 1:
             raise ValueError("Screen analysis bounds must be positive.")
@@ -52,10 +90,13 @@ class CurrentScreenAnalysisManager:
         self._maximum_attempts_per_variant = maximum_attempts_per_variant
         self._identifier_factory = identifier_factory
         self._store = store
+        self._failure_ledger = failure_ledger or ScreenAnalysisFailureLedger()
         self._entries: OrderedDict[ScreenSignature, _AnalysisCacheEntry] = OrderedDict()
         self._request_reasons: OrderedDict[ScreenSignature, str] = OrderedDict()
 
     def required_model_requests(self, observation: Observation) -> int:
+        if self._failure_ledger.contains(self._capacity_key(observation)):
+            return 0
         entry = self._entries.get(_signature(observation))
         if entry is not None and (
             entry.analysis is not None
@@ -74,12 +115,36 @@ class CurrentScreenAnalysisManager:
             return "repair_after_malformed_analysis"
         return "cached_structural_variant"
 
+    def capacity_failure_reason(self, observation: Observation) -> str | None:
+        """Return a typed terminal reason for an already exhausted request."""
+        key = self._capacity_key(observation)
+        if not self._failure_ledger.contains(key) or key is None:
+            return None
+        role, profile_id, contract_id, fingerprint = key
+        return (
+            "screen_analysis_capacity_exhausted: "
+            f"role={role.value} profile={profile_id} contract={contract_id} "
+            f"fingerprint={fingerprint}"
+        )
+
     def analyze(self, observation: Observation) -> CurrentScreenAnalysis | None:
+        if self._failure_ledger.contains(self._capacity_key(observation)):
+            return None
         signature = _signature(observation)
         entry = self._entries.get(signature, _AnalysisCacheEntry())
         if entry.analysis is None and entry.failed_attempts < self._maximum_attempts_per_variant:
             try:
                 analysis = self._source.analyze(observation)
+            except ScreenAnalysisCapacityError as error:
+                self._failure_ledger.record(
+                    (
+                        ModelRole.SCREEN_ANALYZER,
+                        error.profile_id,
+                        error.response_contract_id,
+                        _fingerprint_identity(observation),
+                    )
+                )
+                entry = _AnalysisCacheEntry(failed_attempts=entry.failed_attempts + 1)
             except (ModelInputError, ScreenAnalysisError):
                 entry = _AnalysisCacheEntry(failed_attempts=entry.failed_attempts + 1)
             else:
@@ -100,6 +165,17 @@ class CurrentScreenAnalysisManager:
         rebound = self._bind(cached, observation)
         self._persist(rebound)
         return rebound
+
+    def _capacity_key(self, observation: Observation) -> CapacityFailureKey | None:
+        if not isinstance(self._source, _CapacityIdentifiedSource):
+            return None
+        profile_id, contract_id = self._source.capacity_identity()
+        return (
+            ModelRole.SCREEN_ANALYZER,
+            profile_id,
+            contract_id,
+            _fingerprint_identity(observation),
+        )
 
     def observe_outcome(
         self,
@@ -187,9 +263,7 @@ class CurrentScreenAnalysisManager:
         target = _target_element(analysis, proposal)
         if target is None or target.state is None:
             return analysis
-        cleared = ScreenElement.model_validate(
-            {**target.model_dump(mode="python"), "state": None}
-        )
+        cleared = ScreenElement.model_validate({**target.model_dump(mode="python"), "state": None})
         return CurrentScreenAnalysis.model_validate(
             {
                 **analysis.model_dump(mode="python"),
