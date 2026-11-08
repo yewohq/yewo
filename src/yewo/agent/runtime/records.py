@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from pathlib import Path
 from collections.abc import Callable
-from typing import Annotated, Literal, Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -101,7 +101,6 @@ class AgentStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     step_id: RecordIdentifier
     step_index: int = Field(gt=0)
     source_observation_id: RecordIdentifier

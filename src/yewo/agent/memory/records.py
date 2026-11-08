@@ -53,10 +53,7 @@ class MemoryCompatibility(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     application: EvidenceApplicationIdentity
-    observation_schema_version: Literal[1] = 1
     fingerprint_algorithm: Literal["application-phash-v1"] = "application-phash-v1"
-    action_schema_version: Literal[1] = 1
-    outcome_schema_version: Literal[1] = 1
     screen_comparison: ScreenComparisonPolicy = ScreenComparisonPolicy()
     retention: MemoryRetentionPolicy = MemoryRetentionPolicy()
     setup_contract_sha256: Sha256Digest | None = None
@@ -297,7 +294,6 @@ class AppMemory(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2] = 2
     memory_id: RecordIdentifier
     compatibility: MemoryCompatibility
     source_run_ids: tuple[RecordIdentifier, ...] = Field(min_length=1)

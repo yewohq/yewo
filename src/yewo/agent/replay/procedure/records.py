@@ -200,7 +200,6 @@ class ProcedureReplayResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[2] = 2
     procedure_id: RecordIdentifier
     evidence_id: RecordIdentifier
     source_run_id: RecordIdentifier

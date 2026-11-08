@@ -223,7 +223,6 @@ class ActionProposalDecision(BaseModel):
 class ActionProposal(ActionProposalDecision):
     """A validated planner decision bound to one runtime observation."""
 
-    schema_version: Literal[1] = 1
     proposal_id: RecordIdentifier
     source_observation_id: RecordIdentifier
 
@@ -313,7 +312,6 @@ class ActionRefusal(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     proposal_id: RecordIdentifier
     code: ActionRefusalCode
     reason: str = Field(min_length=1)
@@ -326,7 +324,6 @@ class AuthorizedAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     authorization_id: RecordIdentifier
     proposal_id: RecordIdentifier
     source_observation_id: RecordIdentifier
@@ -418,7 +415,6 @@ class DispatchReceipt(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     receipt_id: RecordIdentifier
     authorization_id: RecordIdentifier
     proposal_id: RecordIdentifier

@@ -331,7 +331,7 @@ class ScenarioAuditorService:
                 ),
             ),
             response_contract=build_model_response_contract(
-                "scenario-audit-v2",
+                "scenario-audit-v1",
                 ScenarioAuditorOutput.model_json_schema(),
             ),
             retry_reasoning_exhaustion=False,

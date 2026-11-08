@@ -229,12 +229,12 @@ def test_completed_result_builds_calls_compiles_and_measures(
     assert request.reasoning_effort is None
     assert request.max_completion_tokens == 8_192
     assert request.response_contract is not None
-    assert request.response_contract.name == "replay-reconciliation-v2"
+    assert request.response_contract.name == "replay-reconciliation-v1"
     content = request.messages[1].content[0]
     assert isinstance(content, TextModelContent)
     payload = json.loads(content.text.split("Evidence JSON follows:\n", 1)[1])
     projected = payload["evidence"]
-    assert projected["projection_version"] == 3
+    assert projected["projection_version"] == 1
     assert projected["task"]["completion_condition_mode"] == ("generate_from_discovery_evidence")
     assert "timeline" not in projected
     assert "fingerprint" not in next(iter(projected["states"].values()))

@@ -307,7 +307,6 @@ class EvidenceDocument(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[2] = 2
     evidence_id: RecordIdentifier
     run: EvidenceRun
     task: EvidenceTask

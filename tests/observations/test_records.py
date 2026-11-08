@@ -104,9 +104,9 @@ def test_observation_rejects_naive_time_and_self_predecessor() -> None:
         build_observation(predecessor_observation_id="obs_1")
 
 
-def test_observation_rejects_an_incompatible_schema_version() -> None:
+def test_observation_rejects_an_unknown_field() -> None:
     payload = build_observation().model_dump()
-    payload["schema_version"] = "unsupported"
+    payload["capture_profile"] = "unsupported"
 
-    with pytest.raises(ValidationError, match="schema_version"):
+    with pytest.raises(ValidationError, match="capture_profile"):
         Observation.model_validate(payload)

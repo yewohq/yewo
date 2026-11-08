@@ -78,7 +78,7 @@ def test_designer_translates_checks_and_semantic_surface_meaning() -> None:
 
     assert model.requests[0].role is ModelRole.TEST_DESIGNER
     assert model.requests[0].response_contract is not None
-    assert model.requests[0].response_contract.name == "test-designer-output-v3"
+    assert model.requests[0].response_contract.name == "test-designer-output-v1"
     assert model.response_models == [DesignerOutput]
     assert model.validation_contexts[0] is not None
     assert design.concerns[0].source_check == check

@@ -516,7 +516,7 @@ def _model_request(
             ),
         ),
         response_contract=build_model_response_contract(
-            "replay-reconciliation-v2",
+            "replay-reconciliation-v1",
             ReconcilerSelection.model_json_schema(),
         ),
         sensitivity=ArtifactSensitivity.DEVICE_CONTENT,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Self
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
@@ -142,7 +142,6 @@ class CurrentScreenAnalysis(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[3] = 3
     analysis_id: RecordIdentifier
     observation_id: RecordIdentifier
     screenshot_sha256: Sha256Digest

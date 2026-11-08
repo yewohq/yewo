@@ -6,7 +6,7 @@ from collections.abc import Callable
 from enum import StrEnum
 import json
 import unicodedata
-from typing import Literal, Protocol, Self
+from typing import Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, model_validator
 
@@ -206,7 +206,6 @@ class ActionReadinessDecision(BaseModel):
 class ActionReadinessAssessment(ActionReadinessDecision):
     """One independent pre-dispatch assessment bound to a proposal."""
 
-    schema_version: Literal[4] = 4
     verification_id: RecordIdentifier
     proposal_id: RecordIdentifier
 
@@ -352,7 +351,7 @@ class ModelActionVerifier:
                 ),
             ),
             response_contract=build_model_response_contract(
-                "action-readiness-decision-v3",
+                "action-readiness-decision-v1",
                 ActionReadinessDecision.model_json_schema(),
             ),
             sensitivity=planning_request.observation.redacted_screenshot.sensitivity,

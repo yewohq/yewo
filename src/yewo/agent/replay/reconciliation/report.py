@@ -25,7 +25,6 @@ class ProcedureCompilationReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = 1
     source_run_id: RecordIdentifier
     evidence_id: RecordIdentifier
     request_id: RecordIdentifier

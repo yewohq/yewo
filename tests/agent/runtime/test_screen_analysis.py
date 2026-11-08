@@ -63,7 +63,7 @@ class _ObservationAwareAnalysisSource:
 
 class _CapacityExhaustedAnalyzer(_Analyzer):
     def capacity_identity(self) -> tuple[str, str]:
-        return "screen-analyzer-primary", "screen-analysis-hypothesis-v2"
+        return "screen-analyzer-primary", "screen-analysis-hypothesis-v1"
 
     def analyze(self, observation: Observation) -> CurrentScreenAnalysis:
         del observation

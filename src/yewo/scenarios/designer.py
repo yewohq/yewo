@@ -213,7 +213,7 @@ class TestDesignerService:
                 ),
             ),
             response_contract=build_model_response_contract(
-                "test-designer-output-v3",
+                "test-designer-output-v1",
                 TestDesignerOutput.model_json_schema(),
             ),
             sensitivity=ArtifactSensitivity.DEVICE_CONTENT,

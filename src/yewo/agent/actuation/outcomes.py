@@ -70,7 +70,6 @@ class ActionOutcome(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     outcome_id: RecordIdentifier
     authorization_id: RecordIdentifier
     receipt_id: RecordIdentifier

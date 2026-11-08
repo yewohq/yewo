@@ -171,7 +171,6 @@ class Observation(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = 1
     observation_id: RecordIdentifier
     device: EvidenceDeviceIdentity
     application: EvidenceApplicationIdentity

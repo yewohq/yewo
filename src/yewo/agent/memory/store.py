@@ -12,12 +12,14 @@ import tempfile
 from typing import Generator
 from collections.abc import Callable
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from yewo.artifacts import (
+    APP_MEMORY_SCHEMA_VERSION,
     ArtifactRetention,
     AtomicArtifactWriter,
     ArtifactWriteError,
+    AppMemorySchemaVersion,
     RecordIdentifier,
     Sha256Digest,
 )
@@ -44,7 +46,7 @@ class AppMemorySchemaError(AppMemoryStoreError):
 class _MemoryEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = Field(default=2, ge=2, le=2)
+    schema_version: AppMemorySchemaVersion = APP_MEMORY_SCHEMA_VERSION
     memory_sha256: Sha256Digest
     memory: AppMemory
 
@@ -187,10 +189,7 @@ class AppMemoryStore:
 def _validate_supported_schema(payload: object) -> None:
     if not isinstance(payload, dict):
         raise AppMemoryStoreError("The app-memory snapshot is invalid.")
-    envelope_version = payload.get("schema_version")
-    memory = payload.get("memory")
-    memory_version = memory.get("schema_version") if isinstance(memory, dict) else None
-    if envelope_version != 2 or memory_version != 2:
+    if payload.get("schema_version") != APP_MEMORY_SCHEMA_VERSION:
         raise AppMemorySchemaError(
             "The app-memory schema is unsupported. Rebuild memory with this Yewo version."
         )

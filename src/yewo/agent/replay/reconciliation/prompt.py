@@ -28,8 +28,7 @@ def build_reconciler_evidence_projection(evidence: EvidenceDocument) -> dict[str
         step for step in evidence.steps if step.result in REUSABLE_EVIDENCE_RESULTS
     )
     return {
-        "projection_version": 3,
-        "schema_version": evidence.schema_version,
+        "projection_version": 1,
         "evidence_id": evidence.evidence_id,
         "run": {
             "run_id": evidence.run.run_id,

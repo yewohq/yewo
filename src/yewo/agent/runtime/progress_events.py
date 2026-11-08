@@ -30,7 +30,6 @@ class RunProgressEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     event_id: RecordIdentifier
     event_index: int = Field(ge=1)
     kind: Literal["initialized", "assessment", "refusal", "route", "planning_focus", "stage"]

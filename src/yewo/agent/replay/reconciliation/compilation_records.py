@@ -71,7 +71,6 @@ class ReconcilerSelection(BaseModel):
 class ReconcilerResponse(ReconcilerSelection):
     """A reconciler selection bound to one runtime request."""
 
-    schema_version: Literal[2] = 2
     request_id: RecordIdentifier
 
 
@@ -114,7 +113,6 @@ class CompilerRefusal(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     request_id: RecordIdentifier
     evidence_id: RecordIdentifier
     reasons: tuple[CompilerReason, ...] = Field(min_length=1)
@@ -206,7 +204,6 @@ class ReplayProcedure(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[3] = 3
     visual_policy_version: Literal[1] = 1
     procedure_id: RecordIdentifier
     request_id: RecordIdentifier

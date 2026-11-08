@@ -56,7 +56,7 @@ class ScreenAnalysisCapacityError(ScreenAnalysisError):
         self.response_contract_id = response_contract_id
 
 
-SCREEN_ANALYSIS_RESPONSE_CONTRACT_ID = "screen-analysis-hypothesis-v2"
+SCREEN_ANALYSIS_RESPONSE_CONTRACT_ID = "screen-analysis-hypothesis-v1"
 
 
 _PARENT_SCOPED_ROLES = frozenset(

@@ -22,10 +22,21 @@ from yewo.artifacts.records import (
     new_record_identifier,
     validate_record_identifier,
 )
+from yewo.artifacts.schema_versions import (
+    APP_MEMORY_SCHEMA_VERSION,
+    CANONICAL_RUN_RECORD_SCHEMA_VERSION,
+    COMPILED_PROCEDURE_SCHEMA_VERSION,
+    AppMemorySchemaVersion,
+    CanonicalRunRecordSchemaVersion,
+    CompiledProcedureSchemaVersion,
+)
 from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
 
 __all__ = [
+    "APP_MEMORY_SCHEMA_VERSION",
     "ARTIFACTS_DIRECTORY",
+    "CANONICAL_RUN_RECORD_SCHEMA_VERSION",
+    "COMPILED_PROCEDURE_SCHEMA_VERSION",
     "DEFAULT_OUTPUT_DIRECTORY",
     "REPORTS_DIRECTORY",
     "RUN_RECORDS_DIRECTORY",
@@ -33,8 +44,11 @@ __all__ = [
     "ArtifactRetention",
     "ArtifactSensitivity",
     "ArtifactWriteError",
+    "AppMemorySchemaVersion",
     "AppendOnlyJsonlWriter",
     "AtomicArtifactWriter",
+    "CanonicalRunRecordSchemaVersion",
+    "CompiledProcedureSchemaVersion",
     "EvidenceApplicationIdentity",
     "EvidenceDeviceIdentity",
     "RecordIdentifier",

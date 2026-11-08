@@ -135,7 +135,7 @@ def test_completed_scenario_receives_an_independent_model_verdict(tmp_path) -> N
     assert {item.status for item in audit.obligations} == {AuditObligationStatus.SATISFIED}
     assert model.requests[0].role is ModelRole.AUDITOR
     assert model.requests[0].response_contract is not None
-    assert model.requests[0].response_contract.name == "scenario-audit-v2"
+    assert model.requests[0].response_contract.name == "scenario-audit-v1"
     assert auditor.model_call_count == 1
 
 

@@ -7,11 +7,13 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yewo.artifacts import (
+    CANONICAL_RUN_RECORD_SCHEMA_VERSION as CANONICAL_RUN_RECORD_SCHEMA_VERSION,
+    CanonicalRunRecordSchemaVersion,
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
@@ -27,9 +29,6 @@ from yewo.reporting.audit_records import (
     ScenarioAuditVerdict,
 )
 from yewo.reporting.limits import REPORT_REASON_MAX_LENGTH, REPORT_TEXT_MAX_LENGTH
-
-
-CANONICAL_RUN_RECORD_SCHEMA_VERSION = 1
 
 
 class ScenarioExecutionClassification(StrEnum):
@@ -339,7 +338,7 @@ class CanonicalRunRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = CANONICAL_RUN_RECORD_SCHEMA_VERSION
+    schema_version: CanonicalRunRecordSchemaVersion = CANONICAL_RUN_RECORD_SCHEMA_VERSION
     run_id: RecordIdentifier
     mode: RunMode
     started_at: datetime

@@ -4,11 +4,14 @@ from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
+from typing import Any
+from collections.abc import Callable
 
 from PIL import Image
 import pytest
 from pydantic import ValidationError
 
+from yewo.artifacts import COMPILED_PROCEDURE_SCHEMA_VERSION
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.discovery.records import DiscoveryObjective
 from yewo.agent.replay import ReplayProcedure, compile_replay_procedure
@@ -43,25 +46,24 @@ def _evidence_with_screenshots(source_root: Path):
     return evidence.model_copy(update={"states": states})
 
 
-def _rewrite_as_previous_schema(path: Path) -> None:
-    payload = json.loads(path.read_text())
-    payload["schema_version"] = 1
-    payload["bundle"]["schema_version"] = 1
-    payload["bundle"]["procedure"]["schema_version"] = 1
-    payload["bundle"]["procedure"].pop("setup_contract")
-    content = json.dumps(
-        payload["bundle"],
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    payload["bundle_sha256"] = sha256(content).hexdigest()
-    path.write_text(json.dumps(payload))
+UNSUPPORTED_SCHEMA_VERSION = COMPILED_PROCEDURE_SCHEMA_VERSION + 1
 
 
-def _rewrite_with_previous_evidence_schema(path: Path) -> None:
+def _rewrite_as_unsupported_schema(path: Path) -> None:
+    _rewrite(path, lambda payload: payload.update(schema_version=UNSUPPORTED_SCHEMA_VERSION))
+
+
+def _rewrite_as_unsupported_schema_with_unreadable_bundle(path: Path) -> None:
+    def rewrite(payload: dict[str, Any]) -> None:
+        payload["schema_version"] = UNSUPPORTED_SCHEMA_VERSION
+        payload["bundle"]["procedure"].pop("setup_contract")
+
+    _rewrite(path, rewrite)
+
+
+def _rewrite(path: Path, rewrite: Callable[[dict[str, Any]], None]) -> None:
     payload = json.loads(path.read_text())
-    payload["bundle"]["evidence"]["schema_version"] = 1
+    rewrite(payload)
     content = json.dumps(
         payload["bundle"],
         ensure_ascii=False,
@@ -179,7 +181,7 @@ def test_bundle_rejects_an_unknown_completion_condition_index() -> None:
         )
 
 
-def test_previous_procedure_schema_is_rebuilt_instead_of_aborting_preparation(
+def test_unsupported_procedure_schema_is_rebuilt_instead_of_aborting_preparation(
     tmp_path: Path,
 ) -> None:
     evidence = _evidence()
@@ -189,7 +191,7 @@ def test_previous_procedure_schema_is_rebuilt_instead_of_aborting_preparation(
     store = CompiledProcedureStore(tmp_path)
     store.save(compatibility, evidence, procedure)
     path = next((tmp_path / "procedures").rglob("procedure.json"))
-    _rewrite_as_previous_schema(path)
+    _rewrite_as_unsupported_schema(path)
 
     with pytest.raises(CompiledProcedureSchemaError, match="Rebuild the procedure"):
         store.load(compatibility, evidence.task.objective_id, evidence.task.objective)
@@ -211,7 +213,9 @@ def test_previous_procedure_schema_is_rebuilt_instead_of_aborting_preparation(
     assert preparation.selection is None
 
 
-def test_previous_evidence_schema_requests_a_rebuild(tmp_path: Path) -> None:
+def test_unsupported_schema_is_reported_before_the_bundle_body_is_validated(
+    tmp_path: Path,
+) -> None:
     evidence = _evidence()
     procedure = compile_replay_procedure(evidence, _response())
     assert isinstance(procedure, ReplayProcedure)
@@ -219,7 +223,7 @@ def test_previous_evidence_schema_requests_a_rebuild(tmp_path: Path) -> None:
     store = CompiledProcedureStore(tmp_path)
     store.save(compatibility, evidence, procedure)
     path = next((tmp_path / "procedures").rglob("procedure.json"))
-    _rewrite_with_previous_evidence_schema(path)
+    _rewrite_as_unsupported_schema_with_unreadable_bundle(path)
 
     with pytest.raises(CompiledProcedureSchemaError, match="Rebuild the procedure"):
         store.load(compatibility, evidence.task.objective_id, evidence.task.objective)
@@ -233,7 +237,7 @@ def test_stale_candidate_does_not_hide_valid_procedure(tmp_path: Path) -> None:
     store = CompiledProcedureStore(tmp_path)
     store.save(compatibility, evidence, procedure)
     stale_path = next((tmp_path / "procedures").rglob("procedure.json"))
-    _rewrite_as_previous_schema(stale_path)
+    _rewrite_as_unsupported_schema(stale_path)
     valid_evidence = evidence.model_copy(
         update={
             "task": evidence.task.model_copy(

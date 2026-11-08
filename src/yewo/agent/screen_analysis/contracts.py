@@ -1,7 +1,7 @@
 """Typed contracts for the canonical screenshot-element catalog."""
 
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -109,7 +109,6 @@ class ScreenElementCatalog(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[2] = 2
     name: str = Field(min_length=1)
     scope: str = Field(min_length=1)
     classification_rules: tuple[str, ...] = Field(min_length=1)

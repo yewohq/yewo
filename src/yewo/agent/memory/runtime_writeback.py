@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -60,7 +59,6 @@ class MemoryWritebackReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
-    schema_version: Literal[1] = 1
     source_run_id: RecordIdentifier
     disposition: MemoryWritebackDisposition
     writeback_id: RecordIdentifier | None = None

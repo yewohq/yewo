@@ -336,10 +336,8 @@ def test_runtime_connects_all_components_and_records_canonical_steps(
         None,
         "done_requested",
     ]
-    assert [step["schema_version"] for step in _stored_steps(tmp_path)] == [1, 1]
     assert [set(step) for step in _stored_steps(tmp_path)] == [
         {
-            "schema_version",
             "step_id",
             "step_index",
             "source_observation_id",

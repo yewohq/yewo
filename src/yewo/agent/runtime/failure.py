@@ -19,7 +19,6 @@ class AgentFailureSummary(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     failure_kind: Literal["model_service_unavailable"] = "model_service_unavailable"
     reason: str = Field(min_length=1)
     final_observation_id: RecordIdentifier

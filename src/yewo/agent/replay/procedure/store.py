@@ -16,8 +16,10 @@ from yewo.agent.replay.reconciliation.records import EvidenceDocument, ReplayPro
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
+    COMPILED_PROCEDURE_SCHEMA_VERSION,
     ArtifactWriteError,
     AtomicArtifactWriter,
+    CompiledProcedureSchemaVersion,
     Sha256Digest,
 )
 from yewo.devices.screen import png_size
@@ -37,7 +39,6 @@ class StoredProcedureBundle(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 2
     compatibility: MemoryCompatibility
     evidence: EvidenceDocument
     procedure: ReplayProcedure
@@ -63,7 +64,7 @@ class StoredProcedureBundle(BaseModel):
 class _StoredProcedureEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 2
+    schema_version: CompiledProcedureSchemaVersion = COMPILED_PROCEDURE_SCHEMA_VERSION
     bundle_sha256: Sha256Digest
     bundle: StoredProcedureBundle
 
@@ -381,19 +382,7 @@ def _read_bundle(path: Path) -> StoredProcedureBundle:
 def _validate_supported_schema(payload: object) -> None:
     if not isinstance(payload, dict):
         raise CompiledProcedureStoreError("The compiled procedure snapshot is invalid.")
-    bundle = payload.get("bundle")
-    procedure = bundle.get("procedure") if isinstance(bundle, dict) else None
-    envelope_version = payload.get("schema_version")
-    bundle_version = bundle.get("schema_version") if isinstance(bundle, dict) else None
-    procedure_version = procedure.get("schema_version") if isinstance(procedure, dict) else None
-    evidence = bundle.get("evidence") if isinstance(bundle, dict) else None
-    evidence_version = evidence.get("schema_version") if isinstance(evidence, dict) else None
-    if (
-        envelope_version != 2
-        or bundle_version != 2
-        or evidence_version != 2
-        or procedure_version != 3
-    ):
+    if payload.get("schema_version") != COMPILED_PROCEDURE_SCHEMA_VERSION:
         raise CompiledProcedureSchemaError(
             "The compiled procedure schema is unsupported. "
             "Rebuild the procedure with this Yewo version."

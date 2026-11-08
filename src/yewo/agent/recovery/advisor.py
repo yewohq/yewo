@@ -6,7 +6,7 @@ from collections.abc import Callable
 from enum import StrEnum
 import json
 from pathlib import Path
-from typing import Literal, Protocol, Self
+from typing import Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -127,7 +127,6 @@ class RecoveryDecision(BaseModel):
 class RecoveryAssessment(RecoveryDecision):
     """One validated recovery decision bound to runtime evidence."""
 
-    schema_version: Literal[2] = 2
     assessment_id: RecordIdentifier
     failed_proposal_id: RecordIdentifier
     pre_failure_observation_id: RecordIdentifier

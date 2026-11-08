@@ -1,6 +1,6 @@
 """Normalize action-scoped application failures for agent recovery."""
 
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -23,7 +23,6 @@ class ActionApplicationFailure(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
     classification: ApplicationDiagnosticClassification
     failure_kinds: tuple[ApplicationFailureKind, ...] = Field(min_length=1)
     summary: str = Field(min_length=1, max_length=512)
