@@ -25,7 +25,7 @@ class SettlementCapture:
 
     observation: Observation
     observation_ids: tuple[str, ...]
-    settled: bool
+    is_settled: bool
 
 
 class SettlementInterrupted(RunWorkflowInterrupted):
@@ -91,14 +91,14 @@ def resolve_action_settlement_policy(
     """Resolve one policy without allowing evidence to weaken hard bounds."""
     default = default_action_settlement_policy(mode_policy)
     policy_source = first_source_of(source, ActionSettlementPolicySource)
-    resolved = default if policy_source is None else policy_source.resolve(default, decision)
-    if resolved.maximum_observations > default.maximum_observations:
+    resolved_policy = default if policy_source is None else policy_source.resolve(default, decision)
+    if resolved_policy.maximum_observations > default.maximum_observations:
         raise ValueError("An action settlement policy cannot raise the observation cap.")
     if action is ActionKind.FOCUS:
-        return resolved.model_copy(
-            update={"minimum_observations": min(3, resolved.maximum_observations)}
+        return resolved_policy.model_copy(
+            update={"minimum_observations": min(3, resolved_policy.maximum_observations)}
         )
-    return resolved
+    return resolved_policy
 
 
 def capture_settled_observation(
@@ -109,7 +109,7 @@ def capture_settled_observation(
     sleep: Callable[[float], None],
 ) -> SettlementCapture:
     """Wait for a stable post-action screen without accepting the source too early."""
-    captured: list[Observation] = []
+    captured_observations: list[Observation] = []
     observation_ids: list[str] = []
     for attempt_index in range(policy.maximum_observations):
         _require_continuation(interruption, observation_ids)
@@ -120,13 +120,13 @@ def capture_settled_observation(
             sleep(delay_seconds)
             _require_continuation(interruption, observation_ids)
         observation = observations.capture(predecessor_observation_id=source.observation_id)
-        captured.append(observation)
+        captured_observations.append(observation)
         observation_ids.append(observation.observation_id)
         final_attempt = attempt_index + 1 == policy.maximum_observations
         if (
             latest_settlement_candidate(
                 source,
-                captured,
+                captured_observations,
                 policy.required_stable_observations,
                 minimum_observations=policy.minimum_observations,
                 final_attempt=final_attempt,
@@ -134,25 +134,25 @@ def capture_settled_observation(
             is not None
         ):
             return SettlementCapture(observation, tuple(observation_ids), True)
-    if not captured:  # The policy requires at least two attempts.
+    if not captured_observations:  # The policy requires at least two attempts.
         raise RuntimeError("Settlement captured no observations.")
-    return SettlementCapture(captured[-1], tuple(observation_ids), False)
+    return SettlementCapture(captured_observations[-1], tuple(observation_ids), False)
 
 
 def latest_settlement_candidate(
     source: Observation,
-    captured: list[Observation] | tuple[Observation, ...],
+    captured_observations: list[Observation] | tuple[Observation, ...],
     required_stable_observations: int = 2,
     *,
     minimum_observations: int = 1,
     final_attempt: bool = False,
 ) -> Observation | None:
     """Accept a stable adjacent state or an exact recurring application image."""
-    if len(captured) < minimum_observations:
+    if len(captured_observations) < minimum_observations:
         return None
-    current = captured[-1]
-    adjacent = len(captured) >= 2 and observations_are_compatible(captured[-2], current)
-    recurring = any(observations_are_identical(previous, current) for previous in captured[:-1])
+    current = captured_observations[-1]
+    adjacent = len(captured_observations) >= 2 and observations_are_compatible(captured_observations[-2], current)
+    recurring = any(observations_are_identical(previous, current) for previous in captured_observations[:-1])
     stable = required_stable_observations == 1 or adjacent or recurring
     changed_from_source = not observations_are_identical(source, current)
     return current if stable and (changed_from_source or final_attempt) else None

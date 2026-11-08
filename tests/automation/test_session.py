@@ -54,12 +54,12 @@ class _DriverStub:
         self,
         events: list[str],
         *,
-        installed: bool = True,
+        is_installed: bool = True,
         log_responses: tuple[tuple[object, ...], ...] | None = None,
     ) -> None:
         self.session_id = "session-123"
         self.events = events
-        self.installed = installed
+        self.is_installed = is_installed
         self.remove_error: Exception | None = None
         self.script_error: Exception | None = None
         self.clipboard_error: Exception | None = None
@@ -69,7 +69,7 @@ class _DriverStub:
 
     def is_app_installed(self, application_id: str) -> bool:
         del application_id
-        return self.installed
+        return self.is_installed
 
     def remove_app(self, application_id: str) -> object:
         self.events.append(f"remove:{application_id}")

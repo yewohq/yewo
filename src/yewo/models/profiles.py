@@ -39,18 +39,18 @@ class ModelEndpoint(BaseModel):
     @classmethod
     def _validate_base_url(cls, value: str) -> str:
         try:
-            parsed = urlsplit(value)
-            port = parsed.port
+            url_parts = urlsplit(value)
+            port = url_parts.port
         except ValueError as error:
             raise ValueError("The model endpoint URL has an invalid port.") from error
         if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-            or (":" in parsed.netloc and port is None)
+            url_parts.scheme not in {"http", "https"}
+            or not url_parts.hostname
+            or url_parts.username is not None
+            or url_parts.password is not None
+            or url_parts.query
+            or url_parts.fragment
+            or (":" in url_parts.netloc and port is None)
         ):
             raise ValueError("The model endpoint must be an HTTP URL without credentials.")
         return value.rstrip("/")
@@ -208,8 +208,8 @@ def missing_model_credentials(profile: ModelProfile) -> tuple[str, ...]:
                 result = validate_environment(profile.model)
         finally:
             os.environ.update(blank_values)
-    missing = result.get("missing_keys") if isinstance(result, dict) else None
-    return tuple(str(name) for name in missing or ())
+    missing_keys = result.get("missing_keys") if isinstance(result, dict) else None
+    return tuple(str(name) for name in missing_keys or ())
 
 
 def validate_model_credentials(
@@ -219,9 +219,9 @@ def validate_model_credentials(
     """Fail before device work when any configured profile lacks credentials."""
     for profile in profiles.profiles:
         try:
-            missing = credential_check(profile)
+            missing_keys = credential_check(profile)
         except Exception as error:  # noqa: BLE001 - LiteLLM configuration boundary
             raise ModelInputError("Could not validate model credentials.") from error
-        if missing:
-            names = ", ".join(missing)
+        if missing_keys:
+            names = ", ".join(missing_keys)
             raise ModelInputError(f"Missing credentials for profile {profile.profile_id}: {names}.")

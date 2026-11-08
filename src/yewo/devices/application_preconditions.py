@@ -60,7 +60,7 @@ class ApplicationPreconditionCoordinator:
                 self._application.activate()
             elif normalized_state == "restart":
                 self._application.relaunch()
-            verified = self._application.is_foreground()
+            is_verified = self._application.is_foreground()
         except Exception:  # noqa: BLE001 - injected device boundary
             return self._receipt(
                 normalized_state,
@@ -69,10 +69,10 @@ class ApplicationPreconditionCoordinator:
             )
         return self._receipt(
             normalized_state,
-            verified,
+            is_verified,
             (
                 "Read-back verified the requested application state."
-                if verified
+                if is_verified
                 else "Read-back did not verify a foreground application."
             ),
         )
@@ -80,12 +80,12 @@ class ApplicationPreconditionCoordinator:
     def _receipt(
         self,
         requested_state: Literal["clear_data", "restart", "preserve"],
-        verified: bool,
+        is_verified: bool,
         reason: str,
     ) -> ApplicationPreconditionReceipt:
         return ApplicationPreconditionReceipt(
             receipt_id=self._identifier_factory(),
             requested_state=requested_state,
-            verified=verified,
+            verified=is_verified,
             reason=reason,
         )

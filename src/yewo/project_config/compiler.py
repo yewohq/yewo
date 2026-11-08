@@ -176,12 +176,12 @@ def compile_yewo_test_configurations(
 ) -> tuple[YewoTestConfiguration, ...]:
     """Compile every selected journey-target pair into an isolated test run."""
     workflows = select_workflows(project, workflow_selector)
-    selected = tuple(
+    workflow_target_pairs = tuple(
         (workflow, target) for workflow in workflows for target in _selected_targets(workflow)
     )
-    selected = _filter_targets(selected, target_selector)
+    workflow_target_pairs = _filter_targets(workflow_target_pairs, target_selector)
     configurations: list[YewoTestConfiguration] = []
-    for workflow, target in selected:
+    for workflow, target in workflow_target_pairs:
         target_project = project.model_copy(update={"settings": target.settings})
         for journey in workflow.journeys:
             base = compile_yewo_run_configuration(target_project, journey.objective)
@@ -220,22 +220,22 @@ def _selected_targets(workflow: ResolvedWorkflow) -> tuple[ResolvedTarget, ...]:
 
 
 def _filter_targets(
-    selected: tuple[tuple[ResolvedWorkflow, ResolvedTarget], ...],
+    workflow_target_pairs: tuple[tuple[ResolvedWorkflow, ResolvedTarget], ...],
     selector: str | None,
 ) -> tuple[tuple[ResolvedWorkflow, ResolvedTarget], ...]:
     if selector is None:
-        return selected
+        return workflow_target_pairs
     names = tuple(name.strip() for name in selector.split(",") if name.strip())
     if not names:
         raise YewoProjectCompileError("The target selector is empty.")
-    available = {target.target_id for _, target in selected}
-    missing = tuple(name for name in names if name not in available)
-    if missing:
+    available_target_ids = {target.target_id for _, target in workflow_target_pairs}
+    unknown_target_names = tuple(name for name in names if name not in available_target_ids)
+    if unknown_target_names:
         raise YewoProjectCompileError(
-            f"Unknown target(s): {', '.join(missing)}. Available targets: "
-            f"{', '.join(sorted(available)) or 'default'}."
+            f"Unknown target(s): {', '.join(unknown_target_names)}. Available targets: "
+            f"{', '.join(sorted(available_target_ids)) or 'default'}."
         )
-    return tuple(item for name in names for item in selected if item[1].target_id == name)
+    return tuple(item for name in names for item in workflow_target_pairs if item[1].target_id == name)
 
 
 def _apply_overrides(
@@ -284,20 +284,20 @@ def _resolve_semantic_models(
     default: str | None,
     overrides: ModelOverridesSpec | None,
 ) -> dict[str, ModelSelectionSpec]:
-    resolved: dict[str, ModelSelectionSpec] = {}
-    missing: list[str] = []
+    models_by_field: dict[str, ModelSelectionSpec] = {}
+    unassigned_fields: list[str] = []
     for _, field in _SEMANTIC_MODELS:
         override = getattr(overrides, field) if overrides is not None else None
-        selected = override or default
-        if selected is None:
-            missing.append(field)
+        model_name = override or default
+        if model_name is None:
+            unassigned_fields.append(field)
         else:
-            resolved[field] = _model_selection(selected)
-    if missing:
+            models_by_field[field] = _model_selection(model_name)
+    if unassigned_fields:
         raise YewoProjectCompileError(
-            "Configure model or explicit models for: " + ", ".join(missing) + "."
+            "Configure model or explicit models for: " + ", ".join(unassigned_fields) + "."
         )
-    return resolved
+    return models_by_field
 
 
 def _model_selection(selection: str | ModelSelectionSpec) -> ModelSelectionSpec:

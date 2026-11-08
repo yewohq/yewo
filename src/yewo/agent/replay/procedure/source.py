@@ -222,10 +222,10 @@ class CompiledProcedureActionSource:
 
     def repair_would_repeat_failed_action(self, proposal: ActionProposal) -> bool:
         """Reject an exact retry of a dispatched non-navigation action."""
-        blocked = self._blocked_repair_proposal
-        return blocked is not None and (
-            proposal.action == blocked.action
-            and proposal.target_expression == blocked.target_expression
+        blocked_proposal = self._blocked_repair_proposal
+        return blocked_proposal is not None and (
+            proposal.action == blocked_proposal.action
+            and proposal.target_expression == blocked_proposal.target_expression
         )
 
     def decision_metadata(self) -> PlannerDecisionMetadata:
@@ -263,7 +263,7 @@ class CompiledProcedureActionSource:
         }
         source_match = (
             EvidenceStateMatch(
-                accepted=True,
+                is_accepted=True,
                 expected_distance=0,
                 competing_distance=None,
                 visual_match_ratio=None,
@@ -277,7 +277,7 @@ class CompiledProcedureActionSource:
                 self._screenshot_loader,
             )
         )
-        if not source_match.accepted:
+        if not source_match.is_accepted:
             return self._diverged(
                 request,
                 step,

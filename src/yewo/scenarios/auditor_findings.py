@@ -137,9 +137,9 @@ def confirm_audit_finding(candidate: AuditCandidateFindingOutput) -> ConfirmedAu
     if isinstance(verification, ArithmeticFindingVerification):
         return _confirm_arithmetic(candidate, verification)
     if isinstance(verification, EqualityFindingVerification):
-        expected = _normalize_text(verification.expected_text)
-        observed = _normalize_text(verification.observed_text)
-        is_violation = expected != observed
+        expected_text = _normalize_text(verification.expected_text)
+        observed_text = _normalize_text(verification.observed_text)
+        is_violation = expected_text != observed_text
         relation = "does not match" if is_violation else "matches"
         return ConfirmedAuditFinding(
             outcome_id=candidate.outcome_id,
@@ -208,8 +208,8 @@ def _confirm_arithmetic(
     candidate: AuditCandidateFindingOutput,
     verification: ArithmeticFindingVerification,
 ) -> ConfirmedAuditFinding:
-    expected = _evaluate_arithmetic(verification.relation, verification.operands)
-    if expected is None:
+    expected_value = _evaluate_arithmetic(verification.relation, verification.operands)
+    if expected_value is None:
         return ConfirmedAuditFinding(
             outcome_id=candidate.outcome_id,
             claim=candidate.claim,
@@ -219,7 +219,7 @@ def _confirm_arithmetic(
             verification_kind=verification.kind,
         )
     quantum = Decimal(1).scaleb(-verification.precision_places)
-    rounded_expected = expected.quantize(quantum, rounding=ROUND_HALF_UP)
+    rounded_expected = expected_value.quantize(quantum, rounding=ROUND_HALF_UP)
     rounded_displayed = verification.displayed_result.quantize(
         quantum,
         rounding=ROUND_HALF_UP,

@@ -101,12 +101,12 @@ def _exception_detail(error: Exception, *, maximum_length: int = 1_000) -> str:
     """Retain bounded external-driver detail for run diagnostics."""
     driver_message = getattr(error, "msg", None)
     detail = driver_message if isinstance(driver_message, str) else str(error)
-    normalized = detail.replace("\r", "\\r").replace("\n", "\\n").strip()
-    if not normalized:
+    escaped_detail = detail.replace("\r", "\\r").replace("\n", "\\n").strip()
+    if not escaped_detail:
         return "No exception message was provided."
-    if len(normalized) <= maximum_length:
-        return normalized
-    return f"{normalized[: maximum_length - 3]}..."
+    if len(escaped_detail) <= maximum_length:
+        return escaped_detail
+    return f"{escaped_detail[: maximum_length - 3]}..."
 
 
 class ScreenGeometry:

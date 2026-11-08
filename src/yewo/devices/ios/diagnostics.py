@@ -133,15 +133,15 @@ def _report_time(fields: Mapping[str, object]) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        report_time = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         try:
-            parsed = _parse_apple_report_time(value)
+            report_time = _parse_apple_report_time(value)
         except ValueError as error:
             raise DeviceLogCaptureError(
                 "The iOS diagnostic report has an invalid timestamp."
             ) from error
-    return parsed if parsed.utcoffset() is not None else None
+    return report_time if report_time.utcoffset() is not None else None
 
 
 def _parse_apple_report_time(value: str) -> datetime:

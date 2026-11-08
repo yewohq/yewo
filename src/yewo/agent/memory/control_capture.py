@@ -34,7 +34,7 @@ def capture_controls(
             )
         )
         return ()
-    captured: dict[RecordIdentifier, ControlKnowledge] = {}
+    controls_by_id: dict[RecordIdentifier, ControlKnowledge] = {}
     for analysis in screen_analyses:
         observation = observations.get(analysis.observation_id)
         screen_id = _screen_id(memory, observation) if observation is not None else None
@@ -81,8 +81,8 @@ def capture_controls(
                     ),
                 ),
             )
-            captured[control_id] = _merge_control(captured.get(control_id), update)
-    return tuple(captured.values())
+            controls_by_id[control_id] = _merge_control(controls_by_id.get(control_id), update)
+    return tuple(controls_by_id.values())
 
 
 def _merge_control(

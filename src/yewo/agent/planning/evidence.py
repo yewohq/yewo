@@ -96,18 +96,18 @@ class PlanningModelUsageSource(Protocol):
 
 def resolve_planner_decision_metadata(source: object) -> PlannerDecisionMetadata:
     """Return delegated decision evidence or the default model provenance."""
-    resolved = first_source_of(source, PlannerDecisionMetadataSource)
-    if resolved is not None:
-        return resolved.decision_metadata()
+    decision_source = first_source_of(source, PlannerDecisionMetadataSource)
+    if decision_source is not None:
+        return decision_source.decision_metadata()
     return PlannerDecisionMetadata(source=PlannerDecisionSource.MODEL)
 
 
 def resolve_planning_model_request_count(source: object, reserved_count: int) -> int:
     """Return actual model calls after one planning operation."""
-    resolved = first_source_of(source, PlanningModelUsageSource)
-    if resolved is None:
+    decision_source = first_source_of(source, PlanningModelUsageSource)
+    if decision_source is None:
         return reserved_count
-    consumed_count = resolved.last_planning_model_request_count()
+    consumed_count = decision_source.last_planning_model_request_count()
     if consumed_count < 0 or consumed_count > reserved_count:
         raise ValueError("Planning model use must remain within the reserved request count.")
     return consumed_count

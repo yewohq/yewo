@@ -22,7 +22,7 @@ def select_procedure_entry_index(
             step.source_state_id,
             evidence,
             screenshot_loader,
-        ).accepted
+        ).is_accepted
         and not any(
             skipped.captures_completion_conditions
             for skipped in procedure.steps[: step.procedure_index]

@@ -52,7 +52,7 @@ def narrate_discovery_result(result: DiscoveryResult) -> None:
     narrator = current_narrator()
     if narrator is None:
         return
-    supported = sum(entry.state.value == "supported" for entry in result.coverage.entries)
+    supported_count = sum(entry.state.value == "supported" for entry in result.coverage.entries)
     verification_state = (
         "satisfied"
         if result.verification is not None and result.verification.satisfied
@@ -75,7 +75,7 @@ def narrate_discovery_result(result: DiscoveryResult) -> None:
             f"Task verification was {verification_state.replace('_', ' ')}. "
             f"Compiled-procedure reuse is "
             f"{'available' if procedure_reusable else 'not available from this attempt'}. "
-            f"Reusable objective coverage is separate: {supported} of "
+            f"Reusable objective coverage is separate: {supported_count} of "
             f"{len(result.coverage.entries)} objective(s) supported.",
         )
     elif result.compiled_procedure_id is not None:
@@ -83,13 +83,13 @@ def narrate_discovery_result(result: DiscoveryResult) -> None:
             _SOURCE,
             "Discovery compiled a reusable procedure. "
             f"Task verification was {verification_state.replace('_', ' ')}. "
-            f"Reusable objective coverage is separate: {supported} of "
+            f"Reusable objective coverage is separate: {supported_count} of "
             f"{len(result.coverage.entries)} objective(s) supported.",
         )
     else:
         narrator.record(
             _SOURCE,
-            f"Discovery finished with {supported} of {len(result.coverage.entries)} "
+            f"Discovery finished with {supported_count} of {len(result.coverage.entries)} "
             f"objective(s) supported.",
         )
     narrator.trace(
@@ -98,7 +98,7 @@ def narrate_discovery_result(result: DiscoveryResult) -> None:
         f"task_verification={verification_state} "
         f"compiled_procedure_reusable="
         f"{str(procedure_reusable).lower()} "
-        f"objectives_supported={supported} total={len(result.coverage.entries)} "
+        f"objectives_supported={supported_count} total={len(result.coverage.entries)} "
         f"memory={result.memory_id or 'none'} "
         f"procedure_replay="
         f"{result.procedure_replay.terminal.value if result.procedure_replay is not None else 'none'} "

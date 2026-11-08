@@ -180,10 +180,10 @@ class ActionReadinessDecision(BaseModel):
         context = info.context
         if not isinstance(context, dict):
             return self
-        allowed = context.get("allowed_work_items")
-        completed = context.get("completed_work_items")
-        allowed_items = set(allowed) if isinstance(allowed, tuple) else set()
-        completed_items = set(completed) if isinstance(completed, tuple) else set()
+        allowed_work_items = context.get("allowed_work_items")
+        completed_work_items = context.get("completed_work_items")
+        allowed_items = set(allowed_work_items) if isinstance(allowed_work_items, tuple) else set()
+        completed_items = set(completed_work_items) if isinstance(completed_work_items, tuple) else set()
         reported_items = set(self.completed_work_items)
         if self.proposal_work_item is not None:
             reported_items.add(self.proposal_work_item)
@@ -486,8 +486,8 @@ def evidence_identifies_control(control_name: str, evidence: str) -> bool:
 
 
 def _identity_tokens(value: str) -> tuple[str, ...]:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    separated = "".join(character if character.isalnum() else " " for character in normalized)
+    normalized_value = unicodedata.normalize("NFKC", value).casefold()
+    separated = "".join(character if character.isalnum() else " " for character in normalized_value)
     return tuple(separated.split())
 
 

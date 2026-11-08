@@ -48,7 +48,7 @@ def test_settlement_captures_immediately_then_waits_for_stability() -> None:
     )
 
     assert events == ["capture", "sleep", "capture"]
-    assert capture.settled
+    assert capture.is_settled
 
 
 def test_default_settlement_adds_the_immediate_capture_to_the_wait_window() -> None:
@@ -104,7 +104,7 @@ def test_settlement_detects_exact_change_when_phash_is_unchanged() -> None:
         lambda unused: None,
     )
 
-    assert capture.settled
+    assert capture.is_settled
     assert capture.observation_ids == ("obs_2", "obs_3")
 
 
@@ -122,7 +122,7 @@ def test_settlement_accepts_minor_perceptual_variation_between_captures() -> Non
         lambda unused: None,
     )
 
-    assert capture.settled
+    assert capture.is_settled
     assert capture.observation_ids == ("obs_2", "obs_3")
 
 
@@ -144,7 +144,7 @@ def test_settlement_accepts_an_exact_recurring_cursor_state() -> None:
         lambda unused: None,
     )
 
-    assert capture.settled
+    assert capture.is_settled
     assert capture.observation_ids == ("obs_2", "obs_3", "obs_4")
 
 
@@ -175,7 +175,7 @@ def test_focus_settlement_captures_past_two_identical_caret_frames() -> None:
         lambda unused: None,
     )
 
-    assert capture.settled
+    assert capture.is_settled
     assert capture.observation_ids == ("obs_2", "obs_3", "obs_4", "obs_5")
 
 
@@ -203,7 +203,7 @@ def test_action_policy_can_capture_immediately_then_use_its_interval() -> None:
     )
 
     assert events == ["capture", "sleep:0.2", "capture"]
-    assert capture.settled
+    assert capture.is_settled
 
 
 def test_replay_policy_accepts_its_first_changed_observation() -> None:
@@ -226,4 +226,4 @@ def test_replay_policy_accepts_its_first_changed_observation() -> None:
 
     assert events == ["capture"]
     assert capture.observation_ids == ("obs_2",)
-    assert capture.settled
+    assert capture.is_settled

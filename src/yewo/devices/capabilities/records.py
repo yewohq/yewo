@@ -106,14 +106,14 @@ class CapabilityTransactionReceipt(BaseModel):
 
     @model_validator(mode="after")
     def _validate_terminal_state(self) -> Self:
-        expected = (
+        expected_values = (
             CapabilityTransactionState.APPLY_FAILED
             if not self.application.verified
             else CapabilityTransactionState.RESTORED
             if self.restoration.verified
             else CapabilityTransactionState.RESTORATION_FAILED
         )
-        if self.state is not expected:
+        if self.state is not expected_values:
             raise ValueError("Capability transaction state does not match its receipts.")
         if self.support.state is not CapabilitySupportState.SUPPORTED:
             raise ValueError("A capability transaction receipt requires supported execution.")

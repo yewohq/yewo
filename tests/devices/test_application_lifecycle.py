@@ -32,7 +32,7 @@ class _DriverStub:
     def __init__(self, states: list[int]) -> None:
         self.states = states
         self.state = states[0]
-        self.installed = True
+        self.is_installed = True
         self.current_application_id: str | None = EXTERNAL_APPLICATION_ID
         self.lifecycle_calls: list[str] = []
 
@@ -42,7 +42,7 @@ class _DriverStub:
 
     def is_app_installed(self, application_id: str) -> bool:
         assert application_id == APPLICATION_ID
-        return self.installed
+        return self.is_installed
 
     def query_app_state(self, application_id: str) -> int:
         assert application_id == APPLICATION_ID
@@ -139,7 +139,7 @@ def test_recovery_returns_false_after_a_bounded_timeout() -> None:
 def test_recovery_does_not_activate_an_absent_application() -> None:
     clock = _ClockStub()
     driver = _DriverStub([0])
-    driver.installed = False
+    driver.is_installed = False
 
     recovered = _lifecycle(driver, clock).recover()
 

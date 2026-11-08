@@ -221,8 +221,8 @@ class ObservationStore:
             return ()
         relative_path = ARTIFACTS_DIRECTORY / "observations.jsonl"
         path = self.root / relative_path
-        selected: list[Observation] = []
-        found: set[str] = set()
+        selected_observations: list[Observation] = []
+        loaded_observation_ids: set[str] = set()
         try:
             if path.is_symlink() or not path.is_file():
                 raise ObservationCaptureError("The observation ledger must be a regular file.")
@@ -240,7 +240,7 @@ class ObservationStore:
                 observation_id = payload.get("observation_id")
                 if observation_id not in observation_ids:
                     continue
-                if observation_id in found:
+                if observation_id in loaded_observation_ids:
                     raise ObservationCaptureError(
                         "The observation ledger repeats a requested observation identifier."
                     )
@@ -251,19 +251,19 @@ class ObservationStore:
                 ):
                     if screenshot is not None:
                         self._verify_screenshot(screenshot)
-                selected.append(observation)
-                found.add(observation.observation_id)
+                selected_observations.append(observation)
+                loaded_observation_ids.add(observation.observation_id)
         except ObservationCaptureError:
             raise
         except (OSError, TypeError, json.JSONDecodeError, ValidationError) as error:
             raise ObservationCaptureError("The observation ledger is invalid.") from error
-        missing = observation_ids - found
-        if missing:
+        missing_observation_ids = observation_ids - loaded_observation_ids
+        if missing_observation_ids:
             raise ObservationCaptureError(
                 "The observation ledger is missing requested observations: "
-                + ", ".join(sorted(missing))
+                + ", ".join(sorted(missing_observation_ids))
             )
-        return tuple(selected)
+        return tuple(selected_observations)
 
     def _verify_screenshot(self, reference: ScreenshotReference) -> None:
         screenshot_path = self.root / reference.path

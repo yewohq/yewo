@@ -117,9 +117,9 @@ class DiscoveryResult(BaseModel):
 
     @model_validator(mode="after")
     def _validate_result(self) -> Self:
-        requested = {objective.objective_id for objective in self.request.objectives}
+        requested_objective_ids = {objective.objective_id for objective in self.request.objectives}
         covered = {entry.objective_id for entry in self.coverage.entries}
-        if requested != covered:
+        if requested_objective_ids != covered:
             raise ValueError("Discovery coverage must account for every requested objective.")
         if self.terminal_reason is not self.agent_result.terminal_reason:
             raise ValueError("Discovery and Device Agent terminals must match.")
@@ -131,7 +131,7 @@ class DiscoveryResult(BaseModel):
         if supported_procedure_ids and supported_procedure_ids != {self.compiled_procedure_id}:
             raise ValueError("Supported discovery coverage must name the compiled procedure.")
         if self.verification is not None and (
-            self.verification.objective_id not in requested
+            self.verification.objective_id not in requested_objective_ids
             or self.verification.final_observation_id != self.agent_result.final_observation_id
         ):
             raise ValueError("Discovery verification does not match the result evidence.")

@@ -144,11 +144,11 @@ class ActionProposalDecision(BaseModel):
             "reason": self.reason,
         }
         present = {name for name, value in action_fields.items() if value is not None}
-        expected = definition.required_fields
-        if not expected.issubset(present):
-            missing = ", ".join(sorted(expected - present))
-            raise ValueError(f"{self.action.value} requires: {missing}.")
-        unexpected = present - expected - definition.optional_fields
+        required_fields = definition.required_fields
+        if not required_fields.issubset(present):
+            missing_field_names = ", ".join(sorted(required_fields - present))
+            raise ValueError(f"{self.action.value} requires: {missing_field_names}.")
+        unexpected = present - required_fields - definition.optional_fields
         if unexpected:
             names = ", ".join(sorted(unexpected))
             raise ValueError(f"{self.action.value} does not accept: {names}.")
@@ -379,13 +379,13 @@ class AuthorizedAction(BaseModel):
             "distance": self.distance,
         }
         present = {name for name, value in action_fields.items() if value is not None}
-        expected = required.get(self.action)
-        if expected is None:
+        required_fields = required.get(self.action)
+        if required_fields is None:
             raise ValueError(f"{self.action.value} is not dispatchable.")
-        if not expected.issubset(present):
-            missing = ", ".join(sorted(expected - present))
-            raise ValueError(f"{self.action.value} authorization requires: {missing}.")
-        unexpected = present - expected - optional.get(self.action, frozenset())
+        if not required_fields.issubset(present):
+            missing_field_names = ", ".join(sorted(required_fields - present))
+            raise ValueError(f"{self.action.value} authorization requires: {missing_field_names}.")
+        unexpected = present - required_fields - optional.get(self.action, frozenset())
         if unexpected:
             names = ", ".join(sorted(unexpected))
             raise ValueError(f"{self.action.value} authorization does not accept: {names}.")

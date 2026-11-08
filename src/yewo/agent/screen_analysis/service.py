@@ -210,9 +210,9 @@ class ScreenAnalysisHypothesis(BaseModel):
                     raise ValueError("Element parent keys cannot form a cycle.")
                 visited.add(parent_key)
                 parent_key = normalized_by_key[parent_key].parent_key
-        normalized = tuple(normalized_elements)
-        if normalized != self.elements:
-            return self.model_copy(update={"elements": normalized})
+        normalized_tuple = tuple(normalized_elements)
+        if normalized_tuple != self.elements:
+            return self.model_copy(update={"elements": normalized_tuple})
         return self
 
 

@@ -101,13 +101,13 @@ class CoordinateTextCodec:
                 GroundingDisposition.OUT_OF_BOUNDS,
                 reason="The model point is outside the source screenshot.",
             )
-        normalized = NormalizedPoint(
+        normalized_point = NormalizedPoint(
             x=_normalize_pixel(x_px, width_px),
             y=_normalize_pixel(y_px, height_px),
         )
         return DecodedGrounding(
             GroundingDisposition.ACCEPTED,
-            GroundedPoint(normalized=normalized, pixel=PixelPoint(x=x_px, y=y_px)),
+            GroundedPoint(normalized=normalized_point, pixel=PixelPoint(x=x_px, y=y_px)),
         )
 
     @staticmethod
@@ -130,14 +130,14 @@ class CoordinateTextCodec:
                 GroundingDisposition.OUT_OF_BOUNDS,
                 reason="The model point is outside the normalized coordinate space.",
             )
-        normalized = NormalizedPoint(x=x_normalized, y=y_normalized)
+        normalized_point = NormalizedPoint(x=x_normalized, y=y_normalized)
         pixel = PixelPoint(
-            x=round(normalized.x * (width_px - 1)),
-            y=round(normalized.y * (height_px - 1)),
+            x=round(normalized_point.x * (width_px - 1)),
+            y=round(normalized_point.y * (height_px - 1)),
         )
         return DecodedGrounding(
             GroundingDisposition.ACCEPTED,
-            GroundedPoint(normalized=normalized, pixel=pixel),
+            GroundedPoint(normalized=normalized_point, pixel=pixel),
         )
 
     @staticmethod
@@ -151,7 +151,7 @@ class CoordinateTextCodec:
         if left >= right or top >= bottom:
             return _malformed_region()
         pixel = PixelRegion(left=left, top=top, right=right, bottom=bottom)
-        normalized = NormalizedRegion(
+        normalized_region = NormalizedRegion(
             left=left / width_px,
             top=top / height_px,
             right=right / width_px,
@@ -159,7 +159,7 @@ class CoordinateTextCodec:
         )
         return DecodedGrounding(
             GroundingDisposition.ACCEPTED,
-            GroundedRegion(normalized=normalized, pixel=pixel),
+            GroundedRegion(normalized=normalized_region, pixel=pixel),
         )
 
     @staticmethod
@@ -180,7 +180,7 @@ class CoordinateTextCodec:
             return _out_of_bounds_region()
         if left >= right or top >= bottom:
             return _malformed_region()
-        normalized = NormalizedRegion(left=left, top=top, right=right, bottom=bottom)
+        normalized_region = NormalizedRegion(left=left, top=top, right=right, bottom=bottom)
         pixel_left = round(left * width_px)
         pixel_top = round(top * height_px)
         pixel_right = round(right * width_px)
@@ -195,7 +195,7 @@ class CoordinateTextCodec:
         )
         return DecodedGrounding(
             GroundingDisposition.ACCEPTED,
-            GroundedRegion(normalized=normalized, pixel=pixel),
+            GroundedRegion(normalized=normalized_region, pixel=pixel),
         )
 
 

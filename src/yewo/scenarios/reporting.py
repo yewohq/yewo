@@ -272,7 +272,7 @@ def _canonical_scenario(
     audit: ScenarioAuditRecord,
     interactions: tuple[CanonicalInteractionRecord, ...] = (),
 ) -> CanonicalScenarioRecord:
-    expected = tuple(
+    expected_outcomes = tuple(
         outcome for obligation in scenario.obligations for outcome in obligation.expected_outcomes
     )
     coverage_cell_id = next(
@@ -289,7 +289,7 @@ def _canonical_scenario(
         coverage_cell_id=coverage_cell_id,
         name=scenario.name,
         objective=scenario.objective,
-        expected_outcomes=tuple(item.statement for item in expected),
+        expected_outcomes=tuple(item.statement for item in expected_outcomes),
         execution=result.execution,
         audit=audit,
         interactions=interactions,

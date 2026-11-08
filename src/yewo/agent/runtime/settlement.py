@@ -85,7 +85,7 @@ def record_settled_action(
     destination_grounding: GroundingEvidence | None,
     authorization: AuthorizedAction,
     receipt: DispatchReceipt,
-    settled: SettledAction,
+    settled_action: SettledAction,
 ) -> AgentStep:
     """Persist one settled dispatch without duplicating its evidence mapping."""
     return step_store.record(
@@ -93,33 +93,35 @@ def record_settled_action(
         current_observation,
         proposal,
         decision,
-        settled.terminal,
+        settled_action.terminal,
         target_grounding=target_grounding,
         destination_grounding=destination_grounding,
         authorization=authorization,
         receipt=receipt,
-        settlement_observation_ids=settled.settlement_observation_ids,
+        settlement_observation_ids=settled_action.settlement_observation_ids,
         settled_observation_id=(
-            settled.settled_observation.observation_id if settled.settlement_completed else None
+            settled_action.settled_observation.observation_id
+            if settled_action.settlement_completed
+            else None
         ),
-        recovery_observation_id=settled.recovery_observation_id,
-        outcome=settled.outcome,
-        application_failure=settled.application_failure,
+        recovery_observation_id=settled_action.recovery_observation_id,
+        outcome=settled_action.outcome,
+        application_failure=settled_action.application_failure,
     )
 
 
-def unsettled_application_failure_reason(settled: SettledAction) -> str:
+def unsettled_application_failure_reason(settled_action: SettledAction) -> str:
     """Describe an application exit that prevented outcome capture."""
-    if settled.application_failure is not None:
-        return settled.application_failure.summary
+    if settled_action.application_failure is not None:
+        return settled_action.application_failure.summary
     return "The application exited before outcome evidence could be captured."
 
 
 def application_terminal_conclusion(
-    settled: SettledAction,
+    settled_action: SettledAction,
 ) -> tuple[AgentTerminalReason, str] | None:
     """Return the terminal and reason for a post-dispatch application exit."""
-    terminal = settled.terminal
+    terminal = settled_action.terminal
     if terminal is None:
         return None
     if terminal not in {
@@ -128,8 +130,8 @@ def application_terminal_conclusion(
     }:
         return None
     reason = (
-        settled.application_failure.summary
-        if settled.application_failure is not None
+        settled_action.application_failure.summary
+        if settled_action.application_failure is not None
         else application_terminal_reason(terminal, initial=False)
     )
     return terminal, reason
@@ -187,7 +189,7 @@ def settle_dispatched_action(
             sleep,
         )
         after = settlement.observation
-        if not settlement.settled:
+        if not settlement.is_settled:
             executor.discard_text_delivery(authorization)
             verified_before_focus = None
             after_focus = None
@@ -200,7 +202,7 @@ def settle_dispatched_action(
             authorization,
             receipt,
             current_observation,
-            after if settlement.settled else None,
+            after if settlement.is_settled else None,
             before_focus=verified_before_focus,
             after_focus=after_focus,
             text_delivery=text_delivery,
@@ -215,7 +217,7 @@ def settle_dispatched_action(
             observation=recovered,
             settled_observation=after,
             settlement_observation_ids=settlement.observation_ids,
-            settlement_completed=settlement.settled,
+            settlement_completed=settlement.is_settled,
             terminal=terminal,
             recovery_observation_id=recovery_id,
             outcome=outcome,

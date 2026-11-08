@@ -51,12 +51,12 @@ class RemoteTemporaryFileReference(BaseModel):
 
     @model_validator(mode="after")
     def validate_owned_path(self) -> RemoteTemporaryFileReference:
-        expected = remote_temporary_path(
+        expected_remote_path = remote_temporary_path(
             self.platform,
             self.application_id,
             self.namespace_id,
             self.name,
         )
-        if self.remote_path != expected:
+        if self.remote_path != expected_remote_path:
             raise ValueError("A remote temporary-file path must match its run namespace.")
         return self

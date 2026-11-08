@@ -136,8 +136,8 @@ class AndroidInteractionBackend:
         try:
             driver.press_keycode(AndroidKey.A, metastate=ANDROID_SELECT_ALL_META_STATE)
             driver.press_keycode(AndroidKey.DELETE)
-            remaining = element.get_attribute("text")
-            if remaining:
+            remaining_text = element.get_attribute("text")
+            if remaining_text:
                 element.clear()
         except Exception:  # noqa: BLE001 - platform fallback owns driver failures
             element.clear()

@@ -118,9 +118,9 @@ class PlanningFocusDecliningSource(Protocol):
 
 def source_accepts_planning_focus(source: object) -> bool:
     """Report whether the active source can use an isolated focus view."""
-    resolved = first_source_of(source, PlanningFocusDecliningSource)
-    if resolved is not None:
-        return not resolved.declines_planning_focus()
+    decision_source = first_source_of(source, PlanningFocusDecliningSource)
+    if decision_source is not None:
+        return not decision_source.declines_planning_focus()
     return True
 
 
@@ -129,9 +129,9 @@ def resolve_action_verification_context(
     default_request: PlanningRequest,
 ) -> ActionVerificationContext:
     """Use delegated verification evidence when the active source supplies it."""
-    resolved = first_source_of(source, ActionVerificationContextSource)
-    if resolved is not None:
-        return resolved.action_verification_context(default_request)
+    decision_source = first_source_of(source, ActionVerificationContextSource)
+    if decision_source is not None:
+        return decision_source.action_verification_context(default_request)
     return ActionVerificationContext(request=default_request)
 
 

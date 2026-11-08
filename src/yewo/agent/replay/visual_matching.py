@@ -136,7 +136,7 @@ def build_target_visual_descriptor(
 def match_target_neighborhood(
     png: bytes,
     descriptor: TargetVisualDescriptor,
-    stored: GroundedPoint,
+    stored_point: GroundedPoint,
     width_px: int,
     height_px: int,
 ) -> TargetMatch | None:
@@ -145,10 +145,10 @@ def match_target_neighborhood(
     if image is None or image.size != (width_px, height_px):
         return None
     reference_hash = imagehash.hex_to_hash(descriptor.hash_value)
-    stored_distance = _patch_distance(image, stored.pixel, descriptor, reference_hash)
+    stored_distance = _patch_distance(image, stored_point.pixel, descriptor, reference_hash)
     if stored_distance is not None and stored_distance <= descriptor.maximum_hash_distance:
-        return TargetMatch(stored, stored_distance, None, False)
-    candidates = _target_candidates(image, stored.pixel, descriptor, reference_hash)
+        return TargetMatch(stored_point, stored_distance, None, False)
+    candidates = _target_candidates(image, stored_point.pixel, descriptor, reference_hash)
     if not candidates:
         return None
     best_distance, best_point = candidates[0]
@@ -175,7 +175,7 @@ def match_target_neighborhood(
         ),
         best_distance,
         runner_up,
-        best_point != stored.pixel,
+        best_point != stored_point.pixel,
     )
 
 
@@ -206,11 +206,11 @@ def _match_ratio(
     stable_tiles: tuple[VisualTileFingerprint, ...],
     maximum_distance: int,
 ) -> float:
-    matched = sum(
+    matching_count = sum(
         hashes[tile.tile_index] - imagehash.hex_to_hash(tile.hash_value) <= maximum_distance
         for tile in stable_tiles
     )
-    return matched / len(stable_tiles)
+    return matching_count / len(stable_tiles)
 
 
 def _tile_hashes(

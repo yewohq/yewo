@@ -59,18 +59,18 @@ def environment_step_refusal_reason(
 
 def compile_setup_contract(
     evidence: EvidenceDocument,
-    selected: tuple[EvidenceStep, ...],
+    selected_steps: tuple[EvidenceStep, ...],
     device: EvidenceDeviceIdentity,
 ) -> ProcedureSetupContract:
     """Build one canonical setup contract from validated source evidence."""
     runtime_permissions = tuple(
         RuntimePermissionSetupRequirement(
-            trigger_source_step=selected[index - 1].step,
+            trigger_source_step=selected_steps[index - 1].step,
             interaction_source_step=step.step,
             prompt_state_id=step.source_state_id,
             return_state_id=step.destination_state_id,
         )
-        for index, step in enumerate(selected)
+        for index, step in enumerate(selected_steps)
         if step.kind is EvidenceStepKind.ENVIRONMENT
         and index > 0
         and step.destination_state_id is not None

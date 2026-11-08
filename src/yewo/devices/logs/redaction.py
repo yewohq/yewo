@@ -37,9 +37,9 @@ class DeclaredValueDeviceLogScrubber:
             raise ValueError("A device-log sensitive value cannot be empty.")
         if len(sensitive_values) != len(set(sensitive_values)):
             raise ValueError("A device-log sensitive value cannot be repeated.")
-        ordered = sorted(sensitive_values, key=lambda value: (-len(value), value))
+        ordered_values = sorted(sensitive_values, key=lambda value: (-len(value), value))
         self._pattern = (
-            re.compile("|".join(re.escape(value) for value in ordered)) if ordered else None
+            re.compile("|".join(re.escape(value) for value in ordered_values)) if ordered_values else None
         )
 
     def __call__(self, text: str) -> DeviceLogRedactionResult:

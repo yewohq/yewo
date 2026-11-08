@@ -25,12 +25,12 @@ def _device() -> DeviceDescriptor:
 def test_android_presence_reads_installed_packages() -> None:
     runner = CommandRunnerStub(stdout="package:com.example.app\npackage:com.android.settings\n")
 
-    installed = AndroidApplicationPresence(AdbClient(runner)).is_installed(
+    is_installed = AndroidApplicationPresence(AdbClient(runner)).is_installed(
         _device(),
         "com.example.app",
     )
 
-    assert installed is True
+    assert is_installed is True
     assert runner.calls == [
         (
             (

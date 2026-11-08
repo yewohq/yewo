@@ -239,12 +239,12 @@ class ApplicationLifecycle:
 
     def _wait_until(
         self,
-        accepted: Callable[[ApplicationActivityEvidence], bool],
+        is_acceptable: Callable[[ApplicationActivityEvidence], bool],
     ) -> ApplicationActivityEvidence:
         deadline = self._clock.monotonic() + self._transition_timeout_seconds
         while True:
             evidence = self.activity_evidence()
-            if accepted(evidence):
+            if is_acceptable(evidence):
                 return evidence
             remaining_seconds = deadline - self._clock.monotonic()
             if remaining_seconds <= 0:

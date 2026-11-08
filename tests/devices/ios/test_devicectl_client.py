@@ -40,12 +40,12 @@ class DevicectlRunnerStub:
 def test_devicectl_reports_matching_application() -> None:
     runner = DevicectlRunnerStub({"result": {"apps": [{"bundleIdentifier": "com.example.app"}]}})
 
-    installed = DevicectlClient(runner).is_application_installed(
+    is_installed = DevicectlClient(runner).is_application_installed(
         "PHYSICAL-ID",
         "com.example.app",
     )
 
-    assert installed is True
+    assert is_installed is True
     command, timeout = runner.calls[0]
     assert command[:7] == (
         "xcrun",
@@ -64,31 +64,31 @@ def test_devicectl_reports_matching_application() -> None:
 def test_devicectl_reports_absent_application_from_recognized_empty_result() -> None:
     runner = DevicectlRunnerStub({"result": {"apps": []}})
 
-    installed = DevicectlClient(runner).is_application_installed(
+    is_installed = DevicectlClient(runner).is_application_installed(
         "PHYSICAL-ID",
         "com.example.app",
     )
 
-    assert installed is False
+    assert is_installed is False
 
 
 def test_devicectl_returns_unknown_for_unrecognized_schema() -> None:
     runner = DevicectlRunnerStub({"result": {"applications": []}})
 
-    installed = DevicectlClient(runner).is_application_installed(
+    is_installed = DevicectlClient(runner).is_application_installed(
         "PHYSICAL-ID",
         "com.example.app",
     )
 
-    assert installed is None
+    assert is_installed is None
 
 
 def test_devicectl_returns_unknown_when_command_fails() -> None:
     runner = DevicectlRunnerStub({}, returncode=1)
 
-    installed = DevicectlClient(runner).is_application_installed(
+    is_installed = DevicectlClient(runner).is_application_installed(
         "PHYSICAL-ID",
         "com.example.app",
     )
 
-    assert installed is None
+    assert is_installed is None

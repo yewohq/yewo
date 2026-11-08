@@ -21,7 +21,7 @@ class _DriverStub:
         self.capabilities: dict[str, object] = {"platformName": "Android"}
         self.quit_calls = 0
         self.quit_error: Exception | None = None
-        self.installed = True
+        self.is_installed = True
         self.removed: list[str] = []
 
     def quit(self) -> None:
@@ -33,7 +33,7 @@ class _DriverStub:
 
     def is_app_installed(self, application_id: str) -> bool:
         del application_id
-        return self.installed
+        return self.is_installed
 
     def remove_app(self, application_id: str) -> object:
         self.removed.append(application_id)

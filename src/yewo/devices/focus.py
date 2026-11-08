@@ -197,18 +197,18 @@ class FocusService:
 
     def focused_field(self) -> TextElement:
         """Return the active editable field without changing focus."""
-        active = _active_element(self._driver)
-        if active is not None and _boolean_attribute(active.get_attribute("focused")) is True:
-            return active
+        active_element = _active_element(self._driver)
+        if active_element is not None and _boolean_attribute(active_element.get_attribute("focused")) is True:
+            return active_element
         focused = _focused_elements(self._driver)
         if focused:
             return focused[0]
         if (
-            active is not None
-            and _boolean_attribute(active.get_attribute("focused")) is not False
+            active_element is not None
+            and _boolean_attribute(active_element.get_attribute("focused")) is not False
             and self._keyboard_visible() is True
         ):
-            return active
+            return active_element
         raise DeviceTargetRejectedError(
             "No editable field has verified focus. Focus a field before editing its text."
         )
@@ -345,10 +345,10 @@ def _unique_target_element(
 def _boolean_attribute(value: str | None) -> bool | None:
     if value is None:
         return None
-    normalized = value.strip().lower()
-    if normalized in {"true", "1"}:
+    normalized_value = value.strip().lower()
+    if normalized_value in {"true", "1"}:
         return True
-    if normalized in {"false", "0"}:
+    if normalized_value in {"false", "0"}:
         return False
     return None
 

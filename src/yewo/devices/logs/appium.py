@@ -46,15 +46,15 @@ class AppiumDeviceLogReader:
             raise DeviceLogCaptureError("Appium returned invalid device-log sources.")
         if not all(isinstance(value, str) and value for value in values):
             raise DeviceLogCaptureError("Appium returned invalid device-log sources.")
-        available = frozenset(values)
-        self._available_log_types = available
-        return available
+        available_log_types = frozenset(values)
+        self._available_log_types = available_log_types
+        return available_log_types
 
     def begin(self, log_type: str) -> DeviceLogBatch | None:
-        available = self._available_log_types
-        if available is None:
-            available = self.available_log_types()
-        return self.read(log_type) if log_type in available else None
+        known_log_types = self._available_log_types
+        if known_log_types is None:
+            known_log_types = self.available_log_types()
+        return self.read(log_type) if log_type in known_log_types else None
 
     def read(self, log_type: str) -> DeviceLogBatch:
         pending_batch = self._pending_batches.get(log_type)

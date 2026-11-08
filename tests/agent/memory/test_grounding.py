@@ -264,7 +264,7 @@ def test_reobserved_transition_enriches_legacy_memory_with_exact_grounding() -> 
         verified_objective_ids=frozenset(),
         source_run_id="run_2",
         updated_at=datetime(2026, 10, 31, 1, tzinfo=timezone.utc),
-        existing=legacy_memory,
+        existing_memory=legacy_memory,
     )
 
     assert promotion.memory is not None

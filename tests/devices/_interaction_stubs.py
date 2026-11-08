@@ -81,7 +81,7 @@ class DriverStub:
         self.hide_keyboard_calls = 0
         self.back_closes_keyboard = True
         self.keyboard = False
-        self.installed = True
+        self.is_installed = True
         self.state = 4
         self.lifecycle: list[str] = []
         self.current_package: str | None = "com.example.app"
@@ -151,7 +151,7 @@ class DriverStub:
 
     def is_app_installed(self, application_id: str) -> bool:
         del application_id
-        return self.installed
+        return self.is_installed
 
     def query_app_state(self, application_id: str) -> int:
         del application_id

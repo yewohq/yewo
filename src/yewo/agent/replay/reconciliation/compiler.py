@@ -76,27 +76,27 @@ def compile_replay_procedure(
         )
 
     by_index = {step.step: step for step in evidence.steps}
-    selected = tuple(by_index[index] for index in response.procedure)
+    selected_steps = tuple(by_index[index] for index in response.procedure)
     reasons = (
-        *_check_launch(evidence, selected),
-        *_check_required_work(evidence, response, selected),
-        *_check_reusable(evidence, selected),
+        *_check_launch(evidence, selected_steps),
+        *_check_required_work(evidence, response, selected_steps),
+        *_check_reusable(evidence, selected_steps),
         *_check_coverage(evidence, response),
-        *known_action_risk_reasons(evidence, selected, memory),
+        *known_action_risk_reasons(evidence, selected_steps, memory),
     )
     if reasons:
         return _refusal(evidence, response, reasons)
 
-    warnings = _warnings(evidence, selected)
+    warnings = _warnings(evidence, selected_steps)
     compiled_steps = tuple(
         _compile_step(
             index,
             step,
             response,
-            selected[index - 1] if index > 0 else None,
-            selected[index + 1].source_state_id if index + 1 < len(selected) else None,
+            selected_steps[index - 1] if index > 0 else None,
+            selected_steps[index + 1].source_state_id if index + 1 < len(selected_steps) else None,
         )
-        for index, step in enumerate(selected)
+        for index, step in enumerate(selected_steps)
     )
     return ReplayProcedure(
         visual_policy_version=1,
@@ -105,8 +105,8 @@ def compile_replay_procedure(
         evidence_id=evidence.evidence_id,
         source_run_id=evidence.run.run_id,
         application=evidence.run.application,
-        setup_contract=compile_setup_contract(evidence, selected, device),
-        source_step_ids=tuple(step.source_step_id for step in selected),
+        setup_contract=compile_setup_contract(evidence, selected_steps, device),
+        source_step_ids=tuple(step.source_step_id for step in selected_steps),
         steps=compiled_steps,
         warnings=warnings,
     )
@@ -138,10 +138,10 @@ def _check_selection(
     evidence: EvidenceDocument,
     response: ReconcilerResponse,
 ) -> tuple[CompilerReason, ...]:
-    available = {step.step for step in evidence.steps}
+    available_step_numbers = {step.step for step in evidence.steps}
     reasons: list[CompilerReason] = []
     for index in response.procedure:
-        if index not in available:
+        if index not in available_step_numbers:
             reasons.append(
                 CompilerReason(
                     check=CompilerCheck.SELECTION_ONLY,
@@ -171,16 +171,16 @@ def _check_selection(
 
 def _check_launch(
     evidence: EvidenceDocument,
-    selected: tuple[EvidenceStep, ...],
+    selected_steps: tuple[EvidenceStep, ...],
 ) -> tuple[CompilerReason, ...]:
-    if not selected:
+    if not selected_steps:
         return (
             CompilerReason(
                 check=CompilerCheck.STARTS_AT_LAUNCH,
                 reason="A replay procedure must select at least one source step.",
             ),
         )
-    first = selected[0]
+    first = selected_steps[0]
     if first.source_state_id == evidence.run.launch_state_id:
         return ()
     return (
@@ -195,9 +195,9 @@ def _check_launch(
 def _check_required_work(
     evidence: EvidenceDocument,
     response: ReconcilerResponse,
-    selected: tuple[EvidenceStep, ...],
+    selected_steps: tuple[EvidenceStep, ...],
 ) -> tuple[CompilerReason, ...]:
-    selected_indexes = {step.step for step in selected}
+    selected_indexes = {step.step for step in selected_steps}
     reasons: list[CompilerReason] = []
     for step in evidence.steps:
         if not _is_required_source_step(step) or step.step in selected_indexes:
@@ -228,29 +228,29 @@ def _is_required_source_step(step: EvidenceStep) -> bool:
 
 
 def _has_selected_correction(
-    missing: EvidenceStep,
+    missing_step: EvidenceStep,
     evidence: EvidenceDocument,
     response: ReconcilerResponse,
     selected_indexes: set[int],
 ) -> bool:
-    identity = missing.control.identity_key
+    identity = missing_step.control.identity_key
     if identity is None:
         return False
     by_index = {step.step: step for step in evidence.steps}
     for decision in response.decisions:
-        if missing.step not in decision.drop:
+        if missing_step.step not in decision.drop:
             continue
         for kept_index in decision.keep:
             kept = by_index.get(kept_index)
             if (
                 kept_index in selected_indexes
                 and kept is not None
-                and kept.step > missing.step
+                and kept.step > missing_step.step
                 and not any(
-                    missing.step < selected_index < kept.step for selected_index in selected_indexes
+                    missing_step.step < selected_index < kept.step for selected_index in selected_indexes
                 )
                 and kept.control.identity_key == identity
-                and kept.proposal.action == missing.proposal.action
+                and kept.proposal.action == missing_step.proposal.action
                 and kept.result in REUSABLE_EVIDENCE_RESULTS
             ):
                 return True
@@ -259,21 +259,21 @@ def _has_selected_correction(
 
 def _check_reusable(
     evidence: EvidenceDocument,
-    selected: tuple[EvidenceStep, ...],
+    selected_steps: tuple[EvidenceStep, ...],
 ) -> tuple[CompilerReason, ...]:
     reasons = [
         reason
-        for index, step in enumerate(selected)
+        for index, step in enumerate(selected_steps)
         for reason in _step_reuse_reasons(
             evidence,
             step,
-            selected[index - 1] if index > 0 else None,
+            selected_steps[index - 1] if index > 0 else None,
         )
     ]
-    final_reason = _final_expectation_reason(selected)
+    final_reason = _final_expectation_reason(selected_steps)
     if final_reason is not None:
         reasons.append(final_reason)
-    for previous, current in zip(selected, selected[1:], strict=False):
+    for previous, current in zip(selected_steps, selected_steps[1:], strict=False):
         context_reason = _disconnected_context_reason(evidence, previous, current)
         if context_reason is not None:
             reasons.append(context_reason)
@@ -315,11 +315,11 @@ def _step_reuse_reasons(
 
 
 def _final_expectation_reason(
-    selected: tuple[EvidenceStep, ...],
+    selected_steps: tuple[EvidenceStep, ...],
 ) -> CompilerReason | None:
-    if not selected:
+    if not selected_steps:
         return None
-    final_step = selected[-1]
+    final_step = selected_steps[-1]
     if final_step.destination_state_id is not None or final_step.signals:
         return None
     return CompilerReason(
@@ -362,7 +362,7 @@ def _check_coverage(
     evidence: EvidenceDocument,
     response: ReconcilerResponse,
 ) -> tuple[CompilerReason, ...]:
-    selected = set(response.procedure)
+    selected_indexes = set(response.procedure)
     expected_conditions = set(range(len(evidence.task.completion_conditions)))
     reasons: list[CompilerReason] = []
     if response.completion_conditions != evidence.task.completion_conditions:
@@ -372,13 +372,13 @@ def _check_coverage(
                 reason="Reconciler completion conditions must match the compiler evidence.",
             )
         )
-    missing = sorted(expected_conditions - set(response.milestones))
+    missing_conditions = sorted(expected_conditions - set(response.milestones))
     extra = sorted(set(response.milestones) - expected_conditions)
-    if missing:
+    if missing_conditions:
         reasons.append(
             CompilerReason(
                 check=CompilerCheck.COVERS_TASK,
-                reason=f"Completion conditions without milestones: {missing}.",
+                reason=f"Completion conditions without milestones: {missing_conditions}.",
             )
         )
     if extra:
@@ -389,7 +389,7 @@ def _check_coverage(
             )
         )
     for condition, source_step in response.milestones.items():
-        if source_step not in selected:
+        if source_step not in selected_indexes:
             reasons.append(
                 CompilerReason(
                     check=CompilerCheck.COVERS_TASK,
@@ -402,10 +402,10 @@ def _check_coverage(
 
 def _warnings(
     evidence: EvidenceDocument,
-    selected: tuple[EvidenceStep, ...],
+    selected_steps: tuple[EvidenceStep, ...],
 ) -> tuple[CompilationWarning, ...]:
     warnings: list[CompilationWarning] = []
-    for step in selected:
+    for step in selected_steps:
         if step.result in {
             EvidenceResult.AMBIGUOUS,
             EvidenceResult.NOT_CAPTURED,
@@ -419,7 +419,7 @@ def _warnings(
                     ),
                 )
             )
-    for previous, current in zip(selected, selected[1:], strict=False):
+    for previous, current in zip(selected_steps, selected_steps[1:], strict=False):
         if previous.destination_state_id is None:
             warnings.append(
                 CompilationWarning(

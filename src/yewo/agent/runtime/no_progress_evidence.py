@@ -46,13 +46,13 @@ class NoProgressEvidence:
         maximum_facts: int,
     ) -> tuple[PlanningScreenFact, ...]:
         """Return current-screen facts not duplicated by recent history."""
-        matched = tuple(
+        matching_entries = tuple(
             fact
             for screen, fact in self._facts
             if self._matches(observation, screen)
             if fact.is_durable_constraint or fact.origin_proposal_id not in recent_proposal_ids
         )
-        return matched[-maximum_facts:]
+        return matching_entries[-maximum_facts:]
 
     def record_fact(
         self,

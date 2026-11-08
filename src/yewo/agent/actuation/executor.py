@@ -199,8 +199,8 @@ class ActionExecutor:
                 self._device.focus(target.x, target.y)
             expected_text = self._resolve_text(action.text)
             context = self._device.focused_field_reading().field_context
-            matched = self._device.type_focused_text(expected_text)
-            return _delivery_evidence(matched, context)
+            is_text_match = self._device.type_focused_text(expected_text)
+            return _delivery_evidence(is_text_match, context)
         elif action.action is ActionKind.CLEAR:
             context = self._device.focused_field_reading().field_context
             return _clear_delivery_evidence(self._device.clear_focused_text(), context)
@@ -264,7 +264,7 @@ class ActionExecutor:
 
 
 def _delivery_evidence(
-    matched: bool | None,
+    is_text_match: bool | None,
     context: TextFieldContext | None,
 ) -> TextDeliveryEvidence:
     context = context or _unknown_text_field_context()
@@ -276,21 +276,21 @@ def _delivery_evidence(
             field_type=context.field_type,
             context_source=context.source,
         )
-    return _matched_delivery_evidence(matched, context)
+    return _matched_delivery_evidence(is_text_match, context)
 
 
 def _clear_delivery_evidence(
-    matched: bool | None,
+    is_text_match: bool | None,
     context: TextFieldContext | None,
 ) -> TextDeliveryEvidence:
-    return _matched_delivery_evidence(matched, context or _unknown_text_field_context())
+    return _matched_delivery_evidence(is_text_match, context or _unknown_text_field_context())
 
 
 def _matched_delivery_evidence(
-    matched: bool | None,
+    is_text_match: bool | None,
     context: TextFieldContext,
 ) -> TextDeliveryEvidence:
-    if matched is None:
+    if is_text_match is None:
         return TextDeliveryEvidence(
             status=TextDeliveryStatus.UNAVAILABLE,
             reason=TextDeliveryReason.PLATFORM_EVIDENCE_UNAVAILABLE,
@@ -299,8 +299,8 @@ def _matched_delivery_evidence(
             context_source=context.source,
         )
     return TextDeliveryEvidence(
-        status=TextDeliveryStatus.MATCHED if matched else TextDeliveryStatus.NOT_LANDED,
-        reason=(TextDeliveryReason.VALUE_MATCHED if matched else TextDeliveryReason.VALUE_MISMATCH),
+        status=TextDeliveryStatus.MATCHED if is_text_match else TextDeliveryStatus.NOT_LANDED,
+        reason=(TextDeliveryReason.VALUE_MATCHED if is_text_match else TextDeliveryReason.VALUE_MISMATCH),
         is_secure=context.is_secure,
         field_type=context.field_type,
         context_source=context.source,

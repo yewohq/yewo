@@ -163,12 +163,12 @@ def classify_discovery_result(
     required = {
         objective.objective_id for objective in result.request.objectives if objective.required
     }
-    supported = {
+    supported_states = {
         entry.objective_id
         for entry in result.coverage.entries
         if entry.state is DiscoveryObjectiveState.SUPPORTED
     }
-    if required.issubset(supported):
+    if required.issubset(supported_states):
         return RunTerminalCategory.COMPLETED
     if (
         not require_reusable_evidence

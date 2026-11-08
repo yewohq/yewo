@@ -224,21 +224,21 @@ def remaining_policy_after_replay(
 ) -> AgentModePolicy | None:
     """Return the shared budget after compiled-procedure replay."""
     if procedure_replay is not None:
-        remaining = remaining_mode_policy(
+        remaining_policy = remaining_mode_policy(
             policy,
             procedure_replay.agent_result.usage,
             elapsed_seconds,
         )
-        if remaining is None or remaining.maximum_model_requests is None:
-            return remaining
+        if remaining_policy is None or remaining_policy.maximum_model_requests is None:
+            return remaining_policy
         audit_calls = (
             procedure_replay.verification.model_call_count
             if procedure_replay.verification is not None
             else 0
         )
-        maximum_model_requests = remaining.maximum_model_requests - audit_calls
+        maximum_model_requests = remaining_policy.maximum_model_requests - audit_calls
         return (
-            remaining.model_copy(update={"maximum_model_requests": maximum_model_requests})
+            remaining_policy.model_copy(update={"maximum_model_requests": maximum_model_requests})
             if maximum_model_requests > 0
             else None
         )

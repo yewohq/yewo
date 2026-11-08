@@ -333,14 +333,14 @@ def planning_history_summary(entries: tuple[PlanningHistoryEntry, ...]) -> Plann
     for entry in entries:
         context = _compact_history_context(entry)
         key = json.dumps(context, sort_keys=True, separators=(",", ":"))
-        existing = grouped.get(key)
-        if existing is None:
+        existing_entry = grouped.get(key)
+        if existing_entry is None:
             grouped[key] = {**context, "count": 1}
         else:
-            count = existing["count"]
+            count = existing_entry["count"]
             if not isinstance(count, int):
                 raise TypeError("A compact history count must be an integer.")
-            existing["count"] = count + 1
+            existing_entry["count"] = count + 1
     selected_newest_first: list[dict[str, object]] = []
     grouped_summaries = list(grouped.values())
     for summary in reversed(grouped_summaries[-EARLIER_HISTORY_SUMMARY_LIMIT:]):

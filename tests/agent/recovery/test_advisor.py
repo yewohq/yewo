@@ -93,10 +93,10 @@ def _failed_step(
     *,
     literal: str = "failed-secret",
 ) -> AgentStep:
-    settled = observation("obs_settled", "2222222222222222", offset_seconds=1)
+    settled_observation = observation("obs_settled", "2222222222222222", offset_seconds=1)
     result = agent_result(
         before,
-        settled,
+        settled_observation,
         terminal=AgentTerminalReason.APPLICATION_EXITED,
         action=ActionKind.TYPE,
     )

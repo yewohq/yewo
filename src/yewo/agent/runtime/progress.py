@@ -102,30 +102,30 @@ class RunProgressLedger:
     def progress_context(self, base: TaskProgressContext | None) -> TaskProgressContext:
         """Return compact ledger state for planner and verifier prompts."""
         context = base or TaskProgressContext()
-        completed = tuple(
+        completed_items = tuple(
             dict.fromkeys(
                 item
                 for item in (*context.completed_work_items, *self._completed_work_items)
                 if item in self._work_items
             )
         )
-        remaining = tuple(item for item in self._work_items if item not in completed)
+        remaining_items = tuple(item for item in self._work_items if item not in completed_items)
         routes = tuple((*context.route_attempts, *self._route_attempts)[-100:])
         return context.model_copy(
             update={
                 "current_progress": tuple(
                     dict.fromkeys((*context.current_progress, *self._current_progress))
                 )[-100:],
-                "completed_work_items": completed,
-                "remaining_work": remaining,
+                "completed_work_items": completed_items,
+                "remaining_work": remaining_items,
                 "route_attempts": routes,
             }
         )
 
     def remaining_work(self) -> tuple[str, ...]:
         """Return canonical task work that has not been completed."""
-        completed = set(self._completed_work_items)
-        return tuple(item for item in self._work_items if item not in completed)
+        completed_items = set(self._completed_work_items)
+        return tuple(item for item in self._work_items if item not in completed_items)
 
     def record_assessment(
         self,

@@ -251,7 +251,7 @@ def _promote_replay_graph(
             verified_objective_ids=None,
             source_run_id=source_run_id,
             updated_at=applied_at,
-            existing=current,
+            existing_memory=current,
         )
     except (ValidationError, ValueError):
         return current, MemoryWritebackSkip(

@@ -40,7 +40,7 @@ def forward_rejoin_index(
             state_id,
             evidence,
             screenshot_loader,
-        ).accepted
+        ).is_accepted
     )
     if not matched_indexes:
         return None
@@ -66,13 +66,13 @@ def repair_target_matches(
         screenshot_loader,
     )
     if not requires_exact_content_match or (
-        not source_match.accepted and source_match.reason != AMBIGUOUS_SOURCE_STATE
+        not source_match.is_accepted and source_match.reason != AMBIGUOUS_SOURCE_STATE
     ):
-        return trace_repair_target_match(source_match.accepted, source_match.reason)
-    accepted = repair_state_matches_observation(
+        return trace_repair_target_match(source_match.is_accepted, source_match.reason)
+    is_accepted = repair_state_matches_observation(
         observation,
         evidence.states[target.expected_state_id],
         evidence.state_grouping_maximum_phash_distance,
         screenshot_loader,
     )
-    return trace_repair_target_match(accepted, "exact_content_match")
+    return trace_repair_target_match(is_accepted, "exact_content_match")

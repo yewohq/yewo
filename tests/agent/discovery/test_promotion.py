@@ -243,7 +243,7 @@ def test_unsuccessful_attempt_retention_keeps_only_the_latest_evidence() -> None
         verified_objective_ids=frozenset(),
         source_run_id="run_2",
         updated_at=datetime(2026, 11, 1, tzinfo=timezone.utc),
-        existing=first_promotion.memory,
+        existing_memory=first_promotion.memory,
     )
 
     assert second_promotion.memory is not None

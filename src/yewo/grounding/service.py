@@ -112,22 +112,22 @@ class GroundingService:
         candidate = request.screen_analysis_candidate
         if candidate is None or not _is_direct_analysis_region_eligible(request):
             return None
-        normalized = NormalizedPoint(
+        normalized_point = NormalizedPoint(
             x=(candidate.region.left + candidate.region.right) / 2,
             y=(candidate.region.top + candidate.region.bottom) / 2,
         )
         location = GroundedPoint(
-            normalized=normalized,
+            normalized=normalized_point,
             pixel=PixelPoint(
-                x=round(normalized.x * (request.screenshot.width_px - 1)),
-                y=round(normalized.y * (request.screenshot.height_px - 1)),
+                x=round(normalized_point.x * (request.screenshot.width_px - 1)),
+                y=round(normalized_point.y * (request.screenshot.height_px - 1)),
             ),
         )
-        validated = self._validate_excluded_regions(
+        validated_target = self._validate_excluded_regions(
             DecodedGrounding(GroundingDisposition.ACCEPTED, location=location),
             request,
         )
-        if validated.disposition is not GroundingDisposition.ACCEPTED:
+        if validated_target.disposition is not GroundingDisposition.ACCEPTED:
             return None
         return GroundingResult(
             grounding_id=request.grounding_id,
@@ -149,9 +149,9 @@ class GroundingService:
         model_request = self._build_model_request(request, candidate)
         response = self._model_client.complete(model_request)
         decoded = self._decode_response(response, request, candidate)
-        validated = self._validate_correction_distance(decoded, request)
-        validated = self._validate_excluded_regions(validated, request)
-        return self._build_result(request, response, validated)
+        validated_target = self._validate_correction_distance(decoded, request)
+        validated_target = self._validate_excluded_regions(validated_target, request)
+        return self._build_result(request, response, validated_target)
 
     def _build_model_request(
         self,

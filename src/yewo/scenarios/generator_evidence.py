@@ -14,7 +14,7 @@ def requirement_surface_ids(
     """Return candidate surfaces that contain accepted requirement evidence."""
     observations = set(requirement.observation_ids)
     indexes = set(requirement.procedure_step_indexes)
-    matched = tuple(
+    matching_surface_ids = tuple(
         surface.surface_id
         for surface in suite.surfaces
         if surface.surface_id in candidate_ids
@@ -23,7 +23,7 @@ def requirement_surface_ids(
             or indexes.intersection(surface.provenance.procedure_step_indexes)
         )
     )
-    return matched or candidate_ids
+    return matching_surface_ids or candidate_ids
 
 
 def interpreted_surface_ids(

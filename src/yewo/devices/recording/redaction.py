@@ -164,14 +164,14 @@ class FfmpegScreenRecordingRedactor:
                 output_stream,
                 metadata,
             )
-            completed = self._command_runner(
+            encode_result = self._command_runner(
                 command,
                 capture_output=True,
                 text=True,
                 timeout=REDACTION_TIMEOUT_SECONDS,
                 check=False,
             )
-            if completed.returncode:
+            if encode_result.returncode:
                 raise ScreenRecordingError("FFmpeg could not redact the screen recording.")
         if not _is_mp4(destination):
             raise ScreenRecordingError("FFmpeg produced an invalid redacted recording.")

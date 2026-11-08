@@ -94,19 +94,19 @@ def _parse_attached_devices(output: str) -> tuple[DeviceDescriptor, ...]:
             continue
         if not in_device_section:
             continue
-        matched = _ATTACHED_DEVICE.match(stripped)
-        if matched:
-            target_id = matched["target_id"]
+        device_match = _ATTACHED_DEVICE.match(stripped)
+        if device_match:
+            target_id = device_match["target_id"]
             devices.append(
                 DeviceDescriptor(
                     platform=DevicePlatform.IOS,
                     target_id=target_id,
                     connection_id=target_id,
-                    display_name=matched["name"],
+                    display_name=device_match["name"],
                     kind=DeviceKind.PHYSICAL,
                     readiness=DeviceReadiness.READY,
                     native_state="connected",
-                    operating_system_version=matched["release"],
+                    operating_system_version=device_match["release"],
                 )
             )
     return tuple(devices)

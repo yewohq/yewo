@@ -461,7 +461,7 @@ class DeviceAgent:
             dispatched_actions += 1
             self._recovery.credit_dispatched_action()
             dispatch_timing.trace_settlement_start(step_index, timed_dispatch, self._monotonic())
-            settled = runtime_settlement.settle_dispatched_action(
+            settled_action = runtime_settlement.settle_dispatched_action(
                 self._observations,
                 self._executor,
                 self._outcome_verifier,
@@ -482,9 +482,9 @@ class DeviceAgent:
                 steps,
                 before_focus,
             )
-            after = settled.observation
-            outcome = settled.outcome
-            application_failure = settled.application_failure
+            after = settled_action.observation
+            outcome = settled_action.outcome
+            application_failure = settled_action.application_failure
             step = runtime_settlement.record_settled_action(
                 self._step_store,
                 step_index,
@@ -495,16 +495,16 @@ class DeviceAgent:
                 destination_grounding,
                 authorization,
                 receipt,
-                settled,
+                settled_action,
             )
             steps.append(step)
             if outcome is None:
                 screen_analysis.invalidate(current_observation, "application_failure")
                 runtime_narration.narrate_application_failure(step_index, application_failure)
-                reason = runtime_settlement.unsettled_application_failure_reason(settled)
+                reason = runtime_settlement.unsettled_application_failure_reason(settled_action)
                 return conclude(AgentTerminalReason.APPLICATION_EXITED, reason)
             runtime_narration.narrate_dispatched_step(
-                step_index, after, outcome, settled.recovery_observation_id, application_failure
+                step_index, after, outcome, settled_action.recovery_observation_id, application_failure
             )
             source_observation = current_observation
             screen_analysis.observe_outcome(proposal, current_observation, after, outcome)
@@ -518,11 +518,11 @@ class DeviceAgent:
             runtime_narration.narrate_no_progress_facts(new_progress_facts)
             current_observation = after
             self._recovery.observe_if_active(after, len(steps), self._monotonic)
-            terminal_conclusion = runtime_settlement.application_terminal_conclusion(settled)
+            terminal_conclusion = runtime_settlement.application_terminal_conclusion(settled_action)
             if terminal_conclusion is not None:
                 return conclude(*terminal_conclusion)
             history.append(
-                settled.planning_history_entry(proposal, target_grounding, source_observation)
+                settled_action.planning_history_entry(proposal, target_grounding, source_observation)
             )
             stop_reason, assessment_requests = recovery_stop_reason(
                 self._recovery,

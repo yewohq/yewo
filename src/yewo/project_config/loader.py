@@ -92,20 +92,20 @@ def load_nearest_yewo_project(start: Path | None = None) -> LoadedYewoProject:
 
 def select_workflows(
     project: LoadedYewoProject,
-    requested: str | None,
+    selector: str | None,
 ) -> tuple[ResolvedWorkflow, ...]:
     """Return workflows named by a comma-separated selector, preserving its order."""
-    if requested is None:
+    if selector is None:
         return project.workflows
-    names = tuple(name.strip() for name in requested.split(",") if name.strip())
+    names = tuple(name.strip() for name in selector.split(",") if name.strip())
     if not names:
         raise YewoProjectError("The workflow selector is empty.")
     workflows_by_name = {workflow.name: workflow for workflow in project.workflows}
-    missing = tuple(name for name in names if name not in workflows_by_name)
-    if missing:
-        available = ", ".join(workflows_by_name) or "unnamed"
+    unknown_workflow_names = tuple(name for name in names if name not in workflows_by_name)
+    if unknown_workflow_names:
+        available_workflow_names = ", ".join(workflows_by_name) or "unnamed"
         raise YewoProjectError(
-            f"Unknown workflow(s): {', '.join(missing)}. Available workflows: {available}."
+            f"Unknown workflow(s): {', '.join(unknown_workflow_names)}. Available workflows: {available_workflow_names}."
         )
     return tuple(workflows_by_name[name] for name in names)
 
@@ -303,12 +303,12 @@ def _resolve_values(
     listed_secrets: set[str],
     location: str,
 ) -> dict[str, ResolvedValue]:
-    missing = listed_secrets - set(declarations)
-    if missing:
+    undeclared_secret_names = listed_secrets - set(declarations)
+    if undeclared_secret_names:
         raise YewoProjectError(
-            f"{location} does not declare secret value(s): {', '.join(sorted(missing))}."
+            f"{location} does not declare secret value(s): {', '.join(sorted(undeclared_secret_names))}."
         )
-    resolved: dict[str, ResolvedValue] = {}
+    resolved_values_by_name: dict[str, ResolvedValue] = {}
     for name, declaration in declarations.items():
         spec = (
             declaration
@@ -317,7 +317,7 @@ def _resolve_values(
         )
         value = _expand_environment(name, str(spec.value), location)
         is_secret = spec.secret or name in listed_secrets
-        resolved[name] = ResolvedValue(
+        resolved_values_by_name[name] = ResolvedValue(
             name=name,
             value=value,
             secret=is_secret,
@@ -328,18 +328,18 @@ def _resolve_values(
             visible_suffix=spec.visible_suffix,
             masked_length=spec.masked_length,
         )
-    return resolved
+    return resolved_values_by_name
 
 
 def _expand_environment(name: str, value: str, location: str) -> str:
     referenced = set(_ENVIRONMENT_REFERENCE.findall(value))
-    missing = sorted(
+    unset_variable_names = sorted(
         variable for variable in referenced if not os.environ.get(variable, "").strip()
     )
-    if missing:
+    if unset_variable_names:
         raise YewoProjectError(
             f"{location}.{name} requires unset or empty environment variable(s): "
-            f"{', '.join(missing)}."
+            f"{', '.join(unset_variable_names)}."
         )
     return _ENVIRONMENT_REFERENCE.sub(lambda match: os.environ[match.group(1)], value)
 
@@ -352,10 +352,10 @@ def _validate_references(
     referenced = {
         name for text in (objective, *requirements) for name in _VALUE_REFERENCE.findall(text)
     }
-    missing = sorted(referenced - available_names)
-    if missing:
+    undeclared_value_names = sorted(referenced - available_names)
+    if undeclared_value_names:
         raise YewoProjectError(
-            "Journey text references undeclared value(s): " + ", ".join(missing) + "."
+            "Journey text references undeclared value(s): " + ", ".join(undeclared_value_names) + "."
         )
 
 
@@ -446,12 +446,12 @@ def _resolved_settings(values: dict[str, object], base_path: Path) -> ResolvedSe
 def _expand_setting_environment(value: object, location: str) -> object:
     if isinstance(value, str):
         referenced = set(_ENVIRONMENT_REFERENCE.findall(value))
-        missing = sorted(
+        unset_variable_names = sorted(
             variable for variable in referenced if not os.environ.get(variable, "").strip()
         )
-        if missing:
+        if unset_variable_names:
             raise YewoProjectError(
-                f"{location} requires unset or empty environment variable(s): {', '.join(missing)}."
+                f"{location} requires unset or empty environment variable(s): {', '.join(unset_variable_names)}."
             )
         return _ENVIRONMENT_REFERENCE.sub(lambda match: os.environ[match.group(1)], value)
     if isinstance(value, dict):

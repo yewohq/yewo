@@ -331,7 +331,7 @@ def _validate_structured_output(
     errors: tuple[dict[str, object], ...] = ()
     for candidate in _json_candidates(content):
         try:
-            validated = response_model.model_validate_json(
+            validated_response = response_model.model_validate_json(
                 candidate,
                 context=validation_context,
             )
@@ -341,7 +341,7 @@ def _validate_structured_output(
             if _has_more_specific_validation_error(candidate_errors, errors):
                 errors = candidate_errors
             continue
-        return cast(dict[str, object], validated.model_dump(mode="json")), ()
+        return cast(dict[str, object], validated_response.model_dump(mode="json")), ()
     return None, errors
 
 

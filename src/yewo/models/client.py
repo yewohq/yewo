@@ -203,7 +203,7 @@ class LiteLLMModelClient:
                     started_at,
                     started,
                 )
-                normalized = normalize_litellm_completion(
+                normalized_completion = normalize_litellm_completion(
                     provider_response,
                     response_model,
                     self._calculate_cost,
@@ -212,10 +212,10 @@ class LiteLLMModelClient:
                 response_evidence = self._artifacts.prepare_response(
                     request_id=request.request_id,
                     attempt_number=actual_attempt,
-                    disposition=normalized.disposition,
-                    text=normalized.text,
-                    reason=normalized.reason,
-                    provider_payload=normalized.provider_payload,
+                    disposition=normalized_completion.disposition,
+                    text=normalized_completion.text,
+                    reason=normalized_completion.reason,
+                    provider_payload=normalized_completion.provider_payload,
                 )
                 call = self._completed_call(
                     request,
@@ -226,30 +226,30 @@ class LiteLLMModelClient:
                     started_at,
                     latency_ms,
                     prompt_artifact,
-                    normalized,
+                    normalized_completion,
                 )
                 calls.append(self._persist_call(call, response_evidence))
                 retryable_response = (
                     response_model is not None
-                    and normalized.disposition in _RETRYABLE_RESPONSE_DISPOSITIONS
+                    and normalized_completion.disposition in _RETRYABLE_RESPONSE_DISPOSITIONS
                     and validation_attempt < validation_attempts
                 )
-                if normalized.disposition is ModelCallDisposition.REASONING_EXHAUSTED and (
+                if normalized_completion.disposition is ModelCallDisposition.REASONING_EXHAUSTED and (
                     reasoning_recovery_used or not request.retry_reasoning_exhaustion
                 ):
                     retryable_response = False
                 if retryable_response:
-                    if normalized.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
+                    if normalized_completion.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
                         reasoning_recovery_used = True
-                    corrections = correction_messages(normalized, self._scrub_input_text)
+                    corrections = correction_messages(normalized_completion, self._scrub_input_text)
                     break
                 return self._response(
                     request,
-                    normalized.disposition,
+                    normalized_completion.disposition,
                     tuple(calls),
-                    text=normalized.text,
-                    structured_output=normalized.structured_output,
-                    reason=normalized.reason,
+                    text=normalized_completion.text,
+                    structured_output=normalized_completion.structured_output,
+                    reason=normalized_completion.reason,
                 )
         raise RuntimeError("The model validation policy allowed no final response.")
 
@@ -274,11 +274,11 @@ class LiteLLMModelClient:
             return
         if request.response_contract is None or response_model is None:
             raise ModelInputError("A structured model request requires its local response model.")
-        expected = build_model_response_contract(
+        response_contract = build_model_response_contract(
             request.response_contract.name,
             response_model.model_json_schema(),
         )
-        if expected.schema_sha256 != request.response_contract.schema_sha256:
+        if response_contract.schema_sha256 != request.response_contract.schema_sha256:
             raise ModelInputError("The local response model does not match the request contract.")
 
     def _prepare_messages(
@@ -457,9 +457,9 @@ class LiteLLMModelClient:
         response_evidence: ModelResponseEvidence,
     ) -> ModelCallRecord:
         reference = self._artifacts.persist_call(call, response_evidence)
-        persisted = call.model_copy(update={"call_artifact": reference})
-        trace_model_call(persisted)
-        return persisted
+        persisted_call = call.model_copy(update={"call_artifact": reference})
+        trace_model_call(persisted_call)
+        return persisted_call
 
     def _response(
         self,
@@ -522,7 +522,7 @@ class LiteLLMModelClient:
         started_at: datetime,
         latency_ms: float,
         prompt_artifact,
-        normalized: NormalizedModelCompletion,
+        completion: NormalizedModelCompletion,
     ) -> ModelCallRecord:
         return ModelCallRecord(
             request_id=request.request_id,
@@ -531,16 +531,16 @@ class LiteLLMModelClient:
             requested_provider=profile.provider,
             requested_model=profile.model,
             requested_revision=profile.revision,
-            served_model=normalized.served_model,
-            upstream_provider=normalized.upstream_provider,
-            provider_request_id=normalized.provider_request_id,
+            served_model=completion.served_model,
+            upstream_provider=completion.upstream_provider,
+            provider_request_id=completion.provider_request_id,
             attempt_number=attempt_number,
             validation_attempt_number=validation_attempt_number,
             provider_attempt_number=provider_attempt_number,
             started_at=started_at,
             latency_ms=latency_ms,
-            finish_reason=normalized.finish_reason,
-            disposition=normalized.disposition,
-            usage=normalized.usage,
+            finish_reason=completion.finish_reason,
+            disposition=completion.disposition,
+            usage=completion.usage,
             prompt_artifact=prompt_artifact,
         )

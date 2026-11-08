@@ -328,8 +328,8 @@ class EvidenceDocument(BaseModel):
         return self
 
     def _validate_step_sequence(self) -> None:
-        expected = tuple(range(1, len(self.steps) + 1))
-        if tuple(step.step for step in self.steps) != expected:
+        expected_indexes = tuple(range(1, len(self.steps) + 1))
+        if tuple(step.step for step in self.steps) != expected_indexes:
             raise ValueError("Evidence step selectors must be unique and chronological.")
         if self.run.step_count != len(self.steps):
             raise ValueError("The evidence step count does not match the timeline.")

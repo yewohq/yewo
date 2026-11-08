@@ -383,9 +383,9 @@ class DeviceInteraction:
             return
         if not isinstance(key, str) or not key:
             raise DeviceActionRejectedError("An iOS button name must be nonempty.")
-        supported = self._ios_buttons()
-        if key not in supported:
-            names = ", ".join(sorted(supported)) or "none"
+        supported_buttons = self._ios_buttons()
+        if key not in supported_buttons:
+            names = ", ".join(sorted(supported_buttons)) or "none"
             raise DeviceActionRejectedError(f"The device supports these iOS buttons: {names}.")
         self._driver.execute_script("mobile: pressButton", {"name": key})
 
@@ -537,9 +537,9 @@ class DeviceInteraction:
 def _boolean_attribute(value: str | None) -> bool | None:
     if value is None:
         return None
-    normalized = value.strip().lower()
-    if normalized in {"true", "1"}:
+    normalized_value = value.strip().lower()
+    if normalized_value in {"true", "1"}:
         return True
-    if normalized in {"false", "0"}:
+    if normalized_value in {"false", "0"}:
         return False
     return None

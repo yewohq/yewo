@@ -49,12 +49,12 @@ class AppiumMediaTransport:
             raise MediaTransferError("Appium could not pull the media file.") from error
         if not isinstance(encoded, str) or not encoded.strip():
             raise MediaTransferError("Appium returned an empty media payload.")
-        normalized = encoded.strip()
+        trimmed_payload = encoded.strip()
         maximum_encoded_bytes = 4 * ((maximum_bytes + 2) // 3)
-        if len(normalized) > maximum_encoded_bytes:
+        if len(trimmed_payload) > maximum_encoded_bytes:
             raise MediaTransferError("Appium media exceeds the configured byte limit.")
         try:
-            content = base64.b64decode(normalized, validate=True)
+            content = base64.b64decode(trimmed_payload, validate=True)
         except (ValueError, binascii.Error) as error:
             raise MediaTransferError("Appium returned an invalid media payload.") from error
         if not content:

@@ -69,18 +69,18 @@ class AutomationServerRequest(BaseModel):
     @classmethod
     def _validate_server_url(cls, value: str) -> str:
         try:
-            parsed = urlsplit(value)
-            port = parsed.port
+            url_parts = urlsplit(value)
+            port = url_parts.port
         except ValueError as error:
             raise ValueError("The automation server URL has an invalid port.") from error
         if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
+            url_parts.scheme not in {"http", "https"}
+            or not url_parts.hostname
             or port is None
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
+            or url_parts.username is not None
+            or url_parts.password is not None
+            or url_parts.query
+            or url_parts.fragment
         ):
             raise ValueError(
                 "The automation server URL must contain only a scheme, host, port, and path."

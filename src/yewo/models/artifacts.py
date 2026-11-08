@@ -220,7 +220,7 @@ class ModelArtifactStore:
     ) -> ModelArtifactReference:
         artifact_id = self._identifier_factory()
         body_sha256 = _payload_digest(body)
-        persisted = {
+        persisted_record = {
             "artifact_id": artifact_id,
             "kind": kind.value,
             "body_retained": retain_body,
@@ -234,7 +234,7 @@ class ModelArtifactStore:
         try:
             content = self._writer.append(
                 relative_path,
-                persisted,
+                persisted_record,
                 identity_field="artifact_id",
             )
             reference = ModelArtifactReference(

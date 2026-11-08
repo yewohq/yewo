@@ -283,16 +283,16 @@ def _recovered_settlement_observation_id(
 ) -> str | None:
     if step.outcome is None or step.outcome.disposition is not ActionOutcomeDisposition.UNAVAILABLE:
         return None
-    captured = [
+    captured_labels = [
         observations[observation_id]
         for observation_id in step.settlement_observation_ids
         if observation_id in observations
     ]
-    for index in range(1, len(captured) + 1):
+    for index in range(1, len(captured_labels) + 1):
         candidate = latest_settlement_candidate(
             source,
-            captured[:index],
-            final_attempt=index == len(captured),
+            captured_labels[:index],
+            final_attempt=index == len(captured_labels),
         )
         if candidate is not None:
             return candidate.observation_id
@@ -411,5 +411,5 @@ def _control_identity(
 ) -> str | None:
     if label is None:
         return None
-    normalized = " ".join(label.casefold().split())
-    return f"{semantic_role.value}:{normalized}" if normalized else None
+    normalized_label = " ".join(label.casefold().split())
+    return f"{semantic_role.value}:{normalized_label}" if normalized_label else None

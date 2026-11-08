@@ -161,18 +161,18 @@ class CapabilityTransaction(Generic[RequestT]):
         try:
             self._adapter.apply(self._request)
             observed_state = self._adapter.read_state(self._request)
-            verified = self._adapter.application_verified(self._request, observed_state)
+            is_verified = self._adapter.application_verified(self._request, observed_state)
             self._application = CapabilityApplicationReceipt(
                 requested_state=requested_state,
                 observed_state=observed_state,
-                verified=verified,
+                verified=is_verified,
                 reason=(
                     "Read-back verified the requested capability state."
-                    if verified
+                    if is_verified
                     else "Read-back did not verify the requested capability state."
                 ),
             )
-            if not verified:
+            if not is_verified:
                 raise RuntimeError("Capability read-back did not match the request.")
         except BaseException as error:  # noqa: BLE001 - cleanup must cover cancellation
             if self._application is None:
@@ -225,7 +225,7 @@ class CapabilityTransaction(Generic[RequestT]):
         try:
             self._adapter.restore(self._request, self._original_state)
             observed_state = self._adapter.read_state(self._request)
-            verified = self._adapter.restoration_verified(
+            is_verified = self._adapter.restoration_verified(
                 self._request,
                 self._original_state,
                 observed_state,
@@ -233,10 +233,10 @@ class CapabilityTransaction(Generic[RequestT]):
             return CapabilityRestorationReceipt(
                 requested_state=self._original_state,
                 observed_state=observed_state,
-                verified=verified,
+                verified=is_verified,
                 reason=(
                     "Read-back verified restoration of the original state."
-                    if verified
+                    if is_verified
                     else "Read-back did not verify restoration of the original state."
                 ),
             )

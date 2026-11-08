@@ -46,13 +46,13 @@ class ScreenAnalysisStore:
         """Load named analyses in requested order and reject missing identities."""
         if not analysis_ids:
             return ()
-        requested = tuple(analysis_ids)
+        requested_ids = tuple(analysis_ids)
         path = self.root / SCREEN_ANALYSES_PATH
         try:
             if path.is_symlink() or not path.is_file():
                 raise ScreenAnalysisStoreError("The screen-analysis ledger is unavailable.")
-            selected: dict[str, CurrentScreenAnalysis] = {}
-            requested_set = set(requested)
+            analyses_by_id: dict[str, CurrentScreenAnalysis] = {}
+            requested_set = set(requested_ids)
             with path.open("rb") as stream:
                 for line in stream:
                     if not line.endswith(b"\n"):
@@ -61,18 +61,18 @@ class ScreenAnalysisStore:
                         )
                     analysis = CurrentScreenAnalysis.model_validate_json(line)
                     if analysis.analysis_id in requested_set:
-                        if analysis.analysis_id in selected:
+                        if analysis.analysis_id in analyses_by_id:
                             raise ScreenAnalysisStoreError(
                                 "The screen-analysis ledger repeats an analysis identity."
                             )
-                        selected[analysis.analysis_id] = analysis
+                        analyses_by_id[analysis.analysis_id] = analysis
         except ScreenAnalysisStoreError:
             raise
         except (OSError, ValidationError) as error:
             raise ScreenAnalysisStoreError("The screen-analysis ledger is invalid.") from error
-        missing = requested_set - selected.keys()
-        if missing:
+        missing_ids = requested_set - analyses_by_id.keys()
+        if missing_ids:
             raise ScreenAnalysisStoreError(
                 "The screen-analysis ledger is missing requested evidence."
             )
-        return tuple(selected[analysis_id] for analysis_id in requested)
+        return tuple(analyses_by_id[analysis_id] for analysis_id in requested_ids)

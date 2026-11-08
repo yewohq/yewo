@@ -374,7 +374,7 @@ def test_stable_regions_can_match_when_global_phash_is_too_distant() -> None:
 
     match = match_evidence_state(live, "state_001", evidence, lambda unused: _screen(3))
 
-    assert match.accepted
+    assert match.is_accepted
     assert match.expected_distance is not None
     assert match.expected_distance > evidence.state_grouping_maximum_phash_distance
     assert match.visual_match_ratio == 1.0

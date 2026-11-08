@@ -122,7 +122,7 @@ class ProcedureGrounder:
             return result
         if match is None:
             raise AssertionError("Reusable procedure grounding requires one location.")
-        stored = match.evidence.result
+        stored_result = match.evidence.result
         _narrate_lookup(request, reused=True)
         result = GroundingResult(
             grounding_id=request.grounding_id,
@@ -131,7 +131,7 @@ class ProcedureGrounder:
             disposition=GroundingDisposition.ACCEPTED,
             resolution=ProcedureGroundingResolution(source_step_id=match.source_step_id),
             location=resolution.location,
-            confidence=stored.confidence,
+            confidence=stored_result.confidence,
         )
         self._record_decision(request, match, resolution, result)
         return result

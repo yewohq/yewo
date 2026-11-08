@@ -149,7 +149,7 @@ def collect_visual_outcome_evidence(
     covered = tuple(
         surface_id for surface_id in required_surface_ids if surface_id in covered_surface_ids
     )
-    missing = tuple(
+    missing_surface_ids = tuple(
         surface_id for surface_id in required_surface_ids if surface_id not in covered_surface_ids
     )
     return ScenarioEvidence(
@@ -167,7 +167,7 @@ def collect_visual_outcome_evidence(
         visual_episodes=episodes,
         required_surface_ids=required_surface_ids,
         covered_surface_ids=covered,
-        missing_surface_ids=missing,
+        missing_surface_ids=missing_surface_ids,
     )
 
 
@@ -242,9 +242,9 @@ def _visual_frames(
     surface_ids_by_index: dict[int, tuple[str, ...]] = {}
     for surface in surfaces:
         for procedure_index in surface.provenance.procedure_step_indexes:
-            existing = surface_ids_by_index.get(procedure_index, ())
+            existing_surface_ids = surface_ids_by_index.get(procedure_index, ())
             surface_ids_by_index[procedure_index] = tuple(
-                dict.fromkeys((*existing, surface.surface_id))
+                dict.fromkeys((*existing_surface_ids, surface.surface_id))
             )
     frames: list[_VisualFrame] = []
     covered_surface_ids: set[str] = set()
@@ -400,10 +400,10 @@ def _required_observation_labels(
         candidates = tuple(step for step in steps if step.decision.reused_segment_index in indexes)
         if not candidates:
             continue
-        selected = max(candidates, key=lambda item: item.step_index)
-        observation_id = selected.settled_observation_id or selected.source_observation_id
-        existing = labels_by_observation.get(observation_id, ())
-        labels_by_observation[observation_id] = tuple(dict.fromkeys((*existing, surface.summary)))
+        latest_step = max(candidates, key=lambda item: item.step_index)
+        observation_id = latest_step.settled_observation_id or latest_step.source_observation_id
+        existing_labels = labels_by_observation.get(observation_id, ())
+        labels_by_observation[observation_id] = tuple(dict.fromkeys((*existing_labels, surface.summary)))
     if include_following_observation and relevant_indexes:
         following = min(
             (

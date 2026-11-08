@@ -35,14 +35,14 @@ def execute_audit_batches(
     audit_batch: Callable[[AuditRequestBatch], AuditBatchAttempt[_Output]],
 ) -> tuple[tuple[AuditRequestBatch, AuditBatchAttempt[_Output]], ...]:
     """Run batches concurrently and split exhausted visual evidence twice."""
-    pending = requests
-    completed: list[tuple[AuditRequestBatch, AuditBatchAttempt[_Output]]] = []
-    while pending:
-        workers = min(_MAXIMUM_PARALLEL_AUDITS, len(pending))
+    pending_requests = requests
+    completed_batches: list[tuple[AuditRequestBatch, AuditBatchAttempt[_Output]]] = []
+    while pending_requests:
+        workers = min(_MAXIMUM_PARALLEL_AUDITS, len(pending_requests))
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            attempts = tuple(executor.map(audit_batch, pending))
+            attempts = tuple(executor.map(audit_batch, pending_requests))
         recovery: list[AuditRequestBatch] = []
-        for batch, attempt in zip(pending, attempts, strict=True):
+        for batch, attempt in zip(pending_requests, attempts, strict=True):
             if attempt.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
                 split = split_audit_request_batch(
                     root,
@@ -53,6 +53,6 @@ def execute_audit_batches(
                 if split:
                     recovery.extend(split)
                     continue
-            completed.append((batch, attempt))
-        pending = tuple(recovery)
-    return tuple(completed)
+            completed_batches.append((batch, attempt))
+        pending_requests = tuple(recovery)
+    return tuple(completed_batches)

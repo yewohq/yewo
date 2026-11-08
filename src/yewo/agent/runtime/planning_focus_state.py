@@ -49,12 +49,12 @@ class PlanningFocusState:
         recent_routes: tuple[ProgressRouteAttempt, ...],
     ) -> PlanningFocusContext | None:
         """Return the focus request owed to the current logical screen."""
-        pending = self._pending
-        if pending is None or not self._matches(observation, pending[0]):
+        pending_focus = self._pending
+        if pending_focus is None or not self._matches(observation, pending_focus[0]):
             return None
         if self._already_focused(observation):
             return None
-        unused_screen, cause, reason = pending
+        unused_screen, cause, reason = pending_focus
         return PlanningFocusContext(
             focus_id=identifier_factory(),
             cause=cause,

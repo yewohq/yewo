@@ -23,7 +23,7 @@ from yewo.run_narration import current_narrator
 class EvidenceStateMatch:
     """One explainable source-state comparison."""
 
-    accepted: bool
+    is_accepted: bool
     expected_distance: int | None
     competing_distance: int | None
     visual_match_ratio: float | None
@@ -33,15 +33,15 @@ class EvidenceStateMatch:
 AMBIGUOUS_SOURCE_STATE = "source_state_ambiguous"
 
 
-def trace_repair_target_match(accepted: bool, reason: str) -> bool:
+def trace_repair_target_match(is_accepted: bool, reason: str) -> bool:
     """Record why one repair-target comparison accepted or rejected a screen."""
     narrator = current_narrator()
     if narrator is not None:
         narrator.trace(
             "procedure-repair",
-            f"repair_target_match accepted={str(accepted).lower()} reason={reason}",
+            f"repair_target_match accepted={str(is_accepted).lower()} reason={reason}",
         )
-    return accepted
+    return is_accepted
 
 
 def match_evidence_state(
@@ -51,16 +51,16 @@ def match_evidence_state(
     screenshot_loader: Callable[[ScreenshotReference], bytes] | None = None,
 ) -> EvidenceStateMatch:
     """Match one live observation and reject an ambiguous known-state result."""
-    expected = evidence.states[expected_state_id]
+    expected_state = evidence.states[expected_state_id]
     if evidence.run.device is not None and observation.device != evidence.run.device:
         return EvidenceStateMatch(False, None, None, None, "source_device_changed")
-    if not _metadata_matches(observation, expected):
+    if not _metadata_matches(observation, expected_state):
         return EvidenceStateMatch(False, None, None, None, "source_metadata_changed")
-    expected_distance = _minimum_distance(observation, expected)
+    expected_distance = _minimum_distance(observation, expected_state)
     if expected_distance is None:
         return EvidenceStateMatch(False, None, None, None, "source_fingerprint_incompatible")
     if (
-        expected.visual_signature is None
+        expected_state.visual_signature is None
         and expected_distance > evidence.state_grouping_maximum_phash_distance
     ):
         return EvidenceStateMatch(
@@ -86,10 +86,10 @@ def match_evidence_state(
             None,
             AMBIGUOUS_SOURCE_STATE,
         )
-    visual_match_ratio = _visual_match_ratio(observation, expected, screenshot_loader)
-    if expected.visual_signature is not None and (
+    visual_match_ratio = _visual_match_ratio(observation, expected_state, screenshot_loader)
+    if expected_state.visual_signature is not None and (
         visual_match_ratio is None
-        or visual_match_ratio < expected.visual_signature.minimum_match_ratio
+        or visual_match_ratio < expected_state.visual_signature.minimum_match_ratio
     ):
         return EvidenceStateMatch(
             False,

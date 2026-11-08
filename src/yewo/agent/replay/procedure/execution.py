@@ -263,10 +263,10 @@ def _validate_execution(
     if budget_refusal is not None:
         raise ValueError(budget_refusal)
     actions = {step.proposal.action for step in procedure.steps}
-    available = (
+    available_budget = (
         mode_policy.action_limits.allowed_actions & mode_policy.action_limits.supported_actions
     )
-    if not actions <= available:
+    if not actions <= available_budget:
         raise ValueError("The active mode does not allow every compiled procedure action.")
     if memory is not None and memory.compatibility.application != procedure.application:
         raise ValueError("Grounding memory does not match the procedure application.")

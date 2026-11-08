@@ -115,12 +115,12 @@ def test_ios_simulator_presence_reads_listapps_output() -> None:
         stdout='{"com.example.app":{"CFBundleIdentifier":"com.example.app"}}'
     )
 
-    installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
+    is_installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
         _ios_device(),
         "com.example.app",
     )
 
-    assert installed is True
+    assert is_installed is True
     assert runner.calls == [(("xcrun", "simctl", "listapps", "IOS-UDID"), 20)]
 
 
@@ -138,34 +138,34 @@ def test_ios_simulator_presence_reads_current_openstep_output() -> None:
 }"""
     )
 
-    installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
+    is_installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
         _ios_device(),
         "com.apple.Preferences",
     )
 
-    assert installed is True
+    assert is_installed is True
 
 
 def test_ios_simulator_presence_is_unknown_for_unrecognized_listapps_output() -> None:
     runner = CommandRunnerStub(stdout="unexpected output")
 
-    installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
+    is_installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
         _ios_device(),
         "com.example.app",
     )
 
-    assert installed is None
+    assert is_installed is None
 
 
 def test_ios_physical_presence_is_unknown_without_supported_host_evidence() -> None:
     runner = CommandRunnerStub()
 
-    installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
+    is_installed = IosApplicationPresence(SimctlClient(runner)).is_installed(
         _ios_device(kind=DeviceKind.PHYSICAL),
         "com.example.app",
     )
 
-    assert installed is None
+    assert is_installed is None
     assert runner.calls == []
 
 
@@ -175,7 +175,7 @@ def test_ios_physical_presence_uses_devicectl_evidence() -> None:
         {"result": {"apps": [{"bundleIdentifier": "com.example.app"}]}}
     )
 
-    installed = IosApplicationPresence(
+    is_installed = IosApplicationPresence(
         SimctlClient(simctl_runner),
         DevicectlClient(devicectl_runner),
     ).is_installed(
@@ -183,5 +183,5 @@ def test_ios_physical_presence_uses_devicectl_evidence() -> None:
         "com.example.app",
     )
 
-    assert installed is True
+    assert is_installed is True
     assert simctl_runner.calls == []

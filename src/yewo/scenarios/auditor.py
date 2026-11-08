@@ -117,15 +117,15 @@ class ScenarioAuditorOutput(BaseModel):
 
     @model_validator(mode="after")
     def _validate_outcome_ids(self, info: ValidationInfo) -> Self:
-        expected = (info.context or {}).get(_VALIDATION_CONTEXT_KEY)
-        if expected is not None and set(expected) != {
+        validation_context = (info.context or {}).get(_VALIDATION_CONTEXT_KEY)
+        if validation_context is not None and set(validation_context) != {
             outcome.outcome_id for outcome in self.outcomes
         }:
             raise ValueError("The scenario audit must settle every supplied outcome once.")
         if len(self.outcomes) != len({item.outcome_id for item in self.outcomes}):
             raise ValueError("The scenario audit cannot repeat an outcome.")
-        if expected is not None and any(
-            finding.outcome_id not in expected for finding in self.findings
+        if validation_context is not None and any(
+            finding.outcome_id not in validation_context for finding in self.findings
         ):
             raise ValueError("A candidate finding must reference a supplied outcome.")
         observation_ids = (info.context or {}).get(_OBSERVATION_CONTEXT_KEY)
@@ -177,7 +177,7 @@ class ScenarioAuditorService:
         terminal_audit = _terminal_execution_audit(scenario, result)
         if terminal_audit is not None:
             return terminal_audit
-        settled: dict[str, AuditObligationRecord] = {}
+        settled_obligations_by_id: dict[str, AuditObligationRecord] = {}
         targets: list[AuditTarget] = []
         for obligation in scenario.obligations:
             for outcome in obligation.expected_outcomes:
@@ -203,9 +203,9 @@ class ScenarioAuditorService:
                         outcome,
                         result,
                     )
-                missing = _missing_evidence_owners(outcome, evidence.owner_counts)
-                if missing:
-                    settled[outcome.outcome_id] = _unverified_obligation(outcome, missing)
+                missing_owners = _missing_evidence_owners(outcome, evidence.owner_counts)
+                if missing_owners:
+                    settled_obligations_by_id[outcome.outcome_id] = _unverified_obligation(outcome, missing_owners)
                 else:
                     targets.append(
                         AuditTarget(
@@ -221,7 +221,7 @@ class ScenarioAuditorService:
         )
         outcomes_by_id = {target.outcome.outcome_id: target.outcome for target in targets}
         for outcome_id in plan.capacity_outcome_ids:
-            settled[outcome_id] = _unverified_obligation(
+            settled_obligations_by_id[outcome_id] = _unverified_obligation(
                 outcomes_by_id[outcome_id],
                 ("auditor_image_capacity",),
             )
@@ -250,10 +250,10 @@ class ScenarioAuditorService:
                 )
         for target in targets:
             outcome_id = target.outcome.outcome_id
-            if outcome_id in settled:
+            if outcome_id in settled_obligations_by_id:
                 continue
             if outcome_id in invalid_ids and not judgments.get(outcome_id):
-                settled[outcome_id] = _unverified_obligation(
+                settled_obligations_by_id[outcome_id] = _unverified_obligation(
                     target.outcome,
                     ("auditor_result",),
                 )
@@ -270,15 +270,15 @@ class ScenarioAuditorService:
                     target.outcome,
                     ("auditor_result",),
                 )
-            settled[outcome_id] = obligation
-        ordered = tuple(settled[outcome.outcome_id] for outcome in _expected_outcomes(scenario))
+            settled_obligations_by_id[outcome_id] = obligation
+        ordered_obligations = tuple(settled_obligations_by_id[outcome.outcome_id] for outcome in _expected_outcomes(scenario))
         summary = (
             f"Independent scenario audit completed across {len(results)} bounded "
             "evidence request(s)."
             if plan.requests
             else "Required evidence is unavailable for independent scenario audit."
         )
-        return _build_audit(ordered, summary)
+        return _build_audit(ordered_obligations, summary)
 
     def _audit_batch(
         self,
@@ -380,9 +380,9 @@ def _missing_evidence_owners(
 
 def _unverified_obligation(
     outcome: ScenarioExpectedOutcome,
-    missing: Iterable[str],
+    missing_owners: Iterable[str],
 ) -> AuditObligationRecord:
-    names = ", ".join(missing)
+    names = ", ".join(missing_owners)
     return AuditObligationRecord(
         obligation_id=outcome.outcome_id,
         description=outcome.statement,

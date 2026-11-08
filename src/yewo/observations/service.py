@@ -331,9 +331,9 @@ def _application_identity(
 def _normalize_orientation(value: str | None) -> DeviceOrientation | None:
     if value is None:
         return None
-    normalized = value.strip().lower()
-    if normalized.startswith("portrait"):
+    normalized_value = value.strip().lower()
+    if normalized_value.startswith("portrait"):
         return DeviceOrientation.PORTRAIT
-    if normalized.startswith("landscape"):
+    if normalized_value.startswith("landscape"):
         return DeviceOrientation.LANDSCAPE
     return DeviceOrientation.UNKNOWN

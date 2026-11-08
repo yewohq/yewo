@@ -76,7 +76,7 @@ def test_consistency_evidence_includes_first_following_observation() -> None:
 
 def test_visual_frames_include_model_settlement_recovery_and_final_states() -> None:
     before = observation("before", "0000000000000001")
-    settled = observation(
+    settled_observation = observation(
         "settled",
         "0000000000000002",
         predecessor_observation_id="before",
@@ -88,7 +88,7 @@ def test_visual_frames_include_model_settlement_recovery_and_final_states() -> N
     )
     result = agent_result(
         before,
-        settled,
+        settled_observation,
         terminal=AgentTerminalReason.BUDGET_EXHAUSTED,
     )
     step = result.steps[0].model_copy(

@@ -163,7 +163,7 @@ class DiscoveryWorkflow:
             context.session.application,
             context.workspace.start.request.application,
         )
-        existing = load_discovery_memory(self._memory_store, compatibility)
+        existing_memory = load_discovery_memory(self._memory_store, compatibility)
         model_client = build_model_client(
             context.workspace.root,
             context.workspace.start.run_id,
@@ -189,7 +189,7 @@ class DiscoveryWorkflow:
             )
 
         objective = self._request.objectives[0]
-        prepared = discovery_preparation.matching_preparation(preparation, existing)
+        prepared = discovery_preparation.matching_preparation(preparation, existing_memory)
         replay_entry = prepare_procedure_replay_entry(
             context,
             compatibility,
@@ -204,7 +204,7 @@ class DiscoveryWorkflow:
             interruption,
             self._procedure_store,
             self._model_profiles.resolve(self._auditor_profile_id, ModelRole.AUDITOR).images,
-            existing,
+            existing_memory,
             self._redaction_regions,
             self._declared_value_resolver,
             prepared,
@@ -225,7 +225,7 @@ class DiscoveryWorkflow:
             result = exhausted_replay_budget_result(
                 self._request,
                 procedure_replay,
-                existing.memory_id if existing is not None else None,
+                existing_memory.memory_id if existing_memory is not None else None,
             )
             if result is not None:
                 return persist_outcome(result)
@@ -243,8 +243,8 @@ class DiscoveryWorkflow:
             recover_application=True,
             declared_value_resolver=self._declared_value_resolver,
             screen_comparison=compatibility.screen_comparison,
-            planning_memory=existing,
-            grounding_memory=existing,
+            planning_memory=existing_memory,
+            grounding_memory=existing_memory,
             progress_context=(prepared.progress_context if prepared is not None else None),
             initial_planning_requests=(
                 prepared.progress_context.preparation_planning_requests
@@ -252,7 +252,7 @@ class DiscoveryWorkflow:
                 else 0
             ),
         ).run(
-            build_discovery_agent_task(self._request, existing),
+            build_discovery_agent_task(self._request, existing_memory),
             repair_policy,
             interruption,
         )
@@ -265,7 +265,7 @@ class DiscoveryWorkflow:
             model_client,
             self._replay_preparation_profile_id,
             compatibility.screen_comparison,
-            existing,
+            existing_memory,
         )
         milestone_ids = compilation.observation_ids() if compilation is not None else set()
         observations = ObservationStore(context.workspace.root).load_selected(
@@ -315,13 +315,13 @@ class DiscoveryWorkflow:
             ),
             source_run_id=context.workspace.start.run_id,
             updated_at=context.workspace.start.started_at,
-            existing=existing,
+            existing_memory=existing_memory,
             compiled_procedure=compiled_procedure,
             evidence_observation_ids=milestone_evidence_ids,
         )
         memory = promotion.memory
         coverage = promotion.coverage
-        if memory is not None and memory != existing:
+        if memory is not None and memory != existing_memory:
             memory = conclusion.save_discovery_memory(
                 self._memory_store,
                 memory,
@@ -331,7 +331,7 @@ class DiscoveryWorkflow:
                 agent_result,
                 coverage,
                 verification,
-                existing.memory_id if existing is not None else None,
+                existing_memory.memory_id if existing_memory is not None else None,
                 procedure_replay,
             )
         result = conclusion.build_discovery_result(

@@ -127,12 +127,12 @@ class AppMemoryBuilder:
         verified_objective_ids: frozenset[RecordIdentifier] | None,
         source_run_id: RecordIdentifier,
         updated_at: datetime,
-        existing: AppMemory | None = None,
+        existing_memory: AppMemory | None = None,
         compiled_procedure: ReplayProcedure | None = None,
         evidence_observation_ids: tuple[RecordIdentifier, ...] = (),
     ) -> DiscoveryPromotion:
         """Return accepted memory and coverage without upgrading ambiguous evidence."""
-        if existing is not None and existing.compatibility != compatibility:
+        if existing_memory is not None and existing_memory.compatibility != compatibility:
             raise ValueError("Existing app memory is incompatible with this discovery run.")
         requested_objective_ids = {objective.objective_id for objective in request.objectives}
         if verified_objective_ids is not None and not verified_objective_ids.issubset(
@@ -140,9 +140,9 @@ class AppMemoryBuilder:
         ):
             raise ValueError("Verification names an objective outside this discovery request.")
         validate_memory_observations(observations, compatibility)
-        screens = list(existing.screens if existing is not None else ())
-        transitions = list(existing.transitions if existing is not None else ())
-        unsuccessful_attempts = list(existing.unsuccessful_attempts if existing is not None else ())
+        screens = list(existing_memory.screens if existing_memory is not None else ())
+        transitions = list(existing_memory.transitions if existing_memory is not None else ())
+        unsuccessful_attempts = list(existing_memory.unsuccessful_attempts if existing_memory is not None else ())
         run_transitions, new_unsuccessful_attempts = self._promote_steps(
             agent_result,
             observations,
@@ -160,9 +160,9 @@ class AppMemoryBuilder:
             evidence_observation_ids,
         )
         if not run_transitions and not new_unsuccessful_attempts:
-            return DiscoveryPromotion(memory=existing, coverage=coverage)
+            return DiscoveryPromotion(memory=existing_memory, coverage=coverage)
         source_run_ids = tuple(
-            dict.fromkeys((*(existing.source_run_ids if existing else ()), source_run_id))
+            dict.fromkeys((*(existing_memory.source_run_ids if existing_memory else ()), source_run_id))
         )
         retained_transitions = retain_transitions(
             transitions,
@@ -178,8 +178,8 @@ class AppMemoryBuilder:
         )
         memory = AppMemory(
             memory_id=(
-                existing.memory_id
-                if existing is not None
+                existing_memory.memory_id
+                if existing_memory is not None
                 else derived_memory_identifier("memory", compatibility.model_dump_json())
             ),
             compatibility=compatibility,
@@ -187,7 +187,7 @@ class AppMemoryBuilder:
             screens=retained_screens,
             transitions=retained_transitions,
             unsuccessful_attempts=retained_attempts,
-            app_knowledge=existing.app_knowledge if existing is not None else AppKnowledge(),
+            app_knowledge=existing_memory.app_knowledge if existing_memory is not None else AppKnowledge(),
             updated_at=updated_at,
         )
         return DiscoveryPromotion(memory=memory, coverage=coverage)

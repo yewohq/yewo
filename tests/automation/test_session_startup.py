@@ -41,7 +41,7 @@ def test_missing_application_after_driver_open_rolls_back_every_lease(
 
     with pytest.raises(AutomationSessionError, match="not installed after"):
         _open(
-            _manager(_DriverStub(events, installed=False), installed_before=False),
+            _manager(_DriverStub(events, is_installed=False), installed_before=False),
             _device(events),
             _server(events),
             _request(),
