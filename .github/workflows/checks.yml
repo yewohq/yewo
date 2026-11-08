@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,3 +51,55 @@ jobs:
           uv pip install --python .package-venv/bin/python "${wheels[0]}"
           .package-venv/bin/python -c "import yewo"
           .package-venv/bin/yewo --help
+
+  # Only this job reaches the Windows branches in src/yewo/host. The Linux job
+  # cannot execute them.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install development dependencies
+        run: uv sync --group dev
+      - name: Enforce Ruff correctness rules
+        run: uv run ruff check --ignore C90 src tests tools
+      - name: Enforce static types
+        run: uv run pyright
+      - name: Run tests
+        run: uv run pytest
+      - name: Verify the command entry point
+        run: |
+          uv run python -c "import yewo"
+          uv run yewo --help
+
+  # No device is required here, because doctor reports what it finds instead
+  # of starting a run.
+  windows-toolchain:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools build-tools;34.0.0"
+      - name: Install Appium
+        run: npm install --global appium
+      - name: Install Yewo
+        run: uv sync --group dev
+      - name: Report the resolved toolchain
+        run: uv run yewo doctor --platform android
+      - name: Preview project setup without changing anything
+        run: uv run yewo setup --dry-run --platform android

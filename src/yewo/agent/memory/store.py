@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, suppress
-import fcntl
 from hashlib import sha256
 import json
 import os
@@ -24,6 +23,7 @@ from yewo.artifacts import (
     Sha256Digest,
 )
 from yewo.devices.screen import png_size
+from yewo.host import exclusive_file_lock, replace_file_durably
 from yewo.observations import ScreenshotReference
 from yewo.run_narration import current_narrator
 
@@ -136,28 +136,17 @@ class AppMemoryStore:
 
     @contextmanager
     def _locked(self, application_root: Path) -> Generator[None, None, None]:
-        descriptor: int | None = None
         try:
             _prepare_root(self.root, application_root)
             lock_path = application_root / ".memory.lock"
             if lock_path.is_symlink():
                 raise AppMemoryStoreError("The app-memory lock cannot be symbolic.")
-            flags = os.O_RDWR | os.O_CREAT
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            descriptor = os.open(lock_path, flags, 0o600)
-            with os.fdopen(descriptor, "r+b") as stream:
-                descriptor = None
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            with exclusive_file_lock(lock_path):
                 yield
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
         except AppMemoryStoreError:
             raise
         except OSError as error:
             raise AppMemoryStoreError("Could not lock app memory.") from error
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
 
     @staticmethod
     def _load_unlocked(
@@ -324,13 +313,8 @@ def _write_snapshot(application_root: Path, memory: AppMemory) -> None:
         destination = application_root / "memory.json"
         if destination.is_symlink():
             raise AppMemoryStoreError("The app-memory snapshot cannot be symbolic.")
-        os.replace(temporary_path, destination)
+        replace_file_durably(temporary_path, destination)
         temporary_path = None
-        directory_descriptor = os.open(application_root, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
     except AppMemoryStoreError:
         raise
     except OSError as error:
@@ -362,9 +346,9 @@ def _remove_unreferenced_screenshots(
                 raise AppMemoryStoreError(
                     "The memory screenshot directory contains an unsafe entry."
                 )
-            resolved = path.resolve()
-            resolved.relative_to(screenshots_root.resolve())
-            if resolved not in referenced:
+            resolved_path = path.resolve()
+            resolved_path.relative_to(screenshots_root.resolve())
+            if resolved_path not in referenced:
                 path.unlink()
     except AppMemoryStoreError:
         raise

@@ -1,7 +1,6 @@
 """Persistence for run evidence and compatible compiled procedures."""
 
 from contextlib import contextmanager
-import fcntl
 from hashlib import sha256
 import json
 import os
@@ -23,6 +22,7 @@ from yewo.artifacts import (
     Sha256Digest,
 )
 from yewo.devices.screen import png_size
+from yewo.host import exclusive_file_lock, replace_file_durably
 from yewo.observations import ScreenshotReference
 
 
@@ -235,30 +235,19 @@ class CompiledProcedureStore:
 
     @contextmanager
     def _locked(self, procedure_root: Path) -> Generator[None, None, None]:
-        descriptor: int | None = None
         try:
             _prepare_procedure_root(self.root, procedure_root)
             lock_path = procedure_root / ".procedure.lock"
             if lock_path.is_symlink():
                 raise CompiledProcedureStoreError("The compiled procedure lock cannot be symbolic.")
-            flags = os.O_RDWR | os.O_CREAT
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            descriptor = os.open(lock_path, flags, 0o600)
-            with os.fdopen(descriptor, "r+b") as stream:
-                descriptor = None
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            with exclusive_file_lock(lock_path):
                 yield
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
         except CompiledProcedureStoreError:
             raise
         except OSError as error:
             raise CompiledProcedureStoreError(
                 "Could not lock the compiled procedure store."
             ) from error
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
 
 
 def _write_bundle(root: Path, bundle: StoredProcedureBundle) -> None:
@@ -280,13 +269,8 @@ def _write_bundle(root: Path, bundle: StoredProcedureBundle) -> None:
         destination = root / "procedure.json"
         if destination.is_symlink():
             raise CompiledProcedureStoreError("The compiled procedure snapshot cannot be symbolic.")
-        os.replace(temporary_path, destination)
+        replace_file_durably(temporary_path, destination)
         temporary_path = None
-        directory_descriptor = os.open(root, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
     except CompiledProcedureStoreError:
         raise
     except OSError as error:

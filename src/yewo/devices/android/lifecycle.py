@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-import subprocess
 import time
 from typing import Protocol
 
 from yewo.devices.errors import DeviceLifecycleError, DeviceStartupTimeoutError
+from yewo.host import ManagedProcess, start_detached_process, stop_process_tree
 from yewo.devices.inventory import (
     DeviceDescriptor,
     DeviceInventory,
@@ -26,18 +26,8 @@ class _Clock(Protocol):
     def sleep(self, seconds: float) -> None: ...
 
 
-class _Process(Protocol):
-    def poll(self) -> int | None: ...
-
-    def terminate(self) -> None: ...
-
-    def wait(self, timeout: float | None = None) -> int: ...
-
-    def kill(self) -> None: ...
-
-
 class _ProcessStarter(Protocol):
-    def __call__(self, command: Sequence[str]) -> _Process: ...
+    def __call__(self, command: Sequence[str]) -> ManagedProcess: ...
 
 
 class _AndroidControl(Protocol):
@@ -67,27 +57,6 @@ class _HostEnvironmentControl(Protocol):
     def isolate_clipboard(self) -> Callable[[], None]: ...
 
 
-def _start_process(command: Sequence[str]) -> _Process:
-    return subprocess.Popen(  # noqa: S603 - the command is an argument list
-        list(command),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-
-
-def _stop_process(process: _Process) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
-
-
 class AndroidDeviceLifecycle:
     """Prepare Android hardware or an AVD for one run."""
 
@@ -99,7 +68,7 @@ class AndroidDeviceLifecycle:
         timeout_seconds: float = 120,
         poll_interval_seconds: float = 1,
         headless: bool = False,
-        process_starter: _ProcessStarter = _start_process,
+        process_starter: _ProcessStarter = start_detached_process,
         clock: _Clock | None = None,
         host_environment: _HostEnvironmentControl | None = None,
     ) -> None:
@@ -168,14 +137,14 @@ class AndroidDeviceLifecycle:
             restore_environment = self._prepare_virtual_environment(ready, connection_id)
         except BaseException:
             with suppress(Exception):
-                _stop_process(process)
+                stop_process_tree(process)
             raise
 
         def release() -> None:
             try:
                 self._adb.kill_emulator(connection_id)
             except Exception:  # noqa: BLE001 - process fallback must still run
-                _stop_process(process)
+                stop_process_tree(process)
                 raise
 
         return DeviceLease(
@@ -243,19 +212,19 @@ class AndroidDeviceLifecycle:
         return restore
 
     def _wait_until_ready(
-        self, initial: DeviceDescriptor, *, process: _Process | None = None
+        self, initial: DeviceDescriptor, *, process: ManagedProcess | None = None
     ) -> tuple[DeviceDescriptor, str]:
         deadline = self._clock.monotonic() + self._timeout_seconds
-        observed = initial
+        observed_device = initial
         while True:
-            connection_id = observed.connection_id
+            connection_id = observed_device.connection_id
             if (
-                observed.readiness is DeviceReadiness.READY
+                observed_device.readiness is DeviceReadiness.READY
                 and connection_id is not None
                 and self._adb.boot_completed(connection_id)
                 and self._adb.system_services_ready(connection_id)
             ):
-                return observed, connection_id
+                return observed_device, connection_id
             if process is not None and process.poll() is not None:
                 raise DeviceLifecycleError(
                     f"Android target '{initial.target_id}' stopped during startup."
@@ -266,7 +235,7 @@ class AndroidDeviceLifecycle:
                     f"{self._timeout_seconds:g} seconds."
                 )
             self._clock.sleep(self._poll_interval_seconds)
-            observed = self._find_target(initial.target_id) or observed
+            observed_device = self._find_target(initial.target_id) or observed_device
 
     def _find_target(self, target_id: str) -> DeviceDescriptor | None:
         return next(

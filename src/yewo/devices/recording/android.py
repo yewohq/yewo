@@ -20,6 +20,7 @@ from yewo.devices.recording.capture import (
     ScreenRecordingStart,
 )
 from yewo.devices.recording.errors import ScreenRecordingError
+from yewo.host import start_detached_process
 from yewo.devices.recording.records import ScreenRecordingCaptureMethod
 from yewo.devices.remote_files import (
     RemoteTemporaryFileError,
@@ -55,16 +56,6 @@ class _SystemClock:
     sleep = staticmethod(time.sleep)
 
 
-def _start_process(command: Sequence[str]) -> _RecordingProcess:
-    return subprocess.Popen(  # noqa: S603 - command is an owned argument list
-        list(command),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-
-
 class AdbRecoverableScreenRecorder:
     """Record to a known remote path and pull it without Appium."""
 
@@ -76,7 +67,7 @@ class AdbRecoverableScreenRecorder:
         remote_files: RemoteTemporaryFileLease,
         connection_id: str,
         *,
-        process_starter: Callable[[Sequence[str]], _RecordingProcess] = _start_process,
+        process_starter: Callable[[Sequence[str]], _RecordingProcess] = start_detached_process,
         identifier_factory: Callable[[], str] = new_record_identifier,
         clock: _Clock | None = None,
     ) -> None:

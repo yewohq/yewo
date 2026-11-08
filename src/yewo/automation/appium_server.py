@@ -7,7 +7,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import subprocess
 import time
 from typing import Protocol
 from urllib.error import HTTPError, URLError
@@ -17,6 +16,7 @@ from urllib.request import urlopen
 from yewo.automation.appium_runtime import AppiumRuntime, resolve_appium_runtime
 from yewo.automation.errors import AppiumServerError, AppiumStartupTimeoutError
 from yewo.run_narration import current_narrator
+from yewo.host import ManagedProcess, start_detached_process, stop_process_tree
 from yewo.resources import ResourceLease, ResourceOwnership
 
 
@@ -64,23 +64,13 @@ class AppiumServerLease(ResourceLease):
         self.log_path = log_path
 
 
-class _Process(Protocol):
-    def poll(self) -> int | None: ...
-
-    def terminate(self) -> None: ...
-
-    def wait(self, timeout: float | None = None) -> int: ...
-
-    def kill(self) -> None: ...
-
-
 class _ProcessStarter(Protocol):
     def __call__(
         self,
         command: Sequence[str],
         *,
         environment: Mapping[str, str],
-    ) -> _Process: ...
+    ) -> ManagedProcess: ...
 
 
 class _StatusProbe(Protocol):
@@ -96,32 +86,6 @@ class _Clock(Protocol):
 class _SystemClock:
     monotonic = staticmethod(time.monotonic)
     sleep = staticmethod(time.sleep)
-
-
-def _start_process(
-    command: Sequence[str],
-    *,
-    environment: Mapping[str, str],
-) -> _Process:
-    return subprocess.Popen(  # noqa: S603 - the command is an argument list
-        list(command),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=environment,
-        start_new_session=True,
-    )
-
-
-def _stop_process(process: _Process) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
 
 
 def _probe_status(status_url: str, *, timeout_seconds: float) -> bool:
@@ -141,29 +105,29 @@ def _probe_status(status_url: str, *, timeout_seconds: float) -> bool:
 
 def _parse_server_url(server_url: str) -> SplitResult:
     try:
-        parsed = urlsplit(server_url)
-        port = parsed.port
+        url_parts = urlsplit(server_url)
+        port = url_parts.port
     except ValueError as error:
         raise ValueError("The Appium server URL has an invalid port.") from error
     if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
+        url_parts.scheme not in {"http", "https"}
+        or not url_parts.hostname
         or port is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
+        or url_parts.username is not None
+        or url_parts.password is not None
+        or url_parts.query
+        or url_parts.fragment
     ):
         raise ValueError("The Appium server URL must contain only a scheme, host, port, and path.")
-    return parsed
+    return url_parts
 
 
 def _status_url(server_url: str) -> str:
     return f"{server_url.rstrip('/')}/status"
 
 
-def _is_local_http(parsed: SplitResult) -> bool:
-    return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+def _is_local_http(url_parts: SplitResult) -> bool:
+    return url_parts.scheme == "http" and url_parts.hostname in {"127.0.0.1", "::1", "localhost"}
 
 
 def _trace_appium(message: str) -> None:
@@ -179,7 +143,7 @@ class AppiumServerManager:
         self,
         *,
         runtime_resolver: Callable[[], AppiumRuntime] = resolve_appium_runtime,
-        process_starter: _ProcessStarter = _start_process,
+        process_starter: _ProcessStarter = start_detached_process,
         status_probe: _StatusProbe = _probe_status,
         clock: _Clock | None = None,
     ) -> None:
@@ -196,8 +160,8 @@ class AppiumServerManager:
             return AppiumServerLease(config.server_url, ResourceOwnership.EXTERNAL)
         if not config.start_if_unavailable:
             raise AppiumServerError(f"No ready Appium server exists at {config.server_url}.")
-        parsed = _parse_server_url(config.server_url)
-        if not _is_local_http(parsed):
+        url_parts = _parse_server_url(config.server_url)
+        if not _is_local_http(url_parts):
             raise AppiumServerError(
                 "Yewo can start Appium only on a local HTTP endpoint. "
                 "Start the configured remote or HTTPS server separately."
@@ -211,7 +175,7 @@ class AppiumServerManager:
             f"appium_script={runtime.appium_script} state=starting"
         )
         self._prepare_log(log_path)
-        command = self._command(config, parsed, runtime, log_path)
+        command = self._command(config, url_parts, runtime, log_path)
         try:
             process = self._process_starter(command, environment=runtime.environment)
         except OSError as error:
@@ -220,7 +184,7 @@ class AppiumServerManager:
             ownership = self._wait_until_ready(process, status_url, config)
         except BaseException:
             with suppress(Exception):
-                _stop_process(process)
+                stop_process_tree(process)
             raise
         if ownership is ResourceOwnership.EXTERNAL:
             _trace_appium(f"server={config.server_url} ownership=external state=ready")
@@ -230,7 +194,7 @@ class AppiumServerManager:
             config.server_url,
             ResourceOwnership.RUN,
             log_path=log_path,
-            release=lambda: _stop_process(process),
+            release=lambda: stop_process_tree(process),
         )
 
     def _is_ready(self, status_url: str, config: AppiumServerConfig) -> bool:
@@ -241,7 +205,7 @@ class AppiumServerManager:
 
     def _wait_until_ready(
         self,
-        process: _Process,
+        process: ManagedProcess,
         status_url: str,
         config: AppiumServerConfig,
     ) -> ResourceOwnership:
@@ -272,12 +236,12 @@ class AppiumServerManager:
     @staticmethod
     def _command(
         config: AppiumServerConfig,
-        parsed: SplitResult,
+        server_url_parts: SplitResult,
         runtime: AppiumRuntime,
         log_path: Path,
     ) -> tuple[str, ...]:
-        host = parsed.hostname
-        port = parsed.port
+        host = server_url_parts.hostname
+        port = server_url_parts.port
         if host is None or port is None:
             raise AppiumServerError("The Appium server URL has no host or port.")
         command = [
@@ -293,7 +257,7 @@ class AppiumServerManager:
             "warn",
             "--log-no-colors",
         ]
-        base_path = parsed.path.rstrip("/")
+        base_path = server_url_parts.path.rstrip("/")
         if base_path:
             command.extend(("--base-path", base_path))
         if config.allow_insecure_features:

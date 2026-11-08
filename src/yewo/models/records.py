@@ -13,6 +13,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yewo.artifacts import (
+    RelativeArtifactPath,
     ARTIFACTS_DIRECTORY,
     ArtifactRetention,
     ArtifactSensitivity,
@@ -83,7 +84,7 @@ class ModelArtifactReference(BaseModel):
     sha256: Sha256Digest
     body_sha256: Sha256Digest
     content_sha256: Sha256Digest
-    path: Path
+    path: RelativeArtifactPath
     body_retained: bool
     sensitivity: ArtifactSensitivity
     retention: ArtifactRetention

@@ -33,6 +33,15 @@ the platform you want to test:
 - Android Studio and the Android SDK for Android.
 - Xcode and its command-line tools for iOS on macOS.
 
+Yewo runs on macOS, Linux, and Windows. Apple device tooling exists only on
+macOS, so iOS testing requires a macOS host:
+
+| Host | Android | iOS |
+| --- | --- | --- |
+| macOS | Supported | Supported |
+| Linux | Supported | Not available |
+| Windows | Supported | Not available |
+
 Install Yewo from [PyPI](https://pypi.org/project/yewo/) with
 [uv](https://docs.astral.sh/uv/):
 

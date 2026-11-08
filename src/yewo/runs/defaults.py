@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import sys
 
 from yewo.artifacts import RUNTIME_DIRECTORY
 from yewo.applications import RequestedApplicationResolver
 from yewo.automation import AppiumServerConfig, AppiumServerManager, AutomationSessionManager
-from yewo.devices import DevicePlatform
+from yewo.applications.inspection import ApplicationArtifactInspector
+from yewo.devices import DeviceInventory, DeviceLifecycle, DevicePlatform
 from yewo.devices.android import (
     AdbDeviceInventory,
     AndroidDeviceLifecycle,
@@ -25,6 +25,10 @@ from yewo.devices.ios import (
 )
 from yewo.devices.ios.simctl import SimctlClient
 from yewo.devices.logs import DeviceLogTextScrubber
+from yewo.host import (
+    supports_android_emulator_clipboard_control,
+    supports_apple_device_tooling,
+)
 from yewo.runs.coordinator import RunCoordinator, RunWorkflow
 from yewo.runs.records import RunMode
 from yewo.runs.store import RunWorkspace, RunWorkspaceFactory
@@ -37,31 +41,36 @@ def build_default_run_coordinator(
     """Compose standard host adapters without discovering or changing devices."""
     android_inventory = AdbDeviceInventory()
     android_control = AdbClient()
-    simulator_inventory = SimctlDeviceInventory()
-    physical_ios_inventory = IosPhysicalDeviceInventory()
-    ios_inventory = IosDeviceInventory(simulator_inventory, physical_ios_inventory)
+    android_lifecycle = AndroidDeviceLifecycle(
+        android_inventory,
+        android_control,
+        host_environment=(
+            MacOsAndroidEmulatorEnvironment()
+            if supports_android_emulator_clipboard_control()
+            else None
+        ),
+    )
+    inventories: dict[DevicePlatform, DeviceInventory] = {
+        DevicePlatform.ANDROID: android_inventory
+    }
+    lifecycles: dict[DevicePlatform, DeviceLifecycle] = {
+        DevicePlatform.ANDROID: android_lifecycle
+    }
+    inspectors: dict[DevicePlatform, ApplicationArtifactInspector] = {
+        DevicePlatform.ANDROID: ApkInspector(android_control)
+    }
+    if supports_apple_device_tooling():
+        inventories[DevicePlatform.IOS] = IosDeviceInventory(
+            SimctlDeviceInventory(),
+            IosPhysicalDeviceInventory(),
+        )
+        lifecycles[DevicePlatform.IOS] = IosDeviceLifecycle(SimctlClient())
+        inspectors[DevicePlatform.IOS] = IosApplicationInspector()
     return RunCoordinator(
         RunWorkspaceFactory(),
-        {
-            DevicePlatform.ANDROID: android_inventory,
-            DevicePlatform.IOS: ios_inventory,
-        },
-        {
-            DevicePlatform.ANDROID: AndroidDeviceLifecycle(
-                android_inventory,
-                android_control,
-                host_environment=(
-                    MacOsAndroidEmulatorEnvironment() if sys.platform == "darwin" else None
-                ),
-            ),
-            DevicePlatform.IOS: IosDeviceLifecycle(SimctlClient()),
-        },
-        RequestedApplicationResolver(
-            {
-                DevicePlatform.ANDROID: ApkInspector(android_control),
-                DevicePlatform.IOS: IosApplicationInspector(),
-            }
-        ),
+        inventories,
+        lifecycles,
+        RequestedApplicationResolver(inspectors),
         AppiumServerManager(),
         AutomationSessionManager.default(),
         workflows,

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from yewo.artifacts import ARTIFACTS_DIRECTORY
 from yewo.devices import ResourceOwnership
 from yewo.observations import RedactionRegion
 from yewo.runs import (
@@ -14,6 +15,7 @@ from yewo.runs import (
     RunTerminalCategory,
     RunWorkflowOutcome,
 )
+from yewo.runs.failure_diagnostics import has_partial_evidence
 from yewo.runs.errors import (
     RunCoordinationError,
     RunTerminalPersistenceError,
@@ -288,3 +290,15 @@ def test_external_resources_are_closed_without_releasing_them(tmp_path: Path) ->
     assert "session.close" in events
     assert "appium.close" not in events
     assert "device.close" not in events
+
+
+def test_a_ledger_lock_alone_is_not_partial_evidence(tmp_path: Path) -> None:
+    artifacts = tmp_path / ARTIFACTS_DIRECTORY
+    artifacts.mkdir(parents=True, exist_ok=True)
+    (artifacts / "observations.jsonl.lock").write_bytes(b"")
+
+    assert not has_partial_evidence(tmp_path)
+
+    (artifacts / "observations.jsonl").write_bytes(b'{"record_id":"1"}\n')
+
+    assert has_partial_evidence(tmp_path)

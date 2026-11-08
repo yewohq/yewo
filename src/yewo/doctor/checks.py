@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 import os
 from pathlib import Path
-import platform as platform_module
 import shutil
 import subprocess
 import sys
@@ -21,6 +20,13 @@ from yewo.automation.errors import AppiumRuntimeError
 from yewo.devices import DeviceDescriptor
 from yewo.devices._commands import CommandRunner, run_command
 from yewo.devices.errors import DeviceInventoryError
+from yewo.host import (
+    default_android_sdk_root,
+    supports_apple_device_tooling,
+    resolve_android_sdk_root,
+    resolve_android_sdk_tool,
+    resolve_build_tools_executables,
+)
 from yewo.devices.ios.inventory import (
     IosDeviceInventory,
     IosPhysicalDeviceInventory,
@@ -136,13 +142,13 @@ def _application_artifact(path: Path, platform: str | None) -> DoctorCheck:
         return _fail(
             "application artifact", f"not found: {path}", "Build the app or fix app in yewo.yaml."
         )
-    expected = (
+    expected_suffixes = (
         {"android": {".apk"}, "ios": {".app", ".ipa"}}.get(platform)
         if platform is not None
         else None
     )
-    if expected is not None and path.suffix.lower() not in expected:
-        suffixes = ", ".join(sorted(expected))
+    if expected_suffixes is not None and path.suffix.lower() not in expected_suffixes:
+        suffixes = ", ".join(sorted(expected_suffixes))
         return _fail(
             "application artifact",
             f"{path} does not match {platform}",
@@ -166,17 +172,17 @@ def _credential_checks(
     for model, matching in grouped.items():
         roles = ", ".join(profile.role.value for profile in matching)
         try:
-            missing = credential_check(matching[0])
+            missing_credentials = credential_check(matching[0])
         except Exception:  # noqa: BLE001 - provider configuration boundary
             checks.append(_fail(f"model credentials: {model}", "could not inspect credentials"))
             continue
-        if missing:
-            names = ", ".join(missing)
+        if missing_credentials:
+            names = ", ".join(missing_credentials)
             checks.append(
                 _fail(
                     f"model credentials: {model}",
                     f"missing {names} for {roles}",
-                    f"Add {missing[0]}=... to the project .env file.",
+                    f"Add {missing_credentials[0]}=... to the project .env file.",
                 )
             )
         else:
@@ -240,8 +246,8 @@ def _appium_checks(
             f"Appium {runtime.appium_version}. Node {runtime.node_executable}",
         )
     ]
-    installed = _installed_appium_drivers(runtime, runner)
-    if installed is None:
+    installed_drivers = _installed_appium_drivers(runtime, runner)
+    if installed_drivers is None:
         checks.extend(
             _warn(f"driver: {_driver(platform)}", "could not list drivers")
             for platform in platforms
@@ -251,7 +257,7 @@ def _appium_checks(
             driver = _driver(platform)
             checks.append(
                 _ok(f"driver: {driver}", "installed")
-                if driver in installed
+                if driver in installed_drivers
                 else _fail(
                     f"driver: {driver}",
                     "not installed",
@@ -292,7 +298,7 @@ def _android_checks(
             _fail(
                 "Android SDK",
                 "not found",
-                "Set ANDROID_HOME to an installed Android SDK.",
+                _android_sdk_remedy(),
             ),
             _skip("adb", "Android SDK is unavailable"),
             _skip("emulator", "Android SDK is unavailable"),
@@ -314,25 +320,25 @@ def _android_checks(
 
 def _avd_check(
     emulator: Path,
-    expected: str | None,
+    expected_device_name: str | None,
     runner: CommandRunner,
 ) -> DoctorCheck:
     result = _capture(runner, [str(emulator), "-list-avds"])
     if result is None or result.returncode:
         return _warn("configured AVDs", "could not list Android virtual devices")
     names = tuple(line.strip() for line in (result.stdout or "").splitlines() if line.strip())
-    if expected is not None and expected in names:
-        return _ok("configured AVDs", f"{expected} is available")
+    if expected_device_name is not None and expected_device_name in names:
+        return _ok("configured AVDs", f"{expected_device_name} is available")
     if not names:
         return _warn(
             "configured AVDs",
             "none configured. An attached physical device can still satisfy the run",
         )
     detail = ", ".join(names)
-    if expected is not None:
+    if expected_device_name is not None:
         return _warn(
             "configured AVDs",
-            f"'{expected}' is not an AVD. Configured AVDs: {detail}",
+            f"'{expected_device_name}' is not an AVD. Configured AVDs: {detail}",
             "Make sure that the configured name identifies an attached physical device.",
         )
     return _ok("configured AVDs", detail)
@@ -342,7 +348,7 @@ def _ios_checks(
     expected_device: str | None,
     runner: CommandRunner,
 ) -> tuple[DoctorCheck, ...]:
-    if platform_module.system() != "Darwin":
+    if not supports_apple_device_tooling():
         return (
             _skip("Xcode", "iOS automation requires macOS"),
             _skip("devices", "iOS automation requires macOS"),
@@ -378,35 +384,37 @@ def _ios_checks(
 
 def _device_check(
     devices: Sequence[DeviceDescriptor],
-    expected: str | None,
+    expected_device_name: str | None,
 ) -> DoctorCheck:
     if not devices:
         return _fail("devices", "none found")
     labels = ", ".join(device.display_name for device in devices)
-    if expected is None:
+    if expected_device_name is None:
         return _ok("devices", labels)
     matching = tuple(
         device
         for device in devices
-        if expected in {device.target_id, device.display_name, device.connection_id}
+        if expected_device_name in {device.target_id, device.display_name, device.connection_id}
     )
     if matching:
         device = matching[0]
-        return _ok("devices", f"{expected}: {device.readiness.value}")
+        return _ok("devices", f"{expected_device_name}: {device.readiness.value}")
     return _fail(
         "devices",
-        f"configured device '{expected}' was not found. Available: {labels}",
+        f"configured device '{expected_device_name}' was not found. Available: {labels}",
         "Update device in yewo.yaml or create/connect the configured device.",
     )
 
 
+def _android_sdk_remedy() -> str:
+    default = default_android_sdk_root()
+    if default is None:
+        return "Set ANDROID_HOME to an installed Android SDK."
+    return f"Set ANDROID_HOME to an installed Android SDK, or install it at {default}."
+
+
 def _android_sdk(environment: Mapping[str, str]) -> Path | None:
-    for name in ANDROID_SDK_ENVIRONMENT:
-        raw = environment.get(name)
-        if raw and Path(raw).expanduser().is_dir():
-            return Path(raw).expanduser().resolve()
-    default = Path.home() / "Library" / "Android" / "sdk"
-    return default.resolve() if platform_module.system() == "Darwin" and default.is_dir() else None
+    return resolve_android_sdk_root(environment)
 
 
 def _android_binary(
@@ -414,13 +422,7 @@ def _android_binary(
     sdk: Path,
     environment: Mapping[str, str],
 ) -> Path | None:
-    found = shutil.which(name, path=environment.get("PATH", ""))
-    if found:
-        return Path(found).resolve()
-    relatives = (f"platform-tools/{name}", f"emulator/{name}", f"tools/bin/{name}")
-    return next(
-        (candidate for relative in relatives if (candidate := sdk / relative).is_file()), None
-    )
+    return resolve_android_sdk_tool(name, sdk, environment.get("PATH", ""))
 
 
 def _binary_check(name: str, path: Path | None) -> DoctorCheck:
@@ -430,8 +432,8 @@ def _binary_check(name: str, path: Path | None) -> DoctorCheck:
 def _aapt_check(sdk: Path) -> DoctorCheck:
     candidates = sorted(
         (
-            *tuple((sdk / "build-tools").glob("*/aapt")),
-            *tuple((sdk / "build-tools").glob("*/aapt2")),
+            *resolve_build_tools_executables(sdk, "aapt"),
+            *resolve_build_tools_executables(sdk, "aapt2"),
         ),
         reverse=True,
     )
@@ -442,11 +444,11 @@ def _aapt_check(sdk: Path) -> DoctorCheck:
     )
 
 
-def _selected_platforms(requested: str | None, configured: str | None) -> tuple[str, ...]:
-    selected = requested or configured or DEFAULT_PLATFORM
-    if selected == "all":
+def _selected_platforms(requested_platform: str | None, configured_platform: str | None) -> tuple[str, ...]:
+    selected_platform = requested_platform or configured_platform or DEFAULT_PLATFORM
+    if selected_platform == "all":
         return "android", "ios"
-    return (selected,)
+    return (selected_platform,)
 
 
 def _expected_device(project: _ProjectInspection, platform: str) -> str | None:

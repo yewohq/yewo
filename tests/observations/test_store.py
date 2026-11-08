@@ -7,6 +7,8 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+from symlink_support import requires_symlinks
+
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.observations import (
     Observation,
@@ -130,6 +132,7 @@ def test_store_rejects_an_unsafe_generated_identifier(tmp_path: Path) -> None:
     assert not (tmp_path / "screenshots").exists()
 
 
+@requires_symlinks
 def test_store_rejects_screenshot_directory_outside_artifact_root(
     tmp_path: Path,
 ) -> None:

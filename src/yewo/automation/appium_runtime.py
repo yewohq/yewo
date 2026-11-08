@@ -7,11 +7,18 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 from typing import Protocol
 
 from yewo.automation.errors import AppiumRuntimeError
+from yewo.host import (
+    is_node_script_shim,
+    node_executable_patterns,
+    node_installation_roots,
+    resolve_host_executable,
+    resolve_node_package_entry_point,
+    sorted_existing_paths,
+)
 
 
 NODE_BINARY_ENV = "YEWO_NODE_BINARY"
@@ -43,13 +50,13 @@ def parse_installed_appium_drivers(output: str) -> frozenset[str] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    installed: set[str] = set()
+    installed_drivers: set[str] = set()
     for name, details in payload.items():
         if not isinstance(name, str) or not isinstance(details, dict):
             return None
         if details.get("installed") is True:
-            installed.add(name)
-    return frozenset(installed)
+            installed_drivers.add(name)
+    return frozenset(installed_drivers)
 
 
 class _RuntimeRunner(Protocol):
@@ -78,36 +85,28 @@ def _run_runtime_command(
     )
 
 
-def _existing_unique_paths(candidates: Sequence[str | Path]) -> tuple[Path, ...]:
-    paths: list[Path] = []
-    known: set[Path] = set()
-    for candidate in candidates:
-        try:
-            resolved = Path(candidate).expanduser().resolve()
-        except OSError:
-            continue
-        if resolved in known or not resolved.is_file():
-            continue
-        known.add(resolved)
-        paths.append(resolved)
-    return tuple(paths)
-
-
 def _node_candidates(environment: Mapping[str, str]) -> tuple[Path, ...]:
-    configured = environment.get(NODE_BINARY_ENV)
-    if configured:
-        return _existing_unique_paths((configured,))
-    discovered: list[str | Path] = []
-    if active := shutil.which("node", path=environment.get("PATH")):
-        discovered.append(active)
-    for root in (Path("/opt/homebrew/opt"), Path("/usr/local/opt")):
-        if root.is_dir():
-            discovered.extend(sorted(root.glob("node@*/bin/node"), reverse=True))
+    configured_binary = environment.get(NODE_BINARY_ENV)
+    if configured_binary:
+        return sorted_existing_paths((configured_binary,))
+    candidate_paths: list[str | Path] = []
+    if active_node := resolve_host_executable("node", environment.get("PATH")):
+        candidate_paths.append(active_node)
+    for root in node_installation_roots():
+        if not root.is_dir():
+            continue
+        for pattern in node_executable_patterns():
+            candidate_paths.extend(sorted(root.glob(pattern), reverse=True))
+    candidate_paths.extend(_nvm_node_candidates(environment))
+    return sorted_existing_paths(candidate_paths)
+
+
+def _nvm_node_candidates(environment: Mapping[str, str]) -> tuple[Path, ...]:
     nvm_root = Path(environment.get("NVM_DIR", str(Path.home() / ".nvm")))
     versions = nvm_root / "versions" / "node"
-    if versions.is_dir():
-        discovered.extend(sorted(versions.glob("*/bin/node"), reverse=True))
-    return _existing_unique_paths(discovered)
+    if not versions.is_dir():
+        return ()
+    return tuple(sorted(versions.glob("*/bin/node"), reverse=True))
 
 
 def _appium_package_json(appium_script: Path) -> Path | None:
@@ -126,8 +125,8 @@ def resolve_appium_runtime(
     """Return a Node and Appium pair that passes local compatibility checks."""
     process_environment = dict(os.environ if environment is None else environment)
     configured_appium = process_environment.get(APPIUM_BINARY_ENV)
-    discovered_appium = configured_appium or shutil.which(
-        "appium", path=process_environment.get("PATH")
+    discovered_appium = configured_appium or resolve_host_executable(
+        "appium", process_environment.get("PATH")
     )
     if not discovered_appium:
         raise AppiumRuntimeError(
@@ -136,7 +135,7 @@ def resolve_appium_runtime(
     appium_script = Path(discovered_appium).expanduser()
     if not appium_script.is_file():
         raise AppiumRuntimeError(f"The configured Appium script does not exist: {appium_script}")
-    appium_script = appium_script.resolve()
+    appium_script = _resolve_appium_script(appium_script.resolve())
     node_candidates = _node_candidates(process_environment)
     if not node_candidates:
         raise AppiumRuntimeError(
@@ -176,11 +175,28 @@ def resolve_appium_runtime(
     )
 
 
+def _resolve_appium_script(appium_path: Path) -> Path:
+    """Return the Node script to run, never a host command shim.
+
+    Node cannot run a Windows command shim, so the installed package entry
+    point replaces it.
+    """
+    if not is_node_script_shim(appium_path):
+        return appium_path
+    entry_point = resolve_node_package_entry_point(appium_path, "appium")
+    if entry_point is None:
+        raise AppiumRuntimeError(
+            f"Yewo found the Appium shim at {appium_path} but no Appium script. "
+            f"Set {APPIUM_BINARY_ENV} to the installed Appium entry point."
+        )
+    return entry_point
+
+
 def _runtime_environment(environment: dict[str, str], node: Path) -> dict[str, str]:
-    configured = dict(environment)
-    existing_path = configured.get("PATH", "")
-    configured["PATH"] = os.pathsep.join(filter(None, (str(node.parent), existing_path)))
-    return configured
+    configured_binary = dict(environment)
+    existing_path = configured_binary.get("PATH", "")
+    configured_binary["PATH"] = os.pathsep.join(filter(None, (str(node.parent), existing_path)))
+    return configured_binary
 
 
 def _node_is_compatible(

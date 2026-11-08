@@ -79,10 +79,22 @@ dev = [
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "SIM", "C90", "BLE", "W"]
+select = ["E", "F", "B", "SIM", "C90", "BLE", "W", "TID"]
 # The formatter owns code width. The long lines that remain are prompt text and
 # model-facing field descriptions, and nothing may rewrap them.
 ignore = ["E501"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# These modules exist only on POSIX hosts. Only yewo.host may import one, and
+# only inside a branch that another host does not reach. See src/yewo/host.
+"fcntl".msg = "Import POSIX-only modules inside src/yewo/host only."
+"termios".msg = "Import POSIX-only modules inside src/yewo/host only."
+"pty".msg = "Import POSIX-only modules inside src/yewo/host only."
+"grp".msg = "Import POSIX-only modules inside src/yewo/host only."
+"pwd".msg = "Import POSIX-only modules inside src/yewo/host only."
+
+[tool.ruff.lint.per-file-ignores]
+"src/yewo/host/*.py" = ["TID251"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 21  # The project requirement is strictly less than 22.

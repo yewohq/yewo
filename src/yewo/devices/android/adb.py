@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from pathlib import Path
-import shutil
 import subprocess
 
 from yewo.devices.android._validation import (
@@ -25,6 +23,7 @@ from yewo.devices._commands import (
     run_command,
 )
 from yewo.devices.errors import DeviceCommandError
+from yewo.host import resolve_emulator_executable
 
 
 @dataclass(frozen=True)
@@ -142,12 +141,8 @@ class AdbClient:
         """Return the configured Android emulator executable when available."""
         if self._emulator_executable:
             return self._emulator_executable
-        found = shutil.which("emulator")
-        if found:
-            return found
-        android_home = os.getenv("ANDROID_HOME")
-        candidate = Path(android_home) / "emulator" / "emulator" if android_home else None
-        return str(candidate) if candidate is not None and candidate.is_file() else None
+        emulator_path = resolve_emulator_executable(os.environ)
+        return str(emulator_path) if emulator_path is not None else None
 
     def list_avds(self) -> tuple[str, ...] | None:
         """Return configured AVD names, or no answer when the tool is absent."""

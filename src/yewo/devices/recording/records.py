@@ -10,6 +10,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yewo.artifacts.records import (
+    RelativeArtifactPath,
     ArtifactRetention,
     ArtifactSensitivity,
     EvidenceApplicationIdentity,
@@ -159,7 +160,7 @@ class ScreenRecordingArtifactReference(BaseModel):
     checkpoint_kind: ScreenRecordingCheckpointKind
     checkpoint_id: RecordIdentifier | None = None
     sha256: Sha256Digest
-    path: Path
+    path: RelativeArtifactPath
     byte_count: int = Field(gt=0)
     duration_seconds: float = Field(gt=0)
     requested_maximum_seconds: int = Field(gt=0)

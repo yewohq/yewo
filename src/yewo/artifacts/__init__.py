@@ -18,7 +18,9 @@ from yewo.artifacts.records import (
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
+    RelativeArtifactPath,
     Sha256Digest,
+    format_relative_artifact_path,
     new_record_identifier,
     validate_record_identifier,
 )
@@ -52,6 +54,8 @@ __all__ = [
     "EvidenceApplicationIdentity",
     "EvidenceDeviceIdentity",
     "RecordIdentifier",
+    "RelativeArtifactPath",
+    "format_relative_artifact_path",
     "Sha256Digest",
     "YEWO_REDACTION_POLICY_ID",
     "draw_yewo_redaction_mask",

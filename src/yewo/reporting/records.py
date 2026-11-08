@@ -12,6 +12,7 @@ from typing import Annotated, Any, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yewo.artifacts import (
+    RelativeArtifactPath,
     CANONICAL_RUN_RECORD_SCHEMA_VERSION as CANONICAL_RUN_RECORD_SCHEMA_VERSION,
     CanonicalRunRecordSchemaVersion,
     EvidenceApplicationIdentity,
@@ -105,7 +106,7 @@ class CanonicalEvidenceReference(BaseModel):
 
     artifact_id: RecordIdentifier
     kind: CanonicalEvidenceKind
-    path: Path
+    path: RelativeArtifactPath
     label: str = Field(min_length=1, max_length=200)
     scenario_id: RecordIdentifier | None = None
 
@@ -222,7 +223,7 @@ class CanonicalReportOutput(BaseModel):
 
     format: ReportOutputFormat
     disposition: ReportOutputDisposition
-    path: Path
+    path: RelativeArtifactPath
     reason: str | None = Field(default=None, min_length=1, max_length=1_024)
 
     @field_validator("path")

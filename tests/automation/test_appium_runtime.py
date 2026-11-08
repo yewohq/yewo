@@ -110,13 +110,46 @@ def test_runtime_resolver_rejects_an_empty_appium_version(tmp_path: Path) -> Non
 
 
 def test_driver_listing_parser_requires_exact_installed_driver_names() -> None:
-    installed = parse_installed_appium_drivers(
+    installed_drivers = parse_installed_appium_drivers(
         '{"uiautomator2-extra":{"installed":true},"uiautomator2":{"installed":false}}'
     )
 
-    assert installed == frozenset({"uiautomator2-extra"})
+    assert installed_drivers == frozenset({"uiautomator2-extra"})
 
 
 @pytest.mark.parametrize("output", ("", "Appium says uiautomator2 is installed", "[]"))
 def test_driver_listing_parser_rejects_non_object_json(output: str) -> None:
     assert parse_installed_appium_drivers(output) is None
+
+
+def test_runtime_resolver_replaces_a_host_shim_with_the_installed_script(
+    tmp_path: Path,
+) -> None:
+    node, appium_script, _ = _runtime_files(tmp_path)
+    shim = tmp_path / "bin" / "appium.cmd"
+    shim.touch()
+    runner = _RuntimeRunnerStub([("", "", 0), ("2.11.3", "", 0)])
+
+    runtime = resolve_appium_runtime(
+        {APPIUM_BINARY_ENV: str(shim), NODE_BINARY_ENV: str(node)},
+        runner=runner,
+    )
+
+    assert runtime.appium_script == appium_script
+    assert str(shim) not in runner.calls[-1][0]
+
+
+def test_runtime_resolver_reports_a_host_shim_without_an_installed_script(
+    tmp_path: Path,
+) -> None:
+    node = tmp_path / "bin" / "node"
+    node.parent.mkdir(parents=True)
+    node.touch()
+    shim = tmp_path / "bin" / "appium.cmd"
+    shim.touch()
+
+    with pytest.raises(AppiumRuntimeError, match="no Appium script"):
+        resolve_appium_runtime(
+            {APPIUM_BINARY_ENV: str(shim), NODE_BINARY_ENV: str(node)},
+            runner=_RuntimeRunnerStub([]),
+        )

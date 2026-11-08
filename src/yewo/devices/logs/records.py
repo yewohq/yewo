@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Annotated, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from yewo.artifacts.records import (
+    RelativeArtifactPath,
     ArtifactRetention,
     ArtifactSensitivity,
     EvidenceApplicationIdentity,
@@ -119,7 +120,7 @@ class DeviceLogArtifactReference(BaseModel):
     platform_reason: str | None = Field(default=None, min_length=1, max_length=256)
     platform_code: str | None = Field(default=None, min_length=1, max_length=128)
     sha256: Sha256Digest
-    path: Path
+    path: RelativeArtifactPath
     byte_count: int = Field(gt=0)
     entry_count: int = Field(gt=0)
     redaction_policy_id: str = Field(pattern=_POLICY_ID_PATTERN)

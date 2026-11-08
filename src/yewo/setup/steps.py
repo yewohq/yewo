@@ -6,7 +6,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import platform as platform_module
 import shutil
 import subprocess
 from typing import Protocol
@@ -17,6 +16,7 @@ from yewo.automation.appium_runtime import (
     resolve_appium_runtime,
 )
 from yewo.automation.errors import AppiumRuntimeError
+from yewo.host import build_host_command, resolve_host_executable, supports_apple_device_tooling
 from yewo.project_config import (
     DEFAULT_PLATFORM,
     YewoProjectError,
@@ -120,16 +120,16 @@ def run_setup(context: SetupContext) -> SetupReport:
 
 def _project_plan(
     context: SetupContext,
-    existing: Path | None,
+    existing_config_path: Path | None,
 ) -> tuple[tuple[str, ...], Path, SetupStep]:
-    if existing is not None:
+    if existing_config_path is not None:
         try:
-            project = load_yewo_project(existing)
+            project = load_yewo_project(existing_config_path)
         except YewoProjectError as error:
             platforms = _platforms(context.requested_platform, None)
-            return platforms, existing.parent, _fail("yewo.yaml", str(error))
+            return platforms, existing_config_path.parent, _fail("yewo.yaml", str(error))
         platforms = _platforms(context.requested_platform, project.settings.platform)
-        return platforms, existing.parent, _ok("yewo.yaml", f"using {existing}")
+        return platforms, existing_config_path.parent, _ok("yewo.yaml", f"using {existing_config_path}")
 
     platforms = _platforms(context.requested_platform, None)
     target = context.root / "yewo.yaml"
@@ -207,13 +207,13 @@ def _appium_step(
             _ok("Appium", f"{runtime.appium_version} with {runtime.node_executable}"),
             runtime,
         )
-    npm = shutil.which("npm", path=environment.get("PATH"))
-    if npm is None:
+    npm_path = resolve_host_executable("npm", environment.get("PATH"))
+    if npm_path is None:
         return (
             _fail("Appium", "npm is unavailable", "Install a supported Node.js release."),
             None,
         )
-    command = (npm, "install", "--global", "appium")
+    command = build_host_command(npm_path, "install", "--global", "appium")
     if context.dry_run:
         return _planned("Appium", "would install Appium", command), None
     if not context.approved("Install Appium globally with npm?"):
@@ -277,12 +277,12 @@ def _driver_step(
         )
     except subprocess.TimeoutExpired:
         return _fail(label, "driver listing timed out", command=listing_command)
-    installed = parse_installed_appium_drivers(listing.stdout or "")
+    installed_drivers = parse_installed_appium_drivers(listing.stdout or "")
     if listing.returncode:
         return _fail(label, "could not list installed drivers", command=listing_command)
-    if installed is None:
+    if installed_drivers is None:
         return _fail(label, "Appium returned an invalid driver listing", command=listing_command)
-    if driver in installed:
+    if driver in installed_drivers:
         return _ok(label, "already installed")
     command = (*base, "install", driver)
     if context.dry_run:
@@ -308,11 +308,11 @@ def _driver_step(
 
 
 def _applesimutils_step(context: SetupContext) -> SetupStep:
-    if platform_module.system() != "Darwin":
+    if not supports_apple_device_tooling():
         return _skip("applesimutils", "iOS permission tooling requires macOS")
-    installed = shutil.which("applesimutils")
-    if installed:
-        return _ok("applesimutils", installed)
+    applesimutils_path = shutil.which("applesimutils")
+    if applesimutils_path:
+        return _ok("applesimutils", applesimutils_path)
     brew = shutil.which("brew")
     if brew is None:
         return _warn(
@@ -343,9 +343,9 @@ def _applesimutils_step(context: SetupContext) -> SetupStep:
     return _ok("applesimutils", "installed")
 
 
-def _platforms(requested: str | None, configured: str | None) -> tuple[str, ...]:
-    selected = requested or configured or DEFAULT_PLATFORM
-    return ("android", "ios") if selected == "all" else (selected,)
+def _platforms(requested_platform: str | None, configured_platform: str | None) -> tuple[str, ...]:
+    selected_platform = requested_platform or configured_platform or DEFAULT_PLATFORM
+    return ("android", "ios") if selected_platform == "all" else (selected_platform,)
 
 
 def _command_failure_detail(

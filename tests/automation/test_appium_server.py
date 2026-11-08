@@ -37,6 +37,7 @@ class _ProcessStub:
         self.returncode = returncode
         self.terminated = False
         self.killed = False
+        self.pid = 4321
 
     def poll(self) -> int | None:
         return self.returncode

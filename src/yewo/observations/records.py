@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from yewo.artifacts.records import (
+    RelativeArtifactPath,
     ArtifactRetention,
     ArtifactSensitivity,
     EvidenceApplicationIdentity,
@@ -111,7 +112,7 @@ class ScreenshotReference(BaseModel):
     sha256: Sha256Digest
     width_px: int = Field(gt=0)
     height_px: int = Field(gt=0)
-    path: Path
+    path: RelativeArtifactPath
     redaction_state: ScreenshotRedactionState
     redaction: RedactionProvenance | None = None
     sensitivity: ArtifactSensitivity

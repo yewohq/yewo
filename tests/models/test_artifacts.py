@@ -9,6 +9,8 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
+from symlink_support import requires_symlinks
+
 from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
 from yewo.models import (
     ImageModelContent,
@@ -231,6 +233,7 @@ def test_model_image_reader_verifies_digest_and_dimensions(tmp_path: Path) -> No
         ModelImageReader(tmp_path).read(reference)
 
 
+@requires_symlinks
 def test_model_image_reader_rejects_symbolic_link(tmp_path: Path) -> None:
     reference = _screenshot(tmp_path)
     target = tmp_path / reference.path

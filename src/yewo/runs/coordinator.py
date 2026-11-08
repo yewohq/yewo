@@ -10,7 +10,11 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from yewo.artifacts import ARTIFACTS_DIRECTORY
+from yewo.runs.failure_diagnostics import (
+    error_chain,
+    has_partial_evidence,
+    validation_detail,
+)
 from yewo.applications import (
     ApplicationDescriptor,
     ApplicationInspectionError,
@@ -81,14 +85,14 @@ class RunWorkflowOutcome:
     reason: str
 
     def __post_init__(self) -> None:
-        allowed = {
+        allowed_categories = {
             RunTerminalCategory.COMPLETED,
             RunTerminalCategory.INCOMPLETE,
             RunTerminalCategory.BUDGET_EXHAUSTED,
             RunTerminalCategory.BLOCKED_BY_POLICY,
             RunTerminalCategory.APPLICATION_FAILURE,
         }
-        if self.category not in allowed:
+        if self.category not in allowed_categories:
             raise ValueError("A workflow returned a coordinator-owned terminal category.")
         if not self.reason.strip():
             raise ValueError("A workflow outcome must explain its conclusion.")
@@ -233,7 +237,10 @@ class RunCoordinator:
                 inventory = self._inventories.get(request.application.platform)
                 lifecycle = self._lifecycles.get(request.application.platform)
                 if inventory is None or lifecycle is None:
-                    raise _SetupBlock("The requested platform has no device adapters.")
+                    raise _SetupBlock(
+                        f"Yewo has no {request.application.platform.value} device "
+                        "adapters on this host."
+                    )
                 query = _platform_query(request.device, request.application.platform)
                 narrator.record(_NARRATION_SOURCE, "Selecting a device...")
                 selected_device = select_device(query, inventory.list_devices())
@@ -347,7 +354,7 @@ class RunCoordinator:
                 narrator.trace(
                     _NARRATION_SOURCE,
                     f"{type(error.original_error).__name__} with evidence persistence failure "
-                    f"during {stage.value} chain={_error_chain(error.original_error)}",
+                    f"during {stage.value} chain={error_chain(error.original_error)}",
                 )
             except RunWorkflowInfrastructureError as error:
                 category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
@@ -367,7 +374,7 @@ class RunCoordinator:
                 reason = "A required device, application, or runtime prerequisite was unavailable."
                 narrator.trace(
                     _NARRATION_SOURCE,
-                    f"{type(error).__name__} during {stage.value} chain={_error_chain(error)}",
+                    f"{type(error).__name__} during {stage.value} chain={error_chain(error)}",
                 )
             except Exception as error:  # noqa: BLE001 - coordinator must classify component failures
                 category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
@@ -375,7 +382,7 @@ class RunCoordinator:
                 narrator.trace(
                     _NARRATION_SOURCE,
                     f"{type(error).__name__} during {stage.value} "
-                    f"chain={_error_chain(error)}{_validation_detail(error)}",
+                    f"chain={error_chain(error)}{validation_detail(error)}",
                 )
 
             preceding_category = workflow_preceding_category
@@ -395,7 +402,7 @@ class RunCoordinator:
                 narrator.trace(
                     _NARRATION_SOURCE,
                     f"{type(cleanup_error).__name__} during cleanup "
-                    f"chain={_error_chain(cleanup_error)}",
+                    f"chain={error_chain(cleanup_error)}",
                 )
             elif cleanup_interrupted:
                 preceding_category = (
@@ -445,7 +452,7 @@ class RunCoordinator:
                 stage=stage,
                 reason=_bounded_terminal_reason(reason),
                 completed_at=self._time_factory(),
-                partial_evidence_available=_has_partial_evidence(workspace.root),
+                partial_evidence_available=has_partial_evidence(workspace.root),
                 preceding_category=preceding_category,
             )
         except ValidationError as error:
@@ -507,40 +514,12 @@ def _close_resources(
                 errors.append(error)
                 narrator.trace(
                     _NARRATION_SOURCE,
-                    f"cleanup={resource_name} state=failed chain={_error_chain(error)}",
+                    f"cleanup={resource_name} state=failed chain={error_chain(error)}",
                 )
         except Exception as error:  # noqa: BLE001 - cleanup must finish
             errors.append(error)
             narrator.trace(
                 _NARRATION_SOURCE,
-                f"cleanup={resource_name} state=failed chain={_error_chain(error)}",
+                f"cleanup={resource_name} state=failed chain={error_chain(error)}",
             )
     return (errors[0] if errors else None), interrupted
-
-
-def _error_chain(error: BaseException) -> str:
-    names: list[str] = []
-    current: BaseException | None = error
-    while current is not None and len(names) < 5:
-        names.append(type(current).__name__)
-        current = current.__cause__ or current.__context__
-    return "<-".join(names)
-
-
-def _validation_detail(error: BaseException) -> str:
-    """Render validation failures without copying validated inputs into the trace."""
-    if not isinstance(error, ValidationError):
-        return ""
-    failures = (
-        f"{'.'.join(str(part) for part in item['loc']) or '<root>'}: {item['msg']}"
-        for item in error.errors(include_url=False, include_input=False)
-    )
-    return f" detail={' | '.join(failures)}"
-
-
-def _has_partial_evidence(root: Path) -> bool:
-    assets = root / ARTIFACTS_DIRECTORY
-    try:
-        return assets.is_dir() and any(path.is_file() for path in assets.rglob("*"))
-    except OSError:
-        return False

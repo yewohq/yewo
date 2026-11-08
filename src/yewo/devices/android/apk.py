@@ -19,6 +19,7 @@ from yewo.devices._commands import (
 from yewo.devices.android.adb import AdbClient
 from yewo.devices.android.manifest import LAUNCHER_CATEGORY, enabled_launcher
 from yewo.devices.errors import DeviceCommandError
+from yewo.host import resolve_build_tools_executables
 from yewo.devices.inventory import DevicePlatform
 
 
@@ -35,11 +36,11 @@ class ApkInfo:
 
 def _build_tools_version(executable: Path) -> tuple[int, tuple[int, ...], bool, str]:
     version = executable.parent.name
-    matched = re.fullmatch(r"(\d+(?:\.\d+)*)(.*)", version)
-    if matched is None:
+    version_match = re.fullmatch(r"(\d+(?:\.\d+)*)(.*)", version)
+    if version_match is None:
         return 0, (), False, version
-    numbers = tuple(int(part) for part in matched.group(1).split("."))
-    is_stable = not matched.group(2)
+    numbers = tuple(int(part) for part in version_match.group(1).split("."))
+    is_stable = not version_match.group(2)
     return 1, numbers, is_stable, version
 
 
@@ -64,7 +65,7 @@ class ApkInspector:
         if self._android_home is None:
             raise DeviceCommandError("ANDROID_HOME is not set.")
         candidates = sorted(
-            (self._android_home / "build-tools").glob(f"*/{executable}"),
+            resolve_build_tools_executables(self._android_home, executable),
             key=_build_tools_version,
             reverse=True,
         )
@@ -101,8 +102,8 @@ class ApkInspector:
 
     @staticmethod
     def _badging_attribute(package_line: str, name: str) -> str | None:
-        matched = re.search(rf"{name}='([^']+)'", package_line)
-        return matched.group(1) if matched else None
+        value_match = re.search(rf"{name}='([^']+)'", package_line)
+        return value_match.group(1) if value_match else None
 
     def inspect(self, artifact_path: Path) -> ApplicationDescriptor:
         """Return application identity observed from one APK."""

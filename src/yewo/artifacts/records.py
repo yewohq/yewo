@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from pathlib import Path, PurePath
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, TypeAdapter
 
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 
@@ -15,6 +16,21 @@ _IDENTIFIER_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 RecordIdentifier = Annotated[str, Field(pattern=_IDENTIFIER_PATTERN)]
 Sha256Digest = Annotated[str, Field(pattern=_SHA256_PATTERN)]
+
+
+def format_relative_artifact_path(value: PurePath) -> str:
+    """Render one stored artifact path the same way on every host.
+
+    Reports link to the stored value and bundles travel between hosts, so a
+    Windows separator would break both.
+    """
+    return value.as_posix()
+
+
+RelativeArtifactPath = Annotated[
+    Path,
+    PlainSerializer(format_relative_artifact_path, return_type=str, when_used="json"),
+]
 _IDENTIFIER_ADAPTER = TypeAdapter(RecordIdentifier)
 
 

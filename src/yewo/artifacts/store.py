@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import suppress
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -12,6 +11,7 @@ import tempfile
 from typing import Any
 
 from yewo.artifacts.errors import ArtifactWriteError
+from yewo.host import LOCK_FILE_MODE, LOCK_FILE_SUFFIX, exclusive_file_lock
 
 
 class AtomicArtifactWriter:
@@ -91,49 +91,63 @@ class AppendOnlyJsonlWriter:
             raise ArtifactWriteError("The JSONL record is not serializable.") from error
 
         destination = self.root / relative_path
-        descriptor: int | None = None
         try:
             _prepare_directory(self.root, destination.parent)
             if destination.is_symlink():
                 raise ArtifactWriteError("A JSONL ledger cannot be a symbolic link.")
-            flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            descriptor = os.open(destination, flags, 0o600)
-            with os.fdopen(descriptor, "r+b") as stream:
-                descriptor = None
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-                stream.seek(0)
-                for line_number, line in enumerate(stream, start=1):
-                    if not line.endswith(b"\n"):
-                        raise ArtifactWriteError(
-                            f"The JSONL ledger has an incomplete line: {line_number}."
-                        )
-                    try:
-                        existing = json.loads(line)
-                    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                        raise ArtifactWriteError(
-                            f"The JSONL ledger has an invalid line: {line_number}."
-                        ) from error
-                    if isinstance(existing, dict) and existing.get(identity_field) == identity:
-                        raise ArtifactWriteError(
-                            f"The JSONL record already exists: {identity_field}={identity}"
-                        )
-                stream.seek(0, os.SEEK_END)
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            lock_path = destination.with_name(destination.name + LOCK_FILE_SUFFIX)
+            if lock_path.is_symlink():
+                raise ArtifactWriteError("A JSONL ledger lock cannot be a symbolic link.")
+            with exclusive_file_lock(lock_path):
+                _append_unique_line(destination, content, identity_field, identity)
         except ArtifactWriteError:
             raise
         except OSError as error:
             raise ArtifactWriteError(
                 f"Could not append artifact: {relative_path.as_posix()}"
             ) from error
-        finally:
-            if descriptor is not None:
-                os.close(descriptor)
         return content
+
+
+def _validate_ledger_line(line: bytes, line_number: int) -> dict[str, Any] | None:
+    if not line.endswith(b"\n"):
+        raise ArtifactWriteError(f"The JSONL ledger has an incomplete line: {line_number}.")
+    try:
+        existing_record = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ArtifactWriteError(
+            f"The JSONL ledger has an invalid line: {line_number}."
+        ) from error
+    return existing_record if isinstance(existing_record, dict) else None
+
+
+def _append_unique_line(
+    destination: Path,
+    content: bytes,
+    identity_field: str,
+    identity: str,
+) -> None:
+    flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(destination, flags, LOCK_FILE_MODE)
+    try:
+        stream = os.fdopen(descriptor, "r+b")
+    except OSError:
+        os.close(descriptor)
+        raise
+    with stream:
+        stream.seek(0)
+        for line_number, line in enumerate(stream, start=1):
+            existing_record = _validate_ledger_line(line, line_number)
+            if existing_record is not None and existing_record.get(identity_field) == identity:
+                raise ArtifactWriteError(
+                    f"The JSONL record already exists: {identity_field}={identity}"
+                )
+        stream.seek(0, os.SEEK_END)
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def _prepare_directory(root: Path, directory: Path) -> None:
