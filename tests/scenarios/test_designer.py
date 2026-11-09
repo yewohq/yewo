@@ -33,7 +33,7 @@ def _ready_inputs():
     return suite, procedure, discovery_evidence()
 
 
-def _output(check: str, surface_id: str) -> dict[str, object]:
+def _output(check: str, surface_ref: str) -> dict[str, object]:
     return {
         "check_interpretations": [
             {
@@ -47,7 +47,7 @@ def _output(check: str, surface_id: str) -> dict[str, object]:
         "category_interpretations": [
             {
                 "category": "navigation",
-                "surface_ids": [surface_id],
+                "surface_refs": [surface_ref],
                 "variations": [
                     {
                         "scenario_type": "happy_path",
@@ -68,7 +68,7 @@ def test_designer_translates_checks_and_semantic_surface_meaning() -> None:
     check = "The user's work must remain after the app restarts."
     journey = _journey().model_copy(update={"checks": (check,)})
     suite, procedure, evidence = _ready_inputs()
-    model = StubPlannerModel(_output(check, suite.surfaces[0].surface_id))
+    model = StubPlannerModel(_output(check, "surface_0"))
 
     design = DesignerService(
         model,
@@ -85,6 +85,7 @@ def test_designer_translates_checks_and_semantic_surface_meaning() -> None:
     assert design.concerns[0].category is CoverageCategory.LIFECYCLE
     assert design.concerns[0].execution_change.value == "lifecycle_interruption"
     assert design.category_interpretations[0].category is CoverageCategory.NAVIGATION
+    assert design.category_interpretations[0].surface_ids == (suite.surfaces[0].surface_id,)
     assert [
         item.execution_change.value for item in design.category_interpretations[0].variations
     ] == ["accepted_route", "recovery_attempt"]
@@ -156,15 +157,52 @@ def test_designer_can_match_a_presentation_surface_to_a_screenshot_state() -> No
     context_content = content[0]
     assert isinstance(context_content, TextModelContent)
     context = json.loads(context_content.text)
+    presentation_index = suite.surfaces.index(presentation)
     projected = next(
-        item for item in context["surfaces"] if item["surface_id"] == presentation.surface_id
+        item
+        for item in context["surfaces"]
+        if item["surface_ref"] == f"surface_{presentation_index}"
     )
+    assert "surface_id" not in projected
     assert projected["state_ids"] == list(presentation.state_ids)
     assert any(
         isinstance(item, TextModelContent)
         and any(state_id in item.text for state_id in presentation.state_ids)
         for item in content[1:]
     )
+
+
+def test_designer_uses_short_surface_refs_with_permission_eligibility() -> None:
+    suite, procedure, evidence = _ready_inputs()
+    system_interaction = suite.surfaces[1].model_copy(
+        update={"kind": ScenarioSurfaceKind.SYSTEM_INTERACTION}
+    )
+    suite = suite.model_copy(
+        update={"surfaces": (suite.surfaces[0], system_interaction, *suite.surfaces[2:])}
+    )
+    model = StubPlannerModel({"check_interpretations": [], "category_interpretations": []})
+
+    DesignerService(model, "test-designer").design(_journey(), suite, procedure, evidence)
+
+    context_content = model.requests[0].messages[1].content[0]
+    assert isinstance(context_content, TextModelContent)
+    context = json.loads(context_content.text)
+    projected_surfaces = context["surfaces"]
+    assert [item["surface_ref"] for item in projected_surfaces] == [
+        f"surface_{index}" for index in range(len(suite.surfaces))
+    ]
+    assert [item["permission_eligible"] for item in projected_surfaces] == [
+        False,
+        True,
+        *([False] * (len(suite.surfaces) - 2)),
+    ]
+    assert all("surface_id" not in item for item in projected_surfaces)
+    assert all(surface.surface_id not in context_content.text for surface in suite.surfaces)
+    response_contract = model.requests[0].response_contract
+    assert response_contract is not None
+    serialized_schema = json.dumps(response_contract.json_schema)
+    assert '"surface_refs"' in serialized_schema
+    assert '"surface_ids"' not in serialized_schema
 
 
 def test_designer_sends_declared_value_metadata_without_its_value() -> None:
@@ -211,7 +249,7 @@ def test_designer_sends_declared_value_metadata_without_its_value() -> None:
         ),
         (
             lambda output: output["category_interpretations"][0].update(
-                {"surface_ids": ["invented_surface"]}
+                {"surface_refs": ["invented_surface"]}
             ),
             "invalid evidence mapping",
         ),
@@ -225,7 +263,7 @@ def test_designer_rejects_untrusted_mappings(mutate, message: str) -> None:
     check = "The user's work must remain after the app restarts."
     journey = _journey().model_copy(update={"checks": (check,)})
     suite, procedure, evidence = _ready_inputs()
-    output = _output(check, suite.surfaces[0].surface_id)
+    output = _output(check, "surface_0")
     mutate(output)
 
     with pytest.raises(DesignerError, match=message):
@@ -241,7 +279,7 @@ def test_designer_rejects_an_app_control_as_native_permission_evidence() -> None
         "category_interpretations": [
             {
                 "category": "permission",
-                "surface_ids": [suite.surfaces[0].surface_id],
+                "surface_refs": ["surface_0"],
                 "variations": [
                     {
                         "scenario_type": "negative",
@@ -273,7 +311,7 @@ def test_permission_mapping_validation_can_correct_mixed_surface_kinds() -> None
         "category_interpretations": [
             {
                 "category": "permission",
-                "surface_ids": [operation.surface_id, system_interaction.surface_id],
+                "surface_refs": ["surface_0", "surface_1"],
                 "variations": [
                     {
                         "scenario_type": "negative",
@@ -296,9 +334,14 @@ def test_permission_mapping_validation_can_correct_mixed_surface_kinds() -> None
 
     permission = output["category_interpretations"][0]
     assert isinstance(permission, dict)
-    permission["surface_ids"] = [system_interaction.surface_id]
+    permission["surface_refs"] = ["surface_1"]
     corrected = DesignerOutput.model_validate(output, context=validation_context)
-    assert corrected.category_interpretations[0].surface_ids == (system_interaction.surface_id,)
+    assert corrected.category_interpretations[0].surface_refs == ("surface_1",)
+
+    design = DesignerService(StubPlannerModel(output), "test-designer").design(
+        _journey(), suite, procedure, evidence
+    )
+    assert design.category_interpretations[0].surface_ids == (system_interaction.surface_id,)
 
 
 def test_designer_reports_a_failed_model_call() -> None:

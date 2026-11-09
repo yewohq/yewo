@@ -16,6 +16,7 @@ from yewo.grounding.records import (
     GroundingProfile,
     GroundingRequest,
     GroundingResult,
+    GroundingTargetOperation,
     ModelGroundingResolution,
     NormalizedPoint,
     PixelPoint,
@@ -33,26 +34,8 @@ from yewo.models import (
     ModelRole,
     TextModelContent,
 )
+from yewo.grounding.service_prompt import GROUNDING_PROMPT
 from yewo.observations import PixelRegion
-
-
-GROUNDING_PROMPT = """You are a GUI visual grounder. Locate one visible target in the screenshot.
-
-Target operation: {operation}
-Referring expression: {expression}
-Screenshot size: {width_px} by {height_px} pixels.
-
-Localization rules:
-- Locate the named target itself, not a nearby item, blank space, or parent container.
-- Use all stated visual attributes, relationships, and scope to reject similar targets.
-- A text label and the control or row that contains it are different targets.
-- {location_instruction}
-{correction_instruction}
-
-Output only {response_shape} in {coordinate_space}. Do not explain the answer.
-If no visible target matches, return: refused: target not found
-If more than one visible target matches, return: ambiguous: target is not unique"""
-
 
 MINIMUM_DIRECT_ANALYSIS_REGION_EDGE_PX = 8
 MAXIMUM_DIRECT_ANALYSIS_REGION_AREA_RATIO = 0.5
@@ -175,7 +158,14 @@ class GroundingService:
             width_px=request.screenshot.width_px,
             height_px=request.screenshot.height_px,
             location_instruction=location_instruction,
-            correction_instruction=_correction_instruction(request),
+            correction_instruction=_correction_instruction(
+                request, candidate.coordinate_convention
+            ),
+            excluded_region_instruction=_excluded_region_instruction(
+                request, candidate.coordinate_convention
+            ),
+            operation_instruction=_operation_instruction(request),
+            bounds_instruction=_bounds_instruction(request, candidate.coordinate_convention),
             response_shape=response_instruction,
             coordinate_space=coordinate_instruction,
         )
@@ -286,7 +276,80 @@ class GroundingService:
         )
 
 
-def _correction_instruction(request: GroundingRequest) -> str:
+_OPERATION_INSTRUCTIONS = {
+    GroundingTargetOperation.TAP: "The target is the activating surface of the named control.",
+    GroundingTargetOperation.TEXT_FIELD: (
+        "The target is the editable area of the named field, not its label."
+    ),
+    GroundingTargetOperation.DRAG_SOURCE: (
+        "The target is the grab position on the item being moved."
+    ),
+    GroundingTargetOperation.DRAG_DESTINATION: (
+        "The target is the drop position, which can be empty space rather than a control."
+    ),
+    GroundingTargetOperation.SCROLL_REGION: (
+        "The target is the scrollable area itself, not one row inside it."
+    ),
+}
+
+
+def _operation_instruction(request: GroundingRequest) -> str:
+    return _OPERATION_INSTRUCTIONS[request.operation]
+
+
+def _bounds_instruction(
+    request: GroundingRequest,
+    convention: GroundingCoordinateConvention,
+) -> str:
+    source_pixels = convention is GroundingCoordinateConvention.SOURCE_PIXELS
+    if source_pixels:
+        width = str(request.screenshot.width_px)
+        height = str(request.screenshot.height_px)
+    else:
+        limit = "1000" if convention is GroundingCoordinateConvention.NORMALIZED_1000 else "1"
+        width, height = limit, limit
+    if request.output_shape is GroundingOutputShape.POINT:
+        # A source pixel coordinate indexes the screenshot, so its last valid value is one
+        # less than the dimension. A normalized coordinate includes its upper limit.
+        if source_pixels:
+            return f"A valid point satisfies 0 <= x < {width} and 0 <= y < {height}."
+        return f"A valid point satisfies 0 <= x <= {width} and 0 <= y <= {height}."
+    rule = (
+        f"A valid region satisfies 0 <= left < right <= {width} and "
+        f"0 <= top < bottom <= {height}, so equal opposite edges are invalid."
+    )
+    if source_pixels:
+        return rule
+    return f"{rule} The region must still cover at least one whole pixel after scaling."
+
+
+def _pixel_conversion_note(convention: GroundingCoordinateConvention) -> str:
+    if convention is GroundingCoordinateConvention.SOURCE_PIXELS:
+        return ""
+    return " Convert those source pixels into the required output coordinate space."
+
+
+def _excluded_region_instruction(
+    request: GroundingRequest,
+    convention: GroundingCoordinateConvention,
+) -> str:
+    regions = request.excluded_regions or ()
+    if not regions:
+        return ""
+    bounds = ", ".join(
+        f"({region.left},{region.top},{region.right},{region.bottom})" for region in regions
+    )
+    return (
+        "The platform owns these source-pixel regions as (left,top,right,bottom): "
+        f"{bounds}. A target inside one of them is rejected, so choose a target outside them."
+        f"{_pixel_conversion_note(convention)}"
+    )
+
+
+def _correction_instruction(
+    request: GroundingRequest,
+    convention: GroundingCoordinateConvention,
+) -> str:
     if request.correction is None:
         return ""
     point = request.correction.previous_point
@@ -294,7 +357,7 @@ def _correction_instruction(request: GroundingRequest) -> str:
         f"The previous dispatched point ({point.x},{point.y}) produced no observable change. "
         "Use the refined target description. "
         f"Choose a point at least {request.correction.minimum_distance_px} source screenshot "
-        "pixels away from the previous point."
+        f"pixels away from the previous point.{_pixel_conversion_note(convention)}"
     )
 
 

@@ -4,6 +4,10 @@ device:
   platform: android
   headless: false
 model: openrouter/deepseek/deepseek-v4.1-flash
+models:
+  screen_analyzer:
+    model: openrouter/deepseek/deepseek-v4.1-flash
+    reasoning: disabled
 grounder:
   model: openrouter/bytedance/ui-tars-1.5-7b
   protocol: source_pixels

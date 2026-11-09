@@ -28,19 +28,11 @@ from yewo.models import (
 )
 
 
+from yewo.agent.replay.procedure.objective_matching_prompt import (
+    OBJECTIVE_MATCHING_SYSTEM_PROMPT,
+)
+
 MAXIMUM_OBJECTIVE_CANDIDATES = 20
-
-OBJECTIVE_MATCHING_SYSTEM_PROMPT = """\
-You compare one requested mobile-application objective with audited stored procedure objectives.
-Judge the complete objective and every completion condition. Wording can differ.
-
-Return equivalent only when the requested objective and one candidate require the same observable
-outcome. Their completion conditions must align one-to-one in the supplied order. A narrower,
-broader, overlapping, unrelated, or uncertain candidate is not equivalent. Do not infer current
-application state. Do not claim that a stored procedure completed the requested task in this run.
-Select at most one candidate. Return only the JSON response.
-"""
-
 OBJECTIVE_MATCHING_USER_PROMPT = """\
 Compare the requested objective with the stored candidates. Context JSON follows:
 """
@@ -75,7 +67,6 @@ class ObjectiveMatchOutput(BaseModel):
 
     procedure_id: RecordIdentifier | None = None
     relationship: ObjectiveRelationship
-    reason: str = Field(min_length=1, max_length=1_000)
 
     @model_validator(mode="after")
     def _validate_equivalent_selection(self) -> "ObjectiveMatchOutput":

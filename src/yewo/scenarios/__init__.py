@@ -24,13 +24,13 @@ from yewo.scenarios.coordinator import (
 )
 from yewo.scenarios.paths import SCENARIO_ARTIFACTS_DIRECTORY, SCENARIO_GENERATION_PATH
 from yewo.scenarios.designer import (
-    TEST_DESIGNER_SYSTEM_PROMPT,
     TestDesignerError,
     TestDesignerInvalidOutputError,
     TestDesignerOutput,
     TestDesignerService,
     ValidatedTestDesign,
 )
+from yewo.scenarios.designer_prompt import TEST_DESIGNER_SYSTEM_PROMPT
 from yewo.scenarios.generator import (
     ScenarioGenerationError,
     generate_scenarios,

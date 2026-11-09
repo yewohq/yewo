@@ -300,10 +300,7 @@ def _standard_messages(
     return (
         ModelMessage(
             role=ModelMessageRole.SYSTEM,
-            content=(
-                TextModelContent(text=TASK_PLANNER_SYSTEM_PROMPT),
-                TextModelContent(text=task_prompt),
-            ),
+            content=(TextModelContent(text=TASK_PLANNER_SYSTEM_PROMPT),),
         ),
         ModelMessage(
             role=ModelMessageRole.USER,
@@ -314,6 +311,7 @@ def _standard_messages(
             role=ModelMessageRole.USER,
             content=(
                 *trusted_history_content(request.history),
+                TextModelContent(text=task_prompt),
                 TextModelContent(text=current_prompt),
                 ImageModelContent(screenshot=request.observation.redacted_screenshot),
                 *(
@@ -355,10 +353,7 @@ def _focus_messages(
     return (
         ModelMessage(
             role=ModelMessageRole.SYSTEM,
-            content=(
-                TextModelContent(text=TASK_PLANNER_SYSTEM_PROMPT),
-                TextModelContent(text=task_prompt),
-            ),
+            content=(TextModelContent(text=TASK_PLANNER_SYSTEM_PROMPT),),
         ),
         ModelMessage(
             role=ModelMessageRole.USER,
@@ -368,6 +363,7 @@ def _focus_messages(
         ModelMessage(
             role=ModelMessageRole.USER,
             content=(
+                TextModelContent(text=task_prompt),
                 TextModelContent(
                     text="Focus decision context:\n"
                     + json.dumps(current_context, sort_keys=True, separators=(",", ":"))

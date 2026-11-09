@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from PIL import Image
+import pytest
 from pydantic import BaseModel
 
 from yewo.agent.discovery import DiscoveryObjective
@@ -375,3 +376,80 @@ def test_four_milestones_are_packed_into_one_auditor_image(tmp_path: Path) -> No
     assert all(item["supporting_actions"] for item in context["milestones"])
     assert len(context["evidence_images"]) == 1
     assert len(context["evidence_images"][0]["observation_ids"]) == 9
+
+
+def _verifier(model: StubAuditModel) -> ModelGoalVerifier:
+    return ModelGoalVerifier(
+        model,
+        "auditor-primary",
+        identifier_factory=iter(("verification_1", "request_1")).__next__,
+    )
+
+
+def test_several_milestones_can_evidence_one_completion_condition() -> None:
+    source = build_observation(observation_id="observation_source")
+    middle = build_observation(observation_id="observation_middle")
+    final = build_observation(observation_id="observation_final")
+    model = StubAuditModel(
+        GoalVerificationAssessment(
+            satisfied=True,
+            reason="Both captured transitions establish the condition.",
+        ).model_dump(mode="json")
+    )
+
+    verification = _verifier(model).verify(
+        "record_form",
+        "Create the record.",
+        ("The saved record is visible.",),
+        final,
+        milestone_evidence=(
+            GoalVerificationMilestone(
+                completion_condition_index=0,
+                source_observation=source,
+                observation=middle,
+                transition_evidence="The recorded tap opened the record.",
+            ),
+            GoalVerificationMilestone(
+                completion_condition_index=0,
+                source_observation=middle,
+                observation=final,
+                transition_evidence="The recorded save returned to the collection.",
+            ),
+        ),
+    )
+
+    assert verification.satisfied
+    assert model.request is not None
+    content = model.request.messages[1].content[0]
+    assert isinstance(content, TextModelContent)
+    milestones = json.loads(content.text.split("\n", 1)[1])["milestones"]
+    assert [item["completion_condition_index"] for item in milestones] == [0, 0]
+    assert {item["completion_condition"] for item in milestones} == {"The saved record is visible."}
+
+
+def test_milestone_index_must_name_a_supplied_condition() -> None:
+    final = build_observation(observation_id="observation_final")
+
+    with pytest.raises(ValueError, match="must name a condition"):
+        _verifier(StubAuditModel(None)).verify(
+            "record_form",
+            "Create the record.",
+            ("The saved record is visible.",),
+            final,
+            milestone_evidence=(
+                GoalVerificationMilestone(completion_condition_index=1, observation=final),
+            ),
+        )
+
+
+def test_objective_milestone_requires_an_objective_without_conditions() -> None:
+    final = build_observation(observation_id="observation_final")
+
+    with pytest.raises(ValueError, match="objective without conditions"):
+        _verifier(StubAuditModel(None)).verify(
+            "record_form",
+            "Create the record.",
+            ("The saved record is visible.",),
+            final,
+            milestone_evidence=(GoalVerificationMilestone(observation=final),),
+        )

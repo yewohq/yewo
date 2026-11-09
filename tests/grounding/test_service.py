@@ -20,6 +20,13 @@ from yewo.grounding import (
     VisualGrounder,
     PixelPoint,
 )
+from yewo.grounding.records import GroundingCoordinateConvention
+from yewo.grounding.service import (
+    _bounds_instruction,
+    _correction_instruction,
+    _excluded_region_instruction,
+    _operation_instruction,
+)
 from yewo.models import ImageModelContent, ModelCallDisposition, TextModelContent
 from yewo.observations import ScreenRegion
 from grounding.support import (
@@ -58,7 +65,9 @@ def test_service_sends_only_target_context_and_preserves_call_evidence() -> None
     assert "visible create control" in text_content.text
     assert "Screenshot size: 200 by 400 pixels" in text_content.text
     assert "Locate the named target itself" in text_content.text
-    assert "Do not explain the answer" in text_content.text
+    assert "Return the coordinates alone." in text_content.text
+    assert "A valid point satisfies 0 <= x < 200 and 0 <= y < 400." in text_content.text
+    assert "The target is the activating surface of the named control." in text_content.text
     assert "region" not in text_content.text.lower()
     assert "goal" not in text_content.text.lower()
     assert isinstance(image_content, ImageModelContent)
@@ -283,3 +292,149 @@ def test_deterministic_grounder_implements_the_public_contract_offline() -> None
     assert result.disposition is GroundingDisposition.ACCEPTED
     assert isinstance(result.location, GroundedPoint)
     assert result.location.pixel.model_dump() == {"x": 50, "y": 100}
+
+
+def test_platform_region_instruction_states_bounds_and_its_coordinate_space() -> None:
+    request = build_grounding_request(
+        excluded_regions=(
+            ScreenRegion(
+                kind=SystemRegionKind.STATUS_BAR,
+                left=0,
+                top=0,
+                right=200,
+                bottom=40,
+            ),
+        )
+    )
+
+    pixels = _excluded_region_instruction(request, GroundingCoordinateConvention.SOURCE_PIXELS)
+    normalized = _excluded_region_instruction(
+        request, GroundingCoordinateConvention.NORMALIZED_1000
+    )
+
+    assert "(0,0,200,40)" in pixels
+    assert "Convert" not in pixels
+    assert "(0,0,200,40)" in normalized
+    assert "Convert those source pixels" in normalized
+
+
+def test_no_platform_region_instruction_without_excluded_regions() -> None:
+    instruction = _excluded_region_instruction(
+        build_grounding_request(), GroundingCoordinateConvention.NORMALIZED_1000
+    )
+
+    assert instruction == ""
+
+
+def test_correction_instruction_states_its_coordinate_space() -> None:
+    request = build_grounding_request(
+        correction=GroundingCorrection(
+            previous_point=PixelPoint(x=100, y=200),
+            minimum_distance_px=8,
+        )
+    )
+
+    pixels = _correction_instruction(request, GroundingCoordinateConvention.SOURCE_PIXELS)
+    normalized = _correction_instruction(request, GroundingCoordinateConvention.NORMALIZED)
+
+    assert "at least 8 source screenshot pixels away" in pixels
+    assert "Convert" not in pixels
+    assert "Convert those source pixels" in normalized
+
+
+@pytest.mark.parametrize(
+    ("shape", "convention", "expected"),
+    [
+        (
+            GroundingOutputShape.POINT,
+            GroundingCoordinateConvention.SOURCE_PIXELS,
+            "A valid point satisfies 0 <= x < 200 and 0 <= y < 400.",
+        ),
+        (
+            GroundingOutputShape.POINT,
+            GroundingCoordinateConvention.NORMALIZED_1000,
+            "A valid point satisfies 0 <= x <= 1000 and 0 <= y <= 1000.",
+        ),
+        (
+            GroundingOutputShape.POINT,
+            GroundingCoordinateConvention.NORMALIZED,
+            "A valid point satisfies 0 <= x <= 1 and 0 <= y <= 1.",
+        ),
+        (
+            GroundingOutputShape.REGION,
+            GroundingCoordinateConvention.SOURCE_PIXELS,
+            "A valid region satisfies 0 <= left < right <= 200 and 0 <= top < bottom <= 400, "
+            "so equal opposite edges are invalid.",
+        ),
+        (
+            GroundingOutputShape.REGION,
+            GroundingCoordinateConvention.NORMALIZED_1000,
+            "A valid region satisfies 0 <= left < right <= 1000 and 0 <= top < bottom <= 1000, "
+            "so equal opposite edges are invalid. The region must still cover at least one whole "
+            "pixel after scaling.",
+        ),
+    ],
+)
+def test_bounds_instruction_states_the_codec_rule_for_the_requested_shape(
+    shape: GroundingOutputShape,
+    convention: GroundingCoordinateConvention,
+    expected: str,
+) -> None:
+    request = build_grounding_request(
+        output_shape=shape,
+        operation=(
+            GroundingTargetOperation.SCROLL_REGION
+            if shape is GroundingOutputShape.REGION
+            else GroundingTargetOperation.TAP
+        ),
+    )
+
+    assert _bounds_instruction(request, convention) == expected
+
+
+def test_service_tells_the_grounder_which_platform_regions_to_avoid() -> None:
+    client = StubModelClient("(150,300)")
+    service = GroundingService(client, build_grounding_profile())
+    request = build_grounding_request(
+        excluded_regions=(
+            ScreenRegion(
+                kind=SystemRegionKind.STATUS_BAR,
+                left=0,
+                top=0,
+                right=200,
+                bottom=40,
+            ),
+        )
+    )
+
+    result = service.ground(request)
+
+    assert result.disposition is GroundingDisposition.ACCEPTED
+    prompt = client.requests[0].messages[0].content[0]
+    assert isinstance(prompt, TextModelContent)
+    assert "(0,0,200,40)" in prompt.text
+    assert "choose a target outside them" in prompt.text
+
+
+def test_every_target_operation_has_a_placement_instruction() -> None:
+    for operation in GroundingTargetOperation:
+        shape = (
+            GroundingOutputShape.REGION
+            if operation is GroundingTargetOperation.SCROLL_REGION
+            else GroundingOutputShape.POINT
+        )
+        request = build_grounding_request(operation=operation, output_shape=shape)
+
+        assert _operation_instruction(request)
+
+
+def test_placement_instruction_names_the_surface_the_operation_needs() -> None:
+    field = build_grounding_request(operation=GroundingTargetOperation.TEXT_FIELD)
+    destination = build_grounding_request(operation=GroundingTargetOperation.DRAG_DESTINATION)
+
+    assert _operation_instruction(field) == (
+        "The target is the editable area of the named field, not its label."
+    )
+    assert _operation_instruction(destination) == (
+        "The target is the drop position, which can be empty space rather than a control."
+    )

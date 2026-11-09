@@ -137,6 +137,9 @@ safety text. Write short active sentences. State one instruction or condition
 per sentence. Use one name for one thing. Preserve conditions and uncertainty;
 do not simplify a qualified claim into an unconditional one.
 
+For production prompt creation, review, or optimization, read and apply the
+[prompt standard](references/prompt-standard.md).
+
 Do not use `getattr`, `hasattr`, or `setattr` inside a typed internal contract
 to compensate for an unclear model. Use a discriminated Pydantic model,
 `isinstance`, `match`, a protocol, or an explicit adapter instead. At an SDK,

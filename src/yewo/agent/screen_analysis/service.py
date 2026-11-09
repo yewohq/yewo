@@ -90,7 +90,17 @@ class ScreenElementHypothesis(BaseModel):
     )
     options: tuple[str, ...] = Field(default=(), max_length=100)
     confidence: ScreenElementConfidence
-    role_alternatives: tuple[ScreenSemanticRole, ...] = Field(default=(), max_length=10)
+    role_alternatives: tuple[ScreenSemanticRole, ...] = Field(
+        default=(),
+        max_length=10,
+        description=(
+            "Other semantic roles the screenshot visibly supports for this element. Each one must "
+            "have its own visible evidence, and none may repeat the role in kind.semantic. Leave "
+            "this empty when the visible evidence establishes the chosen role: an alternative "
+            "whose interaction nature differs from that role marks the element "
+            "interaction-uncertain for everything downstream."
+        ),
+    )
     workflow_role: ScreenWorkflowRole | None = Field(
         default=None,
         description=(
@@ -112,7 +122,6 @@ class ScreenElementHypothesis(BaseModel):
     )
     parent_key: str | None = Field(default=None, min_length=1, max_length=100)
     position_in_parent: int | None = Field(default=None, ge=1)
-    evidence: str = Field(min_length=1, max_length=1_000)
     visual_cues: tuple[ScreenVisualCue, ...] = Field(
         default=(), max_length=20, description=VISUAL_CUES_GUIDANCE
     )
@@ -302,6 +311,7 @@ class ModelScreenAnalyzer:
                         if element.state is not None
                         else None
                     ),
+                    evidence=_stored_element_trace(element),
                     parent_ref=(
                         element_refs[element.parent_key] if element.parent_key is not None else None
                     ),
@@ -320,3 +330,9 @@ class ModelScreenAnalyzer:
         except ValidationError as error:
             raise ScreenAnalysisError("Screen analysis returned an invalid hypothesis.") from error
         return analysis
+
+
+def _stored_element_trace(element: ScreenElementHypothesis) -> str:
+    """Retain a compact record trace without asking the model for duplicate prose."""
+    visual = element.kind.visual.value.replace("_", " ")
+    return f"Visible {visual} {element.name!r}."

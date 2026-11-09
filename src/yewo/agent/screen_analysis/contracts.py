@@ -111,7 +111,6 @@ class ScreenElementCatalog(BaseModel):
 
     name: str = Field(min_length=1)
     scope: str = Field(min_length=1)
-    classification_rules: tuple[str, ...] = Field(min_length=1)
     overlap_rules: tuple[str, ...] = Field(min_length=1)
     interaction_classes: dict[ScreenElementAffordance, str]
     visual_kinds: tuple[ScreenVisualKindDefinition, ...] = Field(min_length=1)

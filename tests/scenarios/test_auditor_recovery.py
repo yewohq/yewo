@@ -75,7 +75,6 @@ def test_reasoning_exhaustion_splits_evidence_and_preserves_failure(
         )
         return auditor_module.AuditBatchAttempt(
             output=auditor_module.ScenarioAuditorOutput(
-                summary="The visual evidence was inspected.",
                 outcomes=(
                     auditor_module.ScenarioAuditOutcomeOutput(
                         outcome_id=outcome.outcome_id,

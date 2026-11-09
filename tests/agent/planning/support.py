@@ -126,9 +126,13 @@ def planner(model: ModelClient) -> TaskPlanner:
 
 def user_context(request: ModelRequest) -> tuple[str, ImageModelContent]:
     user_message = request.messages[2]
-    text_part, image_part = user_message.content
-    assert text_part.kind == "text"
-    assert isinstance(image_part, ImageModelContent)
+    text_part = next(
+        part
+        for part in user_message.content
+        if isinstance(part, TextModelContent)
+        and part.text.startswith(("Current decision context:", "Focus decision context:"))
+    )
+    image_part = next(part for part in user_message.content if isinstance(part, ImageModelContent))
     return text_part.text, image_part
 
 

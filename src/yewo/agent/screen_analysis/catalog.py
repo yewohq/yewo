@@ -259,7 +259,7 @@ ICON = ScreenSemanticRoleDefinition(
     description="A visible symbolic graphic without an established action affordance.",
     visible_requirements=(
         "A symbolic graphic is visible.",
-        "Use button with icon_only presentation when an action affordance is visibly established.",
+        "Use button with visual kind icon when an action affordance is visibly established.",
     ),
 )
 
@@ -436,23 +436,6 @@ SCREEN_VISUAL_KINDS = (
 SCREEN_ELEMENT_CATALOG = ScreenElementCatalog(
     name="yewo-visible-element-kinds",
     scope="Semantic kinds that a vision model can establish from one current application screenshot.",
-    classification_rules=(
-        "Classify only visible application elements.",
-        "Do not infer hidden, covered, off-screen, or purely behavioral properties.",
-        "Classify each element from its own visible evidence and established visual grouping.",
-        "Spatial proximity and reading order alone do not establish that elements belong together.",
-        "Use one composite kind for each semantic element.",
-        "One visible input surface can support only one semantic element.",
-        "Associate one primary label with an input surface only when visible grouping, alignment, or form layout supports the relationship.",
-        "Preserve independently meaningful text beside an input surface as separate elements.",
-        "Record visible state separately from kind.",
-        "Give every element the visual cues that tell it apart from its neighbors.",
-        "Name each element from its own visible label, never from the value it holds.",
-        "Record the value inside an input as its state, and keep the name unchanged.",
-        "A visible interaction affordance does not prove that a runtime interaction will succeed.",
-        "Use role alternatives only when visible evidence supports each alternative.",
-        "Use unknown when no defined semantic role has enough visible evidence.",
-    ),
     overlap_rules=(
         "Use label only when visible grouping shows a one-to-one association with another element. Use heading when text names a visible screen, section, or group.",
         "Use a specific input kind instead of text_field only when kind-specific visual evidence is present.",

@@ -49,7 +49,6 @@ def test_missing_visual_surface_coverage_cannot_pass(tmp_path, monkeypatch) -> N
     outcome = scenario.obligations[0].expected_outcomes[0]
     model = StubPlannerModel(
         {
-            "summary": "The supplied frame has no visible defect.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,

@@ -78,7 +78,6 @@ def test_offline_screen_analysis_flow_reaches_grounded_dispatch(tmp_path: Path) 
                     "input_surface_key": "primary-input",
                     "parent_key": None,
                     "position_in_parent": None,
-                    "evidence": "A visible underlined field has a placeholder.",
                     "visual_cues": ["below Section heading", "above Secondary field"],
                     "region_hint": {
                         "left": 0.4,

@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from yewo.agent.actuation.diagnostics import ActionApplicationFailure
 from yewo.agent.actuation import (
     ActionKind,
@@ -245,3 +248,42 @@ def test_advisor_transport_failure_does_not_end_the_run(tmp_path: Path) -> None:
     assert state.assessment is None
     assert state.is_active is False
     assert state.credit(4, 11.0).steps == 0
+
+
+def _assessment(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "assessment_id": "assessment_1",
+        "failed_proposal_id": "proposal_failed",
+        "pre_failure_observation_id": "obs_frontier",
+        "recovery_observation_id": "obs_fresh",
+        "disposition": "continue",
+        "reason": "The task can still reach the remaining work.",
+        "remaining_work": ["Restore the form state."],
+        "planner_guidance": [],
+        "candidate_causes": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_continuing_recovery_must_identify_remaining_work() -> None:
+    with pytest.raises(ValidationError, match="must identify remaining work"):
+        RecoveryAssessment.model_validate(_assessment(remaining_work=[]))
+
+
+def test_stopping_recovery_needs_no_remaining_work() -> None:
+    assessment = RecoveryAssessment.model_validate(
+        _assessment(disposition="stop", remaining_work=[])
+    )
+
+    assert assessment.disposition is RecoveryDisposition.STOP
+
+
+def test_a_candidate_cause_cannot_also_be_established_guidance() -> None:
+    with pytest.raises(ValidationError, match="cannot also be established planner guidance"):
+        RecoveryAssessment.model_validate(
+            _assessment(
+                planner_guidance=["The platform rejected the submission."],
+                candidate_causes=["The platform rejected the submission."],
+            )
+        )

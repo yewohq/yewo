@@ -46,7 +46,6 @@ def test_matcher_selects_only_an_llm_equivalent_audited_procedure() -> None:
         {
             "procedure_id": bundle.procedure.procedure_id,
             "relationship": "equivalent",
-            "reason": "Both objectives require the same observable signed-in state.",
         }
     )
     matcher = ObjectiveMatcher(
@@ -73,7 +72,6 @@ def test_matcher_rejects_a_non_equivalent_relationship() -> None:
         {
             "procedure_id": None,
             "relationship": "current_is_broader",
-            "reason": "The requested objective requires an additional outcome.",
         }
     )
     matcher = ObjectiveMatcher(
@@ -91,7 +89,6 @@ def test_matcher_rejects_unknown_procedure_and_condition_count_changes() -> None
         {
             "procedure_id": "unknown_procedure",
             "relationship": "equivalent",
-            "reason": "The candidate is equivalent.",
         }
     )
     unknown_matcher = ObjectiveMatcher(
@@ -103,7 +100,6 @@ def test_matcher_rejects_unknown_procedure_and_condition_count_changes() -> None
         {
             "procedure_id": bundle.procedure.procedure_id,
             "relationship": "equivalent",
-            "reason": "The candidate is equivalent.",
         }
     )
     count_matcher = ObjectiveMatcher(

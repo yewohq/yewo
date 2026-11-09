@@ -111,7 +111,6 @@ def test_completed_scenario_receives_an_independent_model_verdict(tmp_path) -> N
     )
     model = StubPlannerModel(
         {
-            "summary": "Current-run evidence satisfies every supplied outcome.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -149,7 +148,6 @@ def test_unmet_outcome_fails_the_independent_audit(tmp_path) -> None:
     )
     model = StubPlannerModel(
         {
-            "summary": "Current-run evidence contradicts an expected outcome.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -198,7 +196,6 @@ def test_consistency_auditor_inspects_screens_before_measurement_exists(tmp_path
     outcome = scenario.obligations[0].expected_outcomes[0]
     model = StubPlannerModel(
         {
-            "summary": "The visible values are internally consistent.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -230,7 +227,6 @@ def test_arithmetic_candidate_confirms_visible_consistency_failure(tmp_path) -> 
     observation_id = observations()[-1].observation_id
     model = StubPlannerModel(
         {
-            "summary": "A visible calculation needs deterministic confirmation.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -286,7 +282,6 @@ def test_unconfirmed_consistency_claim_remains_unverified(tmp_path) -> None:
     outcome = scenario.obligations[0].expected_outcomes[0]
     model = StubPlannerModel(
         {
-            "summary": "The auditor claims a mismatch without structured evidence.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -336,7 +331,6 @@ def test_missing_obligation_does_not_block_an_auditable_obligation(tmp_path) -> 
     _persist_final_observation(tmp_path)
     model = StubPlannerModel(
         {
-            "summary": "The functional evidence is sufficient.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -431,7 +425,6 @@ def test_compatible_outcomes_share_one_bounded_audit_request(tmp_path) -> None:
     )
     model = StubPlannerModel(
         {
-            "summary": "The current-run evidence proves the supplied outcomes.",
             "outcomes": [
                 {
                     "outcome_id": outcome.outcome_id,
@@ -499,7 +492,6 @@ def test_visual_batches_run_in_parallel_and_one_render_error_fails(
         )
         return auditor_module.AuditBatchAttempt(
             output=auditor_module.ScenarioAuditorOutput(
-                summary="The visual batch was inspected.",
                 outcomes=(
                     auditor_module.ScenarioAuditOutcomeOutput(
                         outcome_id=outcome.outcome_id,

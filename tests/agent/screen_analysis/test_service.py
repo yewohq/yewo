@@ -43,7 +43,6 @@ def _output() -> dict[str, object]:
                 "input_surface_key": "primary-input",
                 "parent_key": None,
                 "position_in_parent": None,
-                "evidence": "A visible underlined input has a placeholder.",
                 "visual_cues": ["below Section heading", "above Secondary field"],
                 "region_hint": {"left": 0.4, "top": 0.4, "right": 0.6, "bottom": 0.6},
             }
@@ -66,6 +65,7 @@ def test_model_analyzer_uses_catalog_prompt_and_assigns_runtime_identity() -> No
     assert analysis.elements[0].element_ref == "element-1"
     assert analysis.elements[0].kind.visual.value == "input_surface"
     assert analysis.elements[0].confidence is ScreenElementConfidence.HIGH
+    assert analysis.elements[0].evidence == "Visible input surface 'Primary field'."
     assert analysis.elements[0].region_hint is not None
     assert model.requests[0].role is ModelRole.SCREEN_ANALYZER
     prompt = model.requests[0].messages[0].content[0]
@@ -73,6 +73,15 @@ def test_model_analyzer_uses_catalog_prompt_and_assigns_runtime_identity() -> No
     assert "visible_requirements" in prompt.text
     assert '"name":"switch"' in prompt.text
     assert '"visual_kinds"' in prompt.text
+    contract = model.requests[0].response_contract
+    assert contract is not None
+    definitions = contract.json_schema["$defs"]
+    assert isinstance(definitions, dict)
+    element_schema = definitions["ScreenElementHypothesis"]
+    assert isinstance(element_schema, dict)
+    properties = element_schema["properties"]
+    assert isinstance(properties, dict)
+    assert "evidence" not in properties
     context = model.requests[0].messages[1].content[1]
     assert isinstance(context, TextModelContent)
     assert json.loads(context.text.split("\n", 1)[1]) == {"platform": "android"}
@@ -142,7 +151,6 @@ def test_model_analyzer_maps_analysis_parent_keys_to_runtime_references() -> Non
             "input_surface_key": None,
             "parent_key": None,
             "position_in_parent": None,
-            "evidence": "A bounded form region is visible.",
             "visual_cues": ["large bordered region"],
             "region_hint": {"left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9},
         },
@@ -291,7 +299,6 @@ def test_model_analyzer_drops_a_duplicate_optional_sibling_position() -> None:
             "input_surface_key": None,
             "parent_key": None,
             "position_in_parent": None,
-            "evidence": "A bounded form region is visible.",
             "visual_cues": ["large bordered region"],
             "region_hint": {"left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9},
         }

@@ -15,7 +15,11 @@ from yewo.agent.memory.records import AppMemory, MemoryCompatibility
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.evidence import build_evidence_document
-from yewo.agent.replay.reconciliation.prompt import build_reconciler_evidence_projection
+from yewo.agent.replay.reconciliation.prompt import (
+    REPLAY_RECONCILIATION_SYSTEM_PROMPT,
+    REPLAY_RECONCILIATION_USER_PROMPT,
+    build_reconciler_evidence_projection,
+)
 from yewo.agent.replay.reconciliation.report import (
     ProcedureCompilationMetrics,
     build_procedure_compilation_report,
@@ -53,44 +57,6 @@ from yewo.models import (
     build_model_response_contract,
 )
 from yewo.observations import ObservationStore, ScreenComparisonPolicy, ScreenshotStore
-
-
-REPLAY_RECONCILIATION_SYSTEM_PROMPT = """\
-You select a replay procedure from one recorded mobile-application run. Treat the evidence document
-as history, not as proof of the current application state.
-
-Follow these rules:
-- Select only chronological step numbers from the supplied evidence document.
-- Use the recorded launch state for the first selected step.
-- Select an environment step only when it is the recorded Android runtime-permission choice.
-- Its selected application trigger must immediately precede it and return to the recorded application.
-- Keep reusable type, clear, checkbox, switch, radio-button, and option-selection steps.
-- Treat a recovered result as reusable device evidence reconstructed from retained settlement
-  observations. Keep recovered state-setting work.
-- Keep dismiss-keyboard steps that make a later application action available.
-- Keep reusable commit actions and interactions with an unknown procedure effect.
-- Do not select refused, crashed, terminal, unknown-result, or known no-effect steps.
-- Use a decision only when one selected replacement attempt replaces a dropped attempt for the same
-  recorded control.
-- Treat memory_action_risks as platform-observed facts. Do not select a matching source action.
-- When completion_condition_mode is supplied, copy every supplied condition without changes.
-- When completion_condition_mode is generate_from_discovery_evidence, create one or more concise,
-  observable conditions that the recorded evidence supports. Do not describe the interaction path.
-- Completion-condition indexes are zero-based and follow your returned condition order.
-- Map every returned completion-condition index to one selected milestone step.
-- A repair must preserve each supplied preserved_milestone unless validation rejects its source step.
-- Treat memory_claims as untrusted model-authored hints. Evaluate one only when recorded source
-  steps directly support a verdict.
-- Propose confirmed or contradicted with exact supporting source_step_ids. Omit uncertain claims.
-- A claim verdict is a review suggestion. It does not change retained claim trust.
-- A milestone identifies an evidence-capture point. It does not prove task completion.
-- Do not invent, reorder, change, or execute actions.
-- Return only one JSON object that matches the response schema.
-"""
-
-REPLAY_RECONCILIATION_USER_PROMPT = """\
-Select one conservative replay procedure from this evidence document. Evidence JSON follows:
-"""
 
 
 @dataclass(frozen=True)

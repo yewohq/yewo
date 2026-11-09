@@ -108,13 +108,18 @@ class RecoveryRunState:
         candidate_guidance = tuple(
             f"Unproven recovery cause: {cause}" for cause in assessment.candidate_causes
         )
+        remaining_work_guidance = tuple(
+            f"Remaining work: {item}" for item in assessment.remaining_work
+        )
+        # remaining_work holds five times the guidance window, so established constraints
+        # are spliced ahead of it and survive truncation.
         guidance = tuple(
             dict.fromkeys(
                 (
                     failed_branch,
                     *context.recovery_guidance,
-                    *assessment.remaining_work,
                     *assessment.planner_guidance,
+                    *remaining_work_guidance,
                     *candidate_guidance,
                 )
             )

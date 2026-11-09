@@ -160,7 +160,6 @@ def test_preparation_uses_llm_equivalent_procedure_after_exact_lookup_misses(
             self.output = {
                 "procedure_id": "procedure_1",
                 "relationship": "equivalent",
-                "reason": "Both objectives require the record form to be visible.",
             }
             return super().complete(request, response_model, validation_context)
 

@@ -101,33 +101,53 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
     assert system_content.kind == "text"
     assert system_content.text == TASK_PLANNER_SYSTEM_PROMPT
     section_headings = (
-        "## Trusted evidence",
-        "## Workflow progress",
-        "## Describing a target",
-        "## UI interactions",
-        "## Action usage",
-        "## Input handling",
-        "## Output",
+        "# Role and contract",
+        "# Evidence and state",
+        "## Evidence rules",
+        "## Current screen analysis",
+        "## Reconcile history",
+        "## Progress and recovery",
+        "# Decision procedure",
+        "## Action selection priorities",
+        "## Workflow and completion",
+        "# Targeting and interaction recovery",
+        "## TARS targeting",
+        "## No-effect and rejection handling",
+        "# Action semantics",
+        "## Keyboard and text entry",
+        "# Proposal validation",
     )
     section_positions = tuple(system_content.text.index(heading) for heading in section_headings)
     assert section_positions == tuple(sorted(section_positions))
     assert all(system_content.text.count(heading) == 1 for heading in section_headings)
-    assert "Target, Attributes, Relationships, and Scope" in system_content.text
+    for label in ("- Target:", "- Attributes:", "- Relationships:", "- Scope:"):
+        assert label in system_content.text
     assert "interaction_refinement_for_proposal_id" in system_content.text
-    assert "For every action, state a concise reason" in system_content.text
+    assert "provide a concise reason" in system_content.text
     for action in ActionKind:
-        assert f"- `{action.value}`:" in system_content.text
-    assert "field has no reusable input contract" in system_content.text
-    assert "use `type` directly" in system_content.text
-    assert "visual keyboard type" in system_content.text
-    assert "Never use untargeted `type` to move focus" in system_content.text
-    assert "focus another visible field while the keyboard remains" in system_content.text
-    assert "dropdown or spinner" in system_content.text
+        assert f"- {action.value}:" in system_content.text
+    assert "lacks a trusted reusable input contract" in system_content.text
+    assert "Use a targeted type only when" in system_content.text
+    assert "and keyboard type" in system_content.text
+    assert "Do not use untargeted type to change focus" in system_content.text
+    assert "Keep the keyboard open when switching" in system_content.text
+    assert "dropdowns/spinners" in system_content.text
     assert "newly opened overlay has no observable effect" in system_content.text
     assert "not merely its label" in system_content.text
-    assert "keyboard obscures" in system_content.text
-    assert "compare current evidence with open_work" in system_content.text
-    task_content = model_request.messages[0].content[1]
+    assert "dismiss the keyboard and observe" in system_content.text
+    assert "Choose done only when current evidence" in system_content.text
+    # Both recovery protocols are expression-only in ActionProposalDecision, so the
+    # prompt must not send a refinement or a scroll/drag correction down them.
+    assert "a refinement cannot name an element_ref" in system_content.text
+    assert (
+        "Neither a grounding correction nor an interaction refinement is available for scroll or "
+        "drag" in system_content.text
+    )
+    task_content = next(
+        content
+        for content in model_request.messages[2].content
+        if isinstance(content, TextModelContent) and content.text.startswith("Task context:\n")
+    )
     assert task_content.kind == "text"
     assert task_content.text.startswith("Task context:\n")
     task_context = json.loads(task_content.text.split("\n", 1)[1])
@@ -184,7 +204,11 @@ def test_reconciled_progress_preserves_completion_conditions() -> None:
     model_request = model.requests[0]
     prompt, unused_image = _user_context(model_request)
     context = json.loads(prompt.split("\n", 1)[1])
-    task_content = model_request.messages[0].content[1]
+    task_content = next(
+        content
+        for content in model_request.messages[2].content
+        if isinstance(content, TextModelContent) and content.text.startswith("Task context:\n")
+    )
     system_prompt = model_request.messages[0].content[0]
     assert isinstance(task_content, TextModelContent) and isinstance(
         system_prompt, TextModelContent
@@ -281,26 +305,6 @@ def test_planning_rejects_analysis_for_another_observation() -> None:
 
     with pytest.raises(ValidationError, match="must match the planning observation"):
         PlanningRequest.model_validate(request.model_dump() | {"current_screen_analysis": analysis})
-
-
-def test_planner_keeps_runtime_actions_out_of_the_stable_task_prefix() -> None:
-    first_model = StubPlannerModel(_proposal_output())
-    second_model = StubPlannerModel(_proposal_output())
-    first_request = _planning_request(open_work=("Create the record.",))
-    second_request = _planning_request(
-        open_work=("Reopen the record.",),
-        available_actions=frozenset(
-            {ActionKind.CANNOT_PROGRESS, ActionKind.DISMISS_KEYBOARD, ActionKind.TAP}
-        ),
-    )
-
-    _planner(first_model).plan(first_request)
-    _planner(second_model).plan(second_request)
-
-    first_messages = first_model.requests[0].messages
-    second_messages = second_model.requests[0].messages
-    assert first_messages[0] == second_messages[0]
-    assert first_messages[2] != second_messages[2]
 
 
 def test_history_contains_trusted_feedback_without_repeating_literal_text() -> None:

@@ -31,10 +31,10 @@ from yewo.grounding.records import (
     validate_grounding_request,
 )
 from yewo.grounding.service import (
-    GROUNDING_PROMPT,
     GroundingEvidenceError,
     GroundingService,
 )
+from yewo.grounding.service_prompt import GROUNDING_PROMPT
 
 __all__ = [
     "CoordinateTextCodec",

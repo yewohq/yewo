@@ -174,7 +174,7 @@ def test_advisor_text_reaches_the_planner_as_guidance_not_as_a_work_item() -> No
 
     assert context is not None
     assert context.remaining_work == ()
-    assert "Restore the form state." in context.recovery_guidance
+    assert "Remaining work: Restore the form state." in context.recovery_guidance
     assert "Do not repeat the failed submission unchanged." in context.recovery_guidance
     assert "Unproven recovery cause: A stale internal value may have caused the failure." in (
         context.recovery_guidance
@@ -203,3 +203,47 @@ def test_failed_branch_constraint_survives_full_recovery_guidance() -> None:
         "Do not repeat the application-failing action without a material state change."
     )
     assert len(context.recovery_guidance) == 20
+
+
+class ManyWorkItemsAdvisor:
+    """Return a continuation whose remaining work exceeds the guidance window."""
+
+    def assess(
+        self,
+        planning_request: PlanningRequest,
+        failed_step: AgentStep,
+        recovery_observation: Observation,
+    ) -> RecoveryAssessment:
+        del planning_request, failed_step, recovery_observation
+        return RecoveryAssessment(
+            assessment_id="assessment_1",
+            failed_proposal_id="proposal_failed",
+            pre_failure_observation_id="obs_frontier",
+            recovery_observation_id="obs_fresh",
+            disposition=RecoveryDisposition.CONTINUE,
+            reason="The task can still reach the remaining work.",
+            remaining_work=tuple(f"Remaining item {index}." for index in range(40)),
+            planner_guidance=("The platform rejected the submission.",),
+            candidate_causes=(),
+            model_request_id="request_1",
+        )
+
+
+def test_established_guidance_outranks_remaining_work_in_the_guidance_window() -> None:
+    frontier = observation("obs_frontier", "0000000000000000")
+    fresh = observation("obs_fresh", "1111111111111111", offset_seconds=1)
+    state = RecoveryRunState(ManyWorkItemsAdvisor(), ScreenComparisonPolicy())
+    state.assess(
+        _planning_request(frontier),
+        _failed_step(),
+        fresh,
+        completed_step_count=4,
+        now=10,
+    )
+
+    context = state.progress_context()
+
+    assert context is not None
+    assert len(context.recovery_guidance) == 20
+    assert "The platform rejected the submission." in context.recovery_guidance
+    assert "Remaining work: Remaining item 0." in context.recovery_guidance

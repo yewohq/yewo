@@ -18,6 +18,7 @@ from agent.planning.support import (
     planner,
     planning_request,
     proposal_output,
+    user_context,
 )
 
 
@@ -49,12 +50,11 @@ def test_focus_planning_uses_an_isolated_current_state_request() -> None:
     assert model_request.messages[1].cache_prefix_end
     assert model_request.messages[2].cache_prefix_end is False
     prompt = model_request.messages[1].content[0]
-    context = model_request.messages[2].content[0]
+    context, unused_image = user_context(model_request)
     assert isinstance(prompt, TextModelContent)
-    assert isinstance(context, TextModelContent)
     assert prompt.text == TASK_PLANNER_FOCUS_USER_PROMPT
     assert "Trusted history event" not in str(model_request.messages)
-    focus_context = json.loads(context.text.split("\n", 1)[1])
+    focus_context = json.loads(context.split("\n", 1)[1])
     assert focus_context["focus_context"]["unresolved_work"] == ["Reopen the saved record."]
     route = focus_context["focus_context"]["recent_routes"][0]
     assert route == {
@@ -98,9 +98,8 @@ def test_focus_request_carries_the_evidence_its_rules_depend_on() -> None:
 
     planner(model).plan(request)
 
-    context = model.requests[0].messages[2].content[0]
-    assert isinstance(context, TextModelContent)
-    payload = json.loads(context.text.split("\n", 1)[1])
+    context, unused_image = user_context(model.requests[0])
+    payload = json.loads(context.split("\n", 1)[1])
     # The focus prompt forbids restarting completed work and cites screen evidence,
     # so both must reach the payload it is given.
     assert payload["screen_facts"]

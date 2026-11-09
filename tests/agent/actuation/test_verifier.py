@@ -9,8 +9,10 @@ from yewo.agent.actuation.verifier import (
     ACTION_VERIFIER_MAX_COMPLETION_TOKENS,
     ActionReadinessAssessment,
     ActionReadinessDisposition,
+    ActionReadinessRefusalBasis,
     ModelActionVerifier,
 )
+from yewo.agent.actuation.verifier_prompt import ACTION_VERIFIER_SYSTEM_PROMPT
 from yewo.agent.actuation import (
     ActionKind,
     ActionOutcome,
@@ -285,7 +287,26 @@ def test_action_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> No
     current_content = model.requests[0].messages[2].content[-2]
     assert isinstance(current_content, TextModelContent)
     context = json.loads(current_content.text.split("\n", 1)[1])
-    assert context["current_screen_analysis"]["analysis_id"] == "analysis-1"
+    screen_context = context["current_screen_analysis"]
+    assert screen_context == {
+        "elements": [
+            {
+                "affordance": "interactive",
+                "confidence": "high",
+                "element_ref": "primary-field",
+                "kind": "text_field",
+                "name": "Primary field",
+            }
+        ]
+    }
+    assert "current_observation_id" not in context
+    assert "keyboard_visible" not in context
+    assert context["proposal"] == {
+        "action": "tap",
+        "expected_outcome": "The editor saves and closes.",
+        "reason": "Save the current editor.",
+        "target_expression": "the visible Save button",
+    }
 
 
 def test_action_verifier_rejects_control_agnostic_requirement_claim() -> None:
@@ -349,6 +370,14 @@ def test_action_verifier_accepts_input_contract_as_a_producible_requirement_basi
 
     assert assessment.disposition is ActionReadinessDisposition.REFUSE
     assert assessment.unresolved_controls[0].required_by.value == "input_contract"
+    task_content = next(
+        content
+        for content in model.requests[0].messages[2].content
+        if isinstance(content, TextModelContent)
+        and content.text.startswith("Task context for this run:\n")
+    )
+    task_context = json.loads(task_content.text.split("Task context for this run:\n", 1)[1])
+    assert task_context["declared_value_names"] == ["primary_field"]
 
 
 def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
@@ -515,3 +544,78 @@ def test_action_verifier_rejects_noninteractive_unresolved_evidence() -> None:
         ActionReadinessAssessment.model_validate(
             payload, context={"interactive_control_names": ("Quantity",)}
         )
+
+
+def _refusal_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "verification_id": "verification_1",
+        "proposal_id": "proposal_1",
+        "disposition": "refuse",
+        "reason": "The reason names Save while the target identifies Cancel.",
+        "unresolved_controls": [],
+        "completed_work_items": [],
+        "proposal_work_item": None,
+        "restarts_completed_work_item": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_action_verifier_refuses_an_incoherent_proposal_without_control_evidence() -> None:
+    assessment = ActionReadinessAssessment.model_validate(
+        _refusal_payload(refusal_basis="incoherent_proposal")
+    )
+
+    refusal = assessment.refusal()
+
+    assert refusal is not None
+    assert refusal.code is ActionRefusalCode.DISCOVERY_INCOMPLETE
+    assert refusal.reason == "The reason names Save while the target identifies Cancel."
+
+
+def test_action_verifier_reports_a_reopened_stage_as_a_work_regression() -> None:
+    assessment = ActionReadinessAssessment.model_validate(
+        _refusal_payload(
+            reason="The proposal reopens the accepted confirmation.",
+            refusal_basis="reopened_stage",
+        )
+    )
+
+    refusal = assessment.refusal()
+
+    assert refusal is not None
+    assert refusal.code is ActionRefusalCode.COMPLETED_WORK_REGRESSION
+
+
+def test_action_verifier_rejects_a_basis_without_the_evidence_it_requires() -> None:
+    with pytest.raises(ValidationError, match="must name one unresolved control"):
+        ActionReadinessAssessment.model_validate(
+            _refusal_payload(refusal_basis="unresolved_control")
+        )
+
+
+def test_action_verifier_rejects_evidence_its_basis_does_not_support() -> None:
+    with pytest.raises(ValidationError, match="cannot carry unresolved evidence"):
+        ActionReadinessAssessment.model_validate(
+            _refusal_payload(
+                refusal_basis="incoherent_proposal",
+                restarts_completed_work_item="Create the record.",
+            )
+        )
+
+
+def test_action_verifier_rejects_a_refusal_basis_on_an_allowed_action() -> None:
+    with pytest.raises(ValidationError, match="Only a refusal"):
+        ActionReadinessAssessment.model_validate(
+            _refusal_payload(disposition="allow", refusal_basis="incoherent_proposal")
+        )
+
+
+def test_action_verifier_still_requires_evidence_when_no_basis_is_named() -> None:
+    with pytest.raises(ValidationError, match="must identify unresolved evidence"):
+        ActionReadinessAssessment.model_validate(_refusal_payload())
+
+
+def test_verifier_prompt_names_every_refusal_basis() -> None:
+    for basis in ActionReadinessRefusalBasis:
+        assert basis.value in ACTION_VERIFIER_SYSTEM_PROMPT
