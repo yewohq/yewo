@@ -12,10 +12,11 @@ from yewo.agent.actuation import (
 )
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import proposal
 from agent.runtime.test_agent import _observation
+from agent.runtime.support import exhaust_screen as _exhaust_screen
 
 
 def _no_change_outcome(screen, label: str) -> ActionOutcome:
@@ -29,28 +30,8 @@ def _no_change_outcome(screen, label: str) -> ActionOutcome:
         disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
         signals=frozenset(),
         reason="No application pixels or trusted state changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
-
-
-def _exhaust_screen(tracker: ActionNoProgressTracker, screen, label: str) -> None:
-    for index in range(3):
-        candidate = proposal(
-            ActionKind.TAP,
-            proposal_id=f"{label}-{index}",
-            target_expression=f"{label} control {index}",
-            source_observation_id=screen.observation_id,
-        )
-        tracker.record_refusal(
-            candidate,
-            screen,
-            ActionRefusal(
-                proposal_id=candidate.proposal_id,
-                code=ActionRefusalCode.INVALID_GROUNDING,
-                reason="The grounder did not accept this target.",
-            ),
-        )
 
 
 def test_refused_focus_proposal_keeps_the_exemption_for_a_fresh_action() -> None:
@@ -150,7 +131,6 @@ def _observed_outcome(before, after, label: str) -> ActionOutcome:
         disposition=ActionOutcomeDisposition.OBSERVED,
         signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
         reason="The settled observation contains action-outcome signals.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 

@@ -239,7 +239,7 @@ class ScenarioCoverageObligation(BaseModel):
     source: ScenarioSource
     category: CoverageCategory
     strategy: ScenarioType
-    coverage_cell_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_.-]{0,127}$")
+    coverage_cell_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]{0,127}$")
     required_surface_ids: tuple[RecordIdentifier, ...] = Field(min_length=1, max_length=100)
     expected_outcomes: tuple[ScenarioExpectedOutcome, ...] = Field(min_length=1, max_length=100)
     source_check_indexes: tuple[int, ...] = Field(default=(), max_length=100)

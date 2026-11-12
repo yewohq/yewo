@@ -13,7 +13,6 @@ from yewo.artifacts.errors import ArtifactWriteError
 from yewo.artifacts.paths import ARTIFACTS_DIRECTORY
 from yewo.artifacts.records import (
     ArtifactRetention,
-    ArtifactSensitivity,
     new_record_identifier,
 )
 from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
@@ -53,16 +52,13 @@ class DeviceLogStore:
         entry_count: int,
         kind: DeviceLogArtifactKind,
         source_name: str | None,
-        redaction_policy_id: str,
-        source_redaction_count: int,
-        sensitivity: ArtifactSensitivity,
         retention: ArtifactRetention,
         failure_kind: ApplicationFailureKind | None = None,
         occurred_at: datetime | None = None,
         platform_reason: str | None = None,
         platform_code: str | None = None,
     ) -> DeviceLogArtifactReference:
-        """Persist one nonempty, redacted device-log artifact."""
+        """Persist one nonempty device-log artifact."""
         if not content or entry_count < 1:
             raise DeviceLogCaptureError("A device-log artifact cannot be empty.")
         artifact_id = self._identifier_factory()
@@ -89,9 +85,6 @@ class DeviceLogStore:
                 path=relative_path,
                 byte_count=len(content),
                 entry_count=entry_count,
-                redaction_policy_id=redaction_policy_id,
-                source_redaction_count=source_redaction_count,
-                sensitivity=sensitivity,
                 retention=retention,
             )
             self._writer.write(relative_path, content)

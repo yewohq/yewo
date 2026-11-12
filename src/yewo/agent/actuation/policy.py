@@ -18,12 +18,19 @@ from yewo.grounding import (
     GroundedRegion,
     GroundingDisposition,
     GroundingEvidence,
+    GroundingResult,
     GroundingTargetOperation,
     PixelPoint,
 )
-from yewo.observations import Observation, PixelRegion, ScreenRegion
+from yewo.observations import Observation, PixelRegion
 from yewo.agent.actuation.action_catalog import ACTION_DEFINITIONS, ActionHandling, ActionKind
 
+from yewo.agent.actuation.screen_bounds import (
+    is_point_in_screenshot,
+    is_point_in_system_region,
+    is_region_in_screenshot,
+    overlaps_system_region,
+)
 from yewo.agent.actuation.records import (
     ActionBudget,
     ActionPolicyLimits,
@@ -34,6 +41,37 @@ from yewo.agent.actuation.records import (
     AuthorizedAction,
     TapRepetition,
 )
+
+
+_GROUNDING_REFUSAL_GUIDANCE = {
+    GroundingDisposition.REFUSED: (
+        "The grounder could not locate the described target. Describe it differently or choose "
+        "another route."
+    ),
+    GroundingDisposition.AMBIGUOUS: (
+        "The grounder found more than one match. Add a distinguishing visible attribute or scope."
+    ),
+    GroundingDisposition.OUT_OF_BOUNDS: (
+        "The grounded location fell outside the screenshot or inside a platform-owned region. "
+        "Choose a target away from system surfaces."
+    ),
+    GroundingDisposition.MALFORMED: (
+        "The grounder returned no usable coordinate. The description may still be correct."
+    ),
+    GroundingDisposition.REPEATED_POINT: (
+        "The correction resolved to the previous ineffective point. Describe a different "
+        "interaction surface."
+    ),
+}
+
+
+def _grounding_refusal_reason(result: GroundingResult) -> str:
+    """Report which grounding outcome blocked the action, and what it implies."""
+    guidance = _GROUNDING_REFUSAL_GUIDANCE.get(result.disposition)
+    detail = f" {result.reason}" if result.reason else ""
+    if guidance is None:
+        return f"Grounding was not accepted: {result.disposition.value}.{detail}"
+    return f"Grounding {result.disposition.value}. {guidance}{detail}"
 
 
 class ActionPolicy:
@@ -107,7 +145,6 @@ class ActionPolicy:
             )
 
         text = proposal.text
-        sensitivity = text.sensitivity if text is not None else proposal.sensitivity
         retention = text.retention if text is not None else proposal.retention
         if proposal.expected_outcome is None:
             return self._refuse(
@@ -119,7 +156,7 @@ class ActionPolicy:
             authorization_id=self._identifier_factory(),
             proposal_id=proposal.proposal_id,
             source_observation_id=observation.observation_id,
-            source_screenshot_sha256=observation.redacted_screenshot.sha256,
+            source_screenshot_sha256=observation.screenshot.sha256,
             application_id=observation.application.application_id,
             action=proposal.action,
             source=source,
@@ -141,7 +178,6 @@ class ActionPolicy:
                 if proposal.action is ActionKind.BACK
                 else None
             ),
-            sensitivity=sensitivity,
             retention=retention,
         )
 
@@ -392,7 +428,7 @@ class ActionPolicy:
                     "Grounding does not match the proposal target.",
                 ),
             )
-        screenshot = observation.redacted_screenshot
+        screenshot = observation.screenshot
         if (
             request.screenshot.artifact_id != screenshot.artifact_id
             or request.screenshot.sha256 != screenshot.sha256
@@ -420,7 +456,9 @@ class ActionPolicy:
                 None,
                 None,
                 self._refuse(
-                    proposal, ActionRefusalCode.INVALID_GROUNDING, "Grounding was not accepted."
+                    proposal,
+                    ActionRefusalCode.INVALID_GROUNDING,
+                    _grounding_refusal_reason(result),
                 ),
             )
         location = result.location
@@ -436,7 +474,7 @@ class ActionPolicy:
                     ),
                 )
             point = location.pixel
-            if not self._point_in_screenshot(point, observation) or self._point_in_system_region(
+            if not is_point_in_screenshot(point, observation) or is_point_in_system_region(
                 point, observation.system_regions
             ):
                 return (
@@ -453,7 +491,7 @@ class ActionPolicy:
             GroundingTargetOperation.SCROLL_REGION
         ):
             region = location.pixel
-            if not self._region_in_screenshot(region, observation) or self._overlaps_system_region(
+            if not is_region_in_screenshot(region, observation) or overlaps_system_region(
                 region, observation.system_regions
             ):
                 return (
@@ -477,42 +515,10 @@ class ActionPolicy:
         )
 
     @staticmethod
-    def _point_in_screenshot(point: PixelPoint, observation: Observation) -> bool:
-        screenshot = observation.redacted_screenshot
-        return point.x < screenshot.width_px and point.y < screenshot.height_px
-
-    @staticmethod
-    def _region_in_screenshot(region: PixelRegion, observation: Observation) -> bool:
-        screenshot = observation.redacted_screenshot
-        return region.right <= screenshot.width_px and region.bottom <= screenshot.height_px
-
-    @staticmethod
-    def _point_in_system_region(
-        point: PixelPoint, regions: tuple[ScreenRegion, ...] | None
-    ) -> bool:
-        return any(
-            region.left <= point.x < region.right and region.top <= point.y < region.bottom
-            for region in regions or ()
-        )
-
-    @staticmethod
-    def _overlaps_system_region(
-        target: PixelRegion, regions: tuple[ScreenRegion, ...] | None
-    ) -> bool:
-        return any(
-            target.left < region.right
-            and target.right > region.left
-            and target.top < region.bottom
-            and target.bottom > region.top
-            for region in regions or ()
-        )
-
-    @staticmethod
     def _refuse(proposal: ActionProposal, code: ActionRefusalCode, reason: str) -> ActionRefusal:
         return ActionRefusal(
             proposal_id=proposal.proposal_id,
             code=code,
             reason=reason,
-            sensitivity=proposal.sensitivity,
             retention=proposal.retention,
         )

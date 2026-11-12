@@ -1,4 +1,4 @@
-"""Model-backed semantic analysis of one redacted screenshot."""
+"""Model-backed semantic analysis of one screenshot."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from yewo.agent.narration import trace
 from yewo.agent.screen_analysis.catalog import (
     ScreenElementKind,
     ScreenSemanticRole,
@@ -21,6 +22,7 @@ from yewo.agent.screen_analysis.prompt import (
 from yewo.agent.screen_analysis.records import (
     MAXIMUM_SCREEN_ELEMENT_NAME_LENGTH,
     MAXIMUM_SCREEN_ELEMENT_STATE_LENGTH,
+    MAXIMUM_SCREEN_ROLE_ALTERNATIVES,
     ScreenVisualCue,
     VISUAL_CUES_GUIDANCE,
     CurrentScreenAnalysis,
@@ -68,6 +70,31 @@ _PARENT_SCOPED_ROLES = frozenset(
 )
 
 
+def _parent_scope_release(
+    kind: ScreenElementKind,
+    role_alternatives: tuple[ScreenSemanticRole, ...],
+) -> dict[str, object]:
+    """Return the kind and alternatives for an element that lost its parent reference.
+
+    A navigation item, menu item, or option is defined by the container that holds it. The
+    prompt requires that container, so without it the role keeps no visible support. The
+    claimed role stays as an alternative, which is what the prompt asks the model to do.
+    """
+    if kind.semantic not in _PARENT_SCOPED_ROLES:
+        return {}
+    alternatives = tuple(
+        dict.fromkeys(
+            role
+            for role in (*role_alternatives, kind.semantic)
+            if role is not ScreenSemanticRole.UNKNOWN
+        )
+    )
+    return {
+        "kind": ScreenElementKind(visual=kind.visual, semantic=ScreenSemanticRole.UNKNOWN),
+        "role_alternatives": alternatives[:MAXIMUM_SCREEN_ROLE_ALTERNATIVES],
+    }
+
+
 class ScreenElementHypothesis(BaseModel):
     """Model-authored element data before runtime identity is assigned."""
 
@@ -92,11 +119,11 @@ class ScreenElementHypothesis(BaseModel):
     confidence: ScreenElementConfidence
     role_alternatives: tuple[ScreenSemanticRole, ...] = Field(
         default=(),
-        max_length=10,
+        max_length=MAXIMUM_SCREEN_ROLE_ALTERNATIVES,
         description=(
             "Other semantic roles the screenshot visibly supports for this element. Each one must "
-            "have its own visible evidence, and none may repeat the role in kind.semantic. Leave "
-            "this empty when the visible evidence establishes the chosen role: an alternative "
+            "have its own visible evidence. None may repeat the role in kind.semantic. Leave "
+            "this empty when the visible evidence establishes the chosen role. An alternative "
             "whose interaction nature differs from that role marks the element "
             "interaction-uncertain for everything downstream."
         ),
@@ -188,16 +215,8 @@ class ScreenAnalysisHypothesis(BaseModel):
                 updates: dict[str, object] = {
                     "parent_key": None,
                     "position_in_parent": None,
+                    **_parent_scope_release(element.kind, element.role_alternatives),
                 }
-                if element.kind.semantic in _PARENT_SCOPED_ROLES:
-                    claimed_role = element.kind.semantic
-                    updates["kind"] = ScreenElementKind(
-                        visual=element.kind.visual,
-                        semantic=ScreenSemanticRole.UNKNOWN,
-                    )
-                    updates["role_alternatives"] = tuple(
-                        dict.fromkeys((*element.role_alternatives, claimed_role))
-                    )
                 element = element.model_copy(update=updates)
                 normalized_elements.append(element)
                 continue
@@ -226,7 +245,7 @@ class ScreenAnalysisHypothesis(BaseModel):
 
 
 class ScreenAnalysisSource(Protocol):
-    """Analyze a redacted observation without choosing an action."""
+    """Analyze one observation without choosing an action."""
 
     def required_model_requests(self, observation: Observation) -> int: ...
 
@@ -273,12 +292,14 @@ class ModelScreenAnalyzer:
                         TextModelContent(
                             text="Observation context:\n"
                             + json.dumps(
-                                {"platform": observation.device.platform.value},
+                                {
+                                    "platform": observation.device.platform.value,
+                                },
                                 sort_keys=True,
                                 separators=(",", ":"),
                             )
                         ),
-                        ImageModelContent(screenshot=observation.redacted_screenshot),
+                        ImageModelContent(screenshot=observation.screenshot),
                     ),
                 ),
             ),
@@ -286,8 +307,7 @@ class ModelScreenAnalyzer:
                 SCREEN_ANALYSIS_RESPONSE_CONTRACT_ID,
                 ScreenAnalysisHypothesis.model_json_schema(),
             ),
-            sensitivity=observation.redacted_screenshot.sensitivity,
-            retention=observation.redacted_screenshot.retention,
+            retention=observation.screenshot.retention,
         )
         response = self._model_client.complete(request, ScreenAnalysisHypothesis)
         if response.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
@@ -302,27 +322,18 @@ class ModelScreenAnalyzer:
                 element.analysis_key: f"element-{index}"
                 for index, element in enumerate(hypothesis.elements, start=1)
             }
-            elements = tuple(
-                ScreenElement(
-                    element_ref=element_refs[element.analysis_key],
-                    name=element.name[:MAXIMUM_SCREEN_ELEMENT_NAME_LENGTH],
-                    state=(
-                        element.state[:MAXIMUM_SCREEN_ELEMENT_STATE_LENGTH]
-                        if element.state is not None
-                        else None
-                    ),
-                    evidence=_stored_element_trace(element),
-                    parent_ref=(
-                        element_refs[element.parent_key] if element.parent_key is not None else None
-                    ),
-                    **element.model_dump(exclude={"analysis_key", "name", "state", "parent_key"}),
+            elements, dropped = _accepted_elements(hypothesis, element_refs)
+            if not elements:
+                raise ScreenAnalysisError("Screen analysis described no usable element.")
+            if dropped:
+                trace(
+                    f"screen_analysis observation={observation.observation_id} "
+                    f"elements={len(elements)} dropped={dropped}"
                 )
-                for element in hypothesis.elements
-            )
             analysis = CurrentScreenAnalysis(
                 analysis_id=self._identifier_factory(),
                 observation_id=observation.observation_id,
-                screenshot_sha256=observation.redacted_screenshot.sha256,
+                screenshot_sha256=observation.screenshot.sha256,
                 presentation=observation.presentation_key,
                 screen_summary=hypothesis.screen_summary,
                 elements=elements,
@@ -332,7 +343,61 @@ class ModelScreenAnalyzer:
         return analysis
 
 
-def _stored_element_trace(element: ScreenElementHypothesis) -> str:
-    """Retain a compact record trace without asking the model for duplicate prose."""
-    visual = element.kind.visual.value.replace("_", " ")
-    return f"Visible {visual} {element.name!r}."
+def _accepted_elements(
+    hypothesis: ScreenAnalysisHypothesis,
+    element_refs: dict[str, str],
+) -> tuple[tuple[ScreenElement, ...], int]:
+    """Keep the elements that describe a usable control, and count the ones that do not.
+
+    One element the taxonomy refuses used to discard the whole screen, leaving the planner to
+    act on a screen it had no inventory for. A rejected element is a gap in the inventory, not
+    evidence that the rest of the screen was misread.
+    """
+    accepted: list[ScreenElement] = []
+    dropped = 0
+    # Two passes, because the model lists elements in no required order: a positioned child can
+    # name a parent that appears later, and resolving against the elements kept so far would
+    # drop the parent reference while keeping the position that requires it.
+    candidates = [
+        (element, _stored_element(element, element_refs)) for element in hypothesis.elements
+    ]
+    kept_keys = {element.analysis_key for element, stored in candidates if stored is not None}
+    for element, stored in candidates:
+        if stored is None:
+            dropped += 1
+            continue
+        parent_key = element.parent_key
+        if parent_key is not None and parent_key not in kept_keys:
+            # A position names a place among siblings under one parent. With the parent gone
+            # there are no siblings, and a position without a parent reference is refused.
+            stored = stored.model_copy(
+                update={
+                    "parent_ref": None,
+                    "position_in_parent": None,
+                    **_parent_scope_release(stored.kind, stored.role_alternatives),
+                }
+            )
+        accepted.append(stored)
+    return tuple(accepted), dropped
+
+
+def _stored_element(
+    element: ScreenElementHypothesis,
+    element_refs: dict[str, str],
+) -> ScreenElement | None:
+    """Convert one hypothesis element, or report that the taxonomy refuses it."""
+    parent_key = element.parent_key
+    try:
+        return ScreenElement(
+            element_ref=element_refs[element.analysis_key],
+            name=element.name[:MAXIMUM_SCREEN_ELEMENT_NAME_LENGTH],
+            state=(
+                element.state[:MAXIMUM_SCREEN_ELEMENT_STATE_LENGTH]
+                if element.state is not None
+                else None
+            ),
+            parent_ref=element_refs[parent_key] if parent_key is not None else None,
+            **element.model_dump(exclude={"analysis_key", "name", "state", "parent_key"}),
+        )
+    except ValidationError:
+        return None

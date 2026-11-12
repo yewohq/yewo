@@ -8,13 +8,8 @@ from yewo.artifacts.paths import (
     RUN_RECORDS_DIRECTORY,
     RUNTIME_DIRECTORY,
 )
-from yewo.artifacts.redaction_mask import (
-    YEWO_REDACTION_POLICY_ID,
-    draw_yewo_redaction_mask,
-)
 from yewo.artifacts.records import (
     ArtifactRetention,
-    ArtifactSensitivity,
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
@@ -44,7 +39,6 @@ __all__ = [
     "RUN_RECORDS_DIRECTORY",
     "RUNTIME_DIRECTORY",
     "ArtifactRetention",
-    "ArtifactSensitivity",
     "ArtifactWriteError",
     "AppMemorySchemaVersion",
     "AppendOnlyJsonlWriter",
@@ -57,8 +51,6 @@ __all__ = [
     "RelativeArtifactPath",
     "format_relative_artifact_path",
     "Sha256Digest",
-    "YEWO_REDACTION_POLICY_ID",
-    "draw_yewo_redaction_mask",
     "new_record_identifier",
     "validate_record_identifier",
 ]

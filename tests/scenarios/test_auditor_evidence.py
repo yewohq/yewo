@@ -5,7 +5,12 @@ from yewo.agent.planning.evidence import (
     PlannerDecisionMetadata,
     PlannerDecisionSource,
 )
-from yewo.scenarios.auditor_evidence import _required_observation_labels, _visual_frames
+from yewo.observations import Observation
+from yewo.scenarios.auditor_evidence import (
+    _build_visual_episodes,
+    _required_observation_labels,
+    _visual_frames,
+)
 from yewo.scenarios.records import (
     DiscoveredTestSurface,
     DiscoveryProvenance,
@@ -116,6 +121,60 @@ def test_visual_frames_include_model_settlement_recovery_and_final_states() -> N
         "recovery",
     )
     assert covered_surface_ids == frozenset()
+
+
+def test_visual_episodes_keep_distinct_transients_and_merge_exact_duplicates() -> None:
+    """Settlement may deduplicate a stable pair, but not a transient defect before it."""
+
+    def with_screenshot_digest(item: Observation, digest: str) -> Observation:
+        return item.model_copy(
+            update={"screenshot": item.screenshot.model_copy(update={"sha256": digest})}
+        )
+
+    before = with_screenshot_digest(observation("before", "0000000000000001"), "1" * 64)
+    intermediate = with_screenshot_digest(
+        observation("intermediate", "0000000000000002"),
+        "2" * 64,
+    )
+    settled = with_screenshot_digest(
+        observation("settled", "0000000000000003"),
+        "3" * 64,
+    )
+    duplicate = with_screenshot_digest(
+        observation("settled_duplicate", "0000000000000003"),
+        "3" * 64,
+    )
+    result = agent_result(
+        before,
+        settled,
+        terminal=AgentTerminalReason.BUDGET_EXHAUSTED,
+    )
+    step = result.steps[0].model_copy(
+        update={
+            "settlement_observation_ids": (
+                intermediate.observation_id,
+                settled.observation_id,
+                duplicate.observation_id,
+            )
+        }
+    )
+    result = result.model_copy(
+        update={"steps": (step,), "final_observation_id": duplicate.observation_id}
+    )
+    frames, _unused_surface_ids = _visual_frames((result,), ())
+
+    episodes = _build_visual_episodes(
+        frames,
+        {item.observation_id: item for item in (before, intermediate, settled, duplicate)},
+    )
+
+    images = episodes[0].images
+    assert tuple(image.observation_id for image in images) == (
+        "before",
+        "intermediate",
+        "settled",
+    )
+    assert images[-1].related_observation_ids == ("settled_duplicate",)
 
 
 def test_visual_frames_record_required_surface_coverage_without_dropping_repairs() -> None:

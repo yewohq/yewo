@@ -125,6 +125,7 @@ def procedure_effect(step: EvidenceStep) -> ProcedureEffect:
         ActionKind.DISMISS_KEYBOARD,
         ActionKind.FOCUS,
         ActionKind.SCROLL,
+        ActionKind.REFRESH,
     }:
         return ProcedureEffect.NAVIGATION
     if step.control.kind.semantic in _NAVIGATION_ROLES:
@@ -247,7 +248,8 @@ def _has_selected_correction(
                 and kept is not None
                 and kept.step > missing_step.step
                 and not any(
-                    missing_step.step < selected_index < kept.step for selected_index in selected_indexes
+                    missing_step.step < selected_index < kept.step
+                    for selected_index in selected_indexes
                 )
                 and kept.control.identity_key == identity
                 and kept.proposal.action == missing_step.proposal.action

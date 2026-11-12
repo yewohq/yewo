@@ -24,8 +24,8 @@ from yewo.devices import (
     DeviceReadiness,
     ResourceOwnership,
 )
-from yewo.devices.logs import DeviceLogRedactionResult
-from yewo.observations import RedactionRegion
+from yewo.run_narration import RunNarrator
+from yewo.extensions import ExtensionRegistry, RunContext
 from yewo.runs import (
     RunCoordinator,
     RunExecutionContext,
@@ -168,7 +168,6 @@ class SessionManagerStub:
         self.failure = failure
         self.fail_close = fail_close
         self.interrupt_close = interrupt_close
-        self.recording_redaction_regions: tuple[RedactionRegion, ...] = ()
 
     def open(
         self,
@@ -178,13 +177,9 @@ class SessionManagerStub:
         application,
         *,
         artifact_root: Path,
-        scrub_device_log_text,
-        recording_redaction_regions,
+        extensions=None,
     ) -> AutomationSession:
-        del request, application, scrub_device_log_text
-        self.recording_redaction_regions = tuple(recording_redaction_regions)
-        if self.recording_redaction_regions:
-            self.events.append(f"session.redaction:{len(self.recording_redaction_regions)}")
+        del request, application, extensions
         assert artifact_root.name == "run_1"
         self.events.append("session.open")
         if self.failure is not None:
@@ -210,7 +205,6 @@ class WorkflowStub:
         failure: Exception | None = None,
         preparation_failure: Exception | None = None,
         write_evidence: bool = False,
-        recording_redaction_regions: tuple[RedactionRegion, ...] = (),
     ) -> None:
         self.events = events
         self.outcome = outcome or RunWorkflowOutcome(
@@ -220,12 +214,9 @@ class WorkflowStub:
         self.failure = failure
         self.preparation_failure = preparation_failure
         self.write_evidence = write_evidence
-        self.recording_redaction_regions = recording_redaction_regions
 
     def session_policy(self) -> RunSessionPolicy:
-        return RunSessionPolicy(
-            recording_redaction_regions=self.recording_redaction_regions,
-        )
+        return RunSessionPolicy()
 
     def prepare(self, context, interruption):
         del context
@@ -299,11 +290,14 @@ def build_coordinator(
     server_ownership: ResourceOwnership = ResourceOwnership.RUN,
     include_workflow: bool = True,
     store_factory: Callable[[Path], RunStore] = RunStore,
+    narrator_factory: Callable[[Path], RunNarrator] = RunNarrator,
+    extension_loader: Callable[[RunContext], ExtensionRegistry] | None = None,
 ) -> RunCoordinator:
     return RunCoordinator(
         RunWorkspaceFactory(
             identifier_factory=lambda: "run_1",
             time_factory=lambda: STARTED_AT,
+            narrator_factory=narrator_factory,
         ),
         {DevicePlatform.ANDROID: InventoryStub(events, inventory_failure)},
         {
@@ -323,7 +317,7 @@ def build_coordinator(
         ),
         {RunMode.NORMAL: workflow} if include_workflow else {},
         lambda workspace: AppiumServerConfig(log_path=workspace.root / "runtime/appium.log"),
-        lambda text: DeviceLogRedactionResult(text, "test-policy", 0),
         store_factory=store_factory,
         time_factory=lambda: STARTED_AT + timedelta(seconds=1),
+        extension_loader=extension_loader or (lambda context: ExtensionRegistry()),
     )

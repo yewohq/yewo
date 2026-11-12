@@ -10,12 +10,14 @@ from yewo.agent.actuation.diagnostics import (
     ActionApplicationFailure,
     action_application_failure,
 )
-from yewo.agent.actuation.verifier import ModelActionVerifier
+from yewo.agent.actuation.outcome_verifier import ModelOutcomeVerifier
+from yewo.agent.actuation.proposal_verifier import ModelProposalVerifier
 from yewo.agent.runtime.application_state import (
     ApplicationRecovery,
     restart_and_rebaseline_application,
 )
 from yewo.agent.memory.records import AppMemory
+from yewo.observations.service import ObservationSource
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.grounding import AppMemoryGrounder
 from yewo.agent.planning.planner import (
@@ -36,7 +38,7 @@ from yewo.agent.screen_analysis import (
 )
 from yewo.agent.runtime.records import AgentStepStore
 from yewo.agent.memory.screens import AppMemoryActionSource
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity, new_record_identifier
+from yewo.artifacts import ArtifactRetention, new_record_identifier
 from yewo.devices.interaction import DeviceInteraction
 from yewo.grounding import GroundingProfile, GroundingService, VisualGrounder
 from yewo.models import (
@@ -50,11 +52,10 @@ from yewo.models import (
 from yewo.observations import (
     ObservationService,
     ObservationStore,
-    RedactionRegion,
-    RegionScreenshotRedactor,
     ScreenshotStore,
 )
 from yewo.runs import RunExecutionContext
+from yewo.extensions import ExtensionRegistry
 
 
 def build_device_agent(
@@ -64,9 +65,9 @@ def build_device_agent(
     planner_profile_id: str | None,
     *,
     recovery_profile_id: str | None = None,
-    action_verifier_profile_id: str | None = None,
+    proposal_verifier_profile_id: str | None = None,
+    outcome_verifier_profile_id: str | None = None,
     screen_analyzer_profile_id: str | None = None,
-    redaction_regions: Sequence[RedactionRegion] = (),
     declared_value_resolver: Callable[[str], str] | None = None,
     proposal_source: ActionProposalSource | None = None,
     planning_memory: AppMemory | None = None,
@@ -84,14 +85,15 @@ def build_device_agent(
     if recover_application and recovery_profile_id is None:
         raise ValueError("Application recovery requires a recovery-advisor profile.")
     root = context.workspace.root
+    declared_values = context.declared_values
+    extensions = context.extensions
     interaction = DeviceInteraction.from_session(context.session)
     observations = ObservationService(
-        interaction,
+        extensions.wrapped(ObservationSource, interaction),
         context.session.device.descriptor,
         context.session.application,
         ScreenshotStore(root),
         ObservationStore(root),
-        RegionScreenshotRedactor(redaction_regions),
     )
     if proposal_source is None:
         if planner_profile_id is None:
@@ -131,6 +133,7 @@ def build_device_agent(
         ActionExecutor(
             interaction,
             declared_value_resolver=declared_value_resolver,
+            declared_values=declared_values,
         ),
         ActionOutcomeVerifier(),
         AgentStepStore(root),
@@ -145,9 +148,14 @@ def build_device_agent(
         reused_flow_id=reused_flow_id,
         progress_context=progress_context,
         recovery_advisor=recovery_advisor,
-        action_verifier=(
-            ModelActionVerifier(model_client, action_verifier_profile_id)
-            if action_verifier_profile_id is not None
+        proposal_verifier=(
+            ModelProposalVerifier(model_client, proposal_verifier_profile_id)
+            if proposal_verifier_profile_id is not None
+            else None
+        ),
+        predicted_outcome_verifier=(
+            ModelOutcomeVerifier(model_client, outcome_verifier_profile_id, ScreenshotStore(root))
+            if outcome_verifier_profile_id is not None
             else None
         ),
         screen_analysis=(
@@ -167,27 +175,20 @@ def build_model_client(
     root: Path,
     run_id: str,
     profiles: ModelProfileRegistry,
-    scrub_text: Callable[[str], str],
-    contains_declared_content: bool,
-) -> LiteLLMModelClient:
+    declared_value_names: Sequence[str],
+    extensions: ExtensionRegistry,
+) -> ModelClient:
     """Build one run-scoped model transport shared by agent workflows."""
-    sensitivity = (
-        ArtifactSensitivity.DECLARED_SENSITIVE
-        if contains_declared_content
-        else ArtifactSensitivity.DEVICE_CONTENT
-    )
-    return LiteLLMModelClient(
+    client = LiteLLMModelClient(
         profiles,
         ModelArtifactStore(
             root,
             ModelArtifactPolicy(
-                sensitivity=sensitivity,
                 retention=ArtifactRetention.RUN,
             ),
-            scrub_text,
         ),
         ModelImageReader(root),
-        scrub_text,
         cache_affinity=run_id,
         ai_session_id=run_id,
     )
+    return extensions.wrapped(ModelClient, client)

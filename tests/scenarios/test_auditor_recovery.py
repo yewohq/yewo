@@ -32,7 +32,7 @@ def test_reasoning_exhaustion_splits_evidence_and_preserves_failure(
         auditor_evidence.GoalEvidenceSource(
             observation_id=f"visual_observation_{index}",
             labels=(f"Visual surface {index}.",),
-            screenshot=observation.redacted_screenshot,
+            screenshot=observation.screenshot,
         )
         for index in range(11)
     )

@@ -418,3 +418,30 @@ def test_malformed_proposal_fails_validation() -> None:
             action=ActionKind.TYPE,
             target_expression="the name field",
         )
+
+
+@pytest.mark.parametrize(
+    ("disposition", "expected"),
+    [
+        (GroundingDisposition.REFUSED, "could not locate the described target"),
+        (GroundingDisposition.AMBIGUOUS, "more than one match"),
+        (GroundingDisposition.MALFORMED, "no usable coordinate"),
+        (GroundingDisposition.OUT_OF_BOUNDS, "platform-owned region"),
+    ],
+)
+def test_a_grounding_refusal_reports_which_outcome_blocked_the_action(
+    disposition: GroundingDisposition,
+    expected: str,
+) -> None:
+    # The planner's next move differs per outcome, so one shared reason string hides it.
+    result = ActionPolicy(limits()).authorize(
+        proposal(),
+        build_observation(),
+        budget(),
+        target_grounding=point_grounding(disposition=disposition),
+    )
+
+    assert isinstance(result, ActionRefusal)
+    assert result.code is ActionRefusalCode.INVALID_GROUNDING
+    assert disposition.value in result.reason
+    assert expected in result.reason

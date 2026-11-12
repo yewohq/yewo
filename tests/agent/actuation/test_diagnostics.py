@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from yewo.agent.actuation.diagnostics import action_application_failure
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.devices.diagnostics import (
     ApplicationDiagnosticClassification,
     ApplicationFailureKind,
@@ -37,9 +37,6 @@ def test_action_crash_becomes_concise_planner_safe_evidence() -> None:
         path=Path("device-logs/boundary_1/exit-info.txt"),
         byte_count=10,
         entry_count=1,
-        redaction_policy_id="test-policy",
-        source_redaction_count=0,
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     receipt = DeviceLogDrainReceipt(

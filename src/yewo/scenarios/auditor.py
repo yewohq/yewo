@@ -13,7 +13,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationIn
 
 from yewo.artifacts import (
     ArtifactRetention,
-    ArtifactSensitivity,
     AtomicArtifactWriter,
     RecordIdentifier,
     new_record_identifier,
@@ -78,7 +77,7 @@ class ScenarioAuditOutcomeOutput(BaseModel):
 
     outcome_id: RecordIdentifier
     status: AuditObligationStatus
-    reason: str = Field(min_length=1, max_length=1_024)
+    reason: str = Field(min_length=1)
 
 
 class ScenarioAuditorOutput(BaseModel):
@@ -179,7 +178,9 @@ class ScenarioAuditorService:
                     )
                 missing_owners = _missing_evidence_owners(outcome, evidence.owner_counts)
                 if missing_owners:
-                    settled_obligations_by_id[outcome.outcome_id] = _unverified_obligation(outcome, missing_owners)
+                    settled_obligations_by_id[outcome.outcome_id] = _unverified_obligation(
+                        outcome, missing_owners
+                    )
                 else:
                     targets.append(
                         AuditTarget(
@@ -245,7 +246,10 @@ class ScenarioAuditorService:
                     ("auditor_result",),
                 )
             settled_obligations_by_id[outcome_id] = obligation
-        ordered_obligations = tuple(settled_obligations_by_id[outcome.outcome_id] for outcome in _expected_outcomes(scenario))
+        ordered_obligations = tuple(
+            settled_obligations_by_id[outcome.outcome_id]
+            for outcome in _expected_outcomes(scenario)
+        )
         summary = (
             f"Independent scenario audit completed across {len(results)} bounded "
             "evidence request(s)."
@@ -271,7 +275,7 @@ class ScenarioAuditorService:
         request = ModelRequest(
             request_id=new_record_identifier(),
             profile_id=self._model_profile_id,
-            role=ModelRole.AUDITOR,
+            role=ModelRole.SCENARIO_AUDITOR,
             messages=(
                 ModelMessage(
                     role=ModelMessageRole.SYSTEM,
@@ -309,7 +313,6 @@ class ScenarioAuditorService:
                 ScenarioAuditorOutput.model_json_schema(),
             ),
             retry_reasoning_exhaustion=False,
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
         try:

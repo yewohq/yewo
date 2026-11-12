@@ -40,7 +40,6 @@ from yewo.agent.runtime.records import AgentStep, AgentTask
 from yewo.agent.screen_analysis import ScreenAnalysisStore
 from yewo.artifacts import (
     ArtifactRetention,
-    ArtifactSensitivity,
     RecordIdentifier,
     new_record_identifier,
 )
@@ -469,7 +468,7 @@ def _model_request(
     return ModelRequest(
         request_id=request_id,
         profile_id=profile_id,
-        role=ModelRole.REPLAY_PREPARER,
+        role=ModelRole.REPLAY_RECONCILER,
         max_completion_tokens=MINIMUM_COMPLETION_TOKENS,
         messages=(
             ModelMessage(
@@ -485,7 +484,6 @@ def _model_request(
             "replay-reconciliation-v1",
             ReconcilerSelection.model_json_schema(),
         ),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 

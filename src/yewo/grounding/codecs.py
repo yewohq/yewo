@@ -18,23 +18,31 @@ from yewo.grounding.records import (
 from yewo.observations import PixelRegion
 
 
-_PIXEL_POINT_PATTERN = re.compile(r"\A\(\s*([+-]?\d+)\s*,\s*([+-]?\d+)\s*\)\Z")
-_NORMALIZED_POINT_PATTERN = re.compile(
-    r"\A\(\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)\Z"
-)
-_PIXEL_REGION_PATTERN = re.compile(
-    r"\A\(\s*([+-]?\d+)\s*,\s*([+-]?\d+)\s*,\s*"
-    r"([+-]?\d+)\s*,\s*([+-]?\d+)\s*\)\Z"
-)
-_NORMALIZED_REGION_PATTERN = re.compile(
-    r"\A\(\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)\Z"
-)
+_INTEGER = r"[+-]?\d+"
+_DECIMAL = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+
+
+def _coordinates(number: str, count: int) -> re.Pattern[str]:
+    """Match a bare coordinate tuple. Wrappers are removed before matching."""
+    return re.compile(r"\A" + r"\s*,\s*".join([f"({number})"] * count) + r"\Z")
+
+
+_PIXEL_POINT_PATTERN = _coordinates(_INTEGER, 2)
+_NORMALIZED_POINT_PATTERN = _coordinates(_DECIMAL, 2)
+_PIXEL_REGION_PATTERN = _coordinates(_INTEGER, 4)
+_NORMALIZED_REGION_PATTERN = _coordinates(_DECIMAL, 4)
+_WRAPPERS = (("(", ")"), ("[", "]"), ("{", "}"))
 _REFUSAL_PATTERN = re.compile(r"\Arefused(?:\s*:\s*(.+))?\Z", re.IGNORECASE)
 _AMBIGUITY_PATTERN = re.compile(r"\Aambiguous(?:\s*:\s*(.+))?\Z", re.IGNORECASE)
+
+
+def _unwrap(text: str) -> str:
+    """Drop one matched bracket pair. Models wrap coordinates, or do not, at random."""
+    stripped = text.strip()
+    for opening, closing in _WRAPPERS:
+        if stripped.startswith(opening) and stripped.endswith(closing):
+            return stripped[1:-1].strip()
+    return stripped
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,7 @@ class CoordinateTextCodec:
         output_shape: GroundingOutputShape = GroundingOutputShape.POINT,
     ) -> DecodedGrounding:
         """Decode one response against the declared source geometry."""
+        text = _unwrap(text)
         refusal = _REFUSAL_PATTERN.fullmatch(text.strip())
         if refusal is not None:
             return DecodedGrounding(
@@ -92,10 +101,18 @@ class CoordinateTextCodec:
 
     @staticmethod
     def _decode_source_pixels(text: str, width_px: int, height_px: int) -> DecodedGrounding:
-        match = _PIXEL_POINT_PATTERN.fullmatch(text)
+        match = _PIXEL_POINT_PATTERN.fullmatch(text) or _NORMALIZED_POINT_PATTERN.fullmatch(text)
         if match is None:
             return _malformed_point()
-        x_px, y_px = (int(value) for value in match.groups())
+        values = [float(value) for value in match.groups()]
+        # A fractional pixel is usable, but a pair that could be a normalized answer is not:
+        # rounding (0.51,0.42) would silently dispatch a tap at the screen corner. The bounds are
+        # inclusive, because (0.0,0.73) and (1.0,1.0) are normalized answers that round to that
+        # same corner. This also refuses a literal pixel inside the top-left 2x2, which no
+        # referring expression names and a replan recovers from.
+        if all(0 <= value <= 1 for value in values):
+            return _malformed_point()
+        x_px, y_px = (round(value) for value in values)
         if x_px < 0 or y_px < 0 or x_px >= width_px or y_px >= height_px:
             return DecodedGrounding(
                 GroundingDisposition.OUT_OF_BOUNDS,

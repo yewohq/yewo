@@ -31,13 +31,16 @@ from yewo.devices.android import ANDROID_LOG_SOURCES, AndroidDriverOptionsBuilde
 from yewo.devices.logs import (
     DeviceLogCaptureError,
     DeviceLogCheckpointKind,
-    DeviceLogRedactionResult,
     DeviceLogRollbackError,
-    DeviceLogStore,
 )
 from yewo.devices.recording import ScreenRecordingVideoMetadata
 from yewo.devices.remote_files import RemoteTemporaryFileCleanupError
 from yewo.resources import ResourceOwnership
+
+from automation.session_stores import (
+    FailFinalLogRollbackStore,
+    appium_log_reader,
+)
 
 
 class _PresenceStub:
@@ -173,12 +176,16 @@ def _request(
     )
 
 
-def _manager(driver: _DriverStub, installed_before: bool | None) -> AutomationSessionManager:
+def _manager(
+    driver: _DriverStub,
+    installed_before: bool | None,
+) -> AutomationSessionManager:
     return AutomationSessionManager(
         DriverSessionManager(lambda server_url, options: driver),
         {DevicePlatform.ANDROID: AndroidDriverOptionsBuilder()},
         {DevicePlatform.ANDROID: _PresenceStub(installed_before)},
         {DevicePlatform.ANDROID: ANDROID_LOG_SOURCES},
+        device_log_readers={DevicePlatform.ANDROID: appium_log_reader},
         recording_metadata_reader=lambda path: ScreenRecordingVideoMetadata(
             16,
             9,
@@ -202,11 +209,6 @@ def _open(
         request,
         application,
         artifact_root=artifact_root,
-        scrub_device_log_text=lambda text: DeviceLogRedactionResult(
-            text,
-            "test-policy-v1",
-            0,
-        ),
     )
 
 
@@ -352,22 +354,6 @@ def test_cleanup_continues_after_application_removal_failure(tmp_path: Path) -> 
     ]
 
 
-class _FailFinalLogRollbackStore(DeviceLogStore):
-    def __init__(self, root: Path) -> None:
-        super().__init__(root, identifier_factory=lambda: "artifact_1")
-        self._receipt_count = 0
-
-    def persist_receipt(self, receipt) -> Path:
-        self._receipt_count += 1
-        if self._receipt_count == 2:
-            raise DeviceLogCaptureError("receipt failed")
-        return super().persist_receipt(receipt)
-
-    def discard(self, reference) -> None:
-        del reference
-        raise DeviceLogCaptureError("rollback failed")
-
-
 def test_session_preserves_log_rollback_error_after_other_cleanup(
     tmp_path: Path,
 ) -> None:
@@ -381,7 +367,8 @@ def test_session_preserves_log_rollback_error_after_other_cleanup(
         {DevicePlatform.ANDROID: AndroidDriverOptionsBuilder()},
         {DevicePlatform.ANDROID: _PresenceStub(True)},
         {DevicePlatform.ANDROID: ANDROID_LOG_SOURCES},
-        log_store_factory=_FailFinalLogRollbackStore,
+        log_store_factory=FailFinalLogRollbackStore,
+        device_log_readers={DevicePlatform.ANDROID: appium_log_reader},
     )
     session = _open(
         manager,

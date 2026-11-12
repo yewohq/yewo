@@ -20,7 +20,7 @@ from yewo.agent.actuation import (
     ScrollDistance,
     TextDeliveryStatus,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.devices.errors import DeviceActionRejectedError, DeviceInputRejectedError
 from yewo.devices.focus import (
     FocusedFieldReading,
@@ -37,6 +37,7 @@ class RecordingDevice:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.rejection: str | None = None
+        self.scroll_result: bool | None = None
         self.field_context = TextFieldContext(
             is_secure=False,
             field_type=TextFieldType.TEXT,
@@ -89,7 +90,7 @@ class RecordingDevice:
         right: int | None = None,
         bottom: int | None = None,
         distance_fraction: float = 0.6,
-    ) -> None:
+    ) -> bool | None:
         self._record(
             "scroll",
             direction,
@@ -99,6 +100,17 @@ class RecordingDevice:
             bottom=bottom,
             distance_fraction=distance_fraction,
         )
+        return self.scroll_result
+
+    def refresh(
+        self,
+        *,
+        left: int = 0,
+        top: int = 0,
+        right: int | None = None,
+        bottom: int | None = None,
+    ) -> None:
+        self._record("refresh", left=left, top=top, right=right, bottom=bottom)
 
     def back(self) -> None:
         self._record("back")
@@ -130,7 +142,6 @@ def authorization(action: ActionKind, **updates: object) -> AuthorizedAction:
         "source": ActionSource.PLANNER,
         "side_effect": ACTION_DEFINITIONS[action].side_effect,
         "expected_outcome": "The expected visible change occurs.",
-        "sensitivity": ArtifactSensitivity.DEVICE_CONTENT,
         "retention": ArtifactRetention.RUN,
     }
     values.update(updates)
@@ -266,7 +277,6 @@ def test_declared_value_is_resolved_only_during_dispatch() -> None:
     action = authorization(
         ActionKind.TYPE,
         text=DeclaredValueReference(value_name="declared_secret"),
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
 
     receipt = ActionExecutor(
@@ -285,7 +295,6 @@ def test_text_delivery_comparison_returns_only_secret_free_status() -> None:
     action = authorization(
         ActionKind.TYPE,
         text=DeclaredValueReference(value_name="declared_secret"),
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
     executor = ActionExecutor(device, declared_value_resolver=lambda unused: secret)
 
@@ -340,7 +349,6 @@ def test_missing_declared_value_resolver_returns_safe_refusal() -> None:
     action = authorization(
         ActionKind.TYPE,
         text=DeclaredValueReference(value_name="declared_secret"),
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
     )
 
     receipt = ActionExecutor(RecordingDevice()).dispatch(action)
@@ -399,3 +407,54 @@ def test_executor_rejects_proposal_without_authorization() -> None:
 def test_malformed_authorization_fails_validation() -> None:
     with pytest.raises(ValidationError):
         authorization(ActionKind.TAP)
+
+
+def test_scroll_records_an_exhausted_surface_for_the_outcome() -> None:
+    device = RecordingDevice()
+    device.scroll_result = False
+    action = authorization(
+        ActionKind.SCROLL,
+        direction=ScrollDirection.DOWN,
+        distance=ScrollDistance.MEDIUM,
+    )
+    executor = ActionExecutor(device)
+
+    executor.dispatch(action)
+
+    assert executor.scroll_exhausted(action) is True
+    assert executor.scroll_exhausted(action) is None
+
+
+def test_scroll_records_nothing_when_the_platform_cannot_answer() -> None:
+    device = RecordingDevice()
+    action = authorization(
+        ActionKind.SCROLL,
+        direction=ScrollDirection.DOWN,
+        distance=ScrollDistance.MEDIUM,
+    )
+    executor = ActionExecutor(device)
+
+    executor.dispatch(action)
+
+    assert executor.scroll_exhausted(action) is None
+
+
+def test_refresh_pulls_the_authorized_region() -> None:
+    device = RecordingDevice()
+    action = authorization(
+        ActionKind.REFRESH,
+        region=PixelRegion(left=10, top=20, right=90, bottom=180),
+    )
+
+    ActionExecutor(device).dispatch(action)
+
+    assert device.calls == [("refresh", (), {"left": 10, "top": 20, "right": 89, "bottom": 179})]
+
+
+def test_refresh_without_a_region_pulls_the_screen() -> None:
+    device = RecordingDevice()
+    action = authorization(ActionKind.REFRESH)
+
+    ActionExecutor(device).dispatch(action)
+
+    assert device.calls == [("refresh", (), {"left": 0, "top": 0, "right": None, "bottom": None})]

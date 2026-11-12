@@ -17,11 +17,13 @@ from yewo.agent.memory.records import (
     UnsuccessfulAttempt,
     derived_memory_identifier,
 )
-from yewo.agent.actuation import ActionKind, ActionProposal
+from yewo.agent.actuation import ActionProposal
 from yewo.agent.narration import narrate_memory_eviction
 from yewo.agent.memory.references import referenced_memory_observation_ids
 from yewo.agent.planning.planner import (
+    ActionVerificationContext,
     ActionProposalSource,
+    resolve_action_verification_context,
 )
 from yewo.agent.planning.records import (
     PlanningRequest,
@@ -49,6 +51,10 @@ class AppMemoryActionSource:
 
     def plan(self, request: PlanningRequest) -> ActionProposal:
         """Delegate with bounded historical hints for the matching screen."""
+        return self._source.plan(self._enriched_request(request))
+
+    def _enriched_request(self, request: PlanningRequest) -> PlanningRequest:
+        """Attach the same map evidence to planning and independent verification."""
         progress = request.progress_context or TaskProgressContext(remaining_work=request.open_work)
         memory_facts = memory_planning_facts(
             self._memory,
@@ -58,14 +64,22 @@ class AppMemoryActionSource:
         historical_facts = tuple(dict.fromkeys((*progress.historical_memory_facts, *memory_facts)))[
             :20
         ]
-        return self._source.plan(
-            request.model_copy(
-                update={
-                    "progress_context": progress.model_copy(
-                        update={"historical_memory_facts": historical_facts}
-                    )
-                }
-            )
+        return request.model_copy(
+            update={
+                "progress_context": progress.model_copy(
+                    update={"historical_memory_facts": historical_facts}
+                )
+            }
+        )
+
+    def action_verification_context(
+        self,
+        default_request: PlanningRequest,
+    ) -> ActionVerificationContext:
+        """Give the verifier the exact map-enriched request used by the planner."""
+        return resolve_action_verification_context(
+            self._source,
+            self._enriched_request(default_request),
         )
 
     def required_model_requests(self, request: PlanningRequest) -> int:
@@ -129,7 +143,7 @@ def memory_planning_facts(
         if attempt.screen_id in screen_ids
     )
     proven_expression_facts = tuple(
-        _proven_expression_fact(transition.action.action, transition.action.target_description)
+        _accepted_transition_fact(transition)
         for transition in memory.transitions
         if transition.source_screen_id in screen_ids
         and transition.action.target_description is not None
@@ -163,11 +177,17 @@ def _unsuccessful_attempt_fact(attempt: UnsuccessfulAttempt) -> str:
     )
 
 
-def _proven_expression_fact(action: ActionKind, target_description: str) -> str:
+def _accepted_transition_fact(transition: AcceptedTransition) -> str:
+    target_description = transition.action.target_description
+    if target_description is None:
+        raise ValueError("A targeted map transition requires a target description.")
+    signals = ", ".join(sorted(signal.value for signal in transition.outcome_signals))
     return (
-        f'Previously grounded target on this screen: {action.value} target "{target_description}". '
-        "This proves only that the grounder located the visible target. It does not prove that "
-        "the action is useful, reaches the expected destination, or advances the current goal."
+        f"Previously accepted map transition on this screen: {transition.action.action.value} "
+        f'target "{target_description}" reached logical screen '
+        f'"{transition.destination_screen_id}" with observed outcome signal(s): {signals}. '
+        "This proves that prior transition, not that its destination is current or that it advances "
+        "the current goal."
     )
 
 
@@ -280,8 +300,8 @@ def add_observation_screen(
             observation.screen_fingerprint.value,
             observation.screen_fingerprint.system_region_mask_sha256 or "unmasked",
             observation.platform_context or "",
-            str(observation.redacted_screenshot.width_px),
-            str(observation.redacted_screenshot.height_px),
+            str(observation.screenshot.width_px),
+            str(observation.screenshot.height_px),
         ),
         variants=(_observation_variant(observation, source_run_id),),
     )
@@ -343,5 +363,4 @@ def _observation_variant(
         observation_id=observation.observation_id,
         source_run_id=source_run_id,
         presentation=observation.presentation_key,
-        screenshot=observation.redacted_screenshot,
     )

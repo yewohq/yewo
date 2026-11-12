@@ -65,6 +65,25 @@ class AgentTerminalReason(StrEnum):
     RUNTIME_FAILURE = "runtime_failure"
 
 
+# Terminals the agent decided from its own reading of the screen. Every other terminal reports a
+# condition the runtime observed, which needs no second opinion.
+_MODEL_JUDGED_TERMINALS = frozenset(
+    {
+        AgentTerminalReason.DONE_REQUESTED,
+        AgentTerminalReason.CANNOT_PROGRESS,
+    }
+)
+
+
+def requires_goal_verification(reason: AgentTerminalReason) -> bool:
+    """Whether one terminal claim needs an independent read of the final screen.
+
+    Verifying only success left a run that gave up with no independent read of the screen it
+    gave up on. Both claims come from the planner alone, so both are verified.
+    """
+    return reason in _MODEL_JUDGED_TERMINALS
+
+
 class AgentTask(BaseModel):
     """Workflow-neutral task information supplied to the shared runtime."""
 
@@ -200,7 +219,6 @@ class AgentStep(BaseModel):
                 self.target_grounding,
                 self.destination_grounding,
                 self.authorization,
-                self.refusal,
                 self.receipt,
                 self.outcome,
                 self.application_failure,
@@ -211,8 +229,14 @@ class AgentStep(BaseModel):
             ActionKind.DONE: AgentTerminalReason.DONE_REQUESTED,
             ActionKind.CANNOT_PROGRESS: AgentTerminalReason.CANNOT_PROGRESS,
         }.get(self.proposal.action)
-        if expected_terminal is not None and self.terminal_reason is not expected_terminal:
+        if (
+            expected_terminal is not None
+            and self.refusal is None
+            and self.terminal_reason is not expected_terminal
+        ):
             raise ValueError("The planner terminal does not match the step terminal reason.")
+        if expected_terminal is not None and self.refusal is not None and self.terminal_reason:
+            raise ValueError("A refused planner terminal cannot also stop the agent.")
         return self
 
 
@@ -393,10 +417,7 @@ def invocation_budget_reason(
     """Return the first invocation limit blocking the next planning operation."""
     if elapsed_seconds >= policy.maximum_duration_seconds:
         return "The Device Agent duration budget is exhausted."
-    if (
-        policy.maximum_model_requests is not None
-        and model_requests + requested_model_requests > policy.maximum_model_requests
-    ):
+    if not policy.has_model_request_capacity(model_requests, requested_model_requests):
         return "The Device Agent model-request budget is exhausted."
     return None
 
@@ -408,10 +429,8 @@ def grounding_budget_reason(
     requested_groundings: int,
 ) -> str | None:
     """Return the first model or grounding limit blocked by a proposal."""
-    if (
-        policy.maximum_model_requests is not None
-        and planning_requests + grounding_requests + requested_groundings
-        > policy.maximum_model_requests
+    if not policy.has_model_request_capacity(
+        planning_requests + grounding_requests, requested_groundings
     ):
         return "The Device Agent model-request budget is exhausted."
     if grounding_requests + requested_groundings > policy.maximum_grounding_requests:
@@ -480,7 +499,7 @@ def build_runtime_grounding_request(
     )
     return GroundingRequest(
         grounding_id=grounding_id,
-        screenshot=observation.redacted_screenshot,
+        screenshot=observation.screenshot,
         source_presentation=observation.presentation_key,
         expression=expression,
         operation=operation,

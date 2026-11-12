@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timezone
 import math
@@ -29,9 +29,7 @@ from yewo.devices.recording.errors import (
 )
 from yewo.devices.recording.policy import ScreenRecordingPolicy
 from yewo.devices.recording.processor import ScreenRecordingArtifactProcessor
-from yewo.devices.recording.redaction import (
-    FfmpegScreenRecordingRedactor,
-    ScreenRecordingRedactor,
+from yewo.devices.recording.video import (
     ScreenRecordingVideoMetadata,
     read_screen_recording_metadata,
 )
@@ -42,7 +40,6 @@ from yewo.devices.recording.records import (
     ScreenRecordingCaptureMethod,
     ScreenRecordingCheckpointKind,
     ScreenRecordingCheckpointReceipt,
-    ScreenRecordingMask,
     ScreenRecordingRemoteCleanupState,
     ScreenRecordingRemoteCleanupReceipt,
     ScreenRecordingSegmentState,
@@ -50,7 +47,6 @@ from yewo.devices.recording.records import (
 )
 from yewo.devices.recording.recorder import ScreenRecorder, ScreenRecorderBoundary
 from yewo.devices.recording.store import ScreenRecordingStore
-from yewo.observations.records import RedactionRegion
 
 
 def _utc_now() -> datetime:
@@ -68,11 +64,9 @@ class ScreenRecordingService:
         store: ScreenRecordingStore,
         *,
         policy: ScreenRecordingPolicy | None = None,
-        redactor: ScreenRecordingRedactor | None = None,
         metadata_reader: Callable[[Path], ScreenRecordingVideoMetadata] = (
             read_screen_recording_metadata
         ),
-        initial_masks: Sequence[ScreenRecordingMask] = (),
         identifier_factory: Callable[[], str] = new_record_identifier,
         time_factory: Callable[[], datetime] = _utc_now,
         monotonic_factory: Callable[[], float] = time.monotonic,
@@ -87,7 +81,6 @@ class ScreenRecordingService:
         self._processor = ScreenRecordingArtifactProcessor(
             store,
             self._policy,
-            redactor or FfmpegScreenRecordingRedactor(),
             metadata_reader,
         )
         self._identifier_factory = identifier_factory
@@ -98,13 +91,6 @@ class ScreenRecordingService:
         self._segment_start: ScreenRecordingStart | None = None
         self._active = False
         self._segment_monotonic_started: float | None = None
-        self._segment_masks: list[ScreenRecordingMask] = []
-        masks = tuple(initial_masks)
-        if any(mask.starts_at_seconds != 0 or mask.ends_at_seconds is not None for mask in masks):
-            raise ValueError("An initial recording mask must cover the segment from its start.")
-        if len({self._mask_key(mask) for mask in masks}) != len(masks):
-            raise ValueError("An initial recording mask cannot be repeated.")
-        self._persistent_masks: list[ScreenRecordingMask] = list(masks)
         self._next_segment_index = 1
         self._completed_checkpoints: set[tuple[ScreenRecordingCheckpointKind, str]] = set()
 
@@ -173,64 +159,6 @@ class ScreenRecordingService:
                 self._boundary = None
                 self._clear_active_segment()
 
-    def add_redaction_region(
-        self,
-        region: RedactionRegion,
-        source_width_px: int,
-        source_height_px: int,
-    ) -> None:
-        """Start a mask now. Register it before sensitive pixels appear."""
-        monotonic_started = self._segment_monotonic_started
-        if not self._active or monotonic_started is None:
-            raise ScreenRecordingError(
-                "A recording mask requires an active screen-recording segment."
-            )
-        elapsed_seconds = self._monotonic_factory() - monotonic_started
-        if not math.isfinite(elapsed_seconds):
-            raise ScreenRecordingError("The recording mask time is invalid.")
-        try:
-            mask = ScreenRecordingMask(
-                region=region,
-                source_width_px=source_width_px,
-                source_height_px=source_height_px,
-                starts_at_seconds=max(0.0, elapsed_seconds),
-            )
-        except ValidationError as error:
-            raise ScreenRecordingError("The recording redaction region is invalid.") from error
-        key = self._mask_key(mask)
-        self._segment_masks = [
-            current for current in self._segment_masks if self._mask_key(current) != key
-        ]
-        self._persistent_masks = [
-            current for current in self._persistent_masks if self._mask_key(current) != key
-        ]
-        self._segment_masks.append(mask)
-        self._persistent_masks.append(mask.model_copy(update={"starts_at_seconds": 0.0}))
-
-    def clear_redaction_regions(self) -> None:
-        """End active masks now and stop carrying them into later segments."""
-        monotonic_started = self._segment_monotonic_started
-        if self._active and monotonic_started is not None:
-            elapsed_seconds = max(0.0, self._monotonic_factory() - monotonic_started)
-            if not math.isfinite(elapsed_seconds):
-                raise ScreenRecordingError("The recording mask time is invalid.")
-            self._segment_masks = [
-                (
-                    mask
-                    if mask.ends_at_seconds is not None
-                    else mask.model_copy(
-                        update={
-                            "ends_at_seconds": max(
-                                mask.starts_at_seconds,
-                                elapsed_seconds,
-                            )
-                        }
-                    )
-                )
-                for mask in self._segment_masks
-            ]
-        self._persistent_masks = []
-
     def _start_first_segment(
         self,
     ) -> tuple[
@@ -267,10 +195,6 @@ class ScreenRecordingService:
             self._segment_monotonic_started = self._monotonic_factory()
             if not math.isfinite(self._segment_monotonic_started):
                 raise ScreenRecordingError("The recording segment clock is invalid.")
-            self._segment_masks = [
-                mask.model_copy(update={"starts_at_seconds": 0.0})
-                for mask in self._persistent_masks
-            ]
         except ScreenRecordingError as error:
             self._stop_after_failed_start(error)
             raise
@@ -290,13 +214,11 @@ class ScreenRecordingService:
         continuation_started = False
         try:
             if self._active:
-                masks = tuple(self._segment_masks)
                 try:
                     capture = self._recorder.stop()
                     self._clear_active_segment()
                     artifact = self._processor.persist(
                         capture,
-                        masks,
                         boundary,
                         self._next_segment_index,
                         checkpoint_kind,
@@ -308,10 +230,7 @@ class ScreenRecordingService:
                 except ScreenRecordingError:
                     self._clear_active_segment()
                     state = ScreenRecordingSegmentState.FAILED
-                    reason = (
-                        "The screen-recording segment could not be stopped, redacted, and "
-                        "persisted."
-                    )
+                    reason = "The screen-recording segment could not be stopped and persisted."
             continuation_started, continuation_reason = self._continue_after_checkpoint(
                 checkpoint_kind,
                 allow_start=(
@@ -446,7 +365,6 @@ class ScreenRecordingService:
             self._segment_started_at = None
             self._segment_start = None
             self._segment_monotonic_started = None
-            self._segment_masks = []
         if artifact is not None:
             try:
                 self._store.discard(artifact)
@@ -471,14 +389,12 @@ class ScreenRecordingService:
         self._segment_started_at = None
         self._segment_start = None
         self._segment_monotonic_started = None
-        self._segment_masks = []
 
     def _clear_active_segment(self) -> None:
         self._active = False
         self._segment_started_at = None
         self._segment_start = None
         self._segment_monotonic_started = None
-        self._segment_masks = []
 
     def _build_boundary(
         self,
@@ -518,18 +434,6 @@ class ScreenRecordingService:
             )
         except ValidationError as error:
             raise ScreenRecordingError("The recording boundary is invalid.") from error
-
-    @staticmethod
-    def _mask_key(mask: ScreenRecordingMask) -> tuple[object, ...]:
-        region = mask.region
-        return (
-            region.left,
-            region.top,
-            region.right,
-            region.bottom,
-            mask.source_width_px,
-            mask.source_height_px,
-        )
 
     def _new_identifier(self, record_kind: str) -> str:
         try:

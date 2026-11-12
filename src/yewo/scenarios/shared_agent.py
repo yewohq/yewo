@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from yewo.agent.composition import build_device_agent
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.runtime.records import AgentModePolicy, AgentResult, AgentTask
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelClient
-from yewo.observations import RedactionRegion
 from yewo.runs import InterruptionSignal, RunExecutionContext
 
 
@@ -26,9 +25,9 @@ class SharedDeviceAgentTaskExecutor:
         interruption: InterruptionSignal,
         *,
         recovery_profile_id: str | None = None,
-        action_verifier_profile_id: str | None = None,
+        proposal_verifier_profile_id: str | None = None,
+        outcome_verifier_profile_id: str | None = None,
         screen_analyzer_profile_id: str | None = None,
-        redaction_regions: Sequence[RedactionRegion] = (),
         declared_value_resolver: Callable[[str], str] | None = None,
         planning_memory: AppMemory | None = None,
         grounding_memory: AppMemory | None = None,
@@ -40,9 +39,9 @@ class SharedDeviceAgentTaskExecutor:
         self._mode_policy = mode_policy
         self._interruption = interruption
         self._recovery_profile_id = recovery_profile_id
-        self._action_verifier_profile_id = action_verifier_profile_id
+        self._proposal_verifier_profile_id = proposal_verifier_profile_id
+        self._outcome_verifier_profile_id = outcome_verifier_profile_id
         self._screen_analyzer_profile_id = screen_analyzer_profile_id
-        self._redaction_regions = tuple(redaction_regions)
         self._declared_value_resolver = declared_value_resolver
         self._planning_memory = planning_memory
         self._grounding_memory = grounding_memory
@@ -55,9 +54,9 @@ class SharedDeviceAgentTaskExecutor:
             self._grounding_profile,
             self._planner_profile_id,
             recovery_profile_id=self._recovery_profile_id,
-            action_verifier_profile_id=self._action_verifier_profile_id,
+            proposal_verifier_profile_id=self._proposal_verifier_profile_id,
+            outcome_verifier_profile_id=self._outcome_verifier_profile_id,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
-            redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
             planning_memory=self._planning_memory,
             grounding_memory=self._grounding_memory,

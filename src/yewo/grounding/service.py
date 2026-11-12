@@ -49,6 +49,17 @@ def _coordinate_instruction(convention: GroundingCoordinateConvention) -> str:
     return "normalized numbers from 0 to 1"
 
 
+def _number_format_instruction(convention: GroundingCoordinateConvention) -> str:
+    """State the number format the convention's own coordinate space admits.
+
+    A normalized coordinate carries the fraction of the screenshot, so a whole number names an
+    edge. One shared whole-number instruction left 0 and 1 as the only compliant answers.
+    """
+    if convention is GroundingCoordinateConvention.NORMALIZED:
+        return "Use decimal numbers."
+    return "Use whole numbers."
+
+
 class GroundingEvidenceError(RuntimeError):
     """Raised when a model response lacks its required call evidence."""
 
@@ -168,6 +179,7 @@ class GroundingService:
             bounds_instruction=_bounds_instruction(request, candidate.coordinate_convention),
             response_shape=response_instruction,
             coordinate_space=coordinate_instruction,
+            number_format=_number_format_instruction(candidate.coordinate_convention),
         )
         return ModelRequest(
             request_id=self._identifier_factory(),
@@ -182,7 +194,6 @@ class GroundingService:
                     ),
                 ),
             ),
-            sensitivity=request.screenshot.sensitivity,
             retention=request.screenshot.retention,
         )
 
@@ -354,10 +365,12 @@ def _correction_instruction(
         return ""
     point = request.correction.previous_point
     return (
-        f"The previous dispatched point ({point.x},{point.y}) produced no observable change. "
-        "Use the refined target description. "
-        f"Choose a point at least {request.correction.minimum_distance_px} source screenshot "
-        f"pixels away from the previous point.{_pixel_conversion_note(convention)}"
+        f"A tap at ({point.x},{point.y}) produced no observable change, so that point was not on "
+        "the target. Find the target again from its description and answer with the centre of "
+        "the surface it names. Do not offset from the previous point: a point that merely "
+        "differs from it is as likely to miss. Your answer must be at least "
+        f"{request.correction.minimum_distance_px} source screenshot pixels from the previous "
+        f"point.{_pixel_conversion_note(convention)}"
     )
 
 

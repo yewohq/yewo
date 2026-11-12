@@ -12,17 +12,10 @@ from yewo.grounding import (
     ModelGroundingResolution,
     PixelPoint,
 )
-from yewo.observations import ScreenshotRedactionState
 from grounding.support import DeterministicGrounder, build_grounding_request
-from observations.factories import build_screenshot
 
 
-def test_grounding_request_rejects_raw_pixels_and_incompatible_region_output() -> None:
-    with pytest.raises(ValidationError, match="redacted screenshot"):
-        build_grounding_request(
-            screenshot=build_screenshot(redaction_state=ScreenshotRedactionState.RAW)
-        )
-
+def test_grounding_request_rejects_incompatible_region_output() -> None:
     with pytest.raises(ValidationError, match="scroll-region"):
         build_grounding_request(output_shape=GroundingOutputShape.REGION)
 

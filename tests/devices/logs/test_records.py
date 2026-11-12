@@ -8,7 +8,6 @@ import pytest
 
 from yewo.artifacts import (
     ArtifactRetention,
-    ArtifactSensitivity,
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
 )
@@ -56,9 +55,6 @@ def _artifact(*, boundary_id: str = "boundary_1") -> DeviceLogArtifactReference:
         path=Path(f"device-logs/{boundary_id}/log.log"),
         byte_count=1,
         entry_count=1,
-        redaction_policy_id="test-policy",
-        source_redaction_count=0,
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 

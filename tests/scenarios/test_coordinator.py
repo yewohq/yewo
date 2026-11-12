@@ -87,7 +87,7 @@ def _replay(
                 procedure_index=0,
                 source_step=1,
                 observation_id=after.observation_id,
-                screenshot_artifact_id=after.redacted_screenshot.artifact_id,
+                screenshot_artifact_id=after.screenshot.artifact_id,
                 screen_fingerprint=after.screen_fingerprint,
             ),
         )

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from yewo.devices.application_lifecycle import ApplicationLifecycleDriver
 from yewo.devices.focus import TextElement
+from yewo.devices.scroll import ScrollDirection, ScrollDispatch
 from yewo.devices.interaction import (
     ANDROID_SELECT_ALL_META_STATE,
     AndroidKey,
@@ -110,6 +111,36 @@ class AndroidInteractionBackend:
         driver.execute_script(
             "mobile: longClickGesture",
             {"x": x, "y": y, "duration": round(duration_seconds * 1000)},
+        )
+
+    def scroll(
+        self,
+        driver: InteractionDriver,
+        *,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        direction: ScrollDirection,
+        distance_fraction: float,
+    ) -> ScrollDispatch:
+        """Scroll one region and report whether UiAutomator can scroll further."""
+        answer = driver.execute_script(
+            "mobile: scrollGesture",
+            {
+                "left": left,
+                "top": top,
+                "width": right - left + 1,
+                "height": bottom - top + 1,
+                "direction": direction.value,
+                "percent": distance_fraction,
+            },
+        )
+        # The gesture ran whatever the reply was. Reporting no answer as no dispatch made the
+        # caller repeat the scroll through its fallback swipe.
+        return ScrollDispatch(
+            dispatched=True,
+            can_scroll_more=answer if isinstance(answer, bool) else None,
         )
 
     def drag(

@@ -1,6 +1,6 @@
 """Select compatible fresh-install procedure replay before discovery."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from yewo.agent.memory.records import AppMemory, MemoryCompatibility
@@ -35,7 +35,6 @@ from yewo.applications import ApplicationInstallationChange
 from yewo.artifacts import new_record_identifier
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelClient, ModelImageConstraints
-from yewo.observations import RedactionRegion
 from yewo.run_narration import current_narrator
 from yewo.runs import InterruptionSignal, RunExecutionContext
 
@@ -58,12 +57,12 @@ def prepare_procedure_replay_entry(
     auditor_profile_id: str,
     planner_profile_id: str,
     recovery_profile_id: str,
-    action_verifier_profile_id: str,
+    proposal_verifier_profile_id: str,
+    outcome_verifier_profile_id: str,
     interruption: InterruptionSignal,
     procedure_store: CompiledProcedureStore | None,
     auditor_image_constraints: ModelImageConstraints,
     memory: AppMemory | None,
-    redaction_regions: Sequence[RedactionRegion],
     declared_value_resolver: Callable[[str], str] | None,
     preparation: DiscoveryPreparation | None = None,
     screen_analyzer_profile_id: str | None = None,
@@ -84,12 +83,12 @@ def prepare_procedure_replay_entry(
         procedure_store,
         planner_profile_id=planner_profile_id,
         recovery_profile_id=recovery_profile_id,
-        action_verifier_profile_id=action_verifier_profile_id,
+        proposal_verifier_profile_id=proposal_verifier_profile_id,
+        outcome_verifier_profile_id=outcome_verifier_profile_id,
         screen_analyzer_profile_id=screen_analyzer_profile_id,
         screen_analysis_failures=screen_analysis_failures,
         auditor_image_constraints=auditor_image_constraints,
         memory=memory,
-        redaction_regions=redaction_regions,
         declared_value_resolver=declared_value_resolver,
         preparation=preparation,
         verification_task=(
@@ -126,12 +125,12 @@ def replay_compiled_procedure_if_available(
     *,
     planner_profile_id: str | None = None,
     recovery_profile_id: str | None = None,
-    action_verifier_profile_id: str | None = None,
+    proposal_verifier_profile_id: str | None = None,
+    outcome_verifier_profile_id: str | None = None,
     screen_analyzer_profile_id: str | None = None,
     screen_analysis_failures: ScreenAnalysisFailureLedger | None = None,
     auditor_image_constraints: ModelImageConstraints | None = None,
     memory: AppMemory | None,
-    redaction_regions: Sequence[RedactionRegion],
     declared_value_resolver: Callable[[str], str] | None,
     preparation: DiscoveryPreparation | None = None,
     verification_task: EvidenceTask | None = None,
@@ -198,12 +197,12 @@ def replay_compiled_procedure_if_available(
         planner_profile_id=planner_profile_id,
         recovery_profile_id=recovery_profile_id,
         auditor_profile_id=auditor_profile_id,
-        action_verifier_profile_id=action_verifier_profile_id,
+        proposal_verifier_profile_id=proposal_verifier_profile_id,
+        outcome_verifier_profile_id=outcome_verifier_profile_id,
         screen_analyzer_profile_id=screen_analyzer_profile_id,
         screen_analysis_failures=screen_analysis_failures,
         auditor_image_constraints=auditor_image_constraints,
         memory=memory,
-        redaction_regions=redaction_regions,
         declared_value_resolver=declared_value_resolver,
         verification_task=verification_task,
         initial_model_requests=(

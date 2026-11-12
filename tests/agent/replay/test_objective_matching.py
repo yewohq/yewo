@@ -62,7 +62,7 @@ def test_matcher_selects_only_an_llm_equivalent_audited_procedure() -> None:
     assert selection.preparation_model_requests == 1
     assert matcher.model_request_count == 1
     request = model.requests[0]
-    assert request.role is ModelRole.REPLAY_PREPARER
+    assert request.role is ModelRole.OBJECTIVE_MATCHER
     assert request.messages[0].content == (TextModelContent(text=OBJECTIVE_MATCHING_SYSTEM_PROMPT),)
 
 

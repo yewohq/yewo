@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from yewo.agent.actuation import ActionBudget, ActionPolicy, ActionProposal, ActionRefusal
-from yewo.agent.actuation.verifier import ActionVerifier
+from yewo.agent.actuation import (
+    ACTION_DEFINITIONS,
+    ActionBudget,
+    ActionHandling,
+    ActionPolicy,
+    ActionProposal,
+    ActionRefusal,
+)
+from yewo.agent.actuation.proposal_verifier import ProposalVerifier
 from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.planning.records import PlanningRequest
 from yewo.agent.recovery.runtime import RecoveryRunState
@@ -21,7 +28,6 @@ class PreparedAction:
 
     proposal: ActionProposal
     refusal: ActionRefusal | None
-    system_declared_correction: bool
     verification_request_count: int = 0
     budget_reason: str | None = None
     verification: PreDispatchVerification = PreDispatchVerification()
@@ -60,7 +66,7 @@ def prepare_action_for_grounding(
     progress_ledger: RunProgressLedger,
     action_policy: ActionPolicy,
     action_budget: ActionBudget,
-    verifier: ActionVerifier | None,
+    verifier: ProposalVerifier | None,
     discovery_mode: bool,
     decision_source: PlannerDecisionSource,
     planning_source: object,
@@ -75,7 +81,36 @@ def prepare_action_for_grounding(
     now: float,
 ) -> PreparedAction:
     """Apply deterministic policy before spending a discovery-verifier request."""
-    proposal, refusal, system_declared = gate_before_grounding(
+    definition = ACTION_DEFINITIONS[proposal.action]
+    if definition.handling is ActionHandling.TERMINAL:
+        verification = verify_discovery_action(
+            verifier,
+            discovery_mode,
+            decision_source,
+            planning_source,
+            planning_request,
+            proposal,
+            mode_policy,
+            recovery,
+            completed_step_count,
+            started_at,
+            planning_requests,
+            grounding_requests,
+            now,
+        )
+        progress_refusal = progress_ledger.record_verification(
+            verification,
+            planning_request.observation,
+            proposal,
+        )
+        return PreparedAction(
+            proposal,
+            verification.refusal or progress_refusal,
+            verification.request_count,
+            verification.budget_reason,
+            verification,
+        )
+    proposal, refusal = gate_before_grounding(
         progress_ledger,
         action_policy,
         proposal,
@@ -84,13 +119,13 @@ def prepare_action_for_grounding(
         decision_source,
     )
     if refusal is not None:
-        return PreparedAction(proposal, refusal, system_declared)
+        return PreparedAction(proposal, refusal)
     coherence_refusal = proposal_coherence_refusal(
         proposal,
         planning_request.current_screen_analysis,
     )
     if coherence_refusal is not None:
-        return PreparedAction(proposal, coherence_refusal, system_declared)
+        return PreparedAction(proposal, coherence_refusal)
     verification = verify_discovery_action(
         verifier,
         discovery_mode,
@@ -114,7 +149,6 @@ def prepare_action_for_grounding(
     return PreparedAction(
         proposal,
         verification.refusal or progress_refusal,
-        system_declared,
         verification.request_count,
         verification.budget_reason,
         verification,

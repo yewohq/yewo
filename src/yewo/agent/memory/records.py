@@ -30,7 +30,6 @@ from yewo.observations import (
     DeviceOrientation,
     PresentationKey,
     ScreenComparisonPolicy,
-    ScreenshotReference,
 )
 
 
@@ -76,18 +75,6 @@ class ObservationVariant(BaseModel):
     observation_id: RecordIdentifier
     source_run_id: RecordIdentifier
     presentation: PresentationKey
-    screenshot: ScreenshotReference
-
-    @model_validator(mode="after")
-    def _validate_screenshot(self) -> Self:
-        if (self.presentation.width_px, self.presentation.height_px) != (
-            self.screenshot.width_px,
-            self.screenshot.height_px,
-        ):
-            raise ValueError("A memory variant must match its screenshot dimensions.")
-        if self.presentation.fingerprint.source_artifact_id != self.screenshot.artifact_id:
-            raise ValueError("A memory variant fingerprint must identify its screenshot.")
-        return self
 
 
 class LogicalScreen(BaseModel):
@@ -299,7 +286,7 @@ class AppMemory(BaseModel):
     source_run_ids: tuple[RecordIdentifier, ...] = Field(min_length=1)
     screens: tuple[LogicalScreen, ...] = Field(min_length=1)
     transitions: tuple[AcceptedTransition, ...] = ()
-    unsuccessful_attempts: tuple[UnsuccessfulAttempt, ...] = ()
+    unsuccessful_attempts: tuple[UnsuccessfulAttempt, ...]
     app_knowledge: AppKnowledge = AppKnowledge()
     updated_at: datetime
 

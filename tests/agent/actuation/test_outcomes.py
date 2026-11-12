@@ -22,7 +22,7 @@ from yewo.agent.actuation import (
     TextDeliveryReason,
     TextDeliveryStatus,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.devices.application_lifecycle import ApplicationState
 from yewo.devices.focus import TextFieldContextSource, TextFieldType, FocusedFieldReading
 from yewo.devices.screen import SystemRegionKind
@@ -30,6 +30,7 @@ from yewo.grounding import PixelPoint
 from yewo.observations import Observation, ScreenFingerprint, ScreenRegion
 
 from observations.factories import build_observation, build_screenshot
+from support import DISPATCHED_AT
 
 
 def _authorization(
@@ -47,7 +48,6 @@ def _authorization(
         "source": ActionSource.PLANNER,
         "side_effect": ACTION_DEFINITIONS[action].side_effect,
         "expected_outcome": "The expected visible change occurs.",
-        "sensitivity": ArtifactSensitivity.DEVICE_CONTENT,
         "retention": ArtifactRetention.RUN,
     }
     if action in {ActionKind.TAP, ActionKind.FOCUS}:
@@ -58,8 +58,6 @@ def _authorization(
             if declared_text
             else LiteralText(value="hello")
         )
-        if declared_text:
-            values["sensitivity"] = ArtifactSensitivity.DECLARED_SENSITIVE
     return AuthorizedAction.model_validate(values)
 
 
@@ -69,6 +67,7 @@ def _receipt(
     disposition: DispatchDisposition = DispatchDisposition.DISPATCHED,
 ) -> DispatchReceipt:
     return DispatchReceipt(
+        dispatched_at=DISPATCHED_AT,
         receipt_id="receipt-1",
         authorization_id=action.authorization_id,
         proposal_id=action.proposal_id,
@@ -77,7 +76,6 @@ def _receipt(
         reason="The device rejected the action."
         if disposition is not DispatchDisposition.DISPATCHED
         else None,
-        sensitivity=action.sensitivity,
         retention=action.retention,
     )
 
@@ -120,7 +118,7 @@ def _settled_observation(
         "observation_id": "obs_2",
         "predecessor_observation_id": source.observation_id,
         "captured_at": source.captured_at + timedelta(seconds=1),
-        "redacted_screenshot": screenshot,
+        "screenshot": screenshot,
         "screen_fingerprint": ScreenFingerprint(
             value=fingerprint,
             masked_pixels_sha256=masked_pixels_sha256,
@@ -178,10 +176,6 @@ def test_exact_pixel_digest_detects_change_when_phash_is_unchanged() -> None:
     assert outcome.signals == {ActionOutcomeSignal.PIXELS_CHANGED}
 
 
-def test_legacy_screen_changed_signal_parses_as_pixels_changed() -> None:
-    assert ActionOutcomeSignal("screen_changed") is ActionOutcomeSignal.PIXELS_CHANGED
-
-
 def test_permission_controller_is_a_system_surface_not_app_backgrounding() -> None:
     action = _authorization(ActionKind.TAP)
     outcome = ActionOutcomeVerifier().verify(
@@ -198,16 +192,9 @@ def test_permission_controller_is_a_system_surface_not_app_backgrounding() -> No
     assert ActionOutcomeSignal.APP_BACKGROUNDED not in outcome.signals
 
 
-@pytest.mark.parametrize(
-    ("delivery", "expected_signal"),
-    [
-        (TextDeliveryStatus.NOT_LANDED, ActionOutcomeSignal.TEXT_NOT_LANDED),
-    ],
-)
-def test_distinguishes_failed_text_delivery(
-    delivery: TextDeliveryStatus,
-    expected_signal: ActionOutcomeSignal,
-) -> None:
+def test_distinguishes_failed_text_delivery() -> None:
+    delivery = TextDeliveryStatus.NOT_LANDED
+    expected_signal = ActionOutcomeSignal.TEXT_NOT_LANDED
     action = _authorization(ActionKind.TYPE)
 
     outcome = ActionOutcomeVerifier().verify(
@@ -431,3 +418,92 @@ def test_outcome_serialization_never_contains_a_declared_value() -> None:
     assert ActionOutcome.model_validate_json(encoded) == outcome
     assert secret not in encoded
     assert "declared_secret" not in encoded
+
+
+def test_an_exhausted_scroll_surface_is_evidence_not_an_observable_change() -> None:
+    # A surface that cannot scroll further changed nothing, so the platform answer must not
+    # promote the outcome to observed.
+    action = _authorization()
+
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(),
+        scroll_exhausted=True,
+    )
+
+    assert outcome.disposition is ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE
+    assert outcome.signals == frozenset()
+    assert outcome.scroll_exhausted is True
+
+
+def test_an_unanswered_scroll_leaves_the_platform_evidence_unset() -> None:
+    action = _authorization()
+
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(),
+    )
+
+    assert outcome.scroll_exhausted is None
+
+
+def _dispatch_fingerprint(fingerprint: str) -> ScreenFingerprint:
+    return ScreenFingerprint(
+        value=fingerprint,
+        masked_pixels_sha256=sha256(fingerprint.encode()).hexdigest(),
+        system_region_mask_sha256=None,
+    )
+
+
+def test_a_screen_that_moved_while_the_run_was_planning_is_not_an_action_outcome() -> None:
+    # Planning, verification and grounding run between the source observation and the dispatch,
+    # so a banner that rotates in that window differs from the source through no act of ours.
+    action = _authorization()
+
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(fingerprint="aaaaaaaaaaaaaaaa"),
+        baseline=_dispatch_fingerprint("aaaaaaaaaaaaaaaa"),
+    )
+
+    assert ActionOutcomeSignal.PIXELS_CHANGED not in outcome.signals
+    assert outcome.disposition is ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE
+
+
+def test_a_change_across_the_dispatch_itself_is_still_reported() -> None:
+    action = _authorization()
+
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(fingerprint="bbbbbbbbbbbbbbbb"),
+        baseline=_dispatch_fingerprint("aaaaaaaaaaaaaaaa"),
+    )
+
+    assert ActionOutcomeSignal.PIXELS_CHANGED in outcome.signals
+
+
+def test_an_incomparable_baseline_falls_back_to_the_source_observation() -> None:
+    # A baseline masked with different system regions cannot be compared, and dropping the
+    # comparison entirely would lose the only pixel evidence the step has.
+    action = _authorization()
+    baseline = _dispatch_fingerprint("aaaaaaaaaaaaaaaa").model_copy(
+        update={"system_region_mask_sha256": "f" * 64}
+    )
+
+    outcome = ActionOutcomeVerifier().verify(
+        action,
+        _receipt(action),
+        build_observation(),
+        _settled_observation(fingerprint="bbbbbbbbbbbbbbbb"),
+        baseline=baseline,
+    )
+
+    assert ActionOutcomeSignal.PIXELS_CHANGED in outcome.signals

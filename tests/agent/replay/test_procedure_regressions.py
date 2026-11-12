@@ -146,8 +146,14 @@ def test_focus_and_keyboard_dismissal_are_navigation_effects() -> None:
         }
     )
 
+    refresh = focus.model_copy(
+        update={"proposal": focus.proposal.model_copy(update={"action": ActionKind.REFRESH})}
+    )
+
     assert procedure_effect(focus) is ProcedureEffect.NAVIGATION
     assert procedure_effect(dismissal) is ProcedureEffect.NAVIGATION
+    # A refresh reloads content without setting state, so replay may reuse it freely.
+    assert procedure_effect(refresh) is ProcedureEffect.NAVIGATION
 
 
 def test_analyzed_advance_stage_is_a_commit_effect() -> None:

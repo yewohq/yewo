@@ -18,9 +18,9 @@ from yewo.agent.actuation import (
     RequiredControlBasis,
     UnresolvedControl,
 )
-from yewo.agent.actuation.verifier_prompt import (
-    ACTION_VERIFIER_SYSTEM_PROMPT,
-    ACTION_VERIFIER_USER_PROMPT,
+from yewo.agent.actuation.proposal_verifier_prompt import (
+    PROPOSAL_VERIFIER_SYSTEM_PROMPT,
+    PROPOSAL_VERIFIER_USER_PROMPT,
 )
 from yewo.agent.planning.records import (
     PlanningRequest,
@@ -50,8 +50,15 @@ from yewo.models import (
 )
 
 
-ACTION_VERIFIER_MAX_COMPLETION_TOKENS = 8_192
-_VERIFIED_ACTIONS = frozenset({ActionKind.TAP, ActionKind.BACK})
+PROPOSAL_VERIFIER_MAX_COMPLETION_TOKENS = 8_192
+_VERIFIED_ACTIONS = frozenset(
+    {
+        ActionKind.TAP,
+        ActionKind.BACK,
+        ActionKind.DONE,
+        ActionKind.CANNOT_PROGRESS,
+    }
+)
 
 
 class ActionReadinessDisposition(StrEnum):
@@ -69,6 +76,7 @@ class ActionReadinessRefusalBasis(StrEnum):
     UNRESOLVED_CONTROL = "unresolved_control"
     COMPLETED_WORK_REGRESSION = "completed_work_regression"
     REOPENED_STAGE = "reopened_stage"
+    UNEXPLORED_ROUTE = "unexplored_route"
 
 
 class ActionReadinessDecision(BaseModel):
@@ -92,6 +100,7 @@ class ActionReadinessDecision(BaseModel):
             "unresolved control and no restarted work item."
         ),
     )
+    unexplored_route: str | None = Field(default=None, min_length=1, max_length=2_000)
 
     @model_validator(mode="after")
     def _validate_control_evidence(self, info: ValidationInfo) -> Self:
@@ -126,6 +135,7 @@ class ActionReadinessDecision(BaseModel):
             self.unresolved_controls
             or self.restarts_completed_work_item is not None
             or self.refusal_basis is not None
+            or self.unexplored_route is not None
         ):
             raise ValueError("Only a refusal can identify unresolved evidence.")
         return self
@@ -146,7 +156,19 @@ class ActionReadinessDecision(BaseModel):
             if self.restarts_completed_work_item is None:
                 raise ValueError("A completed-work refusal must name the restarted work item.")
             return
-        if self.unresolved_controls or self.restarts_completed_work_item is not None:
+        if basis is ActionReadinessRefusalBasis.UNEXPLORED_ROUTE:
+            if self.unexplored_route is None:
+                raise ValueError("An unexplored-route refusal must name the remaining route.")
+            if self.unresolved_controls or self.restarts_completed_work_item is not None:
+                raise ValueError(
+                    "An unexplored-route refusal cannot carry unrelated unresolved evidence."
+                )
+            return
+        if (
+            self.unresolved_controls
+            or self.restarts_completed_work_item is not None
+            or self.unexplored_route is not None
+        ):
             raise ValueError(f"A {basis.value} refusal cannot carry unresolved evidence.")
 
     @model_validator(mode="after")
@@ -196,6 +218,8 @@ class ActionReadinessAssessment(ActionReadinessDecision):
             details.append(
                 f"The proposal restarts completed work: {self.restarts_completed_work_item}"
             )
+        if self.unexplored_route is not None:
+            details.append(f"An alternative route remains unexplored: {self.unexplored_route}")
         detail = "; ".join(details)
         reason = self.reason if not detail else f"{self.reason} Unresolved: {detail}"
         return ActionRefusal(
@@ -214,7 +238,7 @@ class ActionReadinessAssessment(ActionReadinessDecision):
         )
 
 
-class ActionVerifier(Protocol):
+class ProposalVerifier(Protocol):
     """Independently assess model-selected actions before discovery dispatch."""
 
     def required_model_requests(self, proposal: ActionProposal) -> int: ...
@@ -226,7 +250,7 @@ class ActionVerifier(Protocol):
     ) -> ActionReadinessAssessment: ...
 
 
-class ModelActionVerifier:
+class ModelProposalVerifier:
     """Use a dedicated model profile for discovery action readiness."""
 
     def __init__(
@@ -272,9 +296,9 @@ class ModelActionVerifier:
                 if planning_request.planning_focus is not None
                 else None
             ),
-            "proposal": _action_verifier_proposal_context(proposal),
+            "proposal": _proposal_verifier_proposal_context(proposal),
             "current_screen_analysis": (
-                _action_verifier_screen_context(planning_request.current_screen_analysis)
+                _proposal_verifier_screen_context(planning_request.current_screen_analysis)
                 if planning_request.current_screen_analysis is not None
                 else None
             ),
@@ -294,16 +318,16 @@ class ModelActionVerifier:
         request = ModelRequest(
             request_id=self._identifier_factory(),
             profile_id=self._model_profile_id,
-            role=ModelRole.ACTION_VERIFIER,
-            max_completion_tokens=ACTION_VERIFIER_MAX_COMPLETION_TOKENS,
+            role=ModelRole.PROPOSAL_VERIFIER,
+            max_completion_tokens=PROPOSAL_VERIFIER_MAX_COMPLETION_TOKENS,
             messages=(
                 ModelMessage(
                     role=ModelMessageRole.SYSTEM,
-                    content=(TextModelContent(text=ACTION_VERIFIER_SYSTEM_PROMPT),),
+                    content=(TextModelContent(text=PROPOSAL_VERIFIER_SYSTEM_PROMPT),),
                 ),
                 ModelMessage(
                     role=ModelMessageRole.USER,
-                    content=(TextModelContent(text=ACTION_VERIFIER_USER_PROMPT),),
+                    content=(TextModelContent(text=PROPOSAL_VERIFIER_USER_PROMPT),),
                     cache_prefix_end=True,
                 ),
                 ModelMessage(
@@ -318,9 +342,7 @@ class ModelActionVerifier:
                             text="Current verification context:\n"
                             + json.dumps(context, sort_keys=True, separators=(",", ":"))
                         ),
-                        ImageModelContent(
-                            screenshot=planning_request.observation.redacted_screenshot
-                        ),
+                        ImageModelContent(screenshot=planning_request.observation.screenshot),
                     ),
                 ),
             ),
@@ -328,8 +350,7 @@ class ModelActionVerifier:
                 "action-readiness-decision-v1",
                 ActionReadinessDecision.model_json_schema(),
             ),
-            sensitivity=planning_request.observation.redacted_screenshot.sensitivity,
-            retention=planning_request.observation.redacted_screenshot.retention,
+            retention=planning_request.observation.screenshot.retention,
         )
         validation_context = {
             "allowed_work_items": known_work_items,
@@ -356,7 +377,7 @@ class ModelActionVerifier:
             return _failed_assessment(
                 verification_id,
                 proposal.proposal_id,
-                response.reason or "The action-verifier model call did not complete.",
+                response.reason or "The proposal-verifier model call did not complete.",
             )
         try:
             decision = ActionReadinessDecision.model_validate(
@@ -366,7 +387,7 @@ class ModelActionVerifier:
             return _failed_assessment(
                 verification_id,
                 proposal.proposal_id,
-                "The action-verifier response was invalid.",
+                "The proposal-verifier response was invalid.",
             )
         known_work_item_set = set(known_work_items)
         reported_work_items = set(decision.completed_work_items)
@@ -375,15 +396,11 @@ class ModelActionVerifier:
         if decision.restarts_completed_work_item is not None:
             reported_work_items.add(decision.restarts_completed_work_item)
         completed_work_item_set = set(completed_work_items)
+        # Which evidence a refusal needs depends on its basis, and _validate_refusal_evidence
+        # owns that rule. Requiring an unresolved control or a restarted work item here as well
+        # refused the two bases the prompt mandates without either.
         if (
             (
-                decision.disposition is ActionReadinessDisposition.REFUSE
-                and not (
-                    decision.unresolved_controls
-                    or decision.restarts_completed_work_item is not None
-                )
-            )
-            or (
                 decision.disposition is not ActionReadinessDisposition.REFUSE
                 and decision.unresolved_controls
             )
@@ -401,7 +418,7 @@ class ModelActionVerifier:
             return _failed_assessment(
                 verification_id,
                 proposal.proposal_id,
-                "The action-verifier response did not satisfy its evidence contract.",
+                "The proposal-verifier response did not satisfy its evidence contract.",
             )
         return ActionReadinessAssessment(
             verification_id=verification_id,
@@ -410,7 +427,7 @@ class ModelActionVerifier:
         )
 
 
-def _action_verifier_proposal_context(proposal: ActionProposal) -> dict[str, object]:
+def _proposal_verifier_proposal_context(proposal: ActionProposal) -> dict[str, object]:
     """Project only the proposal fields used by the readiness decision."""
     return {
         key: value
@@ -425,7 +442,7 @@ def _action_verifier_proposal_context(proposal: ActionProposal) -> dict[str, obj
     }
 
 
-def _action_verifier_screen_context(
+def _proposal_verifier_screen_context(
     analysis: CurrentScreenAnalysis,
 ) -> dict[str, object]:
     """Project interactive hypotheses without grounding or runtime bookkeeping."""
@@ -520,4 +537,5 @@ def _failed_assessment(
         completed_work_items=(),
         proposal_work_item=None,
         restarts_completed_work_item=None,
+        unexplored_route=None,
     )

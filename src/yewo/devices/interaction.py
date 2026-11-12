@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import time
-from typing import Protocol, Self, cast
+from typing import Self, cast
 
 from selenium.common.exceptions import NoAlertPresentException
 
@@ -11,7 +10,6 @@ from yewo.applications.records import ApplicationDescriptor
 from yewo.automation.session import AutomationSession
 from yewo.devices.application_interaction import ApplicationInteraction
 from yewo.devices.application_lifecycle import (
-    ApplicationLifecycleDriver,
     ApplicationState,
     DEFAULT_MAXIMUM_BACKGROUND_SECONDS,
 )
@@ -29,6 +27,12 @@ from yewo.devices.focus import (
     TextElement,
     text_field_context,
 )
+from yewo.devices.interaction_contracts import (
+    InteractionClock,
+    InteractionDriver,
+    PlatformInteractionBackend,
+    SystemInteractionClock,
+)
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.interaction_records import AndroidKey, TextInputConstraint
 from yewo.devices.screen import (
@@ -36,7 +40,8 @@ from yewo.devices.screen import (
     ScreenGeometry,
     ScreenRegionReading,
 )
-from yewo.devices.scroll import ScrollDirection, scroll_gesture
+from yewo.devices.scroll import ScrollDirection, scroll_gesture, validate_scroll_distance
+from yewo.observations.service import ScreenCapture
 
 
 MINIMUM_WAIT_SECONDS = 0.1
@@ -47,114 +52,9 @@ MINIMUM_IOS_DRAG_SECONDS = 0.5
 MAXIMUM_GESTURE_SECONDS = 10.0
 # Android's aggregate Ctrl mask accepted by UiAutomator2 for Ctrl+A.
 ANDROID_SELECT_ALL_META_STATE = 0x7000
-
-
-class _SwitchTo(Protocol):
-    @property
-    def active_element(self) -> TextElement: ...
-
-    @property
-    def alert(self) -> object: ...
-
-
-class _Clock(Protocol):
-    def monotonic(self) -> float: ...
-
-    def sleep(self, seconds: float) -> None: ...
-
-
-class _SystemClock:
-    def monotonic(self) -> float:
-        return time.monotonic()
-
-    def sleep(self, seconds: float) -> None:
-        time.sleep(seconds)
-
-
-class InteractionDriver(ApplicationLifecycleDriver, Protocol):
-    """Driver methods used by core interaction and lifecycle operations."""
-
-    @property
-    def switch_to(self) -> _SwitchTo: ...
-
-    def get_screenshot_as_png(self) -> bytes: ...
-
-    def get_window_size(self) -> dict[str, int]: ...
-
-    def is_keyboard_shown(self) -> bool: ...
-
-    def hide_keyboard(self) -> object: ...
-
-    def press_keycode(self, keycode: int, metastate: int | None = None) -> object: ...
-
-    def back(self) -> None: ...
-
-
-class PlatformInteractionBackend(Protocol):
-    """Dispatch platform-specific interaction and context operations."""
-
-    def dismiss_keyboard(self, driver: InteractionDriver) -> bool: ...
-
-    def tap(self, driver: InteractionDriver, x: int, y: int) -> None: ...
-
-    def double_tap(self, driver: InteractionDriver, x: int, y: int) -> None: ...
-
-    def long_press(
-        self, driver: InteractionDriver, x: int, y: int, duration_seconds: float
-    ) -> None: ...
-
-    def drag(
-        self,
-        driver: InteractionDriver,
-        start: tuple[int, int],
-        end: tuple[int, int],
-        duration_seconds: float,
-    ) -> None: ...
-
-    def clear_text(
-        self,
-        driver: InteractionDriver,
-        element: TextElement,
-    ) -> None: ...
-
-    def focused_text_constraint(
-        self,
-        driver: InteractionDriver,
-    ) -> TextInputConstraint | None: ...
-
-    def active_application_id(
-        self,
-        driver: ApplicationLifecycleDriver,
-    ) -> str | None: ...
-
-    def application_context(
-        self,
-        driver: ApplicationLifecycleDriver,
-    ) -> str | None: ...
-
-    def device_orientation(
-        self,
-        driver: ApplicationLifecycleDriver,
-    ) -> str | None: ...
-
-    def system_regions(
-        self,
-        driver: ApplicationLifecycleDriver,
-        calibration: ScreenCalibration,
-    ) -> tuple[ScreenRegionReading, ...] | None: ...
-
-    def clear_application_data(
-        self,
-        driver: ApplicationLifecycleDriver,
-        application_id: str,
-    ) -> None: ...
-
-    def open_deep_link(
-        self,
-        driver: ApplicationLifecycleDriver,
-        application_id: str,
-        url: str,
-    ) -> None: ...
+_REFRESH_START_FRACTION = 0.1
+_REFRESH_TRAVEL_FRACTION = 0.6
+_REFRESH_SECONDS = 0.6
 
 
 class DeviceInteraction:
@@ -174,7 +74,7 @@ class DeviceInteraction:
         application_poll_interval_seconds: float = 0.25,
         focus_timeout_seconds: float | None = None,
         focus_poll_seconds: float = DEFAULT_FOCUS_POLL_SECONDS,
-        clock: _Clock | None = None,
+        clock: InteractionClock | None = None,
     ) -> None:
         self._driver = driver
         self.platform = platform
@@ -182,7 +82,7 @@ class DeviceInteraction:
         self._backend = backend
         self._device_kind = device_kind
         self._maximum_wait_seconds = maximum_wait_seconds
-        self._clock = clock or _SystemClock()
+        self._clock = clock or SystemInteractionClock()
         self._screen = ScreenGeometry(driver)
         self._focus = FocusService(
             driver,
@@ -237,8 +137,13 @@ class DeviceInteraction:
             device_kind=session.device.descriptor.kind,
         )
 
-    def screenshot(self) -> bytes:
-        """Capture PNG bytes and calibrate screenshot-to-driver coordinates."""
+    def screenshot(self) -> ScreenCapture:
+        """Capture the screen once. A device alters nothing, so both views are the same bytes."""
+        png = self._screen.capture()
+        return ScreenCapture(image=png, comparable=png)
+
+    def comparable_screenshot(self) -> bytes:
+        """Capture the screen for comparison. A device has nothing cheaper to offer."""
         return self._screen.capture()
 
     def tap(
@@ -293,6 +198,27 @@ class DeviceInteraction:
             duration_seconds,
         )
 
+    def refresh(
+        self,
+        *,
+        left: int = 0,
+        top: int = 0,
+        right: int | None = None,
+        bottom: int | None = None,
+    ) -> None:
+        """Pull one region downward far enough to request a content refresh."""
+        width, height = self._screen_size()
+        right = width - 1 if right is None else right
+        bottom = height - 1 if bottom is None else bottom
+        self._validate_region(left, top, right, bottom)
+        center_x = (left + right) // 2
+        span = bottom - top
+        # The pull starts near the top edge, because a refresh control only appears while the
+        # region is already scrolled to its start.
+        start_y = top + max(1, round(span * _REFRESH_START_FRACTION))
+        end_y = min(bottom, start_y + max(2, round(span * _REFRESH_TRAVEL_FRACTION)))
+        self.swipe(center_x, start_y, center_x, end_y, duration_seconds=_REFRESH_SECONDS)
+
     def swipe(
         self,
         start_x: int,
@@ -319,12 +245,29 @@ class DeviceInteraction:
         right: int | None = None,
         bottom: int | None = None,
         distance_fraction: float = 0.6,
-    ) -> None:
+    ) -> bool | None:
+        """Scroll and report whether the surface can scroll further, when known."""
         width, height = self._screen_size()
         right = width - 1 if right is None else right
         bottom = height - 1 if bottom is None else bottom
-        self._validate_region(left, top, right, bottom)
-        self.swipe(*scroll_gesture(direction, left, top, right, bottom, distance_fraction))
+        validate_scroll_distance(distance_fraction)
+        # Converted like every other gesture region. A backend receives driver coordinates, and
+        # the screenshot and the Appium gesture viewport differ whenever the device scales.
+        driver_left, driver_top, driver_right, driver_bottom = self._screen.driver_region(
+            left, top, right, bottom
+        )
+        dispatch = self._backend.scroll(
+            self._driver,
+            left=driver_left,
+            top=driver_top,
+            right=driver_right,
+            bottom=driver_bottom,
+            direction=direction,
+            distance_fraction=distance_fraction,
+        )
+        if not dispatch.dispatched:
+            self.swipe(*scroll_gesture(direction, left, top, right, bottom, distance_fraction))
+        return dispatch.can_scroll_more
 
     def type_text(self, x: int, y: int, text: str) -> bool | None:
         return self._type_in_field(self.focus(x, y), text)
@@ -543,3 +486,22 @@ def _boolean_attribute(value: str | None) -> bool | None:
     if normalized_value in {"false", "0"}:
         return False
     return None
+
+
+# Re-exported because callers address the interaction boundary, not the records and gesture
+# modules behind it.
+__all__ = [
+    "ANDROID_SELECT_ALL_META_STATE",
+    "DEFAULT_MAXIMUM_WAIT_SECONDS",
+    "MAXIMUM_GESTURE_SECONDS",
+    "MINIMUM_ANDROID_DRAG_SECONDS",
+    "MINIMUM_IOS_DRAG_SECONDS",
+    "MINIMUM_LONG_PRESS_SECONDS",
+    "MINIMUM_WAIT_SECONDS",
+    "AndroidKey",
+    "DeviceInteraction",
+    "InteractionDriver",
+    "PlatformInteractionBackend",
+    "ScrollDirection",
+    "TextInputConstraint",
+]

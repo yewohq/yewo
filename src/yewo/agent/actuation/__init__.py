@@ -5,6 +5,7 @@ from yewo.agent.actuation.executor import (
     ActionExecutor,
     AuthorizationReplayError,
 )
+from yewo.agent.actuation.outcome_verifier import OutcomeVerifier
 from yewo.agent.actuation.outcomes import (
     ActionOutcome,
     ActionOutcomeDisposition,
@@ -37,6 +38,7 @@ from yewo.agent.actuation.records import (
     AuthorizedAction,
     DeclaredValueReference,
     DispatchDisposition,
+    is_correctable_rejection,
     DispatchReceipt,
     LiteralText,
     ScrollDistance,
@@ -56,6 +58,7 @@ __all__ = [
     "ActionOutcomeDisposition",
     "ActionOutcomeSignal",
     "ActionOutcomeVerifier",
+    "OutcomeVerifier",
     "ActionPolicy",
     "ActionPolicyLimits",
     "ActionProposal",
@@ -67,6 +70,7 @@ __all__ = [
     "AuthorizedAction",
     "DeclaredValueReference",
     "DispatchDisposition",
+    "is_correctable_rejection",
     "DispatchReceipt",
     "LiteralText",
     "ScrollDistance",

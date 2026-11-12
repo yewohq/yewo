@@ -11,21 +11,11 @@ from yewo.devices.application_lifecycle import (
     ApplicationState,
 )
 from yewo.devices.errors import DeviceInteractionError
+from support import ClockStub
 
 
 APPLICATION_ID = "com.example.app"
 EXTERNAL_APPLICATION_ID = "com.example.launcher"
-
-
-class _ClockStub:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
 
 
 class _DriverStub:
@@ -79,7 +69,7 @@ class _ForegroundReader:
 
 def _lifecycle(
     driver: _DriverStub,
-    clock: _ClockStub,
+    clock: ClockStub,
 ) -> ApplicationLifecycle:
     return ApplicationLifecycle(
         driver,
@@ -92,7 +82,7 @@ def _lifecycle(
 
 
 def test_activation_waits_for_verified_foreground_identity() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([1, 3, 4])
 
     _lifecycle(driver, clock).activate()
@@ -102,7 +92,7 @@ def test_activation_waits_for_verified_foreground_identity() -> None:
 
 
 def test_activation_times_out_without_repeating_the_command() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([1])
 
     with pytest.raises(DeviceInteractionError, match="Could not activate") as failure:
@@ -115,7 +105,7 @@ def test_activation_times_out_without_repeating_the_command() -> None:
 
 
 def test_recovery_activates_an_installed_background_application() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([3, 4])
 
     recovered = _lifecycle(driver, clock).recover()
@@ -126,7 +116,7 @@ def test_recovery_activates_an_installed_background_application() -> None:
 
 
 def test_recovery_returns_false_after_a_bounded_timeout() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([3])
 
     recovered = _lifecycle(driver, clock).recover()
@@ -137,7 +127,7 @@ def test_recovery_returns_false_after_a_bounded_timeout() -> None:
 
 
 def test_recovery_does_not_activate_an_absent_application() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([0])
     driver.is_installed = False
 
@@ -149,7 +139,7 @@ def test_recovery_does_not_activate_an_absent_application() -> None:
 
 
 def test_relaunch_waits_for_verified_foreground_identity() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([1, 1, 4])
 
     _lifecycle(driver, clock).relaunch()
@@ -162,7 +152,7 @@ def test_relaunch_waits_for_verified_foreground_identity() -> None:
 
 
 def test_relaunch_does_not_activate_when_termination_is_unverified() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([4])
 
     with pytest.raises(DeviceInteractionError, match="Could not terminate"):
@@ -173,7 +163,7 @@ def test_relaunch_does_not_activate_when_termination_is_unverified() -> None:
 
 
 def test_terminate_rejects_an_absent_application_without_dispatch() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([ApplicationState.NOT_INSTALLED])
 
     with pytest.raises(DeviceInteractionError, match="not installed"):
@@ -184,7 +174,7 @@ def test_terminate_rejects_an_absent_application_without_dispatch() -> None:
 
 
 def test_missing_foreground_identity_preserves_state_only_evidence() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([4])
 
     class MissingForegroundReader:
@@ -213,7 +203,7 @@ def test_missing_foreground_identity_preserves_state_only_evidence() -> None:
 
 @pytest.mark.parametrize("duration", [0, 31])
 def test_background_duration_fails_before_dispatch(duration: int) -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([4])
 
     with pytest.raises(DeviceInteractionError, match="outside the allowed range"):
@@ -231,7 +221,7 @@ def test_background_waits_for_the_application_to_resume() -> None:
             self.current_application_id = EXTERNAL_APPLICATION_ID
             return self
 
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = BackgroundDriver([4])
 
     _lifecycle(driver, clock).background_and_resume(1)
@@ -248,7 +238,7 @@ def test_background_resume_times_out_without_repeating_the_command() -> None:
             self.current_application_id = EXTERNAL_APPLICATION_ID
             return self
 
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = BackgroundDriver([3])
 
     with pytest.raises(DeviceInteractionError, match="Could not resume"):
@@ -259,7 +249,7 @@ def test_background_resume_times_out_without_repeating_the_command() -> None:
 
 
 def test_external_ui_requires_a_known_foreground_identity() -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = _DriverStub([4])
     lifecycle = _lifecycle(driver, clock)
 

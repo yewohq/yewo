@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from time import monotonic
 
 from yewo.agent.actuation import DeclaredValueReference
@@ -51,7 +51,6 @@ from yewo.grounding import GroundingProfile, GroundingService, VisualGrounder
 from yewo.models import ModelClient, ModelImageConstraints
 from yewo.observations import (
     ObservationStore,
-    RedactionRegion,
     ScreenshotStore,
 )
 from yewo.runs import InterruptionSignal, RunExecutionContext
@@ -70,12 +69,12 @@ def execute_compiled_procedure(
     planner_profile_id: str,
     recovery_profile_id: str | None = None,
     auditor_profile_id: str,
-    action_verifier_profile_id: str | None = None,
+    proposal_verifier_profile_id: str | None = None,
+    outcome_verifier_profile_id: str | None = None,
     screen_analyzer_profile_id: str | None = None,
     screen_analysis_failures: ScreenAnalysisFailureLedger | None = None,
     auditor_image_constraints: ModelImageConstraints | None = None,
     memory: AppMemory | None = None,
-    redaction_regions: Sequence[RedactionRegion] = (),
     declared_value_resolver: Callable[[str], str] | None = None,
     verification_task: EvidenceTask | None = None,
     initial_model_requests: int = 0,
@@ -132,12 +131,12 @@ def execute_compiled_procedure(
         model_client,
         grounding_profile,
         None,
-        redaction_regions=redaction_regions,
         declared_value_resolver=declared_value_resolver,
         proposal_source=source,
         recovery_profile_id=recovery_profile_id,
         recover_application=recovery_profile_id is not None,
-        action_verifier_profile_id=action_verifier_profile_id,
+        proposal_verifier_profile_id=proposal_verifier_profile_id,
+        outcome_verifier_profile_id=outcome_verifier_profile_id,
         screen_analyzer_profile_id=screen_analyzer_profile_id,
         screen_analysis_failures=screen_analysis_failures,
         screen_comparison=comparison,

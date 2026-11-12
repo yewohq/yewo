@@ -90,7 +90,7 @@ class AuditCandidateFindingOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     outcome_id: RecordIdentifier
-    claim: str = Field(min_length=1, max_length=1_024)
+    claim: str = Field(min_length=1)
     regions: tuple[AuditFindingRegionOutput, ...] = Field(min_length=1, max_length=20)
     verification: FindingVerification
 
@@ -101,9 +101,9 @@ class ConfirmedAuditFinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     outcome_id: RecordIdentifier
-    claim: str = Field(min_length=1, max_length=1_024)
+    claim: str = Field(min_length=1)
     is_violation: bool
-    reason: str = Field(min_length=1, max_length=1_024)
+    reason: str = Field(min_length=1)
     regions: tuple[AuditFindingRegionOutput, ...] = Field(min_length=1, max_length=20)
     verification_kind: Literal["arithmetic", "equality", "visual"]
 
@@ -177,7 +177,7 @@ def resolve_candidate_findings(
     if violation is not None:
         return (
             AuditObligationStatus.UNMET,
-            f"{violation.claim} {violation.reason}"[:1_024],
+            f"{violation.claim} {violation.reason}",
             violation,
         )
     if status is AuditObligationStatus.UNMET and category in {

@@ -6,7 +6,7 @@ import os
 import pytest
 from pydantic import ValidationError
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import (
     ImageModelContent,
     ModelCallDisposition,
@@ -66,7 +66,6 @@ def test_model_request_serialization_preserves_schema_and_image_identity() -> No
             ),
         ),
         response_contract=contract,
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -75,13 +74,6 @@ def test_model_request_serialization_preserves_schema_and_image_identity() -> No
     assert restored == request
     assert restored.response_contract is not None
     assert restored.response_contract.schema_sha256 == contract.schema_sha256
-
-
-def test_model_image_rejects_a_raw_screenshot() -> None:
-    from yewo.observations import ScreenshotRedactionState
-
-    with pytest.raises(ValidationError, match="redacted screenshot"):
-        ImageModelContent(screenshot=build_screenshot(redaction_state=ScreenshotRedactionState.RAW))
 
 
 def test_response_contract_rejects_a_changed_schema() -> None:
@@ -114,7 +106,6 @@ def test_incomplete_response_dispositions_remain_distinct(
         text=text,
         reason=reason,
         calls=(_call(disposition),),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -128,7 +119,6 @@ def test_completed_response_requires_text_and_matching_call_identity() -> None:
             request_id="request-1",
             disposition=ModelCallDisposition.COMPLETED,
             calls=(_call(),),
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
 
@@ -139,7 +129,6 @@ def test_completed_response_requires_text_and_matching_call_identity() -> None:
             disposition=ModelCallDisposition.COMPLETED,
             text="done",
             calls=(mismatched_call,),
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
 

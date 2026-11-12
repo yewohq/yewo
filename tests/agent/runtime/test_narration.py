@@ -1,6 +1,7 @@
 """Human-readable narration from the Device Agent runtime."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 from yewo.agent.actuation import ActionKind
 from yewo.agent import PlannerDecisionMetadata, PlannerDecisionSource
@@ -28,10 +29,20 @@ def test_runtime_narrates_agent_decisions_actions_and_outcomes(tmp_path: Path) -
             _observation("obs_3", "1111111111111111", offset_seconds=2),
         ]
     )
-    with narration_scope(RunNarrator(tmp_path)):
+    narrator = RunNarrator(tmp_path)
+    with (
+        patch.object(
+            narrator,
+            "wait_for_pending_sync",
+            wraps=narrator.wait_for_pending_sync,
+        ) as wait_for_pending_sync,
+        narration_scope(narrator),
+    ):
         _runtime(tmp_path, planner, observations, RuntimeDevice()).run(
             _task(), _mode_policy(), NeverInterrupted()
         )
+
+    assert wait_for_pending_sync.call_count == 1
 
     narration = (tmp_path / "runtime/yewo-session.log").read_text()
     assert "device-agent: Starting task: Open the record form." in narration

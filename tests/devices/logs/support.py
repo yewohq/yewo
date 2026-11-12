@@ -19,11 +19,9 @@ from yewo.devices.logs import (
     DeviceLogCapturePolicy,
     DeviceLogCaptureService,
     DeviceLogCheckpointKind,
-    DeviceLogRedactionResult,
     DeviceLogSource,
     DeviceLogStore,
     DeviceLogTextEntry,
-    DeviceLogTextScrubber,
 )
 
 
@@ -86,15 +84,6 @@ class ReaderStub:
         self.acknowledged_batches.append(batch)
 
 
-def redact_text(text: str) -> DeviceLogRedactionResult:
-    count_found = text.count("SECRET")
-    return DeviceLogRedactionResult(
-        text.replace("SECRET", "[redacted]"),
-        "test-policy-v1",
-        count_found,
-    )
-
-
 def build_service(
     reader: ReaderStub,
     root: Path,
@@ -103,7 +92,6 @@ def build_service(
     platform: DevicePlatform = DevicePlatform.ANDROID,
     policy: DeviceLogCapturePolicy | None = None,
     store: DeviceLogStore | None = None,
-    scrubber: DeviceLogTextScrubber = redact_text,
     time_factory: Callable[[], datetime] = lambda: CAPTURE_TIME,
 ) -> DeviceLogCaptureService:
     identifiers = (f"record_{number}" for number in count(1))
@@ -124,7 +112,6 @@ def build_service(
         application,
         sources,
         store or DeviceLogStore(root, identifier_factory=artifacts.__next__),
-        scrubber,
         policy=policy,
         identifier_factory=identifiers.__next__,
         time_factory=time_factory,

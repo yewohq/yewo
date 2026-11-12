@@ -9,7 +9,6 @@ from yewo.agent.runtime.records import AgentModePolicy
 from yewo.artifacts import RecordIdentifier
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelProfileRegistry
-from yewo.observations import RedactionRegion
 from yewo.project_config.records import ResolvedJourney
 from yewo.runs import RunMode, RunRequest
 
@@ -30,12 +29,12 @@ class YewoTestConfiguration(BaseModel):
     planner_profile_id: RecordIdentifier
     auditor_profile_id: RecordIdentifier
     recovery_profile_id: RecordIdentifier
-    action_verifier_profile_id: RecordIdentifier
+    proposal_verifier_profile_id: RecordIdentifier
+    outcome_verifier_profile_id: RecordIdentifier
     replay_preparation_profile_id: RecordIdentifier
     screen_analyzer_profile_id: RecordIdentifier
     test_designer_profile_id: RecordIdentifier
     memory_root: Path
-    redaction_regions: tuple[RedactionRegion, ...] = ()
 
     @field_validator("memory_root")
     @classmethod
@@ -55,7 +54,8 @@ class YewoTestConfiguration(BaseModel):
             self.planner_profile_id,
             self.auditor_profile_id,
             self.recovery_profile_id,
-            self.action_verifier_profile_id,
+            self.proposal_verifier_profile_id,
+            self.outcome_verifier_profile_id,
             self.replay_preparation_profile_id,
             self.screen_analyzer_profile_id,
             self.test_designer_profile_id,
@@ -67,7 +67,8 @@ class YewoTestConfiguration(BaseModel):
             self.planner_profile_id,
             self.auditor_profile_id,
             self.recovery_profile_id,
-            self.action_verifier_profile_id,
+            self.proposal_verifier_profile_id,
+            self.outcome_verifier_profile_id,
             self.replay_preparation_profile_id,
             self.screen_analyzer_profile_id,
             self.test_designer_profile_id,

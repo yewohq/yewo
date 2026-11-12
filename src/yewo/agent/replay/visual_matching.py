@@ -44,7 +44,7 @@ def build_observation_visual_signature(
     screenshots: list[bytes] = []
     try:
         for observation in observations:
-            screenshots.append(screenshot_loader(observation.redacted_screenshot))
+            screenshots.append(screenshot_loader(observation.screenshot))
     except ObservationCaptureError:
         return None
     return build_state_visual_signature(tuple(screenshots))

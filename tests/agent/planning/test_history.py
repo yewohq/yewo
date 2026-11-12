@@ -22,7 +22,7 @@ from yewo.agent.planning.history import (
     build_planning_history_entry,
 )
 from yewo.agent.planning.records import MAXIMUM_PLANNING_HISTORY_ENTRIES
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import proposal
 from agent.planning.support import planning_request
@@ -64,7 +64,6 @@ def _outcome(
         disposition=ActionOutcomeDisposition.OBSERVED,
         signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
         reason="The screen changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -228,3 +227,39 @@ def test_trusted_history_omits_the_summary_for_a_short_run() -> None:
 
     assert len(blocks) == 3
     assert all(item.text.startswith("Trusted history event:") for item in blocks)
+
+
+def test_history_reports_an_exhausted_scroll_surface_to_the_planner() -> None:
+    before = _observation("obs_1", "0000000000000000")
+    after = _observation("obs_2", "0000000000000000")
+    action = proposal(
+        ActionKind.SCROLL,
+        source_observation_id=before.observation_id,
+        reason="More restaurants should be below the visible cards.",
+    )
+    outcome = _outcome(
+        source_observation_id=before.observation_id,
+        settled_observation_id=after.observation_id,
+    ).model_copy(update={"action": ActionKind.SCROLL, "scroll_exhausted": True})
+
+    entry = build_planning_history_entry(action, outcome, None, before, after)
+    feedback = planning_history_context(entry)["feedback"]
+
+    assert isinstance(feedback, dict)
+    assert feedback["scroll_exhausted"] is True
+
+
+def test_history_omits_scroll_evidence_the_platform_did_not_supply() -> None:
+    before = _observation("obs_1", "0000000000000000")
+    after = _observation("obs_2", "1111111111111111")
+    action = proposal(ActionKind.TAP, source_observation_id=before.observation_id)
+    outcome = _outcome(
+        source_observation_id=before.observation_id,
+        settled_observation_id=after.observation_id,
+    )
+
+    entry = build_planning_history_entry(action, outcome, None, before, after)
+    feedback = planning_history_context(entry)["feedback"]
+
+    assert isinstance(feedback, dict)
+    assert "scroll_exhausted" not in feedback

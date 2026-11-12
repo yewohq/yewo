@@ -29,7 +29,6 @@ from yewo.grounding import (
     GroundingTargetOperation,
 )
 from yewo.models import (
-    MINIMUM_COMPLETION_TOKENS,
     ModelGenerationSettings,
     ModelImageConstraints,
     ModelMessageRole,
@@ -40,11 +39,13 @@ from yewo.models import (
     StructuredOutputMode,
     minimum_image_count_for_role,
 )
+from yewo.models import ModelReasoningEffort, ModelReasoningMode
 from yewo.project_config.records import (
     GroundingProtocol,
     LoadedYewoProject,
     ModelOverridesSpec,
     ModelSelectionSpec,
+    ReasoningSetting,
     ResolvedSettings,
     ResolvedTarget,
     ResolvedWorkflow,
@@ -54,7 +55,10 @@ from yewo.runs import RunMode, RunRequest
 from yewo.test_config import YewoTestConfiguration
 
 
-_SCREEN_ANALYZER_COMPLETION_TOKENS = 16_384
+# Reasoning draws on the completion budget, and no provider setting reliably bounds it.
+_COMPLETION_TOKENS = 32_768
+# One request. A reasoning model answering over screenshots needs minutes, not seconds.
+_REQUEST_TIMEOUT_SECONDS = 320
 
 
 _PROFILE_IDS = {
@@ -62,8 +66,9 @@ _PROFILE_IDS = {
     ModelRole.GROUNDER: "yaml-grounder",
     ModelRole.AUDITOR: "yaml-auditor",
     ModelRole.RECOVERY_ADVISOR: "yaml-recovery-advisor",
-    ModelRole.ACTION_VERIFIER: "yaml-action-verifier",
+    ModelRole.PROPOSAL_VERIFIER: "yaml-proposal-verifier",
     ModelRole.SCREEN_ANALYZER: "yaml-screen-analyzer",
+    ModelRole.OUTCOME_VERIFIER: "yaml-outcome-verifier",
     ModelRole.REPLAY_PREPARER: "yaml-replay-preparer",
     ModelRole.TEST_DESIGNER: "yaml-test-designer",
 }
@@ -71,11 +76,14 @@ _SEMANTIC_MODELS = (
     (ModelRole.TASK_PLANNER, "planner"),
     (ModelRole.AUDITOR, "auditor"),
     (ModelRole.RECOVERY_ADVISOR, "recovery"),
-    (ModelRole.ACTION_VERIFIER, "action_verifier"),
+    (ModelRole.PROPOSAL_VERIFIER, "proposal_verifier"),
+    (ModelRole.OUTCOME_VERIFIER, "outcome_verifier"),
     (ModelRole.SCREEN_ANALYZER, "screen_analyzer"),
     (ModelRole.REPLAY_PREPARER, "replay_preparer"),
     (ModelRole.TEST_DESIGNER, "test_designer"),
 )
+# The long edge every frontier provider downsamples to before reading an image.
+_SEMANTIC_LONG_EDGE_PX = 1_568
 _PROTOCOL_CONVENTIONS = {
     GroundingProtocol.SOURCE_PIXELS: GroundingCoordinateConvention.SOURCE_PIXELS,
     GroundingProtocol.NORMALIZED: GroundingCoordinateConvention.NORMALIZED,
@@ -160,7 +168,8 @@ def compile_yewo_run_configuration(
         planner_profile_id=profile_ids[ModelRole.TASK_PLANNER],
         auditor_profile_id=profile_ids[ModelRole.AUDITOR],
         recovery_profile_id=profile_ids[ModelRole.RECOVERY_ADVISOR],
-        action_verifier_profile_id=profile_ids[ModelRole.ACTION_VERIFIER],
+        proposal_verifier_profile_id=profile_ids[ModelRole.PROPOSAL_VERIFIER],
+        outcome_verifier_profile_id=profile_ids[ModelRole.OUTCOME_VERIFIER],
         replay_preparation_profile_id=profile_ids[ModelRole.REPLAY_PREPARER],
         screen_analyzer_profile_id=profile_ids[ModelRole.SCREEN_ANALYZER],
         test_designer_profile_id=profile_ids[ModelRole.TEST_DESIGNER],
@@ -202,12 +211,12 @@ def compile_yewo_test_configurations(
                     planner_profile_id=base.planner_profile_id,
                     auditor_profile_id=base.auditor_profile_id,
                     recovery_profile_id=base.recovery_profile_id,
-                    action_verifier_profile_id=base.action_verifier_profile_id,
+                    proposal_verifier_profile_id=base.proposal_verifier_profile_id,
+                    outcome_verifier_profile_id=base.outcome_verifier_profile_id,
                     replay_preparation_profile_id=base.replay_preparation_profile_id,
                     screen_analyzer_profile_id=base.screen_analyzer_profile_id,
                     test_designer_profile_id=base.test_designer_profile_id,
                     memory_root=base.memory_root,
-                    redaction_regions=base.redaction_regions,
                 )
             )
     return tuple(configurations)
@@ -235,7 +244,9 @@ def _filter_targets(
             f"Unknown target(s): {', '.join(unknown_target_names)}. Available targets: "
             f"{', '.join(sorted(available_target_ids)) or 'default'}."
         )
-    return tuple(item for name in names for item in workflow_target_pairs if item[1].target_id == name)
+    return tuple(
+        item for name in names for item in workflow_target_pairs if item[1].target_id == name
+    )
 
 
 def _apply_overrides(
@@ -261,10 +272,6 @@ def _validate_supported_settings(settings: ResolvedSettings) -> None:
         raise YewoProjectCompileError("headless: true is not wired to the rebuilt runtime yet.")
     if settings.record is not None:
         raise YewoProjectCompileError("record is not wired to the rebuilt runtime yet.")
-    if settings.allow_secret_exposure:
-        raise YewoProjectCompileError(
-            "allow_secret_exposure: true is not supported by the rebuilt runtime."
-        )
 
 
 def _model_profiles(settings: ResolvedSettings) -> tuple[ModelProfile, ...]:
@@ -274,7 +281,7 @@ def _model_profiles(settings: ResolvedSettings) -> tuple[ModelProfile, ...]:
     profiles.append(
         _model_profile(
             ModelRole.GROUNDER,
-            ModelSelectionSpec(model=grounder.model),
+            ModelSelectionSpec(model=grounder.model, reasoning=grounder.reasoning),
         )
     )
     return tuple(profiles)
@@ -300,6 +307,27 @@ def _resolve_semantic_models(
     return models_by_field
 
 
+_REASONING_EFFORTS = {
+    ReasoningSetting.MINIMAL: ModelReasoningEffort.MINIMAL,
+    ReasoningSetting.LOW: ModelReasoningEffort.LOW,
+    ReasoningSetting.MEDIUM: ModelReasoningEffort.MEDIUM,
+    ReasoningSetting.HIGH: ModelReasoningEffort.HIGH,
+}
+
+
+def _reasoning(setting: ReasoningSetting) -> tuple[ModelReasoningMode, ModelReasoningEffort | None]:
+    """Split one project setting into the mode and effort a profile carries."""
+    if setting is ReasoningSetting.DISABLED:
+        return ModelReasoningMode.DISABLED, None
+    return ModelReasoningMode.PROVIDER_DEFAULT, _REASONING_EFFORTS.get(setting)
+
+
+# Providers that accept an explicit cache breakpoint on a message. LiteLLM's cache-control hook
+# applies one with no provider check, and an API that does not define the field rejects the
+# request outright, so the breakpoint is declared only where it is understood.
+_CACHE_BREAKPOINT_PROVIDERS = frozenset({"anthropic", "openrouter"})
+
+
 def _model_selection(selection: str | ModelSelectionSpec) -> ModelSelectionSpec:
     if isinstance(selection, ModelSelectionSpec):
         return selection
@@ -310,6 +338,8 @@ def _model_profile(role: ModelRole, selection: ModelSelectionSpec) -> ModelProfi
     provider = _provider(selection.model)
     uses_openrouter = provider == "openrouter"
     minimum_images = minimum_image_count_for_role(role)
+    reasoning_mode, reasoning_effort = _reasoning(selection.reasoning)
+
     maximum_image_bytes = 8_000_000 if role is ModelRole.GROUNDER else 20_000_000
     return ModelProfile(
         profile_id=_PROFILE_IDS[role],
@@ -319,15 +349,12 @@ def _model_profile(role: ModelRole, selection: ModelSelectionSpec) -> ModelProfi
         structured_output_mode=StructuredOutputMode.PROMPT_SCHEMA,
         generation=ModelGenerationSettings(
             temperature=0,
-            max_completion_tokens=(
-                _SCREEN_ANALYZER_COMPLETION_TOKENS
-                if role is ModelRole.SCREEN_ANALYZER
-                else MINIMUM_COMPLETION_TOKENS
-            ),
-            reasoning=selection.reasoning,
+            max_completion_tokens=_COMPLETION_TOKENS,
+            reasoning=reasoning_mode,
+            reasoning_effort=reasoning_effort,
         ),
         retry=ModelRetryPolicy(
-            timeout_seconds=60,
+            timeout_seconds=_REQUEST_TIMEOUT_SECONDS,
             max_attempts=4,
             backoff_seconds=(1, 2, 4),
             max_validation_attempts=4,
@@ -337,8 +364,11 @@ def _model_profile(role: ModelRole, selection: ModelSelectionSpec) -> ModelProfi
             max_image_bytes=maximum_image_bytes,
             max_width_px=4_096,
             max_height_px=4_096,
+            max_long_edge_px=(None if role is ModelRole.GROUNDER else _SEMANTIC_LONG_EDGE_PX),
         ),
-        cache_control_role=(ModelMessageRole.SYSTEM if uses_openrouter else None),
+        cache_control_role=(
+            ModelMessageRole.SYSTEM if provider in _CACHE_BREAKPOINT_PROVIDERS else None
+        ),
         router_cache_affinity=uses_openrouter,
     )
 

@@ -6,13 +6,15 @@ from importlib import resources
 import re
 from xml.etree import ElementTree
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 
 MOSS = (47, 58, 43)
 SAND = (239, 227, 200)
 CLAY = (201, 120, 74)
 _MARK_CROP = (18.0, 21.0, 52.0, 47.0)
+# How much larger the mark is drawn before it is reduced onto its target square.
+_SUPERSAMPLE = 4
 
 
 @dataclass(frozen=True)
@@ -108,4 +110,25 @@ def draw_mark(
             drawing.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
 
 
-__all__ = ["CLAY", "MOSS", "SAND", "draw_mark"]
+@lru_cache(maxsize=32)
+def _rendered_mark(size: int) -> Image.Image:
+    """Rasterise the mark once per size. Never handed out, so nothing can draw on it."""
+    scale = size * _SUPERSAMPLE
+    canvas = Image.new("RGBA", (scale, scale), (0, 0, 0, 0))
+    draw_mark(ImageDraw.Draw(canvas), 0, 0, scale)
+    return canvas.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def mark_image(size: int) -> Image.Image:
+    """Return the mark as a transparent square of this size.
+
+    Drawn large and reduced, because a stroke has no antialiasing: a mark rasterised straight
+    at a field's height comes out with stepped edges.
+
+    A new image each call. Sharing one cached image puts every later caller one stray draw
+    away from a corrupted mark.
+    """
+    return _rendered_mark(size).copy()
+
+
+__all__ = ["CLAY", "MOSS", "SAND", "draw_mark", "mark_image"]

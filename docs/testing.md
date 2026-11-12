@@ -48,13 +48,18 @@ into the journey text. `${VAR}` reads it from the process environment and fails
 the journey when that variable is absent.
 
 A mapping with `secret: true` marks sensitive data. A top-level `secrets:` list
-of environment names is also supported. Yewo masks declared secrets by name in
-stored reports, records, logs, and scan dumps. It blacks out their screen
-regions in saved screenshots.
+of environment names is also supported. The agent receives the real value
+because it must be able to type and audit it.
 
-The agent receives the real value because it must be able to type and audit it.
-A screen recording cannot be redacted. Yewo therefore keeps no recording for a
-journey with declared secrets unless secret exposure is explicitly allowed.
+What happens to that value in saved evidence depends on what is installed.
+Yewo on its own does not hide it: screenshots, screen recordings, and device
+logs are written and sent exactly as the device produced them. A run that
+declares secret values says so before it starts.
+
+An installed extension can hide them before they reach any artifact. Yewo Cloud
+provides one, covering declared values in screenshots, in every frame of a
+screen recording, and in device log text. Run `yewo doctor` to see what this
+install has.
 
 ## Step and repair budgets
 
@@ -109,11 +114,6 @@ beside the journey file. It starts no device, so it cannot discover an app it
 has never seen. When no compatible knowledge exists it reports the missing
 evidence per cell and writes no scenario for it. Run `yewo test` first for an
 unknown app, because only that command can run bounded discovery.
-
-Generation sends journey text to a model, so `yewo lock` applies the same
-secret-exposure gate as `yewo test`. A journey whose declared secrets request
-`last4` or `show` is refused until you pass `--allow-secret-exposure` or set
-their redaction to `hide`.
 
 ## Evaluate discovery from a cold start
 

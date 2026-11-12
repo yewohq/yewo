@@ -58,7 +58,7 @@ def build_audit_finding_evidence(
                 if observation is None:
                     regions.append(region)
                     continue
-                screenshot = observation.redacted_screenshot
+                screenshot = observation.screenshot
                 evidence_id = _derived_id(
                     "audit-screenshot",
                     scenario_id,

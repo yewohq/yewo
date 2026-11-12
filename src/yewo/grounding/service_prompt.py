@@ -33,7 +33,7 @@ Screenshot size: {width_px} by {height_px} pixels.
 
 # Coordinates
 
-Output only {response_shape} in {coordinate_space}.
+Output only {response_shape} in {coordinate_space}. {number_format}
 
 {bounds_instruction}
 

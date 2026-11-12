@@ -21,7 +21,6 @@ from yewo.grounding import (
     GroundingTargetOperation,
 )
 from yewo.models import ModelProfileRegistry, ModelRole
-from yewo.observations import RedactionRegion
 from yewo.runs import RunMode, RunRequest
 
 
@@ -38,12 +37,12 @@ class YewoRunConfiguration(BaseModel):
     planner_profile_id: RecordIdentifier
     auditor_profile_id: RecordIdentifier
     recovery_profile_id: RecordIdentifier
-    action_verifier_profile_id: RecordIdentifier
+    proposal_verifier_profile_id: RecordIdentifier
+    outcome_verifier_profile_id: RecordIdentifier
     replay_preparation_profile_id: RecordIdentifier
     screen_analyzer_profile_id: RecordIdentifier
     test_designer_profile_id: RecordIdentifier
     memory_root: Path | None = None
-    redaction_regions: tuple[RedactionRegion, ...] = ()
 
     @field_validator("memory_root")
     @classmethod
@@ -65,7 +64,8 @@ class YewoRunConfiguration(BaseModel):
             self.planner_profile_id,
             self.auditor_profile_id,
             self.recovery_profile_id,
-            self.action_verifier_profile_id,
+            self.proposal_verifier_profile_id,
+            self.outcome_verifier_profile_id,
             self.replay_preparation_profile_id,
             self.screen_analyzer_profile_id,
             self.test_designer_profile_id,
@@ -80,7 +80,8 @@ def validate_agent_configuration(
     planner_profile_id: RecordIdentifier,
     auditor_profile_id: RecordIdentifier,
     recovery_profile_id: RecordIdentifier,
-    action_verifier_profile_id: RecordIdentifier,
+    proposal_verifier_profile_id: RecordIdentifier,
+    outcome_verifier_profile_id: RecordIdentifier,
     replay_preparation_profile_id: RecordIdentifier,
     screen_analyzer_profile_id: RecordIdentifier,
     test_designer_profile_id: RecordIdentifier,
@@ -90,7 +91,8 @@ def validate_agent_configuration(
         model_profiles.resolve(planner_profile_id, ModelRole.TASK_PLANNER)
         model_profiles.resolve(auditor_profile_id, ModelRole.AUDITOR)
         recovery_profile = model_profiles.resolve(recovery_profile_id, ModelRole.RECOVERY_ADVISOR)
-        model_profiles.resolve(action_verifier_profile_id, ModelRole.ACTION_VERIFIER)
+        model_profiles.resolve(proposal_verifier_profile_id, ModelRole.PROPOSAL_VERIFIER)
+        model_profiles.resolve(outcome_verifier_profile_id, ModelRole.OUTCOME_VERIFIER)
         model_profiles.resolve(screen_analyzer_profile_id, ModelRole.SCREEN_ANALYZER)
         model_profiles.resolve(replay_preparation_profile_id, ModelRole.REPLAY_PREPARER)
         model_profiles.resolve(test_designer_profile_id, ModelRole.TEST_DESIGNER)

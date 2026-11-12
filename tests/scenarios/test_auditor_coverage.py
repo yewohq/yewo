@@ -28,7 +28,7 @@ def test_missing_visual_surface_coverage_cannot_pass(tmp_path, monkeypatch) -> N
             auditor_evidence.GoalEvidenceSource(
                 observation_id=observation.observation_id,
                 labels=("One covered visual surface.",),
-                screenshot=observation.redacted_screenshot,
+                screenshot=observation.screenshot,
             ),
         ),
         owner_counts={

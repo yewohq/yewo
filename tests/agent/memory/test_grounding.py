@@ -14,7 +14,7 @@ from yewo.agent.memory.knowledge import (
     GroundingRole,
     KnowledgeEvidenceReference,
 )
-from yewo.agent import AgentTerminalReason, AppMemory, MemoryCompatibility
+from yewo.agent import AgentTerminalReason, MemoryCompatibility
 from yewo.grounding import (
     GroundingCoordinateConvention,
     GroundingCandidate,
@@ -88,7 +88,7 @@ def _profile() -> GroundingProfile:
 def _request(source, **updates):
     values = {
         "grounding_id": "grounding_replay",
-        "screenshot": source.redacted_screenshot,
+        "screenshot": source.screenshot,
         "source_presentation": source.presentation_key,
         "expression": "the add button",
         "operation": GroundingTargetOperation.TAP,
@@ -290,17 +290,3 @@ def test_memory_hit_still_requires_a_supported_grounding_operation() -> None:
         grounder.required_model_requests(_request(source))
 
     assert delegate.calls == 0
-
-
-def test_legacy_cached_grounding_uses_the_transition_source_observation() -> None:
-    memory, source, _ = _memory_and_source()
-    payload = memory.model_dump(mode="python")
-    payload["transitions"][0]["target_grounding"].pop("source_observation_id")
-
-    loaded = AppMemory.model_validate(payload)
-    grounding = loaded.transitions[0].target_grounding
-
-    assert grounding is not None
-    assert grounding.source_observation_id is None
-    result = AppMemoryGrounder(CountingGrounder(), loaded, _profile()).ground(_request(source))
-    assert result.resolution_source is GroundingResolutionSource.MEMORY

@@ -179,7 +179,7 @@ class CompiledProcedureActionSource:
                         procedure_index=repaired_step.procedure_index,
                         source_step=repaired_step.source_step,
                         observation_id=observation.observation_id,
-                        screenshot_artifact_id=observation.redacted_screenshot.artifact_id,
+                        screenshot_artifact_id=observation.screenshot.artifact_id,
                         screen_fingerprint=observation.screen_fingerprint,
                     )
                 )
@@ -307,7 +307,7 @@ class CompiledProcedureActionSource:
         self._keyboard_equivalent_source = None
         if source_match.expected_distance is None:
             raise AssertionError("An accepted source state requires a perceptual distance.")
-        screenshot = request.observation.redacted_screenshot
+        screenshot = request.observation.screenshot
         self._grounding_authorization = ProcedureGroundingAuthorization(
             source_step_id=step.source_step_id,
             procedure_index=step.procedure_index,
@@ -446,7 +446,7 @@ class CompiledProcedureActionSource:
                     procedure_index=step.procedure_index,
                     source_step=step.source_step,
                     observation_id=observation.observation_id,
-                    screenshot_artifact_id=observation.redacted_screenshot.artifact_id,
+                    screenshot_artifact_id=observation.screenshot.artifact_id,
                     screen_fingerprint=observation.screen_fingerprint,
                 )
             )

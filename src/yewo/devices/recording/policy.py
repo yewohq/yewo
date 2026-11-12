@@ -2,12 +2,12 @@
 
 from dataclasses import dataclass
 
-from yewo.artifacts.records import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts.records import ArtifactRetention
 
 
 DEFAULT_RECORDING_TIME_LIMIT_SECONDS = 1_800
 DEFAULT_RECORDING_STOP_TIMEOUT_SECONDS = 10.0
-DEFAULT_RECORDING_PULL_TIMEOUT_SECONDS = 120.0
+DEFAULT_RECORDING_PULL_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,6 @@ class ScreenRecordingPolicy:
     maximum_segment_seconds: int = DEFAULT_RECORDING_TIME_LIMIT_SECONDS
     maximum_stop_seconds: float = DEFAULT_RECORDING_STOP_TIMEOUT_SECONDS
     maximum_pull_seconds: float = DEFAULT_RECORDING_PULL_TIMEOUT_SECONDS
-    sensitivity: ArtifactSensitivity = ArtifactSensitivity.DEVICE_CONTENT
     retention: ArtifactRetention = ArtifactRetention.RUN
 
     def __post_init__(self) -> None:

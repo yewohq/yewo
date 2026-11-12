@@ -13,18 +13,11 @@ from yewo.agent.memory.knowledge import (
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.replay.procedure.settlement import ProcedureSettlementPolicySource
-from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.agent.runtime.observation_settlement import ActionSettlementPolicy
 
 from agent.memory.test_store import _memory
-from agent.replay.support import evidence as _evidence, response as _response
-
-
-def _procedure() -> ReplayProcedure:
-    procedure = compile_replay_procedure(_evidence(), _response())
-    assert isinstance(procedure, ReplayProcedure)
-    return procedure
+from agent.replay.support import procedure as _procedure
 
 
 def _decision(procedure: ReplayProcedure) -> PlannerDecisionMetadata:
@@ -74,26 +67,6 @@ def test_repeated_dispatch_timing_shortens_compiled_action_polling(
 
     assert resolved.initial_delay_seconds == 0
     assert resolved.interval_seconds == pytest.approx(0.24)
-    assert resolved.maximum_observations == 6
-    assert resolved.required_stable_observations == 2
-
-
-def test_legacy_timing_uses_fast_replay_policy_without_tuning(
-    tmp_path: Path,
-) -> None:
-    procedure = _procedure()
-    memory = _timed_memory(tmp_path, "source_to_settled_v1")
-    source = ProcedureSettlementPolicySource(procedure, memory)
-    default = ActionSettlementPolicy(
-        maximum_observations=6,
-        initial_delay_seconds=0.35,
-        interval_seconds=0.35,
-    )
-
-    resolved = source.resolve(default, _decision(procedure))
-
-    assert resolved.initial_delay_seconds == 0
-    assert resolved.interval_seconds == pytest.approx(0.42)
     assert resolved.maximum_observations == 6
     assert resolved.required_stable_observations == 2
 

@@ -246,7 +246,7 @@ class ScenarioExecutionRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     classification: ScenarioExecutionClassification
-    reason: str = Field(min_length=1, max_length=REPORT_REASON_MAX_LENGTH)
+    reason: str = Field(min_length=1)
     started_at: datetime | None = None
     completed_at: datetime | None = None
     action_count: int = Field(default=0, ge=0)
@@ -346,7 +346,7 @@ class CanonicalRunRecord(BaseModel):
     completed_at: datetime
     terminal_category: RunTerminalCategory
     terminal_stage: RunStage
-    terminal_reason: str = Field(min_length=1, max_length=REPORT_REASON_MAX_LENGTH)
+    terminal_reason: str = Field(min_length=1)
     partial_evidence_available: bool
     device: EvidenceDeviceIdentity | None = None
     application: EvidenceApplicationIdentity | None = None

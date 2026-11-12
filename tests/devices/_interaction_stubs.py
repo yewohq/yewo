@@ -76,6 +76,7 @@ class DriverStub:
         self.switch_to = SwitchToStub(self.element)
         self.focused_xpath_available = True
         self.scripts: list[tuple[str, dict[str, Any]]] = []
+        self.script_results: dict[str, Any] = {}
         self.keycodes: list[int] = []
         self.back_calls = 0
         self.hide_keyboard_calls = 0
@@ -105,6 +106,8 @@ class DriverStub:
 
     def execute_script(self, script: str, params: dict[str, Any]) -> Any:
         self.scripts.append((script, params))
+        if script in self.script_results:
+            return self.script_results[script]
         if script == "mobile: activeAppInfo":
             return {"bundleId": self.current_package}
         if script == "mobile: getPressableButtons":

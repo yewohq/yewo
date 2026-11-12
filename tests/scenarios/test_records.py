@@ -241,24 +241,14 @@ def test_expected_outcome_needs_an_evidence_requirement() -> None:
         )
 
 
-def test_automatic_obligation_can_retain_an_optional_legacy_coverage_cell() -> None:
-    obligation = _obligation(coverage_cell_id=None)
-
-    assert obligation.source is ScenarioSource.AUTOMATIC_QA
-
-
 def test_exploratory_suggestion_cannot_be_required() -> None:
     with pytest.raises(ValidationError, match="cannot be a required obligation"):
-        _obligation(
-            source=ScenarioSource.EXPLORATORY_SUGGESTION,
-            coverage_cell_id=None,
-        )
+        _obligation(source=ScenarioSource.EXPLORATORY_SUGGESTION)
 
 
 def test_scenario_required_state_must_match_its_obligations() -> None:
     optional = _obligation(
         source=ScenarioSource.EXPLORATORY_SUGGESTION,
-        coverage_cell_id=None,
         required=False,
     )
 

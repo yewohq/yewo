@@ -15,22 +15,15 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from yewo.artifacts import (
     APP_MEMORY_SCHEMA_VERSION,
-    ArtifactRetention,
-    AtomicArtifactWriter,
-    ArtifactWriteError,
     AppMemorySchemaVersion,
-    RecordIdentifier,
     Sha256Digest,
 )
-from yewo.devices.screen import png_size
 from yewo.host import exclusive_file_lock, replace_file_durably
-from yewo.observations import ScreenshotReference
 from yewo.run_narration import current_narrator
 
 from yewo.agent.memory.records import (
     AppMemory,
     MemoryCompatibility,
-    ObservationVariant,
     UnsuccessfulAttemptDisposition,
 )
 
@@ -65,30 +58,47 @@ class AppMemoryStore:
         _narrate_memory_load(memory, legacy_attempt_count)
         return memory
 
-    def save(self, memory: AppMemory, source_run_root: Path) -> AppMemory:
-        """Promote redacted screenshots and atomically replace current memory."""
-        memory, _removed_attempt_count = _without_legacy_target_rejections(memory)
+    def save(self, memory: AppMemory) -> AppMemory:
+        """Atomically replace current memory.
+
+        Nothing is copied out of the run. A variant carries the fingerprint and presentation
+        recognition compares, so the screen it describes needs no retained image.
+        """
+        memory, _removed_attempt_count = _without_target_rejections(memory)
         application_root = self._application_root(memory.compatibility)
         with self._locked(application_root):
-            current, _legacy_attempt_count = self._load_unlocked(
-                application_root, memory.compatibility
-            )
+            current = self._replaceable_current(application_root, memory.compatibility)
             if current is not None and not set(current.source_run_ids).issubset(
                 memory.source_run_ids
             ):
                 raise AppMemoryStoreError(
                     "Refused to replace app memory built from stale source runs."
                 )
-            promoted = _promote_screenshots(memory, source_run_root, application_root)
-            _write_snapshot(application_root, promoted)
-            _remove_unreferenced_screenshots(application_root, promoted)
-        _narrate_memory_save(promoted)
-        return promoted
+            _write_snapshot(application_root, memory)
+        _narrate_memory_save(memory)
+        return memory
+
+    def _replaceable_current(
+        self,
+        application_root: Path,
+        compatibility: MemoryCompatibility,
+    ) -> AppMemory | None:
+        """Read the snapshot this save replaces, treating an unreadable one as absent.
+
+        The stale-source-run guard needs the current snapshot. An obsolete schema cannot be read,
+        but discovery can rebuild this derived memory. Treating that snapshot as present would
+        prevent the rebuilt current-schema replacement from ever reaching disk.
+        """
+        try:
+            current, _legacy_attempt_count = self._load_unlocked(application_root, compatibility)
+        except AppMemorySchemaError:
+            _narrate_replaced_memory()
+            return None
+        return current
 
     def update(
         self,
         compatibility: MemoryCompatibility,
-        source_run_root: Path,
         updater: Callable[[AppMemory], AppMemory],
     ) -> AppMemory:
         """Apply one update while holding the complete load-to-save lock."""
@@ -100,35 +110,9 @@ class AppMemoryStore:
             updated = updater(current)
             if updated.compatibility != compatibility:
                 raise AppMemoryStoreError("Write-back changed app-memory compatibility.")
-            promoted = _promote_screenshots(updated, source_run_root, application_root)
-            _write_snapshot(application_root, promoted)
-            _remove_unreferenced_screenshots(application_root, promoted)
-        _narrate_memory_save(promoted)
-        return promoted
-
-    def read_observation_screenshot(
-        self,
-        memory: AppMemory,
-        observation_id: RecordIdentifier,
-    ) -> tuple[ScreenshotReference, bytes]:
-        """Return one verified retained redacted screenshot by observation ID."""
-        variant = next(
-            (
-                variant
-                for screen in memory.screens
-                for variant in screen.variants
-                if variant.observation_id == observation_id
-            ),
-            None,
-        )
-        if variant is None:
-            raise AppMemoryStoreError("The requested memory observation is unavailable.")
-        application_root = self._application_root(memory.compatibility)
-        _verify_screenshot(application_root, variant.screenshot)
-        try:
-            return variant.screenshot, (application_root / variant.screenshot.path).read_bytes()
-        except OSError as error:
-            raise AppMemoryStoreError("Could not read the memory screenshot.") from error
+            _write_snapshot(application_root, updated)
+        _narrate_memory_save(updated)
+        return updated
 
     def _application_root(self, compatibility: MemoryCompatibility) -> Path:
         identity = _canonical_bytes(compatibility.model_dump(mode="json"))
@@ -171,8 +155,7 @@ class AppMemoryStore:
             raise AppMemoryStoreError("The app-memory snapshot digest does not match.")
         if envelope.memory.compatibility != compatibility:
             raise AppMemoryStoreError("The app-memory snapshot is incompatible.")
-        _verify_persistent_screenshots(application_root, envelope.memory)
-        return _without_legacy_target_rejections(envelope.memory)
+        return _without_target_rejections(envelope.memory)
 
 
 def _validate_supported_schema(payload: object) -> None:
@@ -196,7 +179,12 @@ def load_discovery_memory(
         return None
 
 
-def _without_legacy_target_rejections(memory: AppMemory) -> tuple[AppMemory, int]:
+def _without_target_rejections(memory: AppMemory) -> tuple[AppMemory, int]:
+    """Drop attempts a target rejection produced, which app memory must not learn from.
+
+    A target rejection is Yewo grounding onto the wrong pixel. The application did nothing, so
+    remembering it would teach a lesson about this agent and attribute it to the app.
+    """
     retained_attempts = tuple(
         attempt
         for attempt in memory.unsuccessful_attempts
@@ -204,92 +192,6 @@ def _without_legacy_target_rejections(memory: AppMemory) -> tuple[AppMemory, int
     )
     removed_count = len(memory.unsuccessful_attempts) - len(retained_attempts)
     return memory.model_copy(update={"unsuccessful_attempts": retained_attempts}), removed_count
-
-
-def _promote_screenshots(
-    memory: AppMemory,
-    source_run_root: Path,
-    application_root: Path,
-) -> AppMemory:
-    screens = tuple(
-        screen.model_copy(
-            update={
-                "variants": tuple(
-                    _promote_variant(variant, source_run_root, application_root)
-                    for variant in screen.variants
-                )
-            }
-        )
-        for screen in memory.screens
-    )
-    return memory.model_copy(update={"screens": screens})
-
-
-def _promote_variant(
-    variant: ObservationVariant,
-    source_run_root: Path,
-    application_root: Path,
-) -> ObservationVariant:
-    screenshot = variant.screenshot
-    if screenshot.retention is ArtifactRetention.PERSISTENT:
-        _verify_screenshot(application_root, screenshot)
-        return variant
-    source_path = source_run_root / screenshot.path
-    _verify_source_path(source_run_root, source_path, screenshot)
-    relative_path = Path("screenshots") / f"{screenshot.sha256}.png"
-    destination = application_root / relative_path
-    persistent = screenshot.model_copy(
-        update={"path": relative_path, "retention": ArtifactRetention.PERSISTENT}
-    )
-    if destination.exists():
-        _verify_screenshot(application_root, persistent)
-    else:
-        try:
-            AtomicArtifactWriter(application_root).write_file(relative_path, source_path)
-        except ArtifactWriteError as error:
-            raise AppMemoryStoreError(str(error)) from error
-    return variant.model_copy(update={"screenshot": persistent})
-
-
-def _verify_source_path(
-    source_root: Path,
-    source_path: Path,
-    screenshot: ScreenshotReference,
-) -> None:
-    try:
-        source_path.resolve().relative_to(source_root.resolve())
-        if source_path.is_symlink() or not source_path.is_file():
-            raise AppMemoryStoreError("A memory screenshot source must be a regular file.")
-    except AppMemoryStoreError:
-        raise
-    except (OSError, ValueError) as error:
-        raise AppMemoryStoreError("A memory screenshot source is unavailable.") from error
-    _verify_screenshot(source_root, screenshot)
-
-
-def _verify_persistent_screenshots(root: Path, memory: AppMemory) -> None:
-    for screen in memory.screens:
-        for variant in screen.variants:
-            if variant.screenshot.retention is not ArtifactRetention.PERSISTENT:
-                raise AppMemoryStoreError("Persisted app memory contains a run-scoped screenshot.")
-            _verify_screenshot(root, variant.screenshot)
-
-
-def _verify_screenshot(root: Path, screenshot: ScreenshotReference) -> None:
-    path = root / screenshot.path
-    try:
-        path.resolve().relative_to(root.resolve())
-        if path.is_symlink() or not path.is_file():
-            raise AppMemoryStoreError("A memory screenshot must be a regular file.")
-        content = path.read_bytes()
-    except AppMemoryStoreError:
-        raise
-    except (OSError, ValueError) as error:
-        raise AppMemoryStoreError("A memory screenshot is unavailable.") from error
-    if sha256(content).hexdigest() != screenshot.sha256:
-        raise AppMemoryStoreError("A memory screenshot digest does not match.")
-    if png_size(content) != (screenshot.width_px, screenshot.height_px):
-        raise AppMemoryStoreError("A memory screenshot has invalid dimensions.")
 
 
 def _write_snapshot(application_root: Path, memory: AppMemory) -> None:
@@ -323,37 +225,6 @@ def _write_snapshot(application_root: Path, memory: AppMemory) -> None:
         if temporary_path is not None:
             with suppress(OSError):
                 temporary_path.unlink(missing_ok=True)
-
-
-def _remove_unreferenced_screenshots(
-    application_root: Path,
-    memory: AppMemory,
-) -> None:
-    screenshots_root = application_root / "screenshots"
-    if not screenshots_root.exists():
-        return
-    try:
-        if screenshots_root.is_symlink() or not screenshots_root.is_dir():
-            raise AppMemoryStoreError("The memory screenshot directory must be regular.")
-        screenshots_root.resolve().relative_to(application_root.resolve())
-        referenced = {
-            (application_root / variant.screenshot.path).resolve()
-            for screen in memory.screens
-            for variant in screen.variants
-        }
-        for path in screenshots_root.iterdir():
-            if path.is_symlink() or not path.is_file():
-                raise AppMemoryStoreError(
-                    "The memory screenshot directory contains an unsafe entry."
-                )
-            resolved_path = path.resolve()
-            resolved_path.relative_to(screenshots_root.resolve())
-            if resolved_path not in referenced:
-                path.unlink()
-    except AppMemoryStoreError:
-        raise
-    except (OSError, ValueError) as error:
-        raise AppMemoryStoreError("Could not apply memory screenshot retention.") from error
 
 
 def _prepare_root(root: Path, application_root: Path) -> None:
@@ -409,6 +280,16 @@ def _narrate_memory_load(memory: AppMemory | None, legacy_attempt_count: int = 0
         f"load=completed memory={memory.memory_id} screens={len(memory.screens)} "
         f"transitions={len(memory.transitions)} "
         f"invalidated_legacy_target_rejections={legacy_attempt_count}",
+    )
+
+
+def _narrate_replaced_memory() -> None:
+    narrator = current_narrator()
+    if narrator is None:
+        return
+    narrator.record(
+        "agent-memory",
+        "Replacing an app-memory snapshot written by an unsupported schema.",
     )
 
 

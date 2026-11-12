@@ -80,7 +80,7 @@ def _procedure_replay(
                 procedure_index=0,
                 source_step=1,
                 observation_id=after.observation_id,
-                screenshot_artifact_id=after.redacted_screenshot.artifact_id,
+                screenshot_artifact_id=after.screenshot.artifact_id,
                 screen_fingerprint=after.screen_fingerprint,
             ),
         ),
@@ -114,7 +114,6 @@ def test_compiled_procedure_never_runs_without_a_fresh_install() -> None:
         NeverInterrupted(),
         cast(CompiledProcedureStore, UnexpectedStore()),
         memory=None,
-        redaction_regions=(),
         declared_value_resolver=None,
     )
 
@@ -148,7 +147,6 @@ def test_fresh_install_ignores_a_stale_procedure_at_replay_handoff() -> None:
         NeverInterrupted(),
         cast(CompiledProcedureStore, StaleProcedureStore()),
         memory=None,
-        redaction_regions=(),
         declared_value_resolver=None,
     )
 
@@ -199,7 +197,6 @@ def test_compiled_procedure_does_not_run_after_memory_learns_an_action_risk(
         NeverInterrupted(),
         cast(CompiledProcedureStore, StoredProcedure()),
         memory=memory,
-        redaction_regions=(),
         declared_value_resolver=None,
     )
 

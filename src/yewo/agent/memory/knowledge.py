@@ -150,7 +150,7 @@ class TransitionTimingSample(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     sample_id: RecordIdentifier
-    measurement: Literal["source_to_settled_v1", "dispatch_to_settled_v1"] = "source_to_settled_v1"
+    measurement: Literal["dispatch_to_settled_v1"] = "dispatch_to_settled_v1"
     duration_ms: float = Field(ge=0, le=300_000)
     source: KnowledgeEvidenceReference
 

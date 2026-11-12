@@ -5,14 +5,13 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from yewo.agent.actuation.verifier import (
-    ACTION_VERIFIER_MAX_COMPLETION_TOKENS,
+from yewo.agent.actuation.proposal_verifier import (
+    PROPOSAL_VERIFIER_MAX_COMPLETION_TOKENS,
     ActionReadinessAssessment,
     ActionReadinessDisposition,
     ActionReadinessRefusalBasis,
-    ModelActionVerifier,
+    ModelProposalVerifier,
 )
-from yewo.agent.actuation.verifier_prompt import ACTION_VERIFIER_SYSTEM_PROMPT
 from yewo.agent.actuation import (
     ActionKind,
     ActionOutcome,
@@ -29,7 +28,7 @@ from yewo.agent.planning.records import (
     TaskProgressContext,
 )
 from yewo.agent.planning.history import PlanningHistoryEntry, planning_screen_reference
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import MINIMUM_COMPLETION_TOKENS, ModelRole, TextModelContent
 from yewo.agent.screen_analysis import (
     CurrentScreenAnalysis,
@@ -76,7 +75,6 @@ def _request() -> PlanningRequest:
         disposition=ActionOutcomeDisposition.OBSERVED,
         signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
         reason="The dropdown opened.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     return PlanningRequest(
@@ -101,7 +99,7 @@ def _analysis(request: PlanningRequest) -> CurrentScreenAnalysis:
     return CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=observed.observation_id,
-        screenshot_sha256=observed.redacted_screenshot.sha256,
+        screenshot_sha256=observed.screenshot.sha256,
         presentation=observed.presentation_key,
         screen_summary="Visible workflow form.",
         elements=(
@@ -113,7 +111,6 @@ def _analysis(request: PlanningRequest) -> CurrentScreenAnalysis:
                     semantic=ScreenSemanticRole.LABEL,
                 ),
                 confidence=ScreenElementConfidence.HIGH,
-                evidence="Visible section text.",
             ),
             ScreenElement(
                 element_ref="primary-field",
@@ -123,13 +120,12 @@ def _analysis(request: PlanningRequest) -> CurrentScreenAnalysis:
                     semantic=ScreenSemanticRole.TEXT_FIELD,
                 ),
                 confidence=ScreenElementConfidence.HIGH,
-                evidence="Visible editable field.",
             ),
         ),
     )
 
 
-def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() -> None:
+def test_proposal_verifier_uses_dedicated_profile_and_refuses_unresolved_work() -> None:
     request = _request().model_copy(
         update={"open_work": ("Complete Primary field before saving.",)}
     )
@@ -152,9 +148,9 @@ def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() ->
         }
     )
     identifiers = iter(("verification_1", "request_1"))
-    verifier = ModelActionVerifier(
+    verifier = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
     )
 
@@ -162,9 +158,9 @@ def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() ->
 
     assert assessment.disposition is ActionReadinessDisposition.REFUSE
     assert assessment.refusal() is not None
-    assert model.requests[0].role is ModelRole.ACTION_VERIFIER
-    assert model.requests[0].profile_id == "action-verifier-primary"
-    assert model.requests[0].max_completion_tokens == ACTION_VERIFIER_MAX_COMPLETION_TOKENS
+    assert model.requests[0].role is ModelRole.PROPOSAL_VERIFIER
+    assert model.requests[0].profile_id == "proposal-verifier-primary"
+    assert model.requests[0].max_completion_tokens == PROPOSAL_VERIFIER_MAX_COMPLETION_TOKENS
     validation_context = model.validation_contexts[0]
     assert validation_context is not None
     assert validation_context["allowed_work_items"] == ("Complete Primary field before saving.",)
@@ -173,7 +169,7 @@ def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() ->
     assert requirement_evidence["Primary field"]["objective_or_open_work"] == (
         "Complete Primary field before saving.",
     )
-    assert ACTION_VERIFIER_MAX_COMPLETION_TOKENS == MINIMUM_COMPLETION_TOKENS
+    assert PROPOSAL_VERIFIER_MAX_COMPLETION_TOKENS == MINIMUM_COMPLETION_TOKENS
     assert model.requests[0].messages[1].cache_prefix_end
     assert model.requests[0].messages[2].cache_prefix_end is False
     history_content = model.requests[0].messages[2].content[0]
@@ -183,7 +179,7 @@ def test_action_verifier_uses_dedicated_profile_and_refuses_unresolved_work() ->
     assert history["feedback"]["disposition"] == "observed"
 
 
-def test_action_verifier_receives_the_planners_exact_no_progress_constraints() -> None:
+def test_proposal_verifier_receives_the_planners_exact_no_progress_constraints() -> None:
     focus = PlanningFocusContext(
         focus_id="focus-1",
         cause=PlanningFocusCause.SCREEN_NO_PROGRESS,
@@ -204,9 +200,9 @@ def test_action_verifier_receives_the_planners_exact_no_progress_constraints() -
     )
     identifiers = iter(("verification_1", "request_1"))
 
-    ModelActionVerifier(
+    ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=identifiers.__next__,
     ).verify(request, _proposal())
 
@@ -218,7 +214,7 @@ def test_action_verifier_receives_the_planners_exact_no_progress_constraints() -
     ]
 
 
-def test_action_verifier_fails_closed_on_invalid_allow_response() -> None:
+def test_proposal_verifier_fails_closed_on_invalid_allow_response() -> None:
     model = StubPlannerModel(
         {
             "disposition": "allow",
@@ -237,9 +233,9 @@ def test_action_verifier_fails_closed_on_invalid_allow_response() -> None:
         }
     )
     identifiers = iter(("verification_1", "request_1"))
-    verifier = ModelActionVerifier(
+    verifier = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
     )
 
@@ -252,7 +248,7 @@ def test_action_verifier_fails_closed_on_invalid_allow_response() -> None:
     assert refusal.code is ActionRefusalCode.VERIFICATION_UNAVAILABLE
 
 
-def test_action_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> None:
+def test_proposal_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> None:
     model = StubPlannerModel(
         {
             "disposition": "refuse",
@@ -274,9 +270,9 @@ def test_action_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> No
     request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
     identifiers = iter(("verification_1", "request_1"))
 
-    assessment = ModelActionVerifier(
+    assessment = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
     ).verify(request, _proposal())
 
@@ -309,7 +305,7 @@ def test_action_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> No
     }
 
 
-def test_action_verifier_rejects_control_agnostic_requirement_claim() -> None:
+def test_proposal_verifier_rejects_control_agnostic_requirement_claim() -> None:
     request = _request()
     request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
     model = StubPlannerModel(
@@ -331,16 +327,16 @@ def test_action_verifier_rejects_control_agnostic_requirement_claim() -> None:
     )
     identifiers = iter(("verification_1", "request_1"))
 
-    assessment = ModelActionVerifier(
+    assessment = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=identifiers.__next__,
     ).verify(request, _proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
 
 
-def test_action_verifier_accepts_input_contract_as_a_producible_requirement_basis() -> None:
+def test_proposal_verifier_accepts_input_contract_as_a_producible_requirement_basis() -> None:
     request = _request().model_copy(update={"declared_value_names": ("primary_field",)})
     request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
     model = StubPlannerModel(
@@ -362,9 +358,9 @@ def test_action_verifier_accepts_input_contract_as_a_producible_requirement_basi
     )
     identifiers = iter(("verification_1", "request_1"))
 
-    assessment = ModelActionVerifier(
+    assessment = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=identifiers.__next__,
     ).verify(request, _proposal())
 
@@ -380,7 +376,7 @@ def test_action_verifier_accepts_input_contract_as_a_producible_requirement_basi
     assert task_context["declared_value_names"] == ["primary_field"]
 
 
-def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
+def test_proposal_verifier_refuses_a_route_that_restarts_completed_work() -> None:
     create = "Create and save one reusable record."
     reopen = "Return to the saved record and establish that it can be repeated or updated."
     request = _request().model_copy(
@@ -415,9 +411,9 @@ def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
         }
     )
     identifiers = iter(("verification_1", "request_1"))
-    verifier = ModelActionVerifier(
+    verifier = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
     )
 
@@ -442,7 +438,7 @@ def test_action_verifier_refuses_a_route_that_restarts_completed_work() -> None:
     assert "source_screen_fingerprint" not in context["progress_context"]["route_attempts"][0]
 
 
-def test_action_verifier_requires_an_exact_work_item_for_correction() -> None:
+def test_proposal_verifier_requires_an_exact_work_item_for_correction() -> None:
     work_item = "Inspect every relevant visible control."
     payload = {
         "verification_id": "verification_1",
@@ -465,7 +461,45 @@ def test_action_verifier_requires_an_exact_work_item_for_correction() -> None:
         )
 
 
-def test_action_verifier_does_not_treat_recovery_guidance_as_task_work() -> None:
+def test_unexplored_route_refusal_requires_one_remaining_route() -> None:
+    payload = {
+        "verification_id": "verification_1",
+        "proposal_id": "proposal_1",
+        "disposition": "refuse",
+        "reason": "Discovery has another goal-relevant entry route.",
+        "unresolved_controls": [],
+        "completed_work_items": [],
+        "proposal_work_item": None,
+        "restarts_completed_work_item": None,
+        "refusal_basis": "unexplored_route",
+        "unexplored_route": None,
+    }
+
+    with pytest.raises(ValidationError, match="must name the remaining route"):
+        ActionReadinessAssessment.model_validate(payload)
+
+
+def test_unexplored_route_refusal_reports_discovery_incomplete() -> None:
+    assessment = ActionReadinessAssessment(
+        verification_id="verification_1",
+        proposal_id="proposal_1",
+        disposition=ActionReadinessDisposition.REFUSE,
+        reason="The completed checkout route does not cover another visible entry route.",
+        completed_work_items=(),
+        proposal_work_item=None,
+        restarts_completed_work_item=None,
+        refusal_basis=ActionReadinessRefusalBasis.UNEXPLORED_ROUTE,
+        unexplored_route="Use Search to enter the ordering flow.",
+    )
+
+    refusal = assessment.refusal()
+
+    assert refusal is not None
+    assert refusal.code is ActionRefusalCode.DISCOVERY_INCOMPLETE
+    assert "Use Search to enter the ordering flow" in refusal.reason
+
+
+def test_proposal_verifier_does_not_treat_recovery_guidance_as_task_work() -> None:
     work_item = "Create and save one reusable record."
     recovery_step = "Refill fields lost after the application crash."
     request = _request().model_copy(
@@ -485,9 +519,9 @@ def test_action_verifier_does_not_treat_recovery_guidance_as_task_work() -> None
         }
     )
     identifiers = iter(("verification_1", "request_1"))
-    verifier = ModelActionVerifier(
+    verifier = ModelProposalVerifier(
         model,
-        "action-verifier-primary",
+        "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
     )
 
@@ -498,7 +532,7 @@ def test_action_verifier_does_not_treat_recovery_guidance_as_task_work() -> None
     assert validation_context["allowed_work_items"] == (work_item,)
 
 
-def test_action_verifier_rejects_unresolved_control_without_analyzed_evidence() -> None:
+def test_proposal_verifier_rejects_unresolved_control_without_analyzed_evidence() -> None:
     payload = {
         "verification_id": "verification_1",
         "proposal_id": "proposal_1",
@@ -521,7 +555,7 @@ def test_action_verifier_rejects_unresolved_control_without_analyzed_evidence() 
         ActionReadinessAssessment.model_validate(payload, context={"interactive_control_names": ()})
 
 
-def test_action_verifier_rejects_noninteractive_unresolved_evidence() -> None:
+def test_proposal_verifier_rejects_noninteractive_unresolved_evidence() -> None:
     payload = {
         "verification_id": "verification_1",
         "proposal_id": "proposal_1",
@@ -544,78 +578,3 @@ def test_action_verifier_rejects_noninteractive_unresolved_evidence() -> None:
         ActionReadinessAssessment.model_validate(
             payload, context={"interactive_control_names": ("Quantity",)}
         )
-
-
-def _refusal_payload(**overrides: object) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "verification_id": "verification_1",
-        "proposal_id": "proposal_1",
-        "disposition": "refuse",
-        "reason": "The reason names Save while the target identifies Cancel.",
-        "unresolved_controls": [],
-        "completed_work_items": [],
-        "proposal_work_item": None,
-        "restarts_completed_work_item": None,
-    }
-    payload.update(overrides)
-    return payload
-
-
-def test_action_verifier_refuses_an_incoherent_proposal_without_control_evidence() -> None:
-    assessment = ActionReadinessAssessment.model_validate(
-        _refusal_payload(refusal_basis="incoherent_proposal")
-    )
-
-    refusal = assessment.refusal()
-
-    assert refusal is not None
-    assert refusal.code is ActionRefusalCode.DISCOVERY_INCOMPLETE
-    assert refusal.reason == "The reason names Save while the target identifies Cancel."
-
-
-def test_action_verifier_reports_a_reopened_stage_as_a_work_regression() -> None:
-    assessment = ActionReadinessAssessment.model_validate(
-        _refusal_payload(
-            reason="The proposal reopens the accepted confirmation.",
-            refusal_basis="reopened_stage",
-        )
-    )
-
-    refusal = assessment.refusal()
-
-    assert refusal is not None
-    assert refusal.code is ActionRefusalCode.COMPLETED_WORK_REGRESSION
-
-
-def test_action_verifier_rejects_a_basis_without_the_evidence_it_requires() -> None:
-    with pytest.raises(ValidationError, match="must name one unresolved control"):
-        ActionReadinessAssessment.model_validate(
-            _refusal_payload(refusal_basis="unresolved_control")
-        )
-
-
-def test_action_verifier_rejects_evidence_its_basis_does_not_support() -> None:
-    with pytest.raises(ValidationError, match="cannot carry unresolved evidence"):
-        ActionReadinessAssessment.model_validate(
-            _refusal_payload(
-                refusal_basis="incoherent_proposal",
-                restarts_completed_work_item="Create the record.",
-            )
-        )
-
-
-def test_action_verifier_rejects_a_refusal_basis_on_an_allowed_action() -> None:
-    with pytest.raises(ValidationError, match="Only a refusal"):
-        ActionReadinessAssessment.model_validate(
-            _refusal_payload(disposition="allow", refusal_basis="incoherent_proposal")
-        )
-
-
-def test_action_verifier_still_requires_evidence_when_no_basis_is_named() -> None:
-    with pytest.raises(ValidationError, match="must identify unresolved evidence"):
-        ActionReadinessAssessment.model_validate(_refusal_payload())
-
-
-def test_verifier_prompt_names_every_refusal_basis() -> None:
-    for basis in ActionReadinessRefusalBasis:
-        assert basis.value in ACTION_VERIFIER_SYSTEM_PROMPT

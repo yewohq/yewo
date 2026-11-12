@@ -279,7 +279,7 @@ def build_keyboard_repair_grounding_match(
         return None
     expected_state = evidence.states[target.expected_state_id]
     expected_presentation = expected_state.representative_presentation
-    screenshot = observation.redacted_screenshot
+    screenshot = observation.screenshot
     if (screenshot.width_px, screenshot.height_px) != (
         expected_presentation.width_px,
         expected_presentation.height_px,

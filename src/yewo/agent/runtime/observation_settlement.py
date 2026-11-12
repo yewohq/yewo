@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,9 +15,16 @@ from yewo.agent.planning.evidence import (
     first_source_of,
 )
 from yewo.agent.runtime.records import AgentModePolicy
-from yewo.observations import Observation, ObservationService, fingerprint_distance
+from yewo.observations import (
+    Observation,
+    ObservationProbe,
+    ScreenFingerprint,
+    VisualSettlementProbe,
+    fingerprint_distance,
+)
 from yewo.runs import InterruptionSignal
 from yewo.runs.errors import RunWorkflowInterrupted
+from yewo.run_narration import current_narrator
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,14 @@ class ActionSettlementPolicySource(Protocol):
     ) -> ActionSettlementPolicy: ...
 
 
+class SettlementObservationService(Protocol):
+    """Capture lightweight probes and one persisted settlement observation."""
+
+    def capture_settlement_probe(self) -> VisualSettlementProbe: ...
+
+    def capture(self, *, predecessor_observation_id: str | None = None) -> Observation: ...
+
+
 def default_action_settlement_policy(policy: AgentModePolicy) -> ActionSettlementPolicy:
     """Preserve the configured settlement behavior for ordinary actions."""
     return ActionSettlementPolicy(
@@ -102,41 +118,59 @@ def resolve_action_settlement_policy(
 
 
 def capture_settled_observation(
-    observations: ObservationService,
+    observations: SettlementObservationService,
     source: Observation,
     policy: ActionSettlementPolicy,
     interruption: InterruptionSignal,
     sleep: Callable[[float], None],
 ) -> SettlementCapture:
     """Wait for a stable post-action screen without accepting the source too early."""
-    captured_observations: list[Observation] = []
-    observation_ids: list[str] = []
+    probes: list[VisualSettlementProbe] = []
     for attempt_index in range(policy.maximum_observations):
-        _require_continuation(interruption, observation_ids)
+        _require_continuation(interruption, [])
         delay_seconds = (
             policy.initial_delay_seconds if attempt_index == 0 else policy.interval_seconds
         )
         if delay_seconds > 0:
-            sleep(delay_seconds)
-            _require_continuation(interruption, observation_ids)
-        observation = observations.capture(predecessor_observation_id=source.observation_id)
-        captured_observations.append(observation)
-        observation_ids.append(observation.observation_id)
+            _sleep_for_settlement(sleep, delay_seconds, attempt_index)
+            _require_continuation(interruption, [])
+        probe = _capture_probe(observations, attempt_index)
+        probes.append(probe)
         final_attempt = attempt_index + 1 == policy.maximum_observations
-        if (
-            latest_settlement_candidate(
-                source,
-                captured_observations,
-                policy.required_stable_observations,
-                minimum_observations=policy.minimum_observations,
-                final_attempt=final_attempt,
+        settled = latest_settlement_probe(
+            VisualSettlementProbe.from_observation(source),
+            probes,
+            policy.required_stable_observations,
+            minimum_observations=policy.minimum_observations,
+            final_attempt=final_attempt,
+        )
+        if settled or final_attempt:
+            observation = observations.capture(predecessor_observation_id=source.observation_id)
+            return SettlementCapture(
+                observation,
+                (observation.observation_id,),
+                settled and _probe_matches_observation(probe, observation),
             )
-            is not None
-        ):
-            return SettlementCapture(observation, tuple(observation_ids), True)
-    if not captured_observations:  # The policy requires at least two attempts.
-        raise RuntimeError("Settlement captured no observations.")
-    return SettlementCapture(captured_observations[-1], tuple(observation_ids), False)
+    raise RuntimeError("Settlement captured no probes.")
+
+
+def latest_settlement_probe(
+    source: VisualSettlementProbe,
+    probes: list[VisualSettlementProbe] | tuple[VisualSettlementProbe, ...],
+    required_stable_observations: int = 2,
+    *,
+    minimum_observations: int = 1,
+    final_attempt: bool = False,
+) -> bool:
+    """Return whether lightweight probes establish one stable post-action screen."""
+    if len(probes) < minimum_observations:
+        return False
+    current = probes[-1]
+    adjacent = len(probes) >= 2 and _settlement_probes_are_compatible(probes[-2], current)
+    recurring = any(_settlement_probes_are_identical(previous, current) for previous in probes[:-1])
+    stable = required_stable_observations == 1 or adjacent or recurring
+    changed_from_source = not _settlement_probes_are_identical(source, current)
+    return stable and (changed_from_source or final_attempt)
 
 
 def latest_settlement_candidate(
@@ -151,8 +185,12 @@ def latest_settlement_candidate(
     if len(captured_observations) < minimum_observations:
         return None
     current = captured_observations[-1]
-    adjacent = len(captured_observations) >= 2 and observations_are_compatible(captured_observations[-2], current)
-    recurring = any(observations_are_identical(previous, current) for previous in captured_observations[:-1])
+    adjacent = len(captured_observations) >= 2 and observations_are_compatible(
+        captured_observations[-2], current
+    )
+    recurring = any(
+        observations_are_identical(previous, current) for previous in captured_observations[:-1]
+    )
     stable = required_stable_observations == 1 or adjacent or recurring
     changed_from_source = not observations_are_identical(source, current)
     return current if stable and (changed_from_source or final_attempt) else None
@@ -160,23 +198,32 @@ def latest_settlement_candidate(
 
 def observations_are_compatible(first: Observation, second: Observation) -> bool:
     """Return whether two observations are visually equivalent for settlement."""
-    if not _observation_metadata_matches(first, second):
+    return _probes_are_compatible(
+        ObservationProbe.from_observation(first),
+        ObservationProbe.from_observation(second),
+    )
+
+
+def _fingerprints_are_compatible(first: ScreenFingerprint, second: ScreenFingerprint) -> bool:
+    if first.algorithm != second.algorithm:
+        return False
+    if first.system_region_mask_sha256 != second.system_region_mask_sha256:
         return False
     try:
-        return fingerprint_distance(first.screen_fingerprint, second.screen_fingerprint) <= 1
+        return fingerprint_distance(first, second) <= 1
     except ValueError:
         return False
 
 
-def observations_are_identical(first: Observation, second: Observation) -> bool:
-    """Return whether an action source and capture contain identical application pixels."""
-    return _observation_metadata_matches(first, second) and (
-        first.screen_fingerprint.masked_pixels_sha256
-        == second.screen_fingerprint.masked_pixels_sha256
+def _fingerprints_are_identical(first: ScreenFingerprint, second: ScreenFingerprint) -> bool:
+    return (
+        first.algorithm == second.algorithm
+        and first.system_region_mask_sha256 == second.system_region_mask_sha256
+        and first.masked_pixels_sha256 == second.masked_pixels_sha256
     )
 
 
-def _observation_metadata_matches(first: Observation, second: Observation) -> bool:
+def _probe_metadata_matches(first: ObservationProbe, second: ObservationProbe) -> bool:
     return (
         first.device == second.device
         and first.application == second.application
@@ -185,12 +232,106 @@ def _observation_metadata_matches(first: Observation, second: Observation) -> bo
         and first.platform_context == second.platform_context
         and first.keyboard_visible == second.keyboard_visible
         and first.orientation is second.orientation
-        and first.screen_fingerprint.algorithm == second.screen_fingerprint.algorithm
-        and first.screen_fingerprint.system_region_mask_sha256
-        == second.screen_fingerprint.system_region_mask_sha256
+        and first.screenshot_to_driver_scale == second.screenshot_to_driver_scale
+        and first.width_px == second.width_px
+        and first.height_px == second.height_px
+    )
+
+
+def _probes_are_compatible(first: ObservationProbe, second: ObservationProbe) -> bool:
+    return _probe_metadata_matches(first, second) and _fingerprints_are_compatible(
+        first.fingerprint, second.fingerprint
+    )
+
+
+def _probes_are_identical(first: ObservationProbe, second: ObservationProbe) -> bool:
+    return _probe_metadata_matches(first, second) and _fingerprints_are_identical(
+        first.fingerprint, second.fingerprint
+    )
+
+
+def _probe_matches_observation(
+    probe: VisualSettlementProbe,
+    observation: Observation,
+) -> bool:
+    return _settlement_probes_are_compatible(
+        probe,
+        VisualSettlementProbe.from_observation(observation),
+    )
+
+
+def _settlement_probe_metadata_matches(
+    first: VisualSettlementProbe,
+    second: VisualSettlementProbe,
+) -> bool:
+    return (
+        first.device == second.device
+        and first.application == second.application
+        and first.screenshot_to_driver_scale == second.screenshot_to_driver_scale
+        and first.width_px == second.width_px
+        and first.height_px == second.height_px
+    )
+
+
+def _settlement_probes_are_compatible(
+    first: VisualSettlementProbe,
+    second: VisualSettlementProbe,
+) -> bool:
+    return _settlement_probe_metadata_matches(first, second) and _fingerprints_are_compatible(
+        first.fingerprint, second.fingerprint
+    )
+
+
+def _settlement_probes_are_identical(
+    first: VisualSettlementProbe,
+    second: VisualSettlementProbe,
+) -> bool:
+    return _settlement_probe_metadata_matches(first, second) and _fingerprints_are_identical(
+        first.fingerprint, second.fingerprint
+    )
+
+
+def observations_are_identical(first: Observation, second: Observation) -> bool:
+    """Return whether an action source and capture contain identical application pixels."""
+    return _probes_are_identical(
+        ObservationProbe.from_observation(first),
+        ObservationProbe.from_observation(second),
     )
 
 
 def _require_continuation(interruption: InterruptionSignal, observation_ids: list[str]) -> None:
     if interruption.is_set():
         raise SettlementInterrupted(tuple(observation_ids))
+
+
+def _sleep_for_settlement(
+    sleep: Callable[[float], None],
+    delay_seconds: float,
+    attempt_index: int,
+) -> None:
+    started = perf_counter()
+    sleep(delay_seconds)
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.trace(
+            "device-agent",
+            f"settlement_sleep_attempt={attempt_index + 1} "
+            f"requested_ms={delay_seconds * 1_000:.1f} "
+            f"duration_ms={(perf_counter() - started) * 1_000:.1f}",
+        )
+
+
+def _capture_probe(
+    observations: SettlementObservationService,
+    attempt_index: int,
+) -> VisualSettlementProbe:
+    started = perf_counter()
+    probe = observations.capture_settlement_probe()
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.trace(
+            "device-agent",
+            f"settlement_probe_attempt={attempt_index + 1} "
+            f"duration_ms={(perf_counter() - started) * 1_000:.1f}",
+        )
+    return probe

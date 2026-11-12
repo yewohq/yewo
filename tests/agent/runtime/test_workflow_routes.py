@@ -16,7 +16,7 @@ from yewo.agent.runtime.interaction_intent import interaction_intent_key
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
 from yewo.agent.runtime.progress import RunProgressLedger
 from yewo.agent.runtime.verification import PreDispatchVerification
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import proposal
 from agent.runtime.test_agent import _observation
@@ -299,6 +299,5 @@ def _outcome(
         disposition=disposition,
         signals=signals,
         reason="The runtime recorded the bounded outcome.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )

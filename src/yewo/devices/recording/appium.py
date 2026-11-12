@@ -45,7 +45,7 @@ class AppiumScreenRecorder:
         self,
         maximum_duration_seconds: int,
         maximum_stop_seconds: float = 10.0,
-        maximum_pull_seconds: float = 120.0,
+        maximum_pull_seconds: float = 30.0,
     ) -> ScreenRecordingStart:
         if self._active:
             raise ScreenRecordingError("A screen-recording segment is already active.")

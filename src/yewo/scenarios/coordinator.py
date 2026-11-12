@@ -32,6 +32,7 @@ from yewo.devices.application_preconditions import (
 from yewo.project_config.capabilities import CapabilitySpec, DeviceCapabilitySpec
 from yewo.reporting import ScenarioExecutionClassification, ScenarioExecutionRecord
 from yewo.runs.errors import RunWorkflowInterrupted
+from yewo.scenarios.execution import can_execute_scenario_change
 from yewo.scenarios.records import ScenarioDefinition, ScenarioSuite
 from yewo.scenarios.paths import scenario_execution_path
 from yewo.scenarios.taxonomy import ScenarioExecutionChange
@@ -306,10 +307,7 @@ def _build_scenario_task(
 def _execution_readiness_classification(
     scenario: ScenarioDefinition,
 ) -> tuple[ScenarioExecutionClassification | None, str | None]:
-    if scenario.execution_change not in {
-        ScenarioExecutionChange.ACCEPTED_ROUTE,
-        ScenarioExecutionChange.LIFECYCLE_INTERRUPTION,
-    }:
+    if not can_execute_scenario_change(scenario.execution_change):
         return (
             ScenarioExecutionClassification.INSUFFICIENT_DISCOVERY,
             "Discovery did not identify a concrete replay step for this execution variation.",

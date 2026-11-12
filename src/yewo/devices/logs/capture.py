@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from yewo.artifacts.records import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts.records import ArtifactRetention
 from yewo.devices.logs.records import DeviceLogBoundary, DeviceLogDrainReceipt
 
 
@@ -13,7 +13,6 @@ DEFAULT_MAXIMUM_DRAIN_BYTES = 8 * 1024 * 1024
 class DeviceLogCapturePolicy:
     """Retention and size bounds for device-log artifacts."""
 
-    sensitivity: ArtifactSensitivity = ArtifactSensitivity.DEVICE_CONTENT
     retention: ArtifactRetention = ArtifactRetention.RUN
     maximum_drain_bytes: int = DEFAULT_MAXIMUM_DRAIN_BYTES
 

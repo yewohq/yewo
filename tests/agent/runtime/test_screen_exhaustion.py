@@ -9,7 +9,7 @@ from yewo.agent.actuation import (
 )
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import proposal
 from agent.runtime.test_agent import _observation
@@ -26,28 +26,8 @@ def _no_change_outcome(screen, label: str) -> ActionOutcome:
         disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
         signals=frozenset(),
         reason="No application pixels or trusted state changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
-
-
-def _exhaust_screen(tracker: ActionNoProgressTracker, screen, label: str) -> None:
-    for index in range(3):
-        candidate = proposal(
-            ActionKind.TAP,
-            proposal_id=f"{label}-{index}",
-            target_expression=f"{label} control {index}",
-            source_observation_id=screen.observation_id,
-        )
-        tracker.record_refusal(
-            candidate,
-            screen,
-            ActionRefusal(
-                proposal_id=candidate.proposal_id,
-                code=ActionRefusalCode.INVALID_GROUNDING,
-                reason="The grounder did not accept this target.",
-            ),
-        )
 
 
 def test_screen_no_progress_limit_blocks_more_interactions_but_allows_exit() -> None:
@@ -81,7 +61,6 @@ def test_screen_no_progress_limit_blocks_more_interactions_but_allows_exit() -> 
         disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
         signals=frozenset(),
         reason="No application pixels or trusted state changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     tracker = ActionNoProgressTracker(ScreenComparisonPolicy())

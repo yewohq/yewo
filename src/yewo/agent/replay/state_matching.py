@@ -153,7 +153,7 @@ def repair_state_matches_observation(
     if screenshot_loader is None:
         return False
     try:
-        png = screenshot_loader(observation.redacted_screenshot)
+        png = screenshot_loader(observation.screenshot)
     except ObservationCaptureError:
         return False
     return state_visual_match_is_exact(png, state.visual_signature)
@@ -169,7 +169,7 @@ def _visual_match_ratio(
     if screenshot_loader is None:
         return None
     try:
-        png = screenshot_loader(observation.redacted_screenshot)
+        png = screenshot_loader(observation.screenshot)
     except ObservationCaptureError:
         return None
     return state_visual_match_ratio(png, state.visual_signature)

@@ -3,15 +3,13 @@
 from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.metadata import version
-from io import BytesIO
 import json
 from pathlib import Path
 
-from PIL import Image
 from pydantic import BaseModel
 import pytest
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import (
     ImageModelContent,
     LiteLLMModelClient,
@@ -29,8 +27,9 @@ from yewo.models import (
     TextModelContent,
     build_model_response_contract,
 )
-from yewo.observations import RedactionProvenance, ScreenshotStore
+from yewo.observations import ScreenshotStore
 from models.support import build_model_profile
+from support import png
 
 
 def _artifact_payload(root: Path, reference) -> dict[str, object]:
@@ -58,24 +57,10 @@ class CountingImageReader(ModelImageReader):
         return super().read(reference)
 
 
-def _png() -> bytes:
-    image = Image.new("RGB", (3, 2), color=(10, 20, 30))
-    stream = BytesIO()
-    image.save(stream, format="PNG")
-    return stream.getvalue()
-
-
 def _screenshot(tmp_path: Path):
-    return ScreenshotStore(tmp_path, identifier_factory=lambda: "shot-1").persist_redacted(
-        _png(),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
+    return ScreenshotStore(tmp_path, identifier_factory=lambda: "shot-1").persist(
+        png(),
         retention=ArtifactRetention.RUN,
-        redaction=RedactionProvenance(
-            policy_id="region-mask",
-            region_count=0,
-            region_set_sha256="c" * 64,
-            input_sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
-        ),
     )
 
 
@@ -96,7 +81,6 @@ def _request(tmp_path: Path, *, structured: bool = False, image: bool = False) -
             if structured
             else None
         ),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -127,7 +111,6 @@ def _client(
     *,
     structured_output_mode: StructuredOutputMode = StructuredOutputMode.PROMPT_SCHEMA,
     waits: list[float] | None = None,
-    scrub_text: Callable[[str], str] = lambda text: text,
     credential_check: Callable[..., tuple[str, ...]] = lambda _: (),
     image_reader: ModelImageReader | None = None,
 ) -> LiteLLMModelClient:
@@ -141,14 +124,11 @@ def _client(
         ModelArtifactStore(
             tmp_path,
             ModelArtifactPolicy(
-                sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
                 retention=ArtifactRetention.RUN,
             ),
-            scrub_text,
             identifier_factory=lambda: next(identifiers),
         ),
         image_reader or ModelImageReader(tmp_path),
-        scrub_text,
         completion=completion,
         calculate_cost=lambda _: None,
         credential_check=credential_check,
@@ -217,33 +197,6 @@ def test_empty_provider_choices_finish_as_malformed_instead_of_escaping_client(
     assert response.disposition is ModelCallDisposition.MALFORMED
     assert response.structured_output is None
     assert calls == 4
-
-
-def test_client_scrubs_declared_values_before_provider_call(tmp_path: Path) -> None:
-    calls: list[dict[str, object]] = []
-
-    def complete(**arguments: object) -> object:
-        calls.append(arguments)
-        return _response()
-
-    request = _request(tmp_path).model_copy(
-        update={
-            "messages": (
-                ModelMessage(
-                    role=ModelMessageRole.USER,
-                    content=(TextModelContent(text="Submit hunter2 value."),),
-                ),
-            )
-        }
-    )
-    _client(
-        tmp_path,
-        complete,
-        scrub_text=lambda text: text.replace("hunter2", "{{password}}"),
-    ).complete(request)
-
-    assert "hunter2" not in str(calls[0]["messages"])
-    assert "{{password}}" in str(calls[0]["messages"])
 
 
 def test_prompt_schema_mode_validates_locally_without_provider_grammar(tmp_path: Path) -> None:
@@ -509,23 +462,23 @@ def test_validation_retry_reuses_one_verified_image_payload(tmp_path: Path) -> N
     assert reader.read_count == 1
 
 
-def test_call_artifact_scrubs_nested_cost_details(tmp_path: Path) -> None:
+def test_the_call_ledger_records_provider_usage_verbatim(tmp_path: Path) -> None:
     provider_response = _response()
-    provider_response["usage"] = {
-        "cost_details": {"provider_note": "hunter2"},
-    }
+    provider_response["usage"] = {"cost_details": {"provider_note": "upstream billed 123"}}
 
     response = _client(
         tmp_path,
         lambda **unused: provider_response,
-        scrub_text=lambda text: text.replace("hunter2", "{{secret}}"),
     ).complete(_request(tmp_path))
 
     reference = response.calls[0].call_artifact
     assert reference is not None
     artifact = (tmp_path / reference.path).read_text()
-    assert "hunter2" not in artifact
-    assert "{{secret}}" in artifact
+
+    # A declared value is matched as an exact substring, so scrubbing the ledger would rewrite
+    # unrelated provider accounting. The ledger is evidence and stays as the provider wrote it.
+    assert "upstream billed 123" in artifact
+    assert "{{cvv}}" not in artifact
 
 
 def test_missing_credentials_fail_during_client_construction(tmp_path: Path) -> None:

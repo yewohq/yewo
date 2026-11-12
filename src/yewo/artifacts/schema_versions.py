@@ -12,11 +12,11 @@ from typing import Literal
 # Records that one run writes and the same run reads carry no version. The
 # writer and the reader are the same installed build, so they cannot disagree.
 
-AppMemorySchemaVersion = Literal[1]
-APP_MEMORY_SCHEMA_VERSION: AppMemorySchemaVersion = 1
+AppMemorySchemaVersion = Literal[4]
+APP_MEMORY_SCHEMA_VERSION: AppMemorySchemaVersion = 4
 
-CompiledProcedureSchemaVersion = Literal[1]
-COMPILED_PROCEDURE_SCHEMA_VERSION: CompiledProcedureSchemaVersion = 1
+CompiledProcedureSchemaVersion = Literal[2]
+COMPILED_PROCEDURE_SCHEMA_VERSION: CompiledProcedureSchemaVersion = 2
 
 CanonicalRunRecordSchemaVersion = Literal[1]
 CANONICAL_RUN_RECORD_SCHEMA_VERSION: CanonicalRunRecordSchemaVersion = 1

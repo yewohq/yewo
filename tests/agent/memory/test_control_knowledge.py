@@ -27,7 +27,7 @@ def _analysis(
     return CurrentScreenAnalysis(
         analysis_id=analysis_id,
         observation_id=observed.observation_id,
-        screenshot_sha256=observed.redacted_screenshot.sha256,
+        screenshot_sha256=observed.screenshot.sha256,
         presentation=observed.presentation_key,
         screen_summary="Visible application controls.",
         elements=elements,
@@ -56,7 +56,6 @@ def _element(
         state=state,
         options=options,
         confidence=ScreenElementConfidence.HIGH,
-        evidence="The element is visibly established.",
     )
 
 

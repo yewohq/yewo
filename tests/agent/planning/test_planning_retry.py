@@ -59,7 +59,6 @@ class SequencedPlannerModel:
                     usage=ModelCallUsage(),
                 ),
             ),
-            sensitivity=request.sensitivity,
             retention=request.retention,
         )
 

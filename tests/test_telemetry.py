@@ -29,12 +29,7 @@ def recorded_payloads(monkeypatch: pytest.MonkeyPatch) -> list[Mapping[str, obje
 
 
 def _enable_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Opt this test out of the guard that keeps the suite off the network.
-
-    Pytest restores PYTEST_CURRENT_TEST for the call phase, so a fixture
-    cannot remove it.
-    """
-    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    """Enable telemetry while the suite replaces the transport with a recorder."""
     monkeypatch.setenv("YEWO_TELEMETRY", "1")
 
 
@@ -161,9 +156,12 @@ def test_a_source_checkout_suppresses_every_event(
     assert recorded_payloads == []
 
 
-def test_the_test_suite_never_reaches_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("YEWO_TELEMETRY", "1")
+def test_the_suite_runs_with_telemetry_off() -> None:
+    """The boundary the suite relies on, asserted rather than assumed.
 
+    Production no longer recognises a test runner, so nothing but this fixture keeps the suite
+    off the network. A fixture that stopped applying would otherwise go unnoticed.
+    """
     assert telemetry._is_telemetry_enabled() is False
 
 

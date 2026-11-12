@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from collections.abc import Callable
 import time
 
@@ -14,9 +15,10 @@ from yewo.agent.actuation import (
     ActionPolicy,
     ActionRefusal,
     ActionSource,
-    DispatchDisposition,
+    is_correctable_rejection,
+    OutcomeVerifier,
 )
-from yewo.agent.actuation.verifier import ActionVerifier
+from yewo.agent.actuation.proposal_verifier import ProposalVerifier
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.planning.planner import ActionProposalSource, PlanningHistoryEntry, plan_or_stop
@@ -26,7 +28,11 @@ from yewo.agent.recovery.runtime import RecoveryRunState
 from yewo.agent.runtime import agent_startup, dispatch_timing, grounding, result as rr
 from yewo.agent.runtime.application_state import ApplicationRecovery
 from yewo.agent.runtime.pre_dispatch import pre_dispatch_terminal, prepare_action_for_grounding
-from yewo.agent.runtime.refusals import record_action_refusal, record_dispatch_rejection
+from yewo.agent.runtime.grounding_phase import resolve_proposal_grounding_phase
+from yewo.agent.runtime.refusals import (
+    record_action_refusal,
+    record_dispatch_rejection,
+)
 from yewo.agent.runtime.records import (
     AgentModePolicy,
     AgentResult,
@@ -34,16 +40,18 @@ from yewo.agent.runtime.records import (
     AgentStepStore,
     AgentTask,
     AgentTerminalReason,
-    grounding_budget_reason,
     invocation_budget_reason,
 )
-from yewo.agent.runtime.progress import RunProgressLedger, resolve_progress_terminal
+from yewo.agent.runtime.progress import (
+    RunProgressLedger,
+    trace_ineffective_grounding_correction,
+)
 from yewo.agent.runtime.planning import build_current_planning_view
 from yewo.agent.runtime.verification import recovery_stop_reason
 from yewo.agent.screen_analysis import CurrentScreenAnalysisManager
 from yewo.agent.screen_analysis import runtime as screen_runtime
 from yewo.artifacts import new_record_identifier
-from yewo.grounding import GroundingEvidence, VisualGrounder
+from yewo.grounding import VisualGrounder
 from yewo.observations import ObservationService
 from yewo.runs import InterruptionSignal
 
@@ -70,7 +78,8 @@ class DeviceAgent:
         reused_flow_id: str | None = None,
         progress_context: TaskProgressContext | None = None,
         recovery_advisor: RecoveryAdvisor | None = None,
-        action_verifier: ActionVerifier | None = None,
+        proposal_verifier: ProposalVerifier | None = None,
+        predicted_outcome_verifier: OutcomeVerifier | None = None,
         screen_analysis: CurrentScreenAnalysisManager | None = None,
         initial_planning_requests: int = 0,
     ) -> None:
@@ -89,7 +98,8 @@ class DeviceAgent:
         self._reused_flow_id = reused_flow_id
         self._progress_context = progress_context
         self._recovery = RecoveryRunState(recovery_advisor, self._screen_comparison)
-        self._action_verifier = action_verifier
+        self._proposal_verifier = proposal_verifier
+        self._predicted_outcome_verifier = predicted_outcome_verifier
         self._screen_analysis = screen_analysis
         self._initial_planning_requests = initial_planning_requests
         self._progress_ledger = RunProgressLedger(
@@ -225,7 +235,10 @@ class DeviceAgent:
                 credit.dispatched_actions,
                 mode_policy.action_limits.maximum_actions,
             )
-            if terminal is not None:
+            if terminal is not None and (
+                terminal.terminal_reason is AgentTerminalReason.BUDGET_EXHAUSTED
+                or not task.discovery_mode
+            ):
                 step = self._step_store.record(
                     step_index,
                     current_observation,
@@ -242,7 +255,7 @@ class DeviceAgent:
                 self._progress_ledger,
                 action_policy,
                 action_budget,
-                self._action_verifier,
+                self._proposal_verifier,
                 task.discovery_mode,
                 decision.source,
                 self._planner,
@@ -258,7 +271,6 @@ class DeviceAgent:
             )
             proposal = prepared.proposal
             refusal = prepared.refusal
-            system_declared_correction = prepared.system_declared_correction
             if prepared.budget_reason is not None:
                 step = self._step_store.record(
                     step_index,
@@ -291,6 +303,22 @@ class DeviceAgent:
                 if reason:
                     return conclude(AgentTerminalReason.CANNOT_PROGRESS, reason)
                 continue
+            terminal = pre_dispatch_terminal(
+                proposal,
+                dispatched_actions,
+                credit.dispatched_actions,
+                mode_policy.action_limits.maximum_actions,
+            )
+            if terminal is not None:
+                step = self._step_store.record(
+                    step_index,
+                    current_observation,
+                    proposal,
+                    decision,
+                    terminal.terminal_reason,
+                )
+                steps.append(step)
+                return conclude(terminal.terminal_reason, terminal.reason)
             target_request, destination_request = grounding.build_proposal_grounding_requests(
                 self._identifier_factory,
                 proposal,
@@ -298,58 +326,31 @@ class DeviceAgent:
                 history,
                 current_screen_analysis,
             )
-            target_grounding: GroundingEvidence | None = None
-            destination_grounding: GroundingEvidence | None = None
-            try:
-                grounding_reservation = sum(
-                    self._grounder.required_model_requests(request)
-                    for request in (target_request, destination_request)
-                    if request is not None
-                )
-                grounding_was_recovery = self._recovery.is_active
-                credit = self._recovery.credit(len(steps), budget_time)
-                grounding_budget = grounding_budget_reason(
-                    mode_policy,
-                    planning_requests - credit.planning_requests - credit.analysis_requests,
-                    grounding_requests - credit.grounding_requests,
-                    0 if grounding_was_recovery else grounding_reservation,
-                )
-                if grounding_budget is not None:
-                    step = self._step_store.record(
-                        step_index,
-                        current_observation,
-                        proposal,
-                        decision,
-                        AgentTerminalReason.BUDGET_EXHAUSTED,
-                    )
-                    steps.append(step)
-                    return conclude(
-                        AgentTerminalReason.BUDGET_EXHAUSTED,
-                        grounding_budget,
-                    )
-                target_grounding, destination_grounding = grounding.resolve_proposal_grounding(
-                    self._grounder,
-                    target_request,
-                    destination_request,
-                )
-            except BaseException as error:
-                runtime_narration.narrate(
-                    f"Step {step_index} grounding failed: {type(error).__name__}."
-                )
-                self._step_store.record_partial_or_raise(
-                    step_index,
-                    current_observation,
-                    proposal,
-                    decision,
-                    target_grounding,
-                    destination_grounding,
-                    None,
-                    None,
-                    AgentTerminalReason.RUNTIME_FAILURE,
-                    steps,
-                    error,
-                )
-                raise
+            grounded = resolve_proposal_grounding_phase(
+                self._grounder,
+                self._step_store,
+                self._progress_ledger,
+                self._recovery,
+                mode_policy,
+                target_request,
+                destination_request,
+                steps,
+                history,
+                budget_time,
+                step_index,
+                current_observation,
+                proposal,
+                decision,
+                planning_requests=planning_requests,
+                grounding_requests=grounding_requests,
+                dispatched_actions=dispatched_actions,
+            )
+            if grounded.terminal is not None:
+                return conclude(*grounded.terminal)
+            if grounded.replan:
+                continue
+            target_grounding = grounded.target
+            destination_grounding = grounded.destination
             grounding_count = grounding.consumed_model_requests(
                 target_grounding, destination_grounding
             )
@@ -391,10 +392,15 @@ class DeviceAgent:
                     return conclude(AgentTerminalReason.CANNOT_PROGRESS, reason)
                 continue
             runtime_narration.trace_authorization(step_index, authorization)
+            runtime_narration.require_narration_sync()
             try:
                 runtime_narration.narrate(f"Step {step_index} dispatching {proposal.action.value}.")
                 timed_dispatch = dispatch_timing.dispatch_authorized_action(
-                    self._executor, authorization, step_index, self._monotonic
+                    self._executor,
+                    authorization,
+                    step_index,
+                    self._monotonic,
+                    self._observations,
                 )
                 before_focus, receipt = timed_dispatch.before_focus, timed_dispatch.receipt
             except BaseException as error:
@@ -415,31 +421,7 @@ class DeviceAgent:
                     error,
                 )
                 raise
-            if receipt.disposition is DispatchDisposition.DEVICE_REFUSED:
-                step = self._step_store.record(
-                    step_index,
-                    current_observation,
-                    proposal,
-                    decision,
-                    AgentTerminalReason.DEVICE_REFUSED,
-                    target_grounding=target_grounding,
-                    destination_grounding=destination_grounding,
-                    authorization=authorization,
-                    receipt=receipt,
-                )
-                steps.append(step)
-                runtime_narration.narrate(
-                    f"Step {step_index} device refusal: "
-                    f"{receipt.reason or 'The device refused the action.'}"
-                )
-                return conclude(
-                    AgentTerminalReason.DEVICE_REFUSED,
-                    receipt.reason or "The device refused the authorized action.",
-                )
-            if receipt.disposition in {
-                DispatchDisposition.INPUT_REJECTED,
-                DispatchDisposition.TARGET_REJECTED,
-            }:
+            if is_correctable_rejection(receipt.disposition):
                 screen_analysis.observe_dispatch_rejection(receipt.disposition, current_observation)
                 repeated_rejection = record_dispatch_rejection(
                     self._step_store,
@@ -461,6 +443,14 @@ class DeviceAgent:
             dispatched_actions += 1
             self._recovery.credit_dispatched_action()
             dispatch_timing.trace_settlement_start(step_index, timed_dispatch, self._monotonic())
+            credit = self._recovery.credit(len(steps), budget_time)
+            spent_model_requests = (
+                planning_requests
+                + grounding_requests
+                - credit.planning_requests
+                - credit.analysis_requests
+                - credit.grounding_requests
+            )
             settled_action = runtime_settlement.settle_dispatched_action(
                 self._observations,
                 self._executor,
@@ -481,6 +471,9 @@ class DeviceAgent:
                 self._sleep,
                 steps,
                 before_focus,
+                spent_model_requests,
+                timed_dispatch.baseline,
+                self._predicted_outcome_verifier,
             )
             after = settled_action.observation
             outcome = settled_action.outcome
@@ -504,8 +497,13 @@ class DeviceAgent:
                 reason = runtime_settlement.unsettled_application_failure_reason(settled_action)
                 return conclude(AgentTerminalReason.APPLICATION_EXITED, reason)
             runtime_narration.narrate_dispatched_step(
-                step_index, after, outcome, settled_action.recovery_observation_id, application_failure
+                step_index,
+                after,
+                outcome,
+                settled_action.recovery_observation_id,
+                application_failure,
             )
+            runtime_narration.sync_narration()
             source_observation = current_observation
             screen_analysis.observe_outcome(proposal, current_observation, after, outcome)
             new_progress_facts, progress_terminal = self._progress_ledger.record_step(
@@ -522,7 +520,9 @@ class DeviceAgent:
             if terminal_conclusion is not None:
                 return conclude(*terminal_conclusion)
             history.append(
-                settled_action.planning_history_entry(proposal, target_grounding, source_observation)
+                settled_action.planning_history_entry(
+                    proposal, target_grounding, source_observation
+                )
             )
             stop_reason, assessment_requests = recovery_stop_reason(
                 self._recovery,
@@ -533,12 +533,10 @@ class DeviceAgent:
                 len(steps),
                 self._monotonic,
             )
-            planning_requests += assessment_requests
+            planning_requests += assessment_requests + settled_action.outcome_verification_requests
             if stop_reason is not None:
                 return conclude(AgentTerminalReason.APPLICATION_EXITED, stop_reason)
-            progress_terminal = resolve_progress_terminal(
-                proposal, outcome, system_declared_correction, progress_terminal
-            )
+            trace_ineffective_grounding_correction(proposal, outcome)
             if progress_terminal is not None:
                 return conclude(AgentTerminalReason.CANNOT_PROGRESS, progress_terminal)
         return conclude(

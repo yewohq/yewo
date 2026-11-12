@@ -18,7 +18,7 @@ from yewo.agent.runtime.no_progress import (
     ActionNoProgressTracker,
 )
 from yewo.agent.runtime.interaction_intent import interaction_intent_key
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import limits, proposal
 from agent.runtime.test_agent import (
@@ -63,43 +63,6 @@ def test_runtime_refuses_an_exact_repeat_after_no_observable_progress(
     assert result.steps[1].refusal.code.value == "repeated_no_progress"
     assert result.usage.dispatched_actions == 1
     assert result.usage.grounding_requests == 0
-
-
-def test_runtime_exposes_failed_target_point_and_stops_after_one_correction(
-    tmp_path: Path,
-) -> None:
-    planner = SequencePlanner(
-        [
-            proposal(ActionKind.TAP, target_expression="the Edit Record item"),
-            proposal(
-                ActionKind.TAP,
-                proposal_id="proposal-2",
-                grounding_correction_for_proposal_id="proposal-1",
-                target_expression=(
-                    "the Edit Record row near the top of the drawer, not the blank lower area"
-                ),
-            ),
-        ]
-    )
-    observations = ObservationSequence(
-        [
-            _observation(f"obs_{index}", "0000000000000000", offset_seconds=index)
-            for index in range(1, 6)
-        ]
-    )
-
-    result = _runtime(tmp_path, planner, observations, RuntimeDevice()).run(
-        _task(),
-        _mode_policy(),
-        NeverInterrupted(),
-    )
-
-    assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS
-    assert result.reason == "The grounding correction produced no observable change."
-    assert result.usage.dispatched_actions == 2
-    failed_point = planner.requests[1].history[0].grounded_target_point
-    assert failed_point is not None
-    assert (failed_point.point.x, failed_point.point.y) == (100, 200)
 
 
 def test_runtime_allows_one_declared_interaction_refinement_then_exhausts_family(
@@ -163,7 +126,6 @@ def test_no_progress_suppression_uses_equivalent_screen_policy() -> None:
         disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
         signals=frozenset(),
         reason="No application pixels or trusted state changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     tracker = ActionNoProgressTracker(ScreenComparisonPolicy(maximum_phash_distance=1))
@@ -330,7 +292,6 @@ def test_repeated_observed_transition_warns_then_stops_despite_target_rewording(
             disposition=ActionOutcomeDisposition.OBSERVED,
             signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
             reason="The settled observation contains action-outcome signals.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
         terminal_reasons.append(tracker.record_outcome(candidate, source, destination, outcome))
@@ -402,7 +363,6 @@ def test_distinct_exact_states_do_not_look_like_one_repeated_transition() -> Non
                 {ActionOutcomeSignal.PIXELS_CHANGED, ActionOutcomeSignal.TEXT_LANDED}
             ),
             reason="Text landed.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
         terminal_reasons.append(tracker.record_outcome(candidate, source, destination, outcome))
@@ -433,7 +393,6 @@ def test_exact_repeated_transition_is_refused_before_a_third_dispatch() -> None:
         disposition=ActionOutcomeDisposition.OBSERVED,
         signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
         reason="The menu opened.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     tracker.start(before)
@@ -462,7 +421,6 @@ def test_application_exit_refuses_the_same_action_after_recovery() -> None:
         disposition=ActionOutcomeDisposition.OBSERVED,
         signals=frozenset({ActionOutcomeSignal.APP_EXITED}),
         reason="The application crashed after Save.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     tracker.start(before)

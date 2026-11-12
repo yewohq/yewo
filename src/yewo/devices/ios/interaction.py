@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yewo.devices.scroll import SCROLL_DECLINED, ScrollDirection, ScrollDispatch
 from yewo.devices.application_lifecycle import ApplicationLifecycleDriver
 from yewo.devices.focus import TextElement
 from yewo.devices.interaction import InteractionDriver, TextInputConstraint
@@ -36,6 +37,21 @@ class IosInteractionBackend:
             "mobile: touchAndHold",
             {"x": x, "y": y, "duration": duration_seconds},
         )
+
+    def scroll(
+        self,
+        driver: object,
+        *,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+        direction: ScrollDirection,
+        distance_fraction: float,
+    ) -> ScrollDispatch:
+        """Decline the gesture: XCUITest reports no scrollable-content answer."""
+        del driver, left, top, right, bottom, direction, distance_fraction
+        return SCROLL_DECLINED
 
     def drag(
         self,

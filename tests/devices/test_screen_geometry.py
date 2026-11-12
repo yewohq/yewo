@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from selenium.common.exceptions import InvalidSessionIdException, WebDriverException
 
 from devices._interaction_stubs import DriverStub, png
 from yewo.devices.errors import DeviceInteractionError
@@ -28,9 +29,7 @@ def test_screen_geometry_traces_bounded_driver_failure_detail(tmp_path: Path) ->
 
         def get_screenshot_as_png(self) -> bytes:
             self.screenshot_calls += 1
-            error = RuntimeError("session unavailable\nconnection closed")
-            error.msg = "invalid session id"  # type: ignore[attr-defined]
-            raise error
+            raise InvalidSessionIdException("invalid session id")
 
     driver = FailingScreenshotDriver()
     screen = ScreenGeometry(driver, sleep=lambda unused: None)
@@ -44,7 +43,7 @@ def test_screen_geometry_traces_bounded_driver_failure_detail(tmp_path: Path) ->
     trace = (tmp_path / "runtime/trace.log").read_text()
     assert (
         "appium-command: operation=screenshot state=failed "
-        "attempt=1/3 error=RuntimeError detail=invalid session id"
+        "attempt=1/3 error=InvalidSessionIdException detail=invalid session id"
     ) in trace
 
     assert driver.screenshot_calls == 1
@@ -69,6 +68,29 @@ def test_screen_geometry_retries_a_transient_screenshot_failure() -> None:
     result = screen.capture()
 
     assert result == png(200, 400)
+    assert driver.screenshot_calls == 2
+    assert delays == [0.25]
+
+
+def test_screen_geometry_retries_an_appium_proxy_socket_hangup() -> None:
+    class ProxyFailureDriver(DriverStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.screenshot_calls = 0
+
+        def get_screenshot_as_png(self) -> bytes:
+            self.screenshot_calls += 1
+            if self.screenshot_calls == 1:
+                raise WebDriverException(
+                    "Could not proxy command to the remote server. Original error: socket hang up"
+                )
+            return super().get_screenshot_as_png()
+
+    driver = ProxyFailureDriver()
+    delays: list[float] = []
+    screen = ScreenGeometry(driver, sleep=delays.append)
+
+    assert screen.capture() == png(200, 400)
     assert driver.screenshot_calls == 2
     assert delays == [0.25]
 

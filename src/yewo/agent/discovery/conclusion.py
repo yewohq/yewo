@@ -8,7 +8,11 @@ from pydantic import ValidationError
 
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.memory.store import AppMemoryStore, AppMemoryStoreError
-from yewo.agent.runtime.records import AgentResult, AgentTerminalReason, agent_terminal_category
+from yewo.agent.runtime.records import (
+    AgentResult,
+    agent_terminal_category,
+    requires_goal_verification,
+)
 from yewo.agent.replay.procedure.records import ProcedureReplayResult
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.artifacts import ARTIFACTS_DIRECTORY, AtomicArtifactWriter, ArtifactWriteError
@@ -20,7 +24,10 @@ from yewo.agent.discovery.records import (
     DiscoveryRequest,
     DiscoveryResult,
 )
-from yewo.agent.planning.goal_verifier import GoalVerification
+from yewo.agent.planning.goal_verifier import (
+    GoalVerification,
+    format_goal_evidence_conflicts,
+)
 
 
 class DiscoveryEvidenceError(RuntimeError):
@@ -117,7 +124,6 @@ def persist_discovery_memory_failure(
 def save_discovery_memory(
     memory_store: AppMemoryStore,
     memory: AppMemory,
-    source_run_root: Path,
     workspace: RunWorkspace,
     request: DiscoveryRequest,
     agent_result: AgentResult,
@@ -128,7 +134,7 @@ def save_discovery_memory(
 ) -> AppMemory:
     """Save memory or persist a partial conclusion before propagating failure."""
     try:
-        return memory_store.save(memory, source_run_root)
+        return memory_store.save(memory)
     except AppMemoryStoreError:
         persist_discovery_memory_failure(
             workspace,
@@ -172,7 +178,7 @@ def classify_discovery_result(
         return RunTerminalCategory.COMPLETED
     if (
         not require_reusable_evidence
-        and result.terminal_reason is AgentTerminalReason.DONE_REQUESTED
+        and requires_goal_verification(result.terminal_reason)
         and result.verification is not None
         and result.verification.satisfied
     ):
@@ -208,7 +214,9 @@ def _task_verification_summary(result: DiscoveryResult) -> str:
         if condition_count == 0:
             return "Task completed: the objective was independently verified."
         return f"Task completed: {condition_count} of {condition_count} conditions verified."
-    return f"Task verification failed: {result.verification.reason}"
+    conflict_summary = format_goal_evidence_conflicts(result.verification.evidence_conflicts)
+    suffix = f" {conflict_summary}" if conflict_summary is not None else ""
+    return f"Task verification failed: {result.verification.reason}{suffix}"
 
 
 def _compiled_procedure_summary(result: DiscoveryResult) -> str:

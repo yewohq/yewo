@@ -1,20 +1,11 @@
-"""Bound redacted device-log text without losing every oversized entry."""
+"""Bound device-log text without losing every oversized entry."""
 
 from yewo.devices.logs.errors import DeviceLogCaptureError
 from yewo.devices.logs.records import DeviceLogOmission
-from yewo.devices.logs.redaction import DeviceLogRedactionResult
-
-
-def redaction_policy_id(results: tuple[DeviceLogRedactionResult, ...]) -> str:
-    """Return the one policy shared by all entries in an artifact."""
-    policy_ids = {result.policy_id for result in results}
-    if len(policy_ids) != 1:
-        raise DeviceLogCaptureError("One device-log artifact cannot mix redaction policies.")
-    return next(iter(policy_ids))
 
 
 def bound_text_entries(
-    entries: tuple[DeviceLogRedactionResult, ...],
+    entries: tuple[str, ...],
     maximum_bytes: int,
 ) -> tuple[bytes, int, DeviceLogOmission]:
     """Retain the newest entries and preserve a prefix of one oversized entry."""
@@ -22,7 +13,7 @@ def bound_text_entries(
     retained_bytes = 0
     omission = DeviceLogOmission.NONE
     for entry_index, entry in reversed(tuple(enumerate(entries))):
-        encoded_text = entry.text.encode("utf-8", errors="backslashreplace")
+        encoded_text = entry.encode("utf-8", errors="backslashreplace")
         line = encoded_text + b"\n"
         if retained_bytes + len(line) <= maximum_bytes:
             retained_lines.append(line)

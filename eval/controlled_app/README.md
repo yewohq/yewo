@@ -20,8 +20,11 @@ flutter pub get --enforce-lockfile
 flutter build ios --simulator
 ```
 
-Run the reviewed journeys from the Yewo repository root:
+Run the journeys from this directory. `yewo test` reads the nearest `yewo.yaml` and
+takes no path argument:
 
 ```bash
-uv run yewo test eval/controlled_app/yewo.yaml --locked
+cd eval/controlled_app
+uv run yewo test
+uv run yewo test --workflow permissions_flow
 ```

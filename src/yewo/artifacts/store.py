@@ -115,9 +115,7 @@ def _validate_ledger_line(line: bytes, line_number: int) -> dict[str, Any] | Non
     try:
         existing_record = json.loads(line)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ArtifactWriteError(
-            f"The JSONL ledger has an invalid line: {line_number}."
-        ) from error
+        raise ArtifactWriteError(f"The JSONL ledger has an invalid line: {line_number}.") from error
     return existing_record if isinstance(existing_record, dict) else None
 
 

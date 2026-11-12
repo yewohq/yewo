@@ -2,16 +2,14 @@
 
 from datetime import datetime, timezone
 from hashlib import sha256
-from io import BytesIO
 import json
 from pathlib import Path
 
-from PIL import Image
 import pytest
 
 from symlink_support import requires_symlinks
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import (
     ImageModelContent,
     ModelArtifactError,
@@ -27,27 +25,14 @@ from yewo.models import (
     ModelRole,
     TextModelContent,
 )
-from yewo.observations import RedactionProvenance, ScreenshotStore
-
-
-def _png() -> bytes:
-    image = Image.new("RGB", (3, 2), color=(10, 20, 30))
-    stream = BytesIO()
-    image.save(stream, format="PNG")
-    return stream.getvalue()
+from yewo.observations import ScreenshotStore
+from support import png
 
 
 def _screenshot(tmp_path: Path):
-    return ScreenshotStore(tmp_path, identifier_factory=lambda: "shot-1").persist_redacted(
-        _png(),
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
+    return ScreenshotStore(tmp_path, identifier_factory=lambda: "shot-1").persist(
+        png(),
         retention=ArtifactRetention.RUN,
-        redaction=RedactionProvenance(
-            policy_id="region-mask",
-            region_count=1,
-            region_set_sha256="c" * 64,
-            input_sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
-        ),
     )
 
 
@@ -65,7 +50,6 @@ def _request(tmp_path: Path) -> ModelRequest:
                 ),
             ),
         ),
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
         retention=ArtifactRetention.RUN,
     )
 
@@ -80,11 +64,9 @@ def _store(
     return ModelArtifactStore(
         tmp_path,
         ModelArtifactPolicy(
-            sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
             retention=ArtifactRetention.RUN,
             retain_request_bodies=retain_request_bodies,
         ),
-        lambda text: text.replace("hunter2", "{{password}}"),
         identifier_factory=lambda: next(identifier_iterator),
     )
 
@@ -97,7 +79,7 @@ def _prepared_messages(request: ModelRequest) -> list[dict[str, object]]:
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Submit {{password}} value"},
+                {"type": "text", "text": "Submit [yewo-redacted] value"},
                 {
                     "type": "image_ref",
                     "artifact_id": screenshot.artifact_id,
@@ -161,14 +143,14 @@ def test_request_body_retention_can_be_disabled(tmp_path: Path) -> None:
     assert payload["body_retained"] is False
     assert payload["messages"][0]["content"][0] == {
         "type": "text",
-        "text_sha256": sha256(b"Submit {{password}} value").hexdigest(),
+        "text_sha256": sha256(b"Submit [yewo-redacted] value").hexdigest(),
     }
     assert payload["messages"][0]["content"][1]["artifact_id"] == "shot-1"
     assert "hunter2" not in content.decode()
     assert "iVBOR" not in content.decode()
 
 
-def test_request_and_call_bodies_are_retained_and_scrubbed_by_default(
+def test_request_and_call_bodies_are_retained_verbatim_by_default(
     tmp_path: Path,
 ) -> None:
     store = _store(
@@ -181,17 +163,16 @@ def test_request_and_call_bodies_are_retained_and_scrubbed_by_default(
         store,
         request,
         request_reference,
-        text="The hunter2 value is submitted.",
-        provider_payload={"choices": [{"message": {"content": "hunter2"}}]},
+        text="Tapped the Save control.",
+        provider_payload={"choices": [{"message": {"content": "Tapped the Save control."}}]},
     )
 
     request_text = (tmp_path / request_reference.path).read_text()
     call_text = (tmp_path / call_reference.path).read_text()
 
     assert "hunter2" not in request_text
-    assert "hunter2" not in call_text
-    assert "{{password}}" in request_text
-    assert "{{password}}" in call_text
+    assert "Submit [yewo-redacted] value" in request_text
+    assert "Tapped the Save control." in call_text
     assert request_reference.body_retained is True
     assert call_reference.body_retained is True
     assert call_reference.kind is ModelArtifactKind.CALL
@@ -209,8 +190,8 @@ def test_call_response_is_retained_when_request_body_is_disabled(tmp_path: Path)
         store,
         request,
         request_reference,
-        text="The hunter2 value is submitted.",
-        provider_payload={"content": "hunter2"},
+        text="Tapped the Save control.",
+        provider_payload={"content": "Tapped the Save control."},
     )
 
     call_payload = _record(tmp_path / call_reference.path, call_reference.artifact_id)
@@ -219,16 +200,16 @@ def test_call_response_is_retained_when_request_body_is_disabled(tmp_path: Path)
     assert call_reference.body_retained is True
     response_payload = call_payload["response"]
     assert isinstance(response_payload, dict)
-    assert response_payload["text"] == "The {{password}} value is submitted."
-    assert response_payload["provider_payload"] == {"content": "{{password}}"}
+    assert response_payload["text"] == "Tapped the Save control."
+    assert response_payload["provider_payload"] == {"content": "Tapped the Save control."}
 
 
 def test_model_image_reader_verifies_digest_and_dimensions(tmp_path: Path) -> None:
     reference = _screenshot(tmp_path)
 
-    assert ModelImageReader(tmp_path).read(reference) == _png()
+    assert ModelImageReader(tmp_path).read(reference) == png()
 
-    (tmp_path / reference.path).write_bytes(_png() + b"changed")
+    (tmp_path / reference.path).write_bytes(png() + b"changed")
     with pytest.raises(ModelArtifactError, match="digest"):
         ModelImageReader(tmp_path).read(reference)
 
@@ -238,7 +219,7 @@ def test_model_image_reader_rejects_symbolic_link(tmp_path: Path) -> None:
     reference = _screenshot(tmp_path)
     target = tmp_path / reference.path
     outside = tmp_path / "outside.png"
-    outside.write_bytes(_png())
+    outside.write_bytes(png())
     target.unlink()
     target.symlink_to(outside)
 
@@ -257,29 +238,3 @@ def test_model_artifact_store_does_not_overwrite_evidence(tmp_path: Path) -> Non
 
     with pytest.raises(ModelArtifactError, match="persist"):
         _persist_request(store, request)
-
-
-def test_model_artifact_store_surfaces_scrubbing_failure(tmp_path: Path) -> None:
-    def fail_to_scrub(text: str) -> str:
-        del text
-        raise RuntimeError("scrubber unavailable")
-
-    store = ModelArtifactStore(
-        tmp_path,
-        ModelArtifactPolicy(
-            sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
-            retention=ArtifactRetention.RUN,
-        ),
-        fail_to_scrub,
-    )
-
-    with pytest.raises(ModelArtifactError, match="scrub"):
-        store.prepare_response(
-            request_id="request-1",
-            attempt_number=1,
-            disposition=ModelCallDisposition.COMPLETED,
-            text="hunter2",
-            reason=None,
-        )
-
-    assert not (tmp_path / "models").exists()

@@ -98,7 +98,7 @@ class AdbRecoverableScreenRecorder:
         self,
         maximum_duration_seconds: int,
         maximum_stop_seconds: float = 10.0,
-        maximum_pull_seconds: float = 120.0,
+        maximum_pull_seconds: float = 30.0,
     ) -> ScreenRecordingStart:
         if self._process is not None or self._remote_file is not None:
             raise ScreenRecordingError("A screen-recording segment is already active.")
@@ -209,21 +209,30 @@ class AdbRecoverableScreenRecorder:
         destination: Path,
         timeout_seconds: float,
     ) -> None:
+        deadline = self._clock.monotonic() + timeout_seconds
         last_error: MediaTransferError | None = None
         for attempt in range(_RECOVERY_ATTEMPTS):
+            remaining_seconds = deadline - self._clock.monotonic()
+            if remaining_seconds <= 0:
+                break
             try:
                 self._transport.pull_to_path(
                     remote_path,
                     destination,
                     _MAXIMUM_RECOVERY_BYTES,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=remaining_seconds,
                 )
                 return
             except MediaTransferError as error:
                 last_error = error
                 destination.unlink(missing_ok=True)
                 if attempt + 1 < _RECOVERY_ATTEMPTS:
-                    self._clock.sleep(_START_POLL_SECONDS)
+                    retry_delay_seconds = min(
+                        _START_POLL_SECONDS,
+                        max(0.0, deadline - self._clock.monotonic()),
+                    )
+                    if retry_delay_seconds:
+                        self._clock.sleep(retry_delay_seconds)
         raise ScreenRecordingError(
             "ADB could not recover the remote screen recording."
         ) from last_error

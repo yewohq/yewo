@@ -18,7 +18,6 @@ from pydantic import (
 from yewo.artifacts.records import (
     RelativeArtifactPath,
     ArtifactRetention,
-    ArtifactSensitivity,
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
@@ -29,30 +28,12 @@ from yewo.devices.screen import SystemRegionKind
 from yewo.observations._region_mask import system_region_mask_digest
 
 
-class ScreenshotRedactionState(StrEnum):
-    """Whether screenshot pixels passed through an approved redactor."""
-
-    RAW = "raw"
-    REDACTED = "redacted"
-
-
 class DeviceOrientation(StrEnum):
     """Normalized device orientation observed from the platform driver."""
 
     PORTRAIT = "portrait"
     LANDSCAPE = "landscape"
     UNKNOWN = "unknown"
-
-
-class RedactionProvenance(BaseModel):
-    """Policy evidence for pixels produced by screenshot redaction."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    policy_id: RecordIdentifier
-    region_count: int = Field(ge=0)
-    region_set_sha256: Sha256Digest
-    input_sensitivity: ArtifactSensitivity
 
 
 class CoordinateScale(BaseModel):
@@ -87,10 +68,6 @@ class ScreenRegion(PixelRegion):
     kind: SystemRegionKind
 
 
-class RedactionRegion(PixelRegion):
-    """One declared-sensitive rectangle in screenshot pixels."""
-
-
 def validate_screen_regions(
     regions: tuple[ScreenRegion, ...] | None,
     width: int,
@@ -113,9 +90,6 @@ class ScreenshotReference(BaseModel):
     width_px: int = Field(gt=0)
     height_px: int = Field(gt=0)
     path: RelativeArtifactPath
-    redaction_state: ScreenshotRedactionState
-    redaction: RedactionProvenance | None = None
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
 
     @field_validator("path")
@@ -127,19 +101,6 @@ class ScreenshotReference(BaseModel):
             raise ValueError("A screenshot artifact path must end in .png.")
         return path
 
-    @model_validator(mode="after")
-    def _validate_redaction_provenance(self) -> Self:
-        if self.redaction_state is ScreenshotRedactionState.RAW:
-            if self.redaction is not None:
-                raise ValueError("A raw screenshot cannot have redaction provenance.")
-        elif self.redaction is None:
-            raise ValueError("A redacted screenshot must have redaction provenance.")
-        elif self.sensitivity is not self.redaction.input_sensitivity:
-            raise ValueError(
-                "A redacted screenshot must retain its input sensitivity classification."
-            )
-        return self
-
 
 class ScreenFingerprint(BaseModel):
     """Exact and perceptual fingerprints of application-owned pixels."""
@@ -150,7 +111,8 @@ class ScreenFingerprint(BaseModel):
     value: str = Field(pattern=r"^[0-9a-f]{16}$")
     masked_pixels_sha256: Sha256Digest
     system_region_mask_sha256: Sha256Digest | None = None
-    source_artifact_id: RecordIdentifier
+    # Absent when the screen was fingerprinted without being recorded as an observation.
+    source_artifact_id: RecordIdentifier | None = None
 
 
 class PresentationKey(BaseModel):
@@ -182,8 +144,7 @@ class Observation(BaseModel):
     orientation: DeviceOrientation | None
     screenshot_to_driver_scale: CoordinateScale
     screen_fingerprint: ScreenFingerprint
-    raw_screenshot: ScreenshotReference | None = None
-    redacted_screenshot: ScreenshotReference
+    screenshot: ScreenshotReference
     system_regions: tuple[ScreenRegion, ...] | None
     captured_at: datetime
     predecessor_observation_id: RecordIdentifier | None = None
@@ -191,7 +152,7 @@ class Observation(BaseModel):
     @property
     def presentation_key(self) -> PresentationKey:
         """Return the canonical identity of this visible presentation."""
-        screenshot = self.redacted_screenshot
+        screenshot = self.screenshot
         return PresentationKey(
             foreground_application_id=self.foreground_application_id,
             platform_context=self.platform_context,
@@ -204,14 +165,7 @@ class Observation(BaseModel):
 
     @model_validator(mode="after")
     def _validate_evidence(self) -> Self:
-        if (
-            self.raw_screenshot is not None
-            and self.raw_screenshot.redaction_state is not ScreenshotRedactionState.RAW
-        ):
-            raise ValueError("The raw screenshot reference must contain raw pixels.")
-        if self.redacted_screenshot.redaction_state is not ScreenshotRedactionState.REDACTED:
-            raise ValueError("The redacted screenshot reference must contain redacted pixels.")
-        if self.screen_fingerprint.source_artifact_id != self.redacted_screenshot.artifact_id:
+        if self.screen_fingerprint.source_artifact_id != self.screenshot.artifact_id:
             raise ValueError("The screen fingerprint must identify its source screenshot.")
         if self.predecessor_observation_id == self.observation_id:
             raise ValueError("An observation cannot name itself as its predecessor.")
@@ -220,8 +174,8 @@ class Observation(BaseModel):
         self._validate_screenshot_geometry()
         expected_mask_digest = system_region_mask_digest(
             self.system_regions,
-            self.redacted_screenshot.width_px,
-            self.redacted_screenshot.height_px,
+            self.screenshot.width_px,
+            self.screenshot.height_px,
         )
         if self.screen_fingerprint.system_region_mask_sha256 != expected_mask_digest:
             raise ValueError(
@@ -230,15 +184,6 @@ class Observation(BaseModel):
         return self
 
     def _validate_screenshot_geometry(self) -> None:
-        screenshots = tuple(
-            screenshot
-            for screenshot in (self.raw_screenshot, self.redacted_screenshot)
-            if screenshot is not None
+        validate_screen_regions(
+            self.system_regions, self.screenshot.width_px, self.screenshot.height_px
         )
-        dimensions = {(item.width_px, item.height_px) for item in screenshots}
-        if len(dimensions) != 1:
-            raise ValueError("Observation screenshots must use the same dimensions.")
-        if self.system_regions is None:
-            return
-        width, height = next(iter(dimensions))
-        validate_screen_regions(self.system_regions, width, height)

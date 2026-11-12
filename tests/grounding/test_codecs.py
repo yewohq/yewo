@@ -177,3 +177,79 @@ def test_normalized_regions_that_collapse_in_pixels_are_malformed(text: str) -> 
 
     assert decoded.disposition is GroundingDisposition.MALFORMED
     assert decoded.location is None
+
+
+def test_a_fractional_pixel_point_rounds_to_a_usable_coordinate() -> None:
+    # .7 rounds up where truncation would not, so this pins rounding rather than int().
+    decoded = CoordinateTextCodec().decode(
+        "(546.2,1240.7)", GroundingCoordinateConvention.SOURCE_PIXELS, 1080, 2400
+    )
+
+    assert decoded.disposition is GroundingDisposition.ACCEPTED
+    assert isinstance(decoded.location, GroundedPoint)
+    assert decoded.location.pixel.model_dump() == {"x": 546, "y": 1241}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["(0.51,0.42)", "(0.0, 0.73)", "(0.5, 1.0)", "(1.0, 1.0)", "(0.73, 0.0)", "(0,0)", "(1,1)"],
+)
+def test_a_normalized_looking_pair_is_not_read_as_pixels(answer: str) -> None:
+    # Rounding any of these dispatches a tap at the screen corner instead of refusing. A strict
+    # open interval let every pair carrying a 0 or a 1 through to do exactly that.
+    decoded = CoordinateTextCodec().decode(
+        answer, GroundingCoordinateConvention.SOURCE_PIXELS, 1080, 2400
+    )
+
+    assert decoded.disposition is GroundingDisposition.MALFORMED
+
+
+@pytest.mark.parametrize("answer", ["(0, 1200)", "(540, 1200)", "(540.5, 1200.5)", "(2, 2)"])
+def test_a_pixel_pair_outside_the_normalized_range_is_accepted(answer: str) -> None:
+    decoded = CoordinateTextCodec().decode(
+        answer, GroundingCoordinateConvention.SOURCE_PIXELS, 1080, 2400
+    )
+
+    assert decoded.disposition is GroundingDisposition.ACCEPTED
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["(546,934)", "546,934", "[546, 934]", " 546 , 934 ", "{546,934}"],
+)
+def test_a_point_is_read_however_the_model_wraps_it(answer: str) -> None:
+    # Gemini omits the brackets on about half its answers; the coordinates are identical.
+    decoded = CoordinateTextCodec().decode(
+        answer, GroundingCoordinateConvention.SOURCE_PIXELS, 1080, 2400
+    )
+
+    assert decoded.disposition is GroundingDisposition.ACCEPTED
+    assert isinstance(decoded.location, GroundedPoint)
+    assert decoded.location.pixel.model_dump() == {"x": 546, "y": 934}
+
+
+def test_an_unwrapped_region_is_read_as_a_region() -> None:
+    decoded = CoordinateTextCodec().decode(
+        "10,20,90,180",
+        GroundingCoordinateConvention.SOURCE_PIXELS,
+        1080,
+        2400,
+        GroundingOutputShape.REGION,
+    )
+
+    assert decoded.disposition is GroundingDisposition.ACCEPTED
+    assert isinstance(decoded.location, GroundedRegion)
+    assert decoded.location.pixel.model_dump() == {
+        "left": 10,
+        "top": 20,
+        "right": 90,
+        "bottom": 180,
+    }
+
+
+def test_a_mismatched_wrapper_is_still_rejected() -> None:
+    decoded = CoordinateTextCodec().decode(
+        "(546,934", GroundingCoordinateConvention.SOURCE_PIXELS, 1080, 2400
+    )
+
+    assert decoded.disposition is GroundingDisposition.MALFORMED

@@ -7,6 +7,7 @@ from hashlib import sha256
 
 from yewo.agent.actuation import ActionKind, DeclaredValueReference
 from yewo.agent.discovery import DiscoveryObjectiveState, DiscoveryResult
+from yewo.agent.planning.goal_verifier import format_goal_evidence_conflicts
 from yewo.agent.memory.records import AppMemory
 from yewo.agent.replay.reconciliation.records import (
     ControlValueType,
@@ -186,6 +187,10 @@ def _readiness_issues(
         issues.append(f"Discovery did not support the journey: {coverage.reason}")
     if result.verification is None or not result.verification.satisfied:
         issues.append("Independent final-state verification did not support the journey.")
+    if result.verification is not None:
+        conflict_summary = format_goal_evidence_conflicts(result.verification.evidence_conflicts)
+        if conflict_summary is not None:
+            issues.append(conflict_summary)
     if procedure is None:
         issues.append("Discovery did not produce a compatible compiled procedure.")
     if evidence is None:

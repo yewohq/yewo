@@ -12,7 +12,7 @@ from yewo.models import (
     ModelReasoningMode,
 )
 from yewo.models.client import _RETRYABLE_RESPONSE_DISPOSITIONS
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models.attribution import YEWO_USER_AGENT
 from yewo.models.profiles import ModelGenerationSettings
 from yewo.models.records import ModelMessage, ModelMessageRole, ModelRequest, TextModelContent
@@ -62,7 +62,6 @@ def test_openrouter_reasoning_effort_uses_the_router_body(tmp_path: Path) -> Non
                 content=(TextModelContent(text="hi"),),
             ),
         ),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -98,7 +97,6 @@ def test_direct_provider_reasoning_effort_reaches_the_shared_transport(
                 content=(TextModelContent(text="hi"),),
             ),
         ),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -141,7 +139,6 @@ def test_disabled_reasoning_reaches_each_provider_in_its_own_shape(tmp_path: Pat
                     content=(TextModelContent(text="hi"),),
                 ),
             ),
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
         root = tmp_path / provider

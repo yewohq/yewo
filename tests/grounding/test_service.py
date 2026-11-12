@@ -198,8 +198,8 @@ def test_service_tells_grounder_about_failed_point_and_rejects_an_equivalent_ret
     assert result.reason == "The correction repeated the previous ineffective target point."
     prompt = client.requests[0].messages[0].content[0]
     assert isinstance(prompt, TextModelContent)
-    assert "previous dispatched point (100,200)" in prompt.text
-    assert "at least 8 source screenshot pixels away" in prompt.text
+    assert "A tap at (100,200) produced no observable change" in prompt.text
+    assert "at least 8 source screenshot pixels from the previous point" in prompt.text
 
 
 @pytest.mark.parametrize(
@@ -260,6 +260,52 @@ def test_second_model_profile_uses_the_same_service_with_its_coordinate_conventi
     assert "normalized numbers from 0 to 1" in prompt.text
     assert "refused: target not found" in prompt.text.lower()
     assert "ambiguous: target is not unique" in prompt.text.lower()
+
+
+@pytest.mark.parametrize(
+    ("convention", "number_format", "answer", "pixel"),
+    [
+        (
+            GroundingCoordinateConvention.SOURCE_PIXELS,
+            "Use whole numbers.",
+            "(150,300)",
+            {"x": 150, "y": 300},
+        ),
+        (
+            GroundingCoordinateConvention.NORMALIZED_1000,
+            "Use whole numbers.",
+            "(500,250)",
+            {"x": 100, "y": 100},
+        ),
+        (
+            GroundingCoordinateConvention.NORMALIZED,
+            "Use decimal numbers.",
+            "(0.5,0.25)",
+            {"x": 100, "y": 100},
+        ),
+    ],
+)
+def test_each_convention_instructs_the_number_format_its_own_space_admits(
+    convention: GroundingCoordinateConvention,
+    number_format: str,
+    answer: str,
+    pixel: dict[str, int],
+) -> None:
+    # One shared whole-number instruction contradicted the normalized space, where 0 and 1 were
+    # then the only compliant answers and the whole screen was the only compliant region.
+    client = StubModelClient(answer)
+    profile = build_grounding_profile(coordinate_convention=convention)
+
+    result = GroundingService(client, profile).ground(build_grounding_request())
+
+    prompt = client.requests[0].messages[0].content[0]
+    assert isinstance(prompt, TextModelContent)
+    assert number_format in prompt.text
+    assert ("Use decimal numbers." in prompt.text) is (
+        convention is GroundingCoordinateConvention.NORMALIZED
+    )
+    assert isinstance(result.location, GroundedPoint)
+    assert result.location.pixel.model_dump() == pixel
 
 
 def test_service_resolves_a_scroll_region_without_another_codec() -> None:
@@ -337,7 +383,7 @@ def test_correction_instruction_states_its_coordinate_space() -> None:
     pixels = _correction_instruction(request, GroundingCoordinateConvention.SOURCE_PIXELS)
     normalized = _correction_instruction(request, GroundingCoordinateConvention.NORMALIZED)
 
-    assert "at least 8 source screenshot pixels away" in pixels
+    assert "at least 8 source screenshot pixels from the previous point" in pixels
     assert "Convert" not in pixels
     assert "Convert those source pixels" in normalized
 
@@ -438,3 +484,21 @@ def test_placement_instruction_names_the_surface_the_operation_needs() -> None:
     assert _operation_instruction(destination) == (
         "The target is the drop position, which can be empty space rather than a control."
     )
+
+
+def test_a_correction_asks_for_the_target_not_merely_a_different_point() -> None:
+    # Told only to move a minimum distance, a grounder satisfies the instruction by stepping
+    # sideways off the control it already missed.
+    instruction = _correction_instruction(
+        build_grounding_request(
+            correction=GroundingCorrection(
+                previous_point=PixelPoint(x=100, y=200),
+                minimum_distance_px=8,
+            )
+        ),
+        GroundingCoordinateConvention.SOURCE_PIXELS,
+    )
+
+    assert "was not on the target" in instruction
+    assert "centre of the surface it names" in instruction
+    assert "Do not offset from the previous point" in instruction

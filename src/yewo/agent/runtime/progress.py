@@ -24,6 +24,7 @@ from yewo.agent.planning.records import (
     ProgressRouteAttempt,
     TaskProgressContext,
 )
+from yewo.agent.narration import trace
 from yewo.agent.planning.history import (
     grounding_correction_failure_reason,
     RECENT_PLANNING_HISTORY_LIMIT,
@@ -457,31 +458,30 @@ def gate_before_grounding(
     observation: Observation,
     action_budget: ActionBudget,
     decision_source: PlannerDecisionSource,
-) -> tuple[ActionProposal, ActionRefusal | None, bool]:
+) -> tuple[ActionProposal, ActionRefusal | None]:
     """Re-ground one repeated target, then apply progress and action policy."""
-    corrected, system_declared_correction = correct_repeated_grounding(
+    corrected, _ = correct_repeated_grounding(
         progress_ledger, proposal, observation, decision_source
     )
     refusal = refusal_before_grounding(
         progress_ledger, action_policy, corrected, observation, action_budget, decision_source
     )
-    return corrected, refusal, system_declared_correction
+    return corrected, refusal
 
 
-def resolve_progress_terminal(
+def trace_ineffective_grounding_correction(
     proposal: ActionProposal,
     outcome: ActionOutcome,
-    system_declared_correction: bool,
-    progress_terminal: str | None,
-) -> str | None:
-    """Add a planner-declared correction that the device ignored to ledger evidence.
+) -> None:
+    """Record that re-grounding one repeated target changed nothing.
 
-    A runtime-declared correction is opportunistic, so its failure retires one route
-    rather than proving that the whole task cannot progress.
+    A correction that changes nothing shows that one target is out of reach. It does not show
+    that the objective is, and the planner is often the only component holding evidence of
+    another route. The progress ledger already refuses the repeated route, so the run ends when
+    the routes run out rather than when one aim fails.
     """
-    if system_declared_correction:
-        return progress_terminal
-    return grounding_correction_failure_reason(proposal, outcome) or progress_terminal
+    if grounding_correction_failure_reason(proposal, outcome) is not None:
+        trace(f"grounding_correction=ineffective proposal={proposal.proposal_id}")
 
 
 def refusal_before_grounding(
@@ -511,6 +511,6 @@ __all__ = [
     "RunProgressPersistenceError",
     "correct_repeated_grounding",
     "gate_before_grounding",
-    "resolve_progress_terminal",
+    "trace_ineffective_grounding_correction",
     "refusal_before_grounding",
 ]

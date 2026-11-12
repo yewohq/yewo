@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from yewo.agent.actuation.verifier import (
+from yewo.agent.actuation.proposal_verifier import (
     ActionReadinessAssessment,
     ActionReadinessDisposition,
+    ActionReadinessRefusalBasis,
 )
 from yewo.agent.actuation import (
     ActionKind,
@@ -41,7 +42,7 @@ from agent.runtime.test_agent import (
 )
 
 
-class _RefusingActionVerifier:
+class _RefusingProposalVerifier:
     def required_model_requests(self, candidate: ActionProposal) -> int:
         return int(candidate.action is ActionKind.TAP)
 
@@ -70,7 +71,7 @@ class _RefusingActionVerifier:
         )
 
 
-class _UnavailableActionVerifier:
+class _UnavailableProposalVerifier:
     def required_model_requests(self, candidate: ActionProposal) -> int:
         return int(candidate.action is ActionKind.TAP)
 
@@ -118,7 +119,7 @@ class _CompletedWorkRegressionVerifier:
         )
 
 
-class _RecordingActionVerifier:
+class _RecordingProposalVerifier:
     def __init__(self) -> None:
         self.requests: list[tuple[PlanningRequest, ActionProposal]] = []
 
@@ -139,6 +140,43 @@ class _RecordingActionVerifier:
             reason="The focused proposal follows the no-progress constraints.",
             completed_work_items=(),
             proposal_work_item=None,
+            restarts_completed_work_item=None,
+        )
+
+
+class _TerminalRouteVerifier:
+    def __init__(self) -> None:
+        self.requests: list[ActionProposal] = []
+
+    def required_model_requests(self, candidate: ActionProposal) -> int:
+        return int(candidate.action in {ActionKind.DONE, ActionKind.CANNOT_PROGRESS})
+
+    def verify(
+        self,
+        planning_request: PlanningRequest,
+        candidate: ActionProposal,
+    ) -> ActionReadinessAssessment:
+        del planning_request
+        self.requests.append(candidate)
+        if len(self.requests) == 1:
+            return ActionReadinessAssessment(
+                verification_id="verification-route-1",
+                proposal_id=candidate.proposal_id,
+                disposition=ActionReadinessDisposition.REFUSE,
+                reason="The achieved objective has another goal-relevant entry route.",
+                completed_work_items=("Reach the objective through one supported route.",),
+                proposal_work_item="Explore other goal-relevant entry routes.",
+                restarts_completed_work_item=None,
+                refusal_basis=ActionReadinessRefusalBasis.UNEXPLORED_ROUTE,
+                unexplored_route="Use Search to enter the ordering flow.",
+            )
+        return ActionReadinessAssessment(
+            verification_id="verification-route-2",
+            proposal_id=candidate.proposal_id,
+            disposition=ActionReadinessDisposition.ALLOW,
+            reason="No distinct goal-relevant entry route remains unexercised.",
+            completed_work_items=("Reach the objective through one supported route.",),
+            proposal_work_item="Explore other goal-relevant entry routes.",
             restarts_completed_work_item=None,
         )
 
@@ -165,7 +203,7 @@ def test_focus_respects_verifiers_zero_request_declaration() -> None:
         source_observation_id=screen.observation_id,
         target_expression="a different visible field",
     )
-    verifier = _RecordingActionVerifier()
+    verifier = _RecordingProposalVerifier()
 
     result = verify_discovery_action(
         verifier,
@@ -206,7 +244,7 @@ def test_discovery_verifier_blocks_premature_save_before_grounding(tmp_path: Pat
         planner,
         observations,
         device,
-        action_verifier=_RefusingActionVerifier(),
+        proposal_verifier=_RefusingProposalVerifier(),
     ).run(
         _task().model_copy(update={"discovery_mode": True}),
         _mode_policy(),
@@ -220,6 +258,60 @@ def test_discovery_verifier_blocks_premature_save_before_grounding(tmp_path: Pat
     assert result.usage.grounding_requests == 0
     assert result.usage.dispatched_actions == 0
     assert device.calls == []
+
+
+def test_discovery_terminal_is_refused_until_alternative_route_is_reviewed(
+    tmp_path: Path,
+) -> None:
+    planner = SequencePlanner(
+        [
+            proposal(ActionKind.DONE),
+            proposal(ActionKind.CANNOT_PROGRESS),
+        ]
+    )
+    observations = ObservationSequence([_observation("obs_1", "0000000000000000")])
+    verifier = _TerminalRouteVerifier()
+
+    result = _runtime(
+        tmp_path,
+        planner,
+        observations,
+        RuntimeDevice(),
+        proposal_verifier=verifier,
+    ).run(
+        _task().model_copy(
+            update={
+                "discovery_mode": True,
+                "open_work": (
+                    "Reach the objective through one supported route.",
+                    "Explore other goal-relevant entry routes.",
+                ),
+            }
+        ),
+        _mode_policy(),
+        NeverInterrupted(),
+    )
+
+    assert result.steps[0].proposal.action is ActionKind.DONE
+    assert result.steps[0].terminal_reason is None
+    assert result.steps[0].refusal is not None
+    assert result.steps[0].refusal.code is ActionRefusalCode.DISCOVERY_INCOMPLETE
+    assert "Search" in result.steps[0].refusal.reason
+    assert planner.requests[1].history[0].refusal == result.steps[0].refusal
+    assert planner.requests[1].progress_context is not None
+    assert planner.requests[1].progress_context.completed_work_items == (
+        "Reach the objective through one supported route.",
+    )
+    assert planner.requests[1].open_work == ("Explore other goal-relevant entry routes.",)
+    assert result.steps[1].proposal.action is ActionKind.CANNOT_PROGRESS
+    assert result.steps[1].terminal_reason is not None
+    assert [candidate.action for candidate in verifier.requests] == [
+        ActionKind.DONE,
+        ActionKind.CANNOT_PROGRESS,
+    ]
+    assert result.usage.planning_requests == 4
+    assert result.usage.grounding_requests == 0
+    assert result.usage.dispatched_actions == 0
 
 
 def test_unavailable_verifier_does_not_poison_no_progress_state(tmp_path: Path) -> None:
@@ -238,7 +330,7 @@ def test_unavailable_verifier_does_not_poison_no_progress_state(tmp_path: Path) 
         planner,
         observations,
         device,
-        action_verifier=_UnavailableActionVerifier(),
+        proposal_verifier=_UnavailableProposalVerifier(),
     ).run(
         _task().model_copy(update={"discovery_mode": True}),
         _mode_policy(),
@@ -272,7 +364,7 @@ def test_repeated_unavailable_verifier_stops_at_the_refusal_deadlock_bound(
         planner,
         observations,
         device,
-        action_verifier=_UnavailableActionVerifier(),
+        proposal_verifier=_UnavailableProposalVerifier(),
     )
 
     with pytest.raises(ModelServiceUnavailableError, match="model service remained unavailable"):
@@ -309,7 +401,7 @@ def test_completed_work_regression_is_recorded_and_blocked_before_grounding(
         planner,
         observations,
         device,
-        action_verifier=_CompletedWorkRegressionVerifier(create, reopen),
+        proposal_verifier=_CompletedWorkRegressionVerifier(create, reopen),
     ).run(
         _task().model_copy(
             update={

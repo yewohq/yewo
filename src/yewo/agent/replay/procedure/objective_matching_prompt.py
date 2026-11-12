@@ -21,22 +21,23 @@ Current refers to the requested objective. Candidate refers to a stored procedur
 # Comparison
 
 Compare objectives by required observable outcome, not by wording similarity or procedural steps.
-For each candidate, identify the entities involved, the operations required, the exact values and
-constraints that matter, the required relationships between entities, the required final observable
-state, and every explicit completion condition.
+For each candidate, identify the entities involved and the operations required. Identify the exact
+values and constraints that matter. Identify the required relationships between entities. Identify
+the required final observable state and every explicit completion condition.
 
 Differing wording does not imply differing objectives. Similar wording does not imply equivalent
-objectives. A difference is material when it changes the required outcome: create against update
-against delete, object identity or destination, names, quantities, dates, values, required
-relationships, explicitly required scope or ordering, or an additional or missing required outcome.
+objectives. A difference is material when it changes the required outcome. Material differences
+include create against update against delete, object identity or destination, names, quantities,
+dates, and values. They also include required relationships, explicitly required scope or
+ordering, and an additional or missing required outcome.
 
 Do not treat a procedure's historical actions as extra objective requirements unless its stored
 objective or completion conditions state them.
 
 Compare completion conditions by meaning. Their supplied order carries no significance. Require
-coverage in both directions: every required outcome of the current objective must be required by
-the candidate, and every required outcome of the candidate must be required by the current
-objective. Compare the objective statements on the same basis, not only their conditions.
+coverage in both directions. The candidate must require every required outcome of the current
+objective. The current objective must require every required outcome of the candidate. Compare
+the objective statements on the same basis, not only their conditions.
 
 Do not assume that an unspecified value matches a candidate value. A request that omits the name,
 date, quantity, account, or destination that a candidate fixes is not equivalent to it. When

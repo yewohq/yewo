@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from yewo.observations import Observation, ObservationCaptureError
+from yewo.observations import ObservationCaptureError, VisualSettlementProbe
 from yewo.runs import NeverInterrupted
 
 from agent.actuation.support import proposal
@@ -23,11 +23,11 @@ from agent.runtime.test_agent import (
 class FailingSettlementObservations(ObservationSequence):
     """Capture the initial screen, then fail every post-dispatch observation."""
 
-    def capture(self, *, predecessor_observation_id: str | None = None) -> Observation:
+    def capture_settlement_probe(self) -> VisualSettlementProbe:
         if self.capture_count:
             self.capture_count += 1
             raise ObservationCaptureError("Appium screenshot timed out.")
-        return super().capture(predecessor_observation_id=predecessor_observation_id)
+        return super().capture_settlement_probe()
 
 
 def test_settlement_capture_timeout_never_redispatches_the_action(tmp_path: Path) -> None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from yewo.agent.memory.records import AppMemory, build_memory_compatibility
@@ -18,7 +17,6 @@ from yewo.agent.replay.procedure.preparation import (
 )
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.models import ModelProfileRegistry
-from yewo.observations import RedactionRegion
 from yewo.runs import RunPreparationContext
 
 
@@ -38,8 +36,6 @@ def prepare_compiled_procedure(
     procedure_store: CompiledProcedureStore,
     model_profiles: ModelProfileRegistry,
     replay_preparation_profile_id: str,
-    scrub_text: Callable[[str], str],
-    redaction_regions: Sequence[RedactionRegion],
     maximum_model_requests: int | None,
 ) -> tuple[DiscoveryPreparation | None, int]:
     """Select one exact or LLM-equivalent compiled procedure before Appium."""
@@ -58,8 +54,8 @@ def prepare_compiled_procedure(
             context.workspace.root,
             context.workspace.start.run_id,
             model_profiles,
-            scrub_text,
-            bool(redaction_regions),
+            request.declared_value_names,
+            context.extensions,
         ),
         replay_preparation_profile_id,
         maximum_model_requests,

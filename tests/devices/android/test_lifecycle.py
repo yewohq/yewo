@@ -14,6 +14,8 @@ from yewo.devices.inventory import (
     DeviceReadiness,
 )
 from yewo.resources import ResourceOwnership
+from support import ClockStub
+from support import ProcessStub
 
 
 def _android_device(
@@ -93,48 +95,14 @@ class _AdbStub:
         self.killed.append(connection_id)
 
 
-class _ProcessStub:
-    def __init__(self, *, returncode: int | None = None) -> None:
-        self.returncode = returncode
-        self.terminated = False
-        self.killed = False
-        self.pid = 4321
-
-    def poll(self) -> int | None:
-        return self.returncode
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.returncode = 0
-
-    def wait(self, timeout: float | None = None) -> int:
-        del timeout
-        return self.returncode or 0
-
-    def kill(self) -> None:
-        self.killed = True
-        self.returncode = -9
-
-
 class _ProcessStarterStub:
-    def __init__(self, process: _ProcessStub) -> None:
+    def __init__(self, process: ProcessStub) -> None:
         self.process = process
         self.commands: list[tuple[str, ...]] = []
 
-    def __call__(self, command: Sequence[str]) -> _ProcessStub:
+    def __call__(self, command: Sequence[str]) -> ProcessStub:
         self.commands.append(tuple(command))
         return self.process
-
-
-class _ClockStub:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
 
 
 def test_running_avd_restores_keyboard_environment_without_stopping_device() -> None:
@@ -169,14 +137,14 @@ def test_stopped_avd_is_started_waited_for_and_stopped_once() -> None:
         native_state="device",
     )
     adb = _AdbStub()
-    process = _ProcessStub()
+    process = ProcessStub()
     starter = _ProcessStarterStub(process)
     lifecycle = AndroidDeviceLifecycle(
         _InventoryStub((ready,)),
         adb,
         headless=True,
         process_starter=starter,
-        clock=_ClockStub(),
+        clock=ClockStub(),
     )
 
     lease = lifecycle.prepare(stopped)
@@ -205,7 +173,7 @@ def test_boot_completed_waits_for_required_android_services() -> None:
         native_state="device",
     )
     adb = _AdbStub(services_ready=False)
-    process = _ProcessStub()
+    process = ProcessStub()
 
     with pytest.raises(DeviceStartupTimeoutError):
         AndroidDeviceLifecycle(
@@ -214,7 +182,7 @@ def test_boot_completed_waits_for_required_android_services() -> None:
             timeout_seconds=1,
             poll_interval_seconds=1,
             process_starter=_ProcessStarterStub(process),
-            clock=_ClockStub(),
+            clock=ClockStub(),
         ).prepare(stopped)
 
     assert adb.boot_checks == ["emulator-5554"]
@@ -233,8 +201,8 @@ def test_owned_avd_restores_an_absent_soft_keyboard_setting() -> None:
     lease = AndroidDeviceLifecycle(
         _InventoryStub((ready,)),
         adb,
-        process_starter=_ProcessStarterStub(_ProcessStub()),
-        clock=_ClockStub(),
+        process_starter=_ProcessStarterStub(ProcessStub()),
+        clock=ClockStub(),
     ).prepare(stopped)
 
     lease.close()
@@ -251,7 +219,7 @@ def test_owned_avd_restores_an_absent_soft_keyboard_setting() -> None:
 
 def test_avd_startup_timeout_stops_the_owned_process() -> None:
     stopped = _android_device(readiness=DeviceReadiness.STARTABLE)
-    process = _ProcessStub()
+    process = ProcessStub()
 
     with pytest.raises(DeviceStartupTimeoutError, match="did not start within 2 seconds"):
         AndroidDeviceLifecycle(
@@ -260,7 +228,7 @@ def test_avd_startup_timeout_stops_the_owned_process() -> None:
             timeout_seconds=2,
             poll_interval_seconds=1,
             process_starter=_ProcessStarterStub(process),
-            clock=_ClockStub(),
+            clock=ClockStub(),
         ).prepare(stopped)
 
     assert process.terminated
@@ -268,21 +236,21 @@ def test_avd_startup_timeout_stops_the_owned_process() -> None:
 
 def test_avd_process_exit_is_reported() -> None:
     stopped = _android_device(readiness=DeviceReadiness.STARTABLE)
-    process = _ProcessStub(returncode=1)
+    process = ProcessStub(returncode=1)
 
     with pytest.raises(DeviceLifecycleError, match="stopped during startup"):
         AndroidDeviceLifecycle(
             _InventoryStub(()),
             _AdbStub(),
             process_starter=_ProcessStarterStub(process),
-            clock=_ClockStub(),
+            clock=ClockStub(),
         ).prepare(stopped)
 
     assert not process.terminated
 
 
 def test_process_stop_escalates_after_terminate_timeout() -> None:
-    class StubbornProcess(_ProcessStub):
+    class StubbornProcess(ProcessStub):
         def terminate(self) -> None:
             self.terminated = True
 
@@ -301,7 +269,7 @@ def test_process_stop_escalates_after_terminate_timeout() -> None:
             timeout_seconds=1,
             poll_interval_seconds=1,
             process_starter=_ProcessStarterStub(process),
-            clock=_ClockStub(),
+            clock=ClockStub(),
         ).prepare(stopped)
 
     assert process.terminated

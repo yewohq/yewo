@@ -6,17 +6,9 @@ from yewo.agent.replay.procedure.budget import (
     build_procedure_budget_requirement,
     procedure_budget_refusal_reason,
 )
-from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
-from yewo.agent.replay.reconciliation.records import ReplayProcedure
 
 from agent.actuation.support import limits
-from agent.replay.support import evidence as _evidence, response as _response
-
-
-def _procedure() -> ReplayProcedure:
-    procedure = compile_replay_procedure(_evidence(), _response())
-    assert isinstance(procedure, ReplayProcedure)
-    return procedure
+from agent.replay.support import procedure as _procedure
 
 
 def _policy(**updates: object) -> AgentModePolicy:

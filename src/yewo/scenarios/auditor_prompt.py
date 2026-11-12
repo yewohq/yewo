@@ -38,7 +38,7 @@ unavailable. Look for contradictions in one screenshot and across supplied scree
 calculations, counts, labels, selections, confirmations, enabled states, error surfaces, and
 unexpected state changes. Return a candidate finding when a visible issue can be confirmed. Locate
 each supporting region in whole-number 0-1000 coordinates with positive area, so left is below
-right and top is below bottom, and name a supplied screenshot observation for every region. Use
+right and top is below bottom. Name a supplied screenshot observation for every region. Use
 arithmetic verification for visible calculations, supplying at least two operands and the
 displayed result. Use equality verification when an observed value must preserve an earlier action
 or visible value. Match verification to the category. data_consistency accepts arithmetic or
@@ -47,8 +47,8 @@ equality. ui_visual accepts visual. Do not invent.
 In data_consistency and ui_visual, an unmet verdict survives only with a candidate finding whose
 verification mechanically disproves the observed value. Arithmetic confirms only when the operands
 and relation contradict the displayed result, and equality confirms only when the expected and
-observed text differ. An unmet verdict without such a finding is recorded as unverified, so pair
-every violation you report in those categories with the finding that proves it.
+observed text differ. An unmet verdict without such a finding counts as unverified. Pair every
+violation you report in those categories with the finding that proves it.
 
 # Output
 

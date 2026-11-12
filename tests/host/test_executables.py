@@ -122,9 +122,10 @@ def test_windows_sdk_default_follows_local_application_data(
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\becca\AppData\Local")
     module = load_host_module_as(monkeypatch, "executables", "win32")
 
-    assert module.default_android_sdk_root() == Path(
-        r"C:\Users\becca\AppData\Local"
-    ) / "Android" / "Sdk"
+    assert (
+        module.default_android_sdk_root()
+        == Path(r"C:\Users\becca\AppData\Local") / "Android" / "Sdk"
+    )
 
 
 def test_windows_sdk_default_is_absent_without_local_application_data(

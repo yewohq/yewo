@@ -24,7 +24,6 @@ from yewo.devices.ios import (
     SimctlDeviceInventory,
 )
 from yewo.devices.ios.simctl import SimctlClient
-from yewo.devices.logs import DeviceLogTextScrubber
 from yewo.host import (
     supports_android_emulator_clipboard_control,
     supports_apple_device_tooling,
@@ -36,7 +35,6 @@ from yewo.runs.store import RunWorkspace, RunWorkspaceFactory
 
 def build_default_run_coordinator(
     workflows: Mapping[RunMode, RunWorkflow],
-    scrub_device_log_text: DeviceLogTextScrubber,
 ) -> RunCoordinator:
     """Compose standard host adapters without discovering or changing devices."""
     android_inventory = AdbDeviceInventory()
@@ -50,12 +48,8 @@ def build_default_run_coordinator(
             else None
         ),
     )
-    inventories: dict[DevicePlatform, DeviceInventory] = {
-        DevicePlatform.ANDROID: android_inventory
-    }
-    lifecycles: dict[DevicePlatform, DeviceLifecycle] = {
-        DevicePlatform.ANDROID: android_lifecycle
-    }
+    inventories: dict[DevicePlatform, DeviceInventory] = {DevicePlatform.ANDROID: android_inventory}
+    lifecycles: dict[DevicePlatform, DeviceLifecycle] = {DevicePlatform.ANDROID: android_lifecycle}
     inspectors: dict[DevicePlatform, ApplicationArtifactInspector] = {
         DevicePlatform.ANDROID: ApkInspector(android_control)
     }
@@ -75,7 +69,6 @@ def build_default_run_coordinator(
         AutomationSessionManager.default(),
         workflows,
         _server_config,
-        scrub_device_log_text,
     )
 
 

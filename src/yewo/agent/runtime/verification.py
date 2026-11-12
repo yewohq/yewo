@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from yewo.agent.actuation.diagnostics import ActionApplicationFailure
-from yewo.agent.actuation.verifier import ActionVerifier
+from yewo.agent.actuation.proposal_verifier import ProposalVerifier
 from yewo.agent.actuation import ActionProposal, ActionRefusal
 from yewo.agent.narration import narrate, narrate_recovery_assessment
 from yewo.agent.planning.planner import (
@@ -52,7 +52,7 @@ def goal_verification_budget_reason(
 
 
 def verify_discovery_action(
-    verifier: ActionVerifier | None,
+    verifier: ProposalVerifier | None,
     discovery_mode: bool,
     decision_source: PlannerDecisionSource,
     planning_source: object,
@@ -89,7 +89,9 @@ def verify_discovery_action(
     context = resolve_action_verification_context(planning_source, planning_request)
     assessment = verifier.verify(context.request, proposal)
     recovery.credit_planning_requests(request_count)
-    narrate(f"Discovery action verification {assessment.disposition.value}: {assessment.reason}")
+    narrate(
+        f"Step proposal check (before dispatch) {assessment.disposition.value}: {assessment.reason}"
+    )
     return PreDispatchVerification(
         request_count=request_count,
         refusal=assessment.refusal(),

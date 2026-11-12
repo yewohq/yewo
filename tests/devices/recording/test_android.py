@@ -24,6 +24,7 @@ from yewo.devices.recording import (
 )
 from yewo.devices.recording.android import AdbRecoverableScreenRecorder
 from yewo.devices.remote_files import RemoteTemporaryFileLease
+from support import ClockStub
 
 
 VIDEO = b"\x00\x00\x00\x18ftypmp42video"
@@ -171,6 +172,7 @@ def test_recorder_stops_pulls_and_removes_without_appium() -> None:
         "emulator-5554",
         process_starter=lambda command: process,
         identifier_factory=lambda: "segment_1",
+        clock=ClockStub(),
     )
 
     recorder.start(1_800)
@@ -203,6 +205,7 @@ def test_failed_pull_leaves_the_exact_path_for_session_cleanup() -> None:
         "emulator-5554",
         process_starter=lambda command: _ProcessStub(),
         identifier_factory=lambda: "segment_1",
+        clock=ClockStub(),
     )
     recorder.start(30)
 
@@ -214,6 +217,47 @@ def test_failed_pull_leaves_the_exact_path_for_session_cleanup() -> None:
     assert len(lease.references) == 1
     lease.close()
     assert len(adb.removed_paths) == 1
+
+
+def test_failed_pull_uses_one_total_recovery_deadline() -> None:
+    adb = _AdbStub()
+    clock = ClockStub()
+
+    class _SlowFailingTransport(_TransportStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.timeouts: list[float] = []
+
+        def pull_to_path(
+            self,
+            remote_path: str,
+            destination: Path,
+            maximum_bytes: int,
+            *,
+            timeout_seconds: float = 120,
+        ) -> None:
+            del remote_path, destination, maximum_bytes
+            self.timeouts.append(timeout_seconds)
+            clock.now += 6
+            raise MediaTransferError("pull failed")
+
+    transport = _SlowFailingTransport()
+    recorder = AdbRecoverableScreenRecorder(
+        cast(AdbRecordingCommands, adb),
+        cast(AdbFileCommands, adb),
+        cast(AdbMediaTransport, transport),
+        _lease(adb),
+        "emulator-5554",
+        process_starter=lambda command: _ProcessStub(),
+        identifier_factory=lambda: "segment_1",
+        clock=clock,
+    )
+    recorder.start(30, maximum_pull_seconds=10)
+
+    with pytest.raises(ScreenRecordingError, match="recover"):
+        recorder.stop()
+
+    assert transport.timeouts == [10, 3.5]
 
 
 def test_invalid_recovered_video_allows_a_fresh_segment() -> None:
@@ -229,6 +273,7 @@ def test_invalid_recovered_video_allows_a_fresh_segment() -> None:
         "emulator-5554",
         process_starter=lambda command: _ProcessStub(),
         identifier_factory=lambda: "segment_1",
+        clock=ClockStub(),
     )
     recorder.start(30)
 
@@ -252,6 +297,7 @@ def test_stuck_process_escalates_from_terminate_to_kill() -> None:
         "emulator-5554",
         process_starter=lambda command: process,
         identifier_factory=lambda: "segment_1",
+        clock=ClockStub(),
     )
     recorder.start(30)
 
@@ -276,6 +322,7 @@ def test_startup_failure_stops_the_process_and_releases_the_path() -> None:
         "emulator-5554",
         process_starter=lambda command: process,
         identifier_factory=lambda: "segment_1",
+        clock=ClockStub(),
     )
 
     with pytest.raises(ScreenRecordingError, match="stopped during startup"):

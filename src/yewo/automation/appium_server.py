@@ -254,7 +254,7 @@ class AppiumServerManager:
             "--log",
             str(log_path),
             "--log-level",
-            "warn",
+            "info",
             "--log-no-colors",
         ]
         base_path = server_url_parts.path.rstrip("/")

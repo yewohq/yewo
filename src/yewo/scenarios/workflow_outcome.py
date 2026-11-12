@@ -7,7 +7,6 @@ from yewo.reporting import (
 )
 from yewo.runs import RunTerminalCategory, RunWorkflowOutcome
 from yewo.runs.errors import RunWorkflowInfrastructureError
-from yewo.runs.records import RUN_TERMINAL_REASON_MAX_LENGTH
 from yewo.scenarios.coordinator import ScenarioCoordinationResult
 
 
@@ -115,4 +114,4 @@ def derive_workflow_outcome(
 def _reason_with_details(prefix: str, details: tuple[str, ...]) -> str:
     distinct_details = tuple(dict.fromkeys(details))
     reason = f"{prefix} {'; '.join(distinct_details)}"
-    return reason[:RUN_TERMINAL_REASON_MAX_LENGTH]
+    return reason

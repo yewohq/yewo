@@ -20,6 +20,7 @@ from yewo.devices.errors import (
 )
 from yewo.devices.inventory import DeviceKind, DevicePlatform
 from yewo.devices.screen import is_blank
+from yewo.observations.service import ScreenCapture
 
 
 class ApplicationPlatformBackend(ForegroundApplicationReader, Protocol):
@@ -50,7 +51,7 @@ class ApplicationInteraction:
         application: ApplicationDescriptor,
         backend: ApplicationPlatformBackend,
         clock: LifecycleClock,
-        screenshot: Callable[[], bytes],
+        screenshot: Callable[[], ScreenCapture],
         *,
         transition_timeout_seconds: float,
         poll_interval_seconds: float,
@@ -149,9 +150,11 @@ class ApplicationInteraction:
         while True:
             is_active = self.is_active()
             if is_active is not False:
-                png = self._screenshot()
-                if not is_blank(png, blank_standard_deviation):
-                    return png
+                capture = self._screenshot()
+                # Judged on the bytes the device gave, not on anything drawn over them. An
+                # overlay is paint, and paint makes a blank screen look painted.
+                if not is_blank(capture.comparable, blank_standard_deviation):
+                    return capture.image
             remaining_seconds = deadline - self._clock.monotonic()
             if remaining_seconds <= 0:
                 if is_active is False:

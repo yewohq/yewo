@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+from math import ceil, floor
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from io import BytesIO
 import time
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from PIL import Image, ImageStat, UnidentifiedImageError
+from selenium.common.exceptions import (
+    InvalidSessionIdException,
+    TimeoutException,
+    WebDriverException,
+)
 
 from yewo.devices.errors import DeviceActionRejectedError, DeviceInteractionError
-from yewo.run_narration import current_narrator, elapsed_milliseconds
+
+if TYPE_CHECKING:
+    from yewo.run_narration import RunNarrator
 
 
 class ScreenDriver(Protocol):
@@ -97,6 +106,18 @@ class ScreenCalibration:
         return self.driver_height_px / self.screenshot_height_px
 
 
+def _current_narrator() -> RunNarrator | None:
+    """Return the active narrator, importing the narrator module on use.
+
+    Deferred because `run_narration` reaches the artifact records, those reach device records,
+    and this module is one of them. A module-level import closes that loop, and the loop only
+    resolves when some other module happens to import first.
+    """
+    from yewo.run_narration import current_narrator
+
+    return current_narrator()
+
+
 def _exception_detail(error: Exception, *, maximum_length: int = 1_000) -> str:
     """Retain bounded external-driver detail for run diagnostics."""
     driver_message = getattr(error, "msg", None)
@@ -107,6 +128,13 @@ def _exception_detail(error: Exception, *, maximum_length: int = 1_000) -> str:
     if len(escaped_detail) <= maximum_length:
         return escaped_detail
     return f"{escaped_detail[: maximum_length - 3]}..."
+
+
+def _is_retryable_screenshot_failure(error: Exception) -> bool:
+    """Return whether a failed read can safely be repeated on the same session."""
+    if isinstance(error, InvalidSessionIdException | TimeoutException):
+        return False
+    return isinstance(error, ConnectionError | WebDriverException)
 
 
 class ScreenGeometry:
@@ -160,10 +188,12 @@ class ScreenGeometry:
                 self._sleep(self._screenshot_retry_interval_seconds)
             try:
                 return self._capture_png_once(attempt_number)
-            except ConnectionError as error:
-                last_error = error
             except Exception as error:  # noqa: BLE001 - external driver boundary
-                raise DeviceInteractionError("Could not capture a device screenshot.") from error
+                if not _is_retryable_screenshot_failure(error):
+                    raise DeviceInteractionError(
+                        "Could not capture a device screenshot."
+                    ) from error
+                last_error = error
         raise DeviceInteractionError("Could not capture a device screenshot.") from last_error
 
     def _capture_png_once(self, attempt_number: int) -> bytes:
@@ -171,7 +201,7 @@ class ScreenGeometry:
         try:
             return self._driver.get_screenshot_as_png()
         except Exception as error:  # noqa: BLE001 - external driver boundary
-            narrator = current_narrator()
+            narrator = _current_narrator()
             if narrator is not None:
                 narrator.trace(
                     "appium-command",
@@ -184,8 +214,10 @@ class ScreenGeometry:
             self._trace_duration("screenshot", screenshot_started)
 
     def _trace_duration(self, operation: str, started: float) -> None:
-        narrator = current_narrator()
+        narrator = _current_narrator()
         if narrator is not None:
+            from yewo.run_narration import elapsed_milliseconds
+
             duration_ms = elapsed_milliseconds(started, self._monotonic())
             narrator.trace(
                 "appium-command",
@@ -226,6 +258,35 @@ class ScreenGeometry:
         return (
             min(round(x * driver_width / width), driver_width - 1),
             min(round(y * driver_height / height), driver_height - 1),
+        )
+
+    def driver_region(
+        self,
+        left: int,
+        top: int,
+        right: int,
+        bottom: int,
+    ) -> tuple[int, int, int, int]:
+        """Map an inclusive screenshot rectangle to an inclusive driver rectangle.
+
+        Converting the two corner points with driver_point loses a pixel of extent, because the
+        inclusive right edge is one short of the rectangle's width. The exclusive edge is
+        converted instead, and driver_point refuses it as a point outside the screenshot.
+        """
+        self.validate_region(left, top, right, bottom)
+        width, height = self.screenshot_size()
+        if self._driver_size is None:
+            raise DeviceInteractionError("Driver geometry is unavailable after capture.")
+        driver_width, driver_height = self._driver_size
+        driver_left = min(floor(left * driver_width / width), driver_width - 1)
+        driver_top = min(floor(top * driver_height / height), driver_height - 1)
+        return (
+            driver_left,
+            driver_top,
+            max(driver_left, min(ceil((right + 1) * driver_width / width) - 1, driver_width - 1)),
+            max(
+                driver_top, min(ceil((bottom + 1) * driver_height / height) - 1, driver_height - 1)
+            ),
         )
 
     def validate_region(self, left: int, top: int, right: int, bottom: int) -> None:

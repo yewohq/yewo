@@ -17,6 +17,7 @@ class ActionKind(StrEnum):
     LONG_PRESS = "long_press"
     DRAG = "drag"
     SCROLL = "scroll"
+    REFRESH = "refresh"
     BACK = "back"
     DISMISS_KEYBOARD = "dismiss_keyboard"
     WAIT = "wait"
@@ -56,12 +57,6 @@ class ActionOutcomeSignal(StrEnum):
     APP_BACKGROUNDED = "app_backgrounded"
     SYSTEM_SURFACE_OPENED = "system_surface_opened"
     APP_EXITED = "app_exited"
-
-    @classmethod
-    def _missing_(cls, value: object) -> "ActionOutcomeSignal | None":
-        if value == "screen_changed":
-            return cls.PIXELS_CHANGED
-        return None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -143,6 +138,16 @@ ACTION_DEFINITIONS = {
         side_effect=SideEffectClass.NAVIGATION,
         required_fields=_COMMON | {"direction", "distance"},
         optional_fields=_TARGET,
+        target_operation=GroundingTargetOperation.SCROLL_REGION,
+        blocked_when_keyboard_visible=True,
+    ),
+    ActionKind.REFRESH: ActionDefinition(
+        handling=ActionHandling.EXECUTE,
+        side_effect=SideEffectClass.UNCLASSIFIED_INTERACTION,
+        required_fields=_COMMON,
+        optional_fields=_TARGET,
+        # A pull gesture starts inside the refreshable region, so it grounds like a scroll and
+        # shares the exclusion from grounding corrections and interaction refinements.
         target_operation=GroundingTargetOperation.SCROLL_REGION,
         blocked_when_keyboard_visible=True,
     ),

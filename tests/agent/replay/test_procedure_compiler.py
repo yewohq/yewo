@@ -92,7 +92,7 @@ def test_evidence_uses_analyzed_element_kind_instead_of_reparsing_prose() -> Non
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=before.observation_id,
-        screenshot_sha256=before.redacted_screenshot.sha256,
+        screenshot_sha256=before.screenshot.sha256,
         presentation=before.presentation_key,
         screen_summary="Visible records screen.",
         elements=(
@@ -104,7 +104,6 @@ def test_evidence_uses_analyzed_element_kind_instead_of_reparsing_prose() -> Non
                     semantic=ScreenSemanticRole.NAVIGATION_ITEM,
                 ),
                 confidence=ScreenElementConfidence.HIGH,
-                evidence="A labelled navigation item is visible.",
             ),
         ),
     )

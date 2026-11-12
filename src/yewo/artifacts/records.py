@@ -1,4 +1,4 @@
-"""Shared identity, sensitivity, and retention records for artifacts."""
+"""Shared identity and retention records for artifacts."""
 
 from __future__ import annotations
 
@@ -42,13 +42,6 @@ def validate_record_identifier(value: str) -> str:
 def new_record_identifier() -> str:
     """Return one random identifier that satisfies the record contract."""
     return uuid4().hex
-
-
-class ArtifactSensitivity(StrEnum):
-    """The sensitivity governing one persisted artifact."""
-
-    DEVICE_CONTENT = "device_content"
-    DECLARED_SENSITIVE = "declared_sensitive"
 
 
 class ArtifactRetention(StrEnum):

@@ -17,6 +17,8 @@ from yewo.automation import (
 )
 from yewo.automation import appium_server
 from yewo.resources import ResourceOwnership
+from support import ClockStub
+from support import ProcessStub
 
 
 class _StatusProbeStub:
@@ -32,31 +34,8 @@ class _StatusProbeStub:
         return answer
 
 
-class _ProcessStub:
-    def __init__(self, *, returncode: int | None = None) -> None:
-        self.returncode = returncode
-        self.terminated = False
-        self.killed = False
-        self.pid = 4321
-
-    def poll(self) -> int | None:
-        return self.returncode
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.returncode = 0
-
-    def wait(self, timeout: float | None = None) -> int:
-        del timeout
-        return self.returncode or 0
-
-    def kill(self) -> None:
-        self.killed = True
-        self.returncode = -9
-
-
 class _ProcessStarterStub:
-    def __init__(self, process: _ProcessStub) -> None:
+    def __init__(self, process: ProcessStub) -> None:
         self.process = process
         self.calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
@@ -65,20 +44,9 @@ class _ProcessStarterStub:
         command: Sequence[str],
         *,
         environment: Mapping[str, str],
-    ) -> _ProcessStub:
+    ) -> ProcessStub:
         self.calls.append((tuple(command), environment))
         return self.process
-
-
-class _ClockStub:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
 
 
 def _runtime(tmp_path: Path) -> AppiumRuntime:
@@ -92,7 +60,7 @@ def _runtime(tmp_path: Path) -> AppiumRuntime:
 
 def test_manager_attaches_to_a_ready_external_server(tmp_path: Path) -> None:
     probe = _StatusProbeStub((True,))
-    starter = _ProcessStarterStub(_ProcessStub())
+    starter = _ProcessStarterStub(ProcessStub())
     manager = AppiumServerManager(
         runtime_resolver=lambda: _runtime(tmp_path),
         process_starter=starter,
@@ -110,13 +78,13 @@ def test_manager_attaches_to_a_ready_external_server(tmp_path: Path) -> None:
 
 def test_manager_starts_waits_for_and_stops_a_local_server(tmp_path: Path) -> None:
     probe = _StatusProbeStub((False, False, True))
-    process = _ProcessStub()
+    process = ProcessStub()
     starter = _ProcessStarterStub(process)
     manager = AppiumServerManager(
         runtime_resolver=lambda: _runtime(tmp_path),
         process_starter=starter,
         status_probe=probe,
-        clock=_ClockStub(),
+        clock=ClockStub(),
     )
     config = AppiumServerConfig(
         log_path=tmp_path / "logs" / "appium.log",
@@ -139,7 +107,7 @@ def test_manager_starts_waits_for_and_stops_a_local_server(tmp_path: Path) -> No
         "--log",
         str(config.log_path),
         "--log-level",
-        "warn",
+        "info",
         "--log-no-colors",
         "--base-path",
         "/wd/hub",
@@ -157,9 +125,9 @@ def test_manager_starts_waits_for_and_stops_a_local_server(tmp_path: Path) -> No
 def test_manager_reports_early_process_exit(tmp_path: Path) -> None:
     manager = AppiumServerManager(
         runtime_resolver=lambda: _runtime(tmp_path),
-        process_starter=_ProcessStarterStub(_ProcessStub(returncode=1)),
+        process_starter=_ProcessStarterStub(ProcessStub(returncode=1)),
         status_probe=_StatusProbeStub((False, False)),
-        clock=_ClockStub(),
+        clock=ClockStub(),
     )
 
     with pytest.raises(AppiumServerError, match="stopped during startup"):
@@ -167,12 +135,12 @@ def test_manager_reports_early_process_exit(tmp_path: Path) -> None:
 
 
 def test_manager_timeout_stops_its_process(tmp_path: Path) -> None:
-    process = _ProcessStub()
+    process = ProcessStub()
     manager = AppiumServerManager(
         runtime_resolver=lambda: _runtime(tmp_path),
         process_starter=_ProcessStarterStub(process),
         status_probe=_StatusProbeStub((False,)),
-        clock=_ClockStub(),
+        clock=ClockStub(),
     )
 
     with pytest.raises(AppiumStartupTimeoutError, match="within 1 seconds"):
@@ -188,7 +156,7 @@ def test_manager_timeout_stops_its_process(tmp_path: Path) -> None:
 
 
 def test_manager_does_not_start_a_remote_server(tmp_path: Path) -> None:
-    starter = _ProcessStarterStub(_ProcessStub())
+    starter = _ProcessStarterStub(ProcessStub())
     manager = AppiumServerManager(
         runtime_resolver=lambda: _runtime(tmp_path),
         process_starter=starter,
@@ -263,7 +231,7 @@ def test_status_probe_requires_explicit_readiness(
 
 
 def test_process_stop_escalates_when_terminate_hangs(tmp_path: Path) -> None:
-    class StubbornProcess(_ProcessStub):
+    class StubbornProcess(ProcessStub):
         def terminate(self) -> None:
             self.terminated = True
 
@@ -277,7 +245,7 @@ def test_process_stop_escalates_when_terminate_hangs(tmp_path: Path) -> None:
         runtime_resolver=lambda: _runtime(tmp_path),
         process_starter=_ProcessStarterStub(process),
         status_probe=_StatusProbeStub((False, True)),
-        clock=_ClockStub(),
+        clock=ClockStub(),
     )
 
     lease = manager.acquire(AppiumServerConfig(log_path=tmp_path / "appium.log"))

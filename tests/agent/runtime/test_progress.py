@@ -37,7 +37,7 @@ from yewo.agent.screen_analysis import (
     ScreenVisualKind,
     ScreenWorkflowRole,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import limits, proposal
 from agent.discovery.support import agent_result
@@ -93,7 +93,6 @@ def test_progress_ledger_retains_completed_work_and_routes(tmp_path: Path) -> No
             disposition=ActionOutcomeDisposition.OBSERVED,
             signals=frozenset({ActionOutcomeSignal.CONTEXT_CHANGED}),
             reason="The editor opened.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
     )
@@ -159,7 +158,7 @@ def test_observed_non_english_workflow_role_advances_stage_without_completing_ta
     analysis = CurrentScreenAnalysis(
         analysis_id="analysis-confirm",
         observation_id=before.observation_id,
-        screenshot_sha256=before.redacted_screenshot.sha256,
+        screenshot_sha256=before.screenshot.sha256,
         presentation=before.presentation_key,
         screen_summary="Visible confirmation screen.",
         elements=(
@@ -172,7 +171,6 @@ def test_observed_non_english_workflow_role_advances_stage_without_completing_ta
                 ),
                 confidence=ScreenElementConfidence.HIGH,
                 workflow_role=ScreenWorkflowRole.ADVANCE_STAGE,
-                evidence="A visible action advances the current form workflow.",
                 visual_cues=("filled action at the lower-right edge",),
             ),
         ),
@@ -378,7 +376,6 @@ def test_an_unattributed_route_is_not_recorded(tmp_path: Path) -> None:
             disposition=ActionOutcomeDisposition.OBSERVED,
             signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
             reason="The settled observation contains action-outcome signals.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
     )

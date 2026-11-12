@@ -1,6 +1,6 @@
 """Deterministic YewoAgent discovery evidence builders."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from hashlib import sha256
 
 from yewo.agent import (
@@ -23,7 +23,7 @@ from yewo.agent.actuation import (
     DispatchDisposition,
     DispatchReceipt,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.observations import Observation, ScreenFingerprint
 
 from agent.actuation.support import limits, point_grounding, proposal
@@ -41,7 +41,7 @@ def observation(
     screenshot = build_screenshot(artifact_id=f"shot_{observation_id}")
     base = build_observation(
         observation_id=observation_id,
-        redacted_screenshot=screenshot,
+        screenshot=screenshot,
         predecessor_observation_id=predecessor_observation_id,
         captured_at=build_observation().captured_at + timedelta(seconds=offset_seconds),
     )
@@ -87,15 +87,13 @@ def agent_result(
         if target_operation is None:
             raise AssertionError("The test action has no target operation.")
         grounding = point_grounding(
-            screenshot_sha256=before.redacted_screenshot.sha256,
+            screenshot_sha256=before.screenshot.sha256,
             expression=action_proposal.target_expression,
             operation=target_operation,
         )
         grounding = grounding.model_copy(
             update={
-                "request": grounding.request.model_copy(
-                    update={"screenshot": before.redacted_screenshot}
-                )
+                "request": grounding.request.model_copy(update={"screenshot": before.screenshot})
             }
         )
     authorized = ActionPolicy(limits(), lambda: "authorization_1").authorize(
@@ -106,7 +104,7 @@ def agent_result(
     )
     if isinstance(authorized, ActionRefusal):
         raise AssertionError(authorized.reason)
-    receipt = _receipt(authorized)
+    receipt = _receipt(authorized, before.captured_at)
     signals = (
         frozenset({ActionOutcomeSignal.PIXELS_CHANGED})
         if disposition is ActionOutcomeDisposition.OBSERVED
@@ -125,7 +123,6 @@ def agent_result(
         disposition=disposition,
         signals=signals,
         reason="Deterministic outcome evidence.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
     action_step = AgentStep(
@@ -180,13 +177,14 @@ def agent_result(
     )
 
 
-def _receipt(action: AuthorizedAction) -> DispatchReceipt:
+def _receipt(action: AuthorizedAction, dispatched_at: datetime) -> DispatchReceipt:
+    """Dispatch at the source capture, so a settled timing measures the step and not the fixture."""
     return DispatchReceipt(
+        dispatched_at=dispatched_at,
         receipt_id="receipt_1",
         authorization_id=action.authorization_id,
         proposal_id=action.proposal_id,
         action=action.action,
         disposition=DispatchDisposition.DISPATCHED,
-        sensitivity=action.sensitivity,
         retention=action.retention,
     )

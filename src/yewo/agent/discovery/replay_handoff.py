@@ -21,6 +21,7 @@ from yewo.agent.runtime.records import (
     AgentStep,
     AgentTerminalReason,
     remaining_mode_policy,
+    requires_goal_verification,
 )
 from yewo.agent.runtime.verification import goal_verification_budget_reason
 from yewo.models import ModelClient
@@ -162,7 +163,7 @@ def verify_discovery_goal(
     evidence_packer: GoalEvidencePacker | None = None,
 ) -> GoalVerification | None:
     """Audit a completed repair with retained procedure evidence."""
-    if agent_result.terminal_reason is not AgentTerminalReason.DONE_REQUESTED:
+    if not requires_goal_verification(agent_result.terminal_reason):
         return None
     final_observation = observations_by_id[agent_result.final_observation_id]
     budget_reason = goal_verification_budget_reason(policy, used_model_requests, elapsed_seconds)

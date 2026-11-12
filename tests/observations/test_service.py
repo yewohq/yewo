@@ -26,13 +26,11 @@ from yewo.devices.screen import (
 from yewo.observations import (
     DeviceOrientation,
     ObservationCaptureError,
-    ObservationCapturePolicy,
     ObservationService,
     ObservationStore,
-    RegionScreenshotRedactor,
     ScreenshotStore,
 )
-from yewo.observations.service import ObservationSource
+from yewo.observations.service import ScreenCapture, ObservationSource
 from yewo.run_narration import RunNarrator, narration_scope
 
 
@@ -53,13 +51,19 @@ class _SourceStub:
     def __init__(self) -> None:
         self.foreground_ids: list[str | None] = ["com.example.app"]
         self.foreground_read_count = 0
+        self.dynamic_metadata_calls: list[str] = []
         self.screenshot_calls = 0
+        self.comparable_calls = 0
         self.png = _png()
         self.calibration = ScreenCalibration(200, 400, 100, 200)
         self.regions: tuple[ScreenRegionReading, ...] | None = ()
 
-    def screenshot(self) -> bytes:
+    def screenshot(self) -> ScreenCapture:
         self.screenshot_calls += 1
+        return ScreenCapture(image=self.png, comparable=self.png)
+
+    def comparable_screenshot(self) -> bytes:
+        self.comparable_calls += 1
         return self.png
 
     def screen_calibration(self) -> ScreenCalibration:
@@ -67,20 +71,25 @@ class _SourceStub:
 
     def active_application_id(self) -> str | None:
         self.foreground_read_count += 1
+        self.dynamic_metadata_calls.append("foreground")
         if len(self.foreground_ids) > 1:
             return self.foreground_ids.pop(0)
         return self.foreground_ids[0]
 
     def application_state(self) -> ApplicationState:
+        self.dynamic_metadata_calls.append("application_state")
         return ApplicationState.FOREGROUND
 
     def application_context(self) -> str | None:
+        self.dynamic_metadata_calls.append("application_context")
         return "com.example.MainActivity"
 
     def keyboard_visible(self) -> bool | None:
+        self.dynamic_metadata_calls.append("keyboard")
         return False
 
     def device_orientation(self) -> str | None:
+        self.dynamic_metadata_calls.append("orientation")
         return "PORTRAIT"
 
     def system_regions(self) -> tuple[ScreenRegionReading, ...] | None:
@@ -124,15 +133,13 @@ def _service(
     *,
     retain_raw: bool = True,
 ) -> ObservationService:
-    screenshot_ids = iter(("raw_1", "redacted_1"))
+    screenshot_ids = iter(("shot_1",))
     return ObservationService(
         source,
         _device(),
         _application(),
         ScreenshotStore(root, identifier_factory=_identifier_factory(screenshot_ids)),
         ObservationStore(root),
-        RegionScreenshotRedactor(()),
-        policy=ObservationCapturePolicy(retain_raw=retain_raw),
         identifier_factory=lambda: "obs_1",
         time_factory=lambda: CAPTURE_TIME,
     )
@@ -165,16 +172,12 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
     assert observation.screenshot_to_driver_scale.x == 0.5
     assert observation.screenshot_to_driver_scale.y == 0.5
     assert observation.screen_fingerprint.system_region_mask_sha256 is not None
-    assert (
-        observation.screen_fingerprint.source_artifact_id
-        == observation.redacted_screenshot.artifact_id
-    )
+    assert observation.screen_fingerprint.source_artifact_id == observation.screenshot.artifact_id
     assert observation.system_regions is not None
     assert observation.system_regions[0].right == 200
     assert observation.system_regions[0].bottom == 40
-    assert observation.raw_screenshot is not None
-    assert (tmp_path / observation.raw_screenshot.path).is_file()
-    assert (tmp_path / observation.redacted_screenshot.path).is_file()
+    assert (tmp_path / observation.screenshot.path).is_file()
+    assert (tmp_path / observation.screenshot.path).is_file()
     observation_path = tmp_path / "observations.jsonl"
     assert observation_path.is_file()
     assert (
@@ -184,27 +187,46 @@ def test_service_captures_and_persists_coherent_evidence(tmp_path: Path) -> None
 
 def test_service_traces_active_capture_duration(tmp_path: Path) -> None:
     source = _SourceStub()
-    moments = iter((10.0, 10.125))
+    moments = iter(
+        (
+            10.0,
+            10.0,
+            10.010,
+            10.010,
+            10.020,
+            10.020,
+            10.030,
+            10.030,
+            10.040,
+            10.040,
+            10.050,
+            10.125,
+        )
+    )
     service = ObservationService(
         source,
         _device(),
         _application(),
         ScreenshotStore(
             tmp_path,
-            identifier_factory=_identifier_factory(iter(("raw_1", "redacted_1"))),
+            identifier_factory=_identifier_factory(iter(("shot_1",))),
         ),
         ObservationStore(tmp_path),
-        RegionScreenshotRedactor(()),
         identifier_factory=lambda: "obs_1",
         time_factory=lambda: CAPTURE_TIME,
         monotonic=lambda: next(moments),
     )
 
     with narration_scope(RunNarrator(tmp_path)):
-        service.capture()
+        service.capture(predecessor_observation_id=None)
 
     trace = (tmp_path / "runtime/trace.log").read_text()
     assert "device-observation: capture=completed duration_ms=125.0" in trace
+    assert "device-observation: phase=source_screenshot duration_ms=10.0" in trace
+    assert "device-observation: phase=metadata duration_ms=10.0" in trace
+    assert "device-observation: phase=screenshot_persist duration_ms=10.0" in trace
+    assert "device-observation: phase=fingerprint duration_ms=10.0" in trace
+    assert "device-observation: phase=observation_persist duration_ms=10.0" in trace
 
 
 def test_service_rejects_calibration_mismatch_without_writing(tmp_path: Path) -> None:
@@ -282,16 +304,6 @@ def test_service_wraps_invalid_clamped_region_as_capture_error(
     assert not (tmp_path / "screenshots").exists()
 
 
-def test_service_can_retain_only_the_redacted_screenshot(tmp_path: Path) -> None:
-    observation = _service(_SourceStub(), tmp_path, retain_raw=False).capture()
-
-    assert observation.raw_screenshot is None
-    assert observation.redacted_screenshot.path.name == "raw_1.png"
-    assert tuple((tmp_path / "screenshots").iterdir()) == (
-        tmp_path / observation.redacted_screenshot.path,
-    )
-
-
 def test_failed_record_write_removes_screenshots_from_that_capture(
     tmp_path: Path,
 ) -> None:
@@ -315,7 +327,6 @@ def test_service_rejects_platform_mismatch_at_construction(tmp_path: Path) -> No
             _application(DevicePlatform.IOS),
             ScreenshotStore(tmp_path),
             ObservationStore(tmp_path),
-            RegionScreenshotRedactor(()),
         )
 
 
@@ -327,7 +338,6 @@ def test_service_rejects_stores_with_different_roots(tmp_path: Path) -> None:
             _application(),
             ScreenshotStore(tmp_path / "screenshots"),
             ObservationStore(tmp_path / "observations"),
-            RegionScreenshotRedactor(()),
         )
 
 
@@ -335,3 +345,50 @@ def _bind_device_interaction(
     interaction: DeviceInteraction,
 ) -> ObservationSource:
     return interaction
+
+
+def test_a_settlement_probe_never_asks_for_an_image(tmp_path: Path) -> None:
+    """A source that alters the image charges for the alteration on every call.
+
+    This caller hashes the screen and drops it, so asking for an image it will not look at
+    pays a masking cost per poll. One run spent 58 of 215 maskings here.
+    """
+    source = _SourceStub()
+    service = _service(source, tmp_path)
+
+    probe = service.capture_settlement_probe()
+
+    assert probe.fingerprint.source_artifact_id is None
+    assert source.comparable_calls == 1
+    assert source.screenshot_calls == 0
+    assert source.dynamic_metadata_calls == []
+
+
+def test_settlement_probes_defer_dynamic_metadata_to_the_full_observation(
+    tmp_path: Path,
+) -> None:
+    source = _SourceStub()
+    service = _service(source, tmp_path)
+
+    service.capture_settlement_probe()
+    service.capture_settlement_probe()
+    service.capture()
+
+    assert source.dynamic_metadata_calls == [
+        "foreground",
+        "application_state",
+        "application_context",
+        "keyboard",
+        "orientation",
+    ]
+
+
+def test_an_observation_takes_both_views_from_one_capture(tmp_path: Path) -> None:
+    """Two captures would be two moments, and the stored image would not be the one hashed."""
+    source = _SourceStub()
+    service = _service(source, tmp_path)
+
+    service.capture(predecessor_observation_id=None)
+
+    assert source.screenshot_calls == 1
+    assert source.comparable_calls == 0

@@ -6,7 +6,12 @@ import pytest
 
 from yewo.devices import DevicePlatform
 from yewo.grounding import GroundingCoordinateConvention
-from yewo.models import ModelMessageRole, ModelReasoningMode, ModelRole
+from yewo.models import (
+    ModelMessageRole,
+    ModelReasoningEffort,
+    ModelReasoningMode,
+    ModelRole,
+)
 from yewo.project_config import (
     RunConfigurationOverrides,
     YewoProjectCompileError,
@@ -36,7 +41,7 @@ journey: Open the app.
     return load_yewo_project(path)
 
 
-def test_compiles_old_shaped_yaml_and_plain_english_goal(tmp_path: Path) -> None:
+def test_compiles_project_yaml_and_plain_english_goal(tmp_path: Path) -> None:
     project = _project(tmp_path)
 
     configuration = compile_yewo_run_configuration(
@@ -59,7 +64,8 @@ def test_compiles_old_shaped_yaml_and_plain_english_goal(tmp_path: Path) -> None
     )
 
 
-def test_compiles_the_controlled_app_without_selecting_a_workflow() -> None:
+def test_the_committed_example_project_still_compiles() -> None:
+    """The shipped example must stay runnable, without this test owning its model choices."""
     path = Path(__file__).parents[2] / "eval" / "controlled_app" / "yewo.yaml"
 
     configuration = compile_yewo_run_configuration(
@@ -67,12 +73,7 @@ def test_compiles_the_controlled_app_without_selecting_a_workflow() -> None:
         "Open the restaurant list.",
     )
 
-    assert configuration.run.device.target_id == "Pixel_8"
-    grounder = configuration.model_profiles.resolve("yaml-grounder", ModelRole.GROUNDER)
-    assert grounder.model == "openrouter/bytedance/ui-tars-1.5-7b"
-    assert configuration.grounding_profile.coordinate_convention is (
-        GroundingCoordinateConvention.SOURCE_PIXELS
-    )
+    assert configuration.run.device.target_id
 
 
 def test_one_model_defaults_each_semantic_role_but_not_grounding(tmp_path: Path) -> None:
@@ -100,11 +101,20 @@ def test_compiled_profiles_accept_the_supported_mobile_screenshot_envelope(
         assert profile.images.max_image_bytes == (
             8_000_000 if profile.role is ModelRole.GROUNDER else 20_000_000
         )
-        assert profile.generation.max_completion_tokens == (
-            16_384 if profile.role is ModelRole.SCREEN_ANALYZER else 8_192
-        )
+        assert profile.generation.max_completion_tokens == 32_768
+        assert profile.retry.timeout_seconds == 320
         assert profile.cache_control_role is ModelMessageRole.SYSTEM
         assert profile.router_cache_affinity
+
+
+def test_only_the_grounder_keeps_its_source_resolution(tmp_path: Path) -> None:
+    configuration = compile_yewo_run_configuration(_project(tmp_path), "Open settings.")
+
+    for profile in configuration.model_profiles.profiles:
+        if profile.role is ModelRole.GROUNDER:
+            assert profile.images.max_long_edge_px is None
+        else:
+            assert profile.images.max_long_edge_px == 1_568
 
 
 def test_role_overrides_replace_only_the_named_semantic_models(tmp_path: Path) -> None:
@@ -137,7 +147,8 @@ journey: Open the app.
     by_role = {profile.role: profile for profile in configuration.model_profiles.profiles}
     assert by_role[ModelRole.TASK_PLANNER].model == "anthropic/claude-planner"
     assert by_role[ModelRole.TASK_PLANNER].provider == "anthropic"
-    assert by_role[ModelRole.TASK_PLANNER].cache_control_role is None
+    # Anthropic permits four breakpoints; only router-side affinity is OpenRouter-only.
+    assert by_role[ModelRole.TASK_PLANNER].cache_control_role is ModelMessageRole.SYSTEM
     assert not by_role[ModelRole.TASK_PLANNER].router_cache_affinity
     assert by_role[ModelRole.AUDITOR].model == "openrouter/example/auditor"
     assert by_role[ModelRole.AUDITOR].cache_control_role is ModelMessageRole.SYSTEM
@@ -314,7 +325,6 @@ def test_command_line_overrides_replace_supported_top_level_settings(
         ("headless: true", "headless"),
         ("record: true", "record"),
         ("record: false", "record"),
-        ("allow_secret_exposure: true", "allow_secret_exposure"),
     ),
 )
 def test_rejects_yaml_settings_the_runtime_cannot_honour(
@@ -326,3 +336,43 @@ def test_rejects_yaml_settings_the_runtime_cannot_honour(
 
     with pytest.raises(YewoProjectCompileError, match=message):
         compile_yewo_run_configuration(project, "Open settings.")
+
+
+def test_a_project_can_bound_how_long_a_role_reasons(tmp_path: Path) -> None:
+    # Reasoning and the answer share one completion budget, so a project needs a way to keep a
+    # deliberating role from spending the whole budget before its answer starts.
+    path = tmp_path / "yewo.yaml"
+    path.write_text(
+        """
+device:
+  name: Pixel
+  platform: android
+app: app.apk
+model: openrouter/example/default
+models:
+  planner:
+    model: openrouter/example/planner
+    reasoning: minimal
+  screen_analyzer:
+    model: openrouter/example/analyzer
+    reasoning: disabled
+grounder:
+  model: openrouter/example/grounder
+  protocol: source_pixels
+  reasoning: disabled
+journey: Open the app.
+"""
+    )
+
+    configuration = compile_yewo_run_configuration(load_yewo_project(path), "Open settings.")
+
+    by_role = {profile.role: profile for profile in configuration.model_profiles.profiles}
+    planner = by_role[ModelRole.TASK_PLANNER].generation
+    assert planner.reasoning is ModelReasoningMode.PROVIDER_DEFAULT
+    assert planner.reasoning_effort is ModelReasoningEffort.MINIMAL
+    for role in (ModelRole.SCREEN_ANALYZER, ModelRole.GROUNDER):
+        assert by_role[role].generation.reasoning is ModelReasoningMode.DISABLED
+        assert by_role[role].generation.reasoning_effort is None
+    unset = by_role[ModelRole.AUDITOR].generation
+    assert unset.reasoning is ModelReasoningMode.PROVIDER_DEFAULT
+    assert unset.reasoning_effort is None

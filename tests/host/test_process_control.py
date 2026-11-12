@@ -84,7 +84,11 @@ def test_a_started_child_runs_and_can_be_stopped() -> None:
 
 def test_a_started_child_inherits_only_the_given_environment() -> None:
     process = start_detached_process(
-        [sys.executable, "-c", "import os,sys; sys.exit(0 if os.environ.get('YEWO_PROBE')=='1' else 1)"],
+        [
+            sys.executable,
+            "-c",
+            "import os,sys; sys.exit(0 if os.environ.get('YEWO_PROBE')=='1' else 1)",
+        ],
         environment={"YEWO_PROBE": "1"},
     )
 
@@ -109,9 +113,7 @@ def test_posix_detachment_starts_a_new_session(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_windows_detachment_uses_its_own_process_group(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False
-    )
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
     monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x8000000, raising=False)
     module = load_host_module_as(monkeypatch, "process_control", "win32")
     recorded: dict[str, object] = {}

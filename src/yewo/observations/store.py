@@ -13,7 +13,6 @@ from yewo.artifacts.errors import ArtifactWriteError
 from yewo.artifacts.paths import ARTIFACTS_DIRECTORY
 from yewo.artifacts.records import (
     ArtifactRetention,
-    ArtifactSensitivity,
     new_record_identifier,
 )
 from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
@@ -21,8 +20,6 @@ from yewo.devices.screen import png_size
 from yewo.observations.errors import ObservationCaptureError
 from yewo.observations.records import (
     Observation,
-    RedactionProvenance,
-    ScreenshotRedactionState,
     ScreenshotReference,
 )
 
@@ -40,37 +37,14 @@ class ScreenshotStore:
         self._identifier_factory = identifier_factory
         self._writer = AtomicArtifactWriter(root)
 
-    def persist_raw(
+    def persist(
         self,
         png: bytes,
         *,
-        sensitivity: ArtifactSensitivity,
         retention: ArtifactRetention,
     ) -> ScreenshotReference:
-        """Persist unredacted PNG bytes and return their verified reference."""
-        return self._persist(
-            png,
-            redaction_state=ScreenshotRedactionState.RAW,
-            sensitivity=sensitivity,
-            retention=retention,
-        )
-
-    def persist_redacted(
-        self,
-        png: bytes,
-        *,
-        sensitivity: ArtifactSensitivity,
-        retention: ArtifactRetention,
-        redaction: RedactionProvenance,
-    ) -> ScreenshotReference:
-        """Persist approved redacted PNG bytes and return their reference."""
-        return self._persist(
-            png,
-            redaction_state=ScreenshotRedactionState.REDACTED,
-            sensitivity=sensitivity,
-            retention=retention,
-            redaction=redaction,
-        )
+        """Persist PNG bytes and return their verified reference."""
+        return self._persist(png, retention=retention)
 
     def discard(self, reference: ScreenshotReference) -> None:
         """Remove an unchanged screenshot created by an incomplete capture."""
@@ -115,10 +89,7 @@ class ScreenshotStore:
         self,
         png: bytes,
         *,
-        redaction_state: ScreenshotRedactionState,
-        sensitivity: ArtifactSensitivity,
         retention: ArtifactRetention,
-        redaction: RedactionProvenance | None = None,
     ) -> ScreenshotReference:
         dimensions = png_size(png)
         if dimensions is None:
@@ -133,9 +104,6 @@ class ScreenshotStore:
                 width_px=width,
                 height_px=height,
                 path=relative_path,
-                redaction_state=redaction_state,
-                redaction=redaction,
-                sensitivity=sensitivity,
                 retention=retention,
             )
         except ValidationError as error:
@@ -158,12 +126,7 @@ class ObservationStore:
 
     def persist(self, observation: Observation) -> Path:
         """Append one canonical observation without overwriting evidence."""
-        for screenshot in (
-            observation.raw_screenshot,
-            observation.redacted_screenshot,
-        ):
-            if screenshot is not None:
-                self._verify_screenshot(screenshot)
+        self._verify_screenshot(observation.screenshot)
         relative_path = ARTIFACTS_DIRECTORY / "observations.jsonl"
         try:
             self._writer.append(
@@ -201,12 +164,7 @@ class ObservationStore:
                     raise ObservationCaptureError(
                         "The observation ledger repeats an observation identifier."
                     )
-                for screenshot in (
-                    observation.raw_screenshot,
-                    observation.redacted_screenshot,
-                ):
-                    if screenshot is not None:
-                        self._verify_screenshot(screenshot)
+                self._verify_screenshot(observation.screenshot)
                 observations.append(observation)
                 observation_ids.add(observation.observation_id)
         except ObservationCaptureError:
@@ -245,12 +203,7 @@ class ObservationStore:
                         "The observation ledger repeats a requested observation identifier."
                     )
                 observation = Observation.model_validate(payload)
-                for screenshot in (
-                    observation.raw_screenshot,
-                    observation.redacted_screenshot,
-                ):
-                    if screenshot is not None:
-                        self._verify_screenshot(screenshot)
+                self._verify_screenshot(observation.screenshot)
                 selected_observations.append(observation)
                 loaded_observation_ids.add(observation.observation_id)
         except ObservationCaptureError:

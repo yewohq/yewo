@@ -30,3 +30,18 @@ class AgentModePolicy(BaseModel):
     )
     maximum_settlement_observations: int = Field(default=7, ge=2, le=20)
     settlement_interval_seconds: float = Field(default=0.35, ge=0, le=5)
+
+    def has_model_request_capacity(
+        self,
+        model_requests: int,
+        requested_model_requests: int,
+    ) -> bool:
+        """Report whether the run can still afford the requested model calls.
+
+        Every model call reserves its capacity here before the provider is asked. A call
+        counted only after it returns lets one run exceed the ceiling it reports.
+        """
+        return (
+            self.maximum_model_requests is None
+            or model_requests + requested_model_requests <= self.maximum_model_requests
+        )

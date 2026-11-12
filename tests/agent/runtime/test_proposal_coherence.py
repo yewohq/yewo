@@ -19,7 +19,7 @@ def _analysis() -> CurrentScreenAnalysis:
     return CurrentScreenAnalysis(
         analysis_id="analysis-1",
         observation_id=observation.observation_id,
-        screenshot_sha256=observation.redacted_screenshot.sha256,
+        screenshot_sha256=observation.screenshot.sha256,
         presentation=observation.presentation_key,
         screen_summary="Visible form with two fields.",
         elements=(
@@ -39,7 +39,6 @@ def _field(reference: str, name: str, state: str) -> ScreenElement:
         ),
         state=state,
         confidence=ScreenElementConfidence.HIGH,
-        evidence="A distinct editable surface is visible.",
         visual_cues=("under its visible label",),
     )
 

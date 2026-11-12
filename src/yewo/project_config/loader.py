@@ -32,7 +32,6 @@ from yewo.project_config.records import (
     ScenarioType,
     SettingsSpec,
     TargetSpec,
-    ValueRedaction,
     WorkflowSpec,
     YewoFileSpec,
 )
@@ -62,8 +61,6 @@ def load_yewo_project(path: Path) -> LoadedYewoProject:
     """Parse one YAML file and resolve its inherited workflows and journeys."""
     source_path = path.expanduser().resolve()
     payload = _read_yaml(source_path)
-    if isinstance(payload, list):
-        payload = {"journeys": payload}
     if not isinstance(payload, Mapping):
         raise YewoProjectError("A Yewo project file must contain a mapping or journey list.")
     try:
@@ -136,11 +133,7 @@ def _resolve_workflows(
     base_path: Path,
 ) -> tuple[ResolvedWorkflow, ...]:
     if declaration.workflows is None:
-        if (
-            declaration.journeys is None
-            and declaration.journey is None
-            and declaration.description is None
-        ):
+        if declaration.journeys is None and declaration.journey is None:
             return ()
         workflow = _inline_workflow(declaration)
         return (
@@ -219,12 +212,13 @@ def _resolve_workflow(
 def _journey_specs(workflow: WorkflowSpec) -> tuple[JourneySpec, ...]:
     if workflow.journeys is not None:
         return workflow.journeys
+    if workflow.journey is None:
+        raise YewoProjectError("A workflow must list journeys or carry one inline.")
     return (
         JourneySpec(
             id=workflow.id,
             name=workflow.name,
             journey=workflow.journey,
-            description=workflow.description,
             security_rules=(),
             checks=(),
             env={},
@@ -269,9 +263,7 @@ def _resolve_journey(
         )
         for actor_name, values in actor_specs.items()
     }
-    objective = declaration.journey or declaration.description
-    if objective is None:
-        raise YewoProjectError("A resolved journey must contain an objective.")
+    objective = declaration.journey
     available_names = set(declared_values)
     available_names.update(
         f"actors.{actor_name}.{value_name}"
@@ -322,11 +314,6 @@ def _resolve_values(
             value=value,
             secret=is_secret,
             refused=spec.refused,
-            redaction=spec.redaction if is_secret else ValueRedaction.HIDE,
-            verify_as=spec.verify_as,
-            normalizers=spec.normalizers,
-            visible_suffix=spec.visible_suffix,
-            masked_length=spec.masked_length,
         )
     return resolved_values_by_name
 
@@ -355,7 +342,9 @@ def _validate_references(
     undeclared_value_names = sorted(referenced - available_names)
     if undeclared_value_names:
         raise YewoProjectError(
-            "Journey text references undeclared value(s): " + ", ".join(undeclared_value_names) + "."
+            "Journey text references undeclared value(s): "
+            + ", ".join(undeclared_value_names)
+            + "."
         )
 
 
@@ -393,7 +382,6 @@ def _settings_values(declaration: SettingsSpec) -> dict[str, object]:
     payload = declaration.model_dump(mode="python", exclude_none=True)
     values = {name: payload[name] for name in _SETTINGS_FIELDS if name in payload}
     device = values.pop("device", None)
-    emulator = values.pop("emulator", None)
     if isinstance(device, dict):
         if device.get("name") is not None:
             values["device_name"] = device["name"]
@@ -402,16 +390,9 @@ def _settings_values(declaration: SettingsSpec) -> dict[str, object]:
                 values[name] = device[name]
     elif device is not None:
         values["device_name"] = device
-    elif emulator is not None:
-        values["device_name"] = emulator
     app = values.pop("app", None)
-    app_path = values.pop("app_path", None)
-    if app is not None or app_path is not None:
-        values["app_path"] = app if app is not None else app_path
-    record = values.pop("record", None)
-    record_session = values.pop("record_session", None)
-    if record is not None or record_session is not None:
-        values["record"] = record if record is not None else record_session
+    if app is not None:
+        values["app_path"] = app
     return values
 
 
@@ -473,8 +454,8 @@ def _resolve_target(
     }
     if target.headless is not None:
         overrides["headless"] = target.headless
-    if target.app is not None or target.app_path is not None:
-        overrides["app_path"] = target.app if target.app is not None else target.app_path
+    if target.app is not None:
+        overrides["app_path"] = target.app
     return ResolvedTarget(
         target_id=target.id,
         settings=_resolved_settings(_merge_settings(workflow_settings, overrides), base_path),

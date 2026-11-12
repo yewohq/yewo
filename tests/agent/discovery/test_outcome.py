@@ -16,16 +16,18 @@ from yewo.agent.memory.store import AppMemoryStore
 from yewo.models import ModelClient
 from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
 from yewo.runs import RunExecutionContext, RunTerminalCategory, RunWorkflowOutcome
+from yewo.extensions import ExtensionRegistry
 
 
 def _context(tmp_path: Path) -> RunExecutionContext:
     return cast(
         RunExecutionContext,
         SimpleNamespace(
+            extensions=ExtensionRegistry(),
             workspace=SimpleNamespace(
                 root=tmp_path,
                 start=SimpleNamespace(run_id="run_1"),
-            )
+            ),
         ),
     )
 

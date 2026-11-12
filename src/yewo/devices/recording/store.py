@@ -12,7 +12,6 @@ from yewo.artifacts.errors import ArtifactWriteError
 from yewo.artifacts.paths import ARTIFACTS_DIRECTORY
 from yewo.artifacts.records import (
     ArtifactRetention,
-    ArtifactSensitivity,
     new_record_identifier,
 )
 from yewo.artifacts.store import AppendOnlyJsonlWriter, AtomicArtifactWriter
@@ -23,8 +22,6 @@ from yewo.devices.recording.records import (
     ScreenRecordingCaptureMethod,
     ScreenRecordingCheckpointKind,
     ScreenRecordingCheckpointReceipt,
-    ScreenRecordingRedactionProvenance,
-    ScreenRecordingRedactionState,
     ScreenRecordingRemoteCleanupReceipt,
 )
 
@@ -64,9 +61,6 @@ class ScreenRecordingStore:
         maximum_stop_seconds: float,
         maximum_pull_seconds: float,
         reached_effective_limit: bool,
-        redaction_state: ScreenRecordingRedactionState,
-        redaction: ScreenRecordingRedactionProvenance | None,
-        sensitivity: ArtifactSensitivity,
         retention: ArtifactRetention,
     ) -> ScreenRecordingArtifactReference:
         """Persist one nonempty MP4 segment and return its immutable reference."""
@@ -93,9 +87,6 @@ class ScreenRecordingStore:
                 maximum_pull_seconds=maximum_pull_seconds,
                 reached_effective_limit=reached_effective_limit,
                 capture_method=capture_method,
-                redaction_state=redaction_state,
-                redaction=redaction,
-                sensitivity=sensitivity,
                 retention=retention,
             )
             self._writer.write_file(relative_path, source)

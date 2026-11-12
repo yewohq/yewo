@@ -16,5 +16,5 @@ def planning_observation_context(observation: Observation) -> dict[str, object]:
             observation.orientation.value if observation.orientation is not None else None
         ),
         "screen_fingerprint": observation.screen_fingerprint.value,
-        "screenshot_sha256": observation.redacted_screenshot.sha256,
+        "screenshot_sha256": observation.screenshot.sha256,
     }

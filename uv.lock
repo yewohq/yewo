@@ -3,13 +3,17 @@ revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform != 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'darwin'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform == 'win32'",
-    "python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform != 'win32'",
+    "python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform == 'darwin'",
+    "python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.12.4' and sys_platform == 'win32'",
-    "python_full_version < '3.12.4' and sys_platform != 'win32'",
+    "python_full_version < '3.12.4' and sys_platform == 'darwin'",
+    "python_full_version < '3.12.4' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 
 [[package]]
@@ -3092,7 +3096,7 @@ version = "0.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
-    { name = "cffi", marker = "implementation_name != 'pypy' and os_name == 'nt'" },
+    { name = "cffi", marker = "implementation_name != 'pypy' and os_name == 'nt' and sys_platform != 'darwin'" },
     { name = "idna" },
     { name = "outcome" },
     { name = "sniffio" },
@@ -3398,7 +3402,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.0.0,!=1.82.7,!=1.82.8,!=1.107.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "onnxruntime", marker = "extra == 'vision'", specifier = "==1.31.1" },
-    { name = "pillow", specifier = ">=9.5.0" },
+    { name = "pillow", specifier = ">=10.1.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },

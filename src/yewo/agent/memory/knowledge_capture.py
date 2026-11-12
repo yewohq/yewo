@@ -441,13 +441,8 @@ def _timing(
         receipt = step.receipt
         if receipt is None:
             raise AssertionError("A successful settled step must contain a dispatch receipt.")
-        measurement = (
-            "dispatch_to_settled_v1"
-            if receipt.dispatched_at is not None
-            else "source_to_settled_v1"
-        )
-        timing_started_at = receipt.dispatched_at or source.captured_at
-        duration_ms = (destination.captured_at - timing_started_at).total_seconds() * 1_000
+        measurement = "dispatch_to_settled_v1"
+        duration_ms = (destination.captured_at - receipt.dispatched_at).total_seconds() * 1_000
         if duration_ms < 0:
             skipped_records.append(
                 MemoryWritebackSkip(

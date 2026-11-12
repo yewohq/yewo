@@ -16,11 +16,10 @@ from yewo.artifacts import (
     RelativeArtifactPath,
     ARTIFACTS_DIRECTORY,
     ArtifactRetention,
-    ArtifactSensitivity,
     RecordIdentifier,
     Sha256Digest,
 )
-from yewo.observations import ScreenshotRedactionState, ScreenshotReference
+from yewo.observations import ScreenshotReference
 
 
 class ModelRole(StrEnum):
@@ -29,10 +28,15 @@ class ModelRole(StrEnum):
     TASK_PLANNER = "task_planner"
     GROUNDER = "grounder"
     AUDITOR = "auditor"
+    GOAL_VERIFIER = "goal_verifier"
+    SCENARIO_AUDITOR = "scenario_auditor"
     RECOVERY_ADVISOR = "recovery_advisor"
-    ACTION_VERIFIER = "action_verifier"
+    PROPOSAL_VERIFIER = "proposal_verifier"
+    OUTCOME_VERIFIER = "outcome_verifier"
     SCREEN_ANALYZER = "screen_analyzer"
     REPLAY_PREPARER = "replay_preparer"
+    OBJECTIVE_MATCHER = "objective_matcher"
+    REPLAY_RECONCILER = "replay_reconciler"
     TEST_DESIGNER = "test_designer"
 
 
@@ -86,7 +90,6 @@ class ModelArtifactReference(BaseModel):
     content_sha256: Sha256Digest
     path: RelativeArtifactPath
     body_retained: bool
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
 
     @field_validator("path")
@@ -114,18 +117,12 @@ class TextModelContent(BaseModel):
 
 
 class ImageModelContent(BaseModel):
-    """One redacted screenshot part sent to a model."""
+    """One screenshot part sent to a model."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["image"] = "image"
     screenshot: ScreenshotReference
-
-    @model_validator(mode="after")
-    def _validate_redacted_screenshot(self) -> Self:
-        if self.screenshot.redaction_state is not ScreenshotRedactionState.REDACTED:
-            raise ValueError("A model image must reference a redacted screenshot.")
-        return self
 
 
 ModelContent = Annotated[
@@ -185,7 +182,6 @@ class ModelRequest(BaseModel):
     retry_reasoning_exhaustion: bool = True
     messages: tuple[ModelMessage, ...] = Field(min_length=1)
     response_contract: ModelResponseContract | None = None
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
 
 
@@ -261,7 +257,6 @@ class ModelResponse(BaseModel):
     structured_output: dict[str, object] | None = None
     reason: str | None = Field(default=None, min_length=1)
     calls: tuple[ModelCallRecord, ...] = Field(min_length=1)
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
 
     @model_validator(mode="after")

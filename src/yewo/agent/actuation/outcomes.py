@@ -10,13 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.artifacts import (
     ArtifactRetention,
-    ArtifactSensitivity,
     RecordIdentifier,
     new_record_identifier,
 )
 from yewo.devices.application_lifecycle import ApplicationState, trusted_system_surface
 from yewo.devices.focus import FocusedFieldReading, TextFieldContextSource, TextFieldType
-from yewo.observations import Observation
+from yewo.observations import Observation, ScreenFingerprint
 from yewo.agent.actuation.action_catalog import ActionKind, ActionOutcomeSignal
 
 from yewo.agent.actuation.records import (
@@ -79,8 +78,15 @@ class ActionOutcome(BaseModel):
     disposition: ActionOutcomeDisposition
     signals: frozenset[ActionOutcomeSignal]
     text_delivery: TextDeliveryEvidence | None = None
+    scroll_exhausted: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the platform reported that the scrolled surface cannot scroll further in "
+            "the requested direction. This is dispatch-time platform evidence, not an observed "
+            "change, and it stays unset where the platform cannot answer."
+        ),
+    )
     reason: str = Field(min_length=1)
-    sensitivity: ArtifactSensitivity
     retention: Literal[ArtifactRetention.RUN]
 
     @model_validator(mode="after")
@@ -120,6 +126,35 @@ class ActionOutcomeVerifier:
         before: Observation,
         after: Observation | None,
         *,
+        baseline: ScreenFingerprint | None = None,
+        before_focus: FocusedFieldReading | None = None,
+        after_focus: FocusedFieldReading | None = None,
+        text_delivery: TextDeliveryEvidence | None = None,
+        scroll_exhausted: bool | None = None,
+    ) -> ActionOutcome:
+        """Judge one action, then attach platform evidence that observation cannot supply."""
+        outcome = self._observed_outcome(
+            action,
+            receipt,
+            before,
+            after,
+            baseline=baseline,
+            before_focus=before_focus,
+            after_focus=after_focus,
+            text_delivery=text_delivery,
+        )
+        if scroll_exhausted is None:
+            return outcome
+        return outcome.model_copy(update={"scroll_exhausted": scroll_exhausted})
+
+    def _observed_outcome(
+        self,
+        action: AuthorizedAction,
+        receipt: DispatchReceipt,
+        before: Observation,
+        after: Observation | None,
+        *,
+        baseline: ScreenFingerprint | None = None,
         before_focus: FocusedFieldReading | None = None,
         after_focus: FocusedFieldReading | None = None,
         text_delivery: TextDeliveryEvidence | None = None,
@@ -146,7 +181,7 @@ class ActionOutcomeVerifier:
             after_focus,
             text_delivery,
         )
-        fingerprint_change = _fingerprint_changed(before, after)
+        fingerprint_change = _dispatch_window_change(baseline, before, after)
         if fingerprint_change is True:
             signals.add(ActionOutcomeSignal.PIXELS_CHANGED)
         text_unresolved = action.action in {ActionKind.TYPE, ActionKind.CLEAR} and (
@@ -225,14 +260,11 @@ class ActionOutcomeVerifier:
             or receipt.action is not action.action
         ):
             raise ValueError("The dispatch receipt does not match the authorization.")
-        if (
-            receipt.sensitivity is not action.sensitivity
-            or receipt.retention is not action.retention
-        ):
+        if receipt.retention is not action.retention:
             raise ValueError("The dispatch receipt policy does not match the authorization.")
         if (
             before.observation_id != action.source_observation_id
-            or before.redacted_screenshot.sha256 != action.source_screenshot_sha256
+            or before.screenshot.sha256 != action.source_screenshot_sha256
             or before.application.application_id != action.application_id
         ):
             raise ValueError("The source observation does not match the authorization.")
@@ -303,7 +335,6 @@ class ActionOutcomeVerifier:
             signals=signals,
             text_delivery=text_delivery,
             reason=reason,
-            sensitivity=action.sensitivity,
             retention=action.retention,
         )
 
@@ -375,13 +406,29 @@ def _text_signal(
     }[delivery.status]
 
 
-def _fingerprint_changed(before: Observation, after: Observation) -> bool | None:
-    before_fingerprint = before.screen_fingerprint
-    after_fingerprint = after.screen_fingerprint
+def _dispatch_window_change(
+    baseline: ScreenFingerprint | None,
+    before: Observation,
+    after: Observation,
+) -> bool | None:
+    """Report whether the screen changed across the dispatch itself.
+
+    The source observation is the screen that authorized the action, captured before planning,
+    verification and grounding ran. Comparing against it credits the action with everything the
+    screen did on its own while those ran. A baseline taken at dispatch is therefore preferred
+    whenever one is comparable.
+    """
+    if baseline is not None:
+        change = _fingerprint_changed(baseline, after.screen_fingerprint)
+        if change is not None:
+            return change
+    return _fingerprint_changed(before.screen_fingerprint, after.screen_fingerprint)
+
+
+def _fingerprint_changed(before: ScreenFingerprint, after: ScreenFingerprint) -> bool | None:
     if (
-        before_fingerprint.algorithm != after_fingerprint.algorithm
-        or before_fingerprint.system_region_mask_sha256
-        != after_fingerprint.system_region_mask_sha256
+        before.algorithm != after.algorithm
+        or before.system_region_mask_sha256 != after.system_region_mask_sha256
     ):
         return None
-    return before_fingerprint.masked_pixels_sha256 != after_fingerprint.masked_pixels_sha256
+    return before.masked_pixels_sha256 != after.masked_pixels_sha256

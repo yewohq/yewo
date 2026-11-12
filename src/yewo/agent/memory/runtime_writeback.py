@@ -16,7 +16,7 @@ from yewo.agent.discovery.replay_handoff import replay_observation_ids
 from yewo.agent.memory.grounding_capture import build_grounding_assessments
 from yewo.agent.memory.knowledge_capture import build_memory_delta
 from yewo.agent.memory.records import AppMemory, MemoryCompatibility
-from yewo.agent.memory.store import AppMemoryStore
+from yewo.agent.memory.store import AppMemoryStore, load_discovery_memory
 from yewo.agent.memory.writeback import (
     MemoryDelta,
     MemoryDeltaApplication,
@@ -117,7 +117,7 @@ def _apply_writeback(
     procedure_store: CompiledProcedureStore | None,
     applied_at: datetime,
 ) -> MemoryWritebackReport:
-    memory = memory_store.load(compatibility)
+    memory = load_discovery_memory(memory_store, compatibility)
     if memory is None:
         return MemoryWritebackReport(
             source_run_id=source_run_id,
@@ -160,7 +160,6 @@ def _apply_writeback(
 
     updated = memory_store.update(
         compatibility,
-        root,
         partial(
             _update_memory,
             discovery_result=result,

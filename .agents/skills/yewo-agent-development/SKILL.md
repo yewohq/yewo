@@ -34,8 +34,7 @@ package boundaries:
 - `src/yewo/runs`: run coordination, workflow contracts, workspaces, and
   top-level terminal classification
 
-`main.py` is a deprecated compatibility shim. Add CLI behavior through
-`src/yewo/cli` and the `yewo` entry point.
+Add CLI behavior through `src/yewo/cli` and the `yewo` entry point.
 
 ## Preserve the execution model
 

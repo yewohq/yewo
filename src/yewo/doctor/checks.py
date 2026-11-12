@@ -32,6 +32,7 @@ from yewo.devices.ios.inventory import (
     IosPhysicalDeviceInventory,
     SimctlDeviceInventory,
 )
+from yewo.extensions import DeclaredValues, RunContext, load_extensions
 from yewo.models import ModelProfile
 from yewo.models.profiles import missing_model_credentials
 from yewo.project_config import (
@@ -75,6 +76,7 @@ def run_doctor(
     sections = [
         DoctorSection(title="Project", checks=project.checks),
         DoctorSection(title="System", checks=_system_checks(start)),
+        DoctorSection(title="Extensions", checks=_extension_checks()),
         DoctorSection(
             title="Appium",
             checks=_appium_checks(platforms, runner, configured_environment),
@@ -219,6 +221,26 @@ def _system_checks(start: Path | None) -> tuple[DoctorCheck, ...]:
             )
         )
     return python, yewo, disk
+
+
+def _extension_checks() -> tuple[DoctorCheck, ...]:
+    """Report which components an installed package is providing.
+
+    Named without naming any package. An empty slot is then a visible fact, not something a
+    reader infers from a run that quietly did less than they expected.
+    """
+    registry = load_extensions(
+        RunContext(artifact_root=Path("."), run_id="", declared_values=DeclaredValues())
+    )
+    filled = registry.filled()
+    checks = [
+        _ok("components", ", ".join(filled) if filled else "none installed"),
+    ]
+    checks.extend(
+        _fail("extension", failure, "Reinstall or remove the package that failed to load.")
+        for failure in registry.failures()
+    )
+    return tuple(checks)
 
 
 def _appium_checks(
@@ -444,7 +466,9 @@ def _aapt_check(sdk: Path) -> DoctorCheck:
     )
 
 
-def _selected_platforms(requested_platform: str | None, configured_platform: str | None) -> tuple[str, ...]:
+def _selected_platforms(
+    requested_platform: str | None, configured_platform: str | None
+) -> tuple[str, ...]:
     selected_platform = requested_platform or configured_platform or DEFAULT_PLATFORM
     if selected_platform == "all":
         return "android", "ios"

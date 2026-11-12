@@ -31,6 +31,7 @@ from agent.discovery.test_workflow import (
 )
 from agent.planning.support import StubPlannerModel
 from agent.replay.support import evidence as _evidence, response as _response
+from yewo.extensions import ExtensionRegistry
 
 
 def test_semantic_selection_loads_stored_identity_and_audits_requested_objective(
@@ -74,6 +75,7 @@ def test_semantic_selection_loads_stored_identity_and_audits_requested_objective
     context = cast(
         RunExecutionContext,
         SimpleNamespace(
+            extensions=ExtensionRegistry(),
             session=SimpleNamespace(installation_change=ApplicationInstallationChange.REINSTALLED),
             workspace=SimpleNamespace(root=Path("run-root")),
         ),
@@ -103,7 +105,6 @@ def test_semantic_selection_loads_stored_identity_and_audits_requested_objective
         cast(CompiledProcedureStore, StoredProcedure()),
         planner_profile_id="planner-primary",
         memory=None,
-        redaction_regions=(),
         declared_value_resolver=None,
         preparation=preparation,
         verification_task=evidence.task.model_copy(
@@ -174,6 +175,7 @@ def test_preparation_uses_llm_equivalent_procedure_after_exact_lookup_misses(
         RunPreparationContext,
         SimpleNamespace(
             application=execution_context.session.application,
+            extensions=ExtensionRegistry(),
             workspace=SimpleNamespace(
                 root=tmp_path / "run",
                 start=SimpleNamespace(

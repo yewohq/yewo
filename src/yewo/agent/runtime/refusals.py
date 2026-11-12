@@ -78,6 +78,48 @@ def record_action_refusal(
     return terminal_reason
 
 
+def record_grounding_refusal(
+    step_store: AgentStepStore,
+    steps: list[AgentStep],
+    history: list[PlanningHistoryEntry],
+    progress_ledger: RunProgressLedger,
+    step_index: int,
+    observation: Observation,
+    proposal: ActionProposal,
+    decision: PlannerDecisionMetadata,
+    error: Exception,
+    *,
+    planning_requests: int,
+    grounding_requests: int,
+    dispatched_actions: int,
+) -> str | None:
+    """Record one target the grounder could not resolve as a refusal, not a run terminal.
+
+    One target that cannot be grounded says nothing about the other routes on this screen. The
+    refusal streak still bounds a grounder that never answers.
+    """
+    narrate(f"Step {step_index} grounding refused: {type(error).__name__}.")
+    return record_action_refusal(
+        step_store,
+        steps,
+        history,
+        progress_ledger,
+        step_index,
+        observation,
+        proposal,
+        decision,
+        ActionRefusal(
+            proposal_id=proposal.proposal_id,
+            code=ActionRefusalCode.PROVIDER_UNAVAILABLE,
+            reason=f"Grounding did not produce a usable target: {error}",
+            retention=proposal.retention,
+        ),
+        planning_requests=planning_requests,
+        grounding_requests=grounding_requests,
+        dispatched_actions=dispatched_actions,
+    )
+
+
 def record_dispatch_rejection(
     step_store: AgentStepStore,
     steps: list[AgentStep],
@@ -119,6 +161,7 @@ def record_dispatch_rejection(
         code={
             DispatchDisposition.INPUT_REJECTED: ActionRefusalCode.INVALID_INPUT,
             DispatchDisposition.TARGET_REJECTED: ActionRefusalCode.INVALID_GROUNDING,
+            DispatchDisposition.DEVICE_REFUSED: ActionRefusalCode.INVALID_CONSTRAINT,
         }[receipt.disposition],
         reason=reason,
     )

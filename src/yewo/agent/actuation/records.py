@@ -8,7 +8,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity, RecordIdentifier
+from yewo.artifacts import ArtifactRetention, RecordIdentifier
 from yewo.devices.interaction import (
     DEFAULT_MAXIMUM_WAIT_SECONDS,
     MAXIMUM_GESTURE_SECONDS,
@@ -48,7 +48,6 @@ class LiteralText(BaseModel):
 
     source: Literal["literal"] = "literal"
     value: str = Field(min_length=1, max_length=10_000)
-    sensitivity: Literal[ArtifactSensitivity.DEVICE_CONTENT] = ArtifactSensitivity.DEVICE_CONTENT
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
 
 
@@ -59,9 +58,6 @@ class DeclaredValueReference(BaseModel):
 
     source: Literal["declared_value"] = "declared_value"
     value_name: RecordIdentifier
-    sensitivity: Literal[ArtifactSensitivity.DECLARED_SENSITIVE] = (
-        ArtifactSensitivity.DECLARED_SENSITIVE
-    )
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
 
 
@@ -93,7 +89,14 @@ class ActionProposalDecision(BaseModel):
     )
     text: TextInput | None = None
     duration_seconds: float | None = Field(default=None, ge=0)
-    direction: ScrollDirection | None = None
+    direction: ScrollDirection | None = Field(
+        default=None,
+        description=(
+            "The content a scroll reveals. Use down to bring lower content into view and up to "
+            "return to content above. Use right to reveal content further right and left to "
+            "return to content on the left."
+        ),
+    )
     distance: ScrollDistance | None = None
     expected_outcome: str | None = Field(
         default=None,
@@ -105,7 +108,6 @@ class ActionProposalDecision(BaseModel):
         ),
     )
     reason: str | None = Field(default=None, min_length=1, max_length=2_000)
-    sensitivity: Literal[ArtifactSensitivity.DEVICE_CONTENT] = ArtifactSensitivity.DEVICE_CONTENT
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
 
     @model_validator(mode="after")
@@ -315,7 +317,6 @@ class ActionRefusal(BaseModel):
     proposal_id: RecordIdentifier
     code: ActionRefusalCode
     reason: str = Field(min_length=1)
-    sensitivity: ArtifactSensitivity = ArtifactSensitivity.DEVICE_CONTENT
     retention: Literal[ArtifactRetention.RUN] = ArtifactRetention.RUN
 
 
@@ -343,15 +344,12 @@ class AuthorizedAction(BaseModel):
     tap_count: int = Field(default=1, ge=1, le=10)
     tap_interval_seconds: float = Field(default=0, ge=0, le=1)
     expected_back_destination_observation_id: RecordIdentifier | None = None
-    sensitivity: ArtifactSensitivity
     retention: Literal[ArtifactRetention.RUN]
 
     @model_validator(mode="after")
     def _validate_action_fields(self) -> Self:
         if self.side_effect is not ACTION_DEFINITIONS[self.action].side_effect:
             raise ValueError("The side-effect class does not match the action.")
-        if self.text is not None and self.sensitivity is not self.text.sensitivity:
-            raise ValueError("The authorization sensitivity does not match its text input.")
         required: dict[ActionKind, frozenset[str]] = {
             ActionKind.TAP: frozenset({"target"}),
             ActionKind.FOCUS: frozenset({"target"}),
@@ -361,12 +359,14 @@ class AuthorizedAction(BaseModel):
             ActionKind.LONG_PRESS: frozenset({"target", "duration_seconds"}),
             ActionKind.DRAG: frozenset({"target", "destination", "duration_seconds"}),
             ActionKind.SCROLL: frozenset({"direction", "distance"}),
+            ActionKind.REFRESH: frozenset(),
             ActionKind.BACK: frozenset(),
             ActionKind.DISMISS_KEYBOARD: frozenset(),
             ActionKind.WAIT: frozenset({"duration_seconds"}),
         }
         optional: dict[ActionKind, frozenset[str]] = {
             ActionKind.SCROLL: frozenset({"region"}),
+            ActionKind.REFRESH: frozenset({"region"}),
             ActionKind.TYPE: frozenset({"target"}),
         }
         action_fields = {
@@ -410,6 +410,23 @@ class DispatchDisposition(StrEnum):
     DEVICE_REFUSED = "device_refused"
 
 
+# Rejections the device raised before it changed anything. The proposal was wrong for this
+# screen, and the planner can answer by proposing something else. Losing the device is a
+# different class and still ends the run.
+_CORRECTABLE_REJECTIONS = frozenset(
+    {
+        DispatchDisposition.TARGET_REJECTED,
+        DispatchDisposition.INPUT_REJECTED,
+        DispatchDisposition.DEVICE_REFUSED,
+    }
+)
+
+
+def is_correctable_rejection(disposition: DispatchDisposition) -> bool:
+    """Whether the planner can answer this rejection by proposing something else."""
+    return disposition in _CORRECTABLE_REJECTIONS
+
+
 class DispatchReceipt(BaseModel):
     """A dispatch receipt that contains no action-outcome claim."""
 
@@ -420,14 +437,13 @@ class DispatchReceipt(BaseModel):
     proposal_id: RecordIdentifier
     action: ActionKind
     disposition: DispatchDisposition
-    dispatched_at: datetime | None = None
+    dispatched_at: datetime
     reason: str | None = Field(default=None, min_length=1)
-    sensitivity: ArtifactSensitivity
     retention: Literal[ArtifactRetention.RUN]
 
     @model_validator(mode="after")
     def _validate_disposition(self) -> Self:
-        if self.dispatched_at is not None and self.dispatched_at.utcoffset() is None:
+        if self.dispatched_at.utcoffset() is None:
             raise ValueError("A dispatch timestamp must include a timezone.")
         if self.disposition is not DispatchDisposition.DISPATCHED and self.reason is None:
             raise ValueError("A non-accepted dispatch must contain a reason.")

@@ -5,23 +5,13 @@ from devices._interaction_stubs import application
 from yewo.devices import DevicePlatform
 from yewo.devices.android.interaction import AndroidInteractionBackend
 from yewo.devices.interaction import DeviceInteraction
-
-
-class _Clock:
-    def __init__(self) -> None:
-        self.current = 0.0
-
-    def monotonic(self) -> float:
-        return self.current
-
-    def sleep(self, seconds: float) -> None:
-        self.current += seconds
+from support import ClockStub
 
 
 def test_focus_accepts_the_clicked_field_after_keyboard_reflow() -> None:
     driver = DriverStub()
     driver.element.focused = False
-    clock = _Clock()
+    clock = ClockStub()
 
     def focus_and_reflow() -> None:
         driver.element.clicked = True
@@ -44,4 +34,4 @@ def test_focus_accepts_the_clicked_field_after_keyboard_reflow() -> None:
 
     assert focused is driver.element
     assert driver.element.clicked
-    assert clock.current == 0
+    assert clock.now == 0

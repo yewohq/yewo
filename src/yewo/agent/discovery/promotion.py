@@ -142,7 +142,9 @@ class AppMemoryBuilder:
         validate_memory_observations(observations, compatibility)
         screens = list(existing_memory.screens if existing_memory is not None else ())
         transitions = list(existing_memory.transitions if existing_memory is not None else ())
-        unsuccessful_attempts = list(existing_memory.unsuccessful_attempts if existing_memory is not None else ())
+        unsuccessful_attempts = list(
+            existing_memory.unsuccessful_attempts if existing_memory is not None else ()
+        )
         run_transitions, new_unsuccessful_attempts = self._promote_steps(
             agent_result,
             observations,
@@ -162,7 +164,9 @@ class AppMemoryBuilder:
         if not run_transitions and not new_unsuccessful_attempts:
             return DiscoveryPromotion(memory=existing_memory, coverage=coverage)
         source_run_ids = tuple(
-            dict.fromkeys((*(existing_memory.source_run_ids if existing_memory else ()), source_run_id))
+            dict.fromkeys(
+                (*(existing_memory.source_run_ids if existing_memory else ()), source_run_id)
+            )
         )
         retained_transitions = retain_transitions(
             transitions,
@@ -187,7 +191,9 @@ class AppMemoryBuilder:
             screens=retained_screens,
             transitions=retained_transitions,
             unsuccessful_attempts=retained_attempts,
-            app_knowledge=existing_memory.app_knowledge if existing_memory is not None else AppKnowledge(),
+            app_knowledge=existing_memory.app_knowledge
+            if existing_memory is not None
+            else AppKnowledge(),
             updated_at=updated_at,
         )
         return DiscoveryPromotion(memory=memory, coverage=coverage)

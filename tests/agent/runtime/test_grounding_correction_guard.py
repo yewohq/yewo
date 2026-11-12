@@ -10,7 +10,7 @@ from yewo.agent.actuation import (
     ActionOutcomeDisposition,
     ActionRefusalCode,
 )
-from yewo.agent.actuation.verifier import (
+from yewo.agent.actuation.proposal_verifier import (
     ActionReadinessAssessment,
     ActionReadinessDisposition,
 )
@@ -19,7 +19,7 @@ from yewo.agent.planning.evidence import PlannerDecisionSource
 from yewo.agent.planning.records import PlanningRequest
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
 from yewo.agent.runtime.progress import RunProgressLedger, correct_repeated_grounding
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.observations import Observation
 
 from yewo.agent import AgentTerminalReason
@@ -54,7 +54,6 @@ def _no_change_outcome() -> ActionOutcome:
         disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
         reason="The settled observation reports no action-outcome signal.",
         signals=frozenset(),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -117,7 +116,8 @@ def test_a_correction_naming_an_attempt_that_never_failed_stays_refused() -> Non
     assert refusal.code is ActionRefusalCode.REPEATED_NO_PROGRESS
 
 
-def test_a_correction_for_a_failure_on_another_screen_stays_refused() -> None:
+def test_a_correction_is_accepted_when_the_named_attempt_failed_on_this_screen() -> None:
+    """The same attempt also failing elsewhere does not disqualify this screen's correction."""
     tracker = _tracker()
     drawer = _observation("obs_1", "0000000000000000")
     other_screen = _observation("obs_2", "ffffffffffffffff", offset_seconds=1)
@@ -132,6 +132,30 @@ def test_a_correction_for_a_failure_on_another_screen_stays_refused() -> None:
     )
 
     assert tracker.refusal_for(correction, drawer) is None
+
+
+def test_a_correction_for_a_failure_on_another_screen_stays_refused() -> None:
+    """What the guard is for: a correction has to answer a failure on the screen it is on.
+
+    The named attempt failed somewhere else. Accepting it here would let one failed tap excuse
+    a repeat on every screen the run later reaches.
+    """
+    tracker = _tracker()
+    drawer = _observation("obs_1", "0000000000000000")
+    other_screen = _observation("obs_2", "ffffffffffffffff", offset_seconds=1)
+    _record_missed_tap(tracker, drawer, "proposal-1")
+    _record_missed_tap(tracker, other_screen, "proposal-9")
+
+    correction = proposal(
+        ActionKind.TAP,
+        proposal_id="proposal-2",
+        grounding_correction_for_proposal_id="proposal-9",
+        target_expression=_DRAWER_ITEM,
+    )
+    refusal = tracker.refusal_for(correction, drawer)
+
+    assert refusal is not None
+    assert refusal.code is ActionRefusalCode.REPEATED_NO_PROGRESS
 
 
 def test_the_named_attempt_comes_from_this_screen_not_a_later_failure_elsewhere() -> None:
@@ -206,7 +230,7 @@ def test_deterministic_repeat_gate_runs_before_the_discovery_verifier(tmp_path: 
         planner,
         ObservationSequence(stuck),
         RuntimeDevice(),
-        action_verifier=verifier,
+        proposal_verifier=verifier,
     ).run(
         _task().model_copy(update={"discovery_mode": True}),
         _mode_policy(),

@@ -117,7 +117,7 @@ def test_compilation_uses_replay_screen_analysis(
         CurrentScreenAnalysis(
             analysis_id="replay-analysis",
             observation_id=before.observation_id,
-            screenshot_sha256=before.redacted_screenshot.sha256,
+            screenshot_sha256=before.screenshot.sha256,
             presentation=before.presentation_key,
             screen_summary="Visible navigation control.",
             elements=(
@@ -129,7 +129,6 @@ def test_compilation_uses_replay_screen_analysis(
                         semantic=ScreenSemanticRole.NAVIGATION_ITEM,
                     ),
                     confidence=ScreenElementConfidence.HIGH,
-                    evidence="A labelled navigation control is visible.",
                 ),
             ),
         )

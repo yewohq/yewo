@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from yewo.agent.actuation import ActionKind
+from yewo.agent.runtime.records import AgentTerminalReason
 from yewo.grounding import GroundingInputError, GroundingRequest, GroundingResult
 
 from agent.actuation.support import proposal
@@ -53,21 +55,30 @@ def test_grounding_failure_preserves_the_proposal_as_a_partial_step(tmp_path: Pa
     assert stored[0]["authorization"] is None
 
 
-def test_grounding_request_validation_failure_preserves_the_partial_step(
+def test_an_ungroundable_target_refuses_the_step_and_lets_the_planner_choose_again(
     tmp_path: Path,
 ) -> None:
-    planner = SequencePlanner([proposal()])
-    observations = ObservationSequence([_observation("obs_1", "0000000000000000")])
+    # One target the grounder cannot resolve says nothing about the other routes on the screen.
+    # Ending the whole run on it discarded every step already completed.
+    planner = SequencePlanner([proposal(), proposal(ActionKind.CANNOT_PROGRESS)])
+    observations = ObservationSequence(
+        [
+            _observation("obs_1", "0000000000000000"),
+            _observation("obs_2", "0000000000000001", offset_seconds=1),
+        ]
+    )
 
-    with pytest.raises(GroundingInputError, match="rejects this operation"):
-        _runtime(
-            tmp_path,
-            planner,
-            observations,
-            RuntimeDevice(),
-            grounder=InvalidRequestGrounder(),
-        ).run(_task(), _mode_policy(), NeverInterrupted())
+    result = _runtime(
+        tmp_path,
+        planner,
+        observations,
+        RuntimeDevice(),
+        grounder=InvalidRequestGrounder(),
+    ).run(_task(), _mode_policy(), NeverInterrupted())
 
     stored = _stored_steps(tmp_path)
-    assert stored[0]["terminal_reason"] == "runtime_failure"
-    assert stored[0]["target_grounding"] is None
+    assert stored[0]["terminal_reason"] is None
+    refusal = stored[0]["refusal"]
+    assert isinstance(refusal, dict)
+    assert refusal["code"] == "provider_unavailable"
+    assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS

@@ -20,7 +20,7 @@ class ScreenRecorder(Protocol):
         self,
         maximum_duration_seconds: int,
         maximum_stop_seconds: float = 10.0,
-        maximum_pull_seconds: float = 120.0,
+        maximum_pull_seconds: float = 30.0,
     ) -> ScreenRecordingStart: ...
 
     def stop(self) -> ScreenRecordingCapture: ...

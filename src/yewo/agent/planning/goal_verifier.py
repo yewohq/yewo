@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 import json
 from pathlib import Path
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
@@ -49,6 +49,33 @@ GOAL_VERIFIER_USER_PROMPT = (
 )
 
 
+class GoalEvidenceConflict(BaseModel):
+    """One material contradiction between current-run observations."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+
+    subject: str = Field(min_length=1, max_length=200)
+    earlier_observation: VerificationText
+    later_observation: VerificationText
+    reason: VerificationText
+
+
+def format_goal_evidence_conflicts(
+    conflicts: tuple[GoalEvidenceConflict, ...],
+) -> str | None:
+    """Return a report-safe summary of structured current-run conflicts."""
+    if not conflicts:
+        return None
+    details = " ".join(
+        (
+            f"{conflict.subject}: {conflict.earlier_observation} "
+            f"Conflicting evidence: {conflict.later_observation} {conflict.reason}"
+        )
+        for conflict in conflicts
+    )
+    return f"Discovery found {len(conflicts)} material evidence conflict(s). {details}"
+
+
 class GoalVerification(BaseModel):
     """Independent visible-state conclusion for one agent objective."""
 
@@ -60,6 +87,7 @@ class GoalVerification(BaseModel):
     satisfied: bool
     reason: VerificationText
     observed_app_state: VerificationText | None = None
+    evidence_conflicts: tuple[GoalEvidenceConflict, ...] = Field(default=(), max_length=100)
     model_request_id: RecordIdentifier | None = None
     model_call_count: int = Field(default=0, ge=0)
 
@@ -72,6 +100,13 @@ class GoalVerificationAssessment(BaseModel):
     satisfied: bool
     reason: VerificationText
     observed_app_state: VerificationText | None = None
+    evidence_conflicts: tuple[GoalEvidenceConflict, ...] = Field(default=(), max_length=100)
+
+    @model_validator(mode="after")
+    def _validate_conflict_disposition(self) -> Self:
+        if self.satisfied and self.evidence_conflicts:
+            raise ValueError("Contradictory goal evidence cannot satisfy the objective.")
+        return self
 
 
 class GoalVerificationActionEvidence(BaseModel):
@@ -220,7 +255,7 @@ class ModelGoalVerifier:
         request = ModelRequest(
             request_id=self._identifier_factory(),
             profile_id=self._model_profile_id,
-            role=ModelRole.AUDITOR,
+            role=ModelRole.GOAL_VERIFIER,
             messages=(
                 ModelMessage(
                     role=ModelMessageRole.SYSTEM,
@@ -235,8 +270,7 @@ class ModelGoalVerifier:
                 "goal-verification-assessment-v1",
                 GoalVerificationAssessment.model_json_schema(),
             ),
-            sensitivity=observation.redacted_screenshot.sensitivity,
-            retention=observation.redacted_screenshot.retention,
+            retention=observation.screenshot.retention,
         )
         response = self._model_client.complete(request, GoalVerificationAssessment)
         if (
@@ -269,6 +303,7 @@ class ModelGoalVerifier:
             satisfied=assessment.satisfied,
             reason=assessment.reason,
             observed_app_state=assessment.observed_app_state,
+            evidence_conflicts=assessment.evidence_conflicts,
             model_request_id=request.request_id,
             model_call_count=len(response.calls),
         )
@@ -294,19 +329,18 @@ def _validate_milestone_evidence(
         raise ValueError("Objective milestones require an objective without conditions.")
     screenshots = (
         *(
-            item.source_observation.redacted_screenshot
+            item.source_observation.screenshot
             for item in milestone_evidence
             if item.source_observation is not None
         ),
-        *(item.observation.redacted_screenshot for item in milestone_evidence),
-        final_observation.redacted_screenshot,
+        *(item.observation.screenshot for item in milestone_evidence),
+        final_observation.screenshot,
     )
     if any(
-        screenshot.sensitivity is not final_observation.redacted_screenshot.sensitivity
-        or screenshot.retention is not final_observation.redacted_screenshot.retention
+        screenshot.retention is not final_observation.screenshot.retention
         for screenshot in screenshots
     ):
-        raise ValueError("Goal verification screenshots must use one artifact policy.")
+        raise ValueError("Goal verification screenshots must use one retention policy.")
 
 
 def _observation_context(observation: Observation | None) -> dict[str, object] | None:
@@ -352,7 +386,7 @@ def _goal_evidence_sources(
         GoalEvidenceSource(
             observation_id=observation_id,
             labels=tuple(labels),
-            screenshot=observations_by_id[observation_id].redacted_screenshot,
+            screenshot=observations_by_id[observation_id].screenshot,
         )
         for observation_id, labels in labels_by_observation_id.items()
     )

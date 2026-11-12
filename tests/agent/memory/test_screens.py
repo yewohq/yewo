@@ -16,6 +16,7 @@ from yewo.agent.discovery import AppMemoryBuilder, DiscoveryObjective, Discovery
 from yewo.agent.planning.records import (
     PlanningRequest,
 )
+from yewo.agent.planning.planner import resolve_action_verification_context
 from yewo.agent.planning.evidence import PlannerDecisionMetadata, PlannerDecisionSource
 from yewo.agent.memory.screens import AppMemoryActionSource, memory_planning_facts
 from yewo.grounding import (
@@ -137,8 +138,8 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
         disposition=UnsuccessfulAttemptDisposition.TARGET_REJECTED,
         reason="The grounded point selected the label.",
         grounded_point=PixelPoint(x=10, y=20),
-        screenshot_width_px=before.redacted_screenshot.width_px,
-        screenshot_height_px=before.redacted_screenshot.height_px,
+        screenshot_width_px=before.screenshot.width_px,
+        screenshot_height_px=before.screenshot.height_px,
         source_step_id="step_1",
         source_run_id="run_1",
     )
@@ -166,7 +167,8 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
     assert source.request.progress_context is not None
     historical_facts = source.request.progress_context.historical_memory_facts
     assert any("Previous unsuccessful attempt" in fact for fact in historical_facts)
-    assert any("Previously grounded target" in fact for fact in historical_facts)
+    assert any("Previously accepted map transition" in fact for fact in historical_facts)
+    assert any(transition.destination_screen_id in fact for fact in historical_facts)
     assert all("unrelated settings menu" not in fact for fact in historical_facts)
     assert source.request.known_facts == ()
     narration = (tmp_path / "runtime/yewo-session.log").read_text()
@@ -184,12 +186,23 @@ def test_action_source_supplies_only_matching_screen_and_grounder_evidence(
     destination_facts = memory_planning_facts(memory, after)
     assert all("unrelated settings menu" in fact for fact in destination_facts)
 
+    verification_context = resolve_action_verification_context(
+        wrapped,
+        PlanningRequest(
+            observation=before,
+            objective="Open the record form.",
+            completion_conditions=("The record form is visible.",),
+            available_actions=frozenset({ActionKind.DONE}),
+        ),
+    )
+    assert verification_context.request.progress_context is not None
+    assert verification_context.request.progress_context.historical_memory_facts == historical_facts
+
 
 def test_memory_wrapper_does_not_hide_delegated_source_capabilities() -> None:
     from yewo.agent.planning.planner import (
         ActionVerificationContext,
         source_accepts_planning_focus,
-        resolve_action_verification_context,
     )
     from yewo.agent.planning.evidence import resolve_planning_model_request_count
 

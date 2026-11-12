@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
 import time
 
 from yewo.grounding import GroundingProfile
 from yewo.models import ModelProfileRegistry, ModelRole
-from yewo.observations import ObservationStore, RedactionRegion
+from yewo.observations import ObservationStore
 from yewo.runs import (
     InterruptionSignal,
     RunExecutionContext,
@@ -60,13 +60,12 @@ class DiscoveryWorkflow:
         planner_profile_id: str,
         auditor_profile_id: str,
         recovery_profile_id: str,
-        action_verifier_profile_id: str,
+        proposal_verifier_profile_id: str,
+        outcome_verifier_profile_id: str,
         replay_preparation_profile_id: str,
         memory_root: Path | None,
-        scrub_text: Callable[[str], str],
         *,
         screen_analyzer_profile_id: str | None = None,
-        redaction_regions: Sequence[RedactionRegion] = (),
         declared_value_resolver: Callable[[str], str] | None = None,
         memory_builder: AppMemoryBuilder | None = None,
         memory_store: AppMemoryStore | None = None,
@@ -82,7 +81,8 @@ class DiscoveryWorkflow:
         self._planner_profile_id = planner_profile_id
         self._auditor_profile_id = auditor_profile_id
         self._recovery_profile_id = recovery_profile_id
-        self._action_verifier_profile_id = action_verifier_profile_id
+        self._proposal_verifier_profile_id = proposal_verifier_profile_id
+        self._outcome_verifier_profile_id = outcome_verifier_profile_id
         self._replay_preparation_profile_id = replay_preparation_profile_id
         self._screen_analyzer_profile_id = screen_analyzer_profile_id
         if memory_store is not None:
@@ -91,8 +91,6 @@ class DiscoveryWorkflow:
             self._memory_store = AppMemoryStore(memory_root)
         else:
             raise ValueError("Discovery requires a Yewo memory root or memory store.")
-        self._scrub_text = scrub_text
-        self._redaction_regions = tuple(redaction_regions)
         if request.declared_value_names and declared_value_resolver is None:
             raise ValueError("Discovery declared values require a resolver.")
         self._declared_value_resolver = declared_value_resolver
@@ -114,8 +112,8 @@ class DiscoveryWorkflow:
         self._monotonic = monotonic
 
     def session_policy(self) -> RunSessionPolicy:
-        """Apply declared redaction regions before automation starts."""
-        return RunSessionPolicy(recording_redaction_regions=self._redaction_regions)
+        """Apply the declared regions from the project file before automation starts."""
+        return RunSessionPolicy()
 
     def prepare(
         self,
@@ -137,8 +135,6 @@ class DiscoveryWorkflow:
                     self._procedure_store,
                     self._model_profiles,
                     self._replay_preparation_profile_id,
-                    self._scrub_text,
-                    self._redaction_regions,
                     self._mode_policy.maximum_model_requests,
                 )
             )
@@ -168,8 +164,8 @@ class DiscoveryWorkflow:
             context.workspace.root,
             context.workspace.start.run_id,
             self._model_profiles,
-            self._scrub_text,
-            bool(self._redaction_regions),
+            self._request.declared_value_names,
+            context.extensions,
         )
         screen_analysis_failures = ScreenAnalysisFailureLedger()
         compilation: DiscoveryCompilationMilestones | None = None
@@ -200,12 +196,12 @@ class DiscoveryWorkflow:
             self._auditor_profile_id,
             self._planner_profile_id,
             self._recovery_profile_id,
-            self._action_verifier_profile_id,
+            self._proposal_verifier_profile_id,
+            self._outcome_verifier_profile_id,
             interruption,
             self._procedure_store,
             self._model_profiles.resolve(self._auditor_profile_id, ModelRole.AUDITOR).images,
             existing_memory,
-            self._redaction_regions,
             self._declared_value_resolver,
             prepared,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
@@ -236,8 +232,8 @@ class DiscoveryWorkflow:
             self._grounding_profile,
             self._planner_profile_id,
             recovery_profile_id=self._recovery_profile_id,
-            redaction_regions=self._redaction_regions,
-            action_verifier_profile_id=self._action_verifier_profile_id,
+            proposal_verifier_profile_id=self._proposal_verifier_profile_id,
+            outcome_verifier_profile_id=self._outcome_verifier_profile_id,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
             screen_analysis_failures=screen_analysis_failures,
             recover_application=True,
@@ -325,7 +321,6 @@ class DiscoveryWorkflow:
             memory = conclusion.save_discovery_memory(
                 self._memory_store,
                 memory,
-                context.workspace.root,
                 context.workspace,
                 self._request,
                 agent_result,

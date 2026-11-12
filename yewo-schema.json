@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/yewohq/yewo/master/yewo-schema.json",
   "$defs": {
-    "AccessibilityCapability": {
+    "AccessibilityCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -19,10 +19,10 @@
       "required": [
         "enabled"
       ],
-      "title": "AccessibilityCapability",
+      "title": "AccessibilityCapabilitySpec",
       "type": "object"
     },
-    "AppStateCapability": {
+    "AppStateCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -53,17 +53,16 @@
             }
           ],
           "default": null,
-          "description": "Seconds to remain backgrounded. Only background_resume uses it.",
           "title": "Duration Seconds"
         }
       },
       "required": [
         "action"
       ],
-      "title": "AppStateCapability",
+      "title": "AppStateCapabilitySpec",
       "type": "object"
     },
-    "BatteryCapability": {
+    "BatteryCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -87,10 +86,10 @@
       "required": [
         "level"
       ],
-      "title": "BatteryCapability",
+      "title": "BatteryCapabilitySpec",
       "type": "object"
     },
-    "BiometricCapability": {
+    "BiometricCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -127,11 +126,31 @@
       "required": [
         "action"
       ],
-      "title": "BiometricCapability",
+      "title": "BiometricCapabilitySpec",
       "type": "object"
     },
-    "Category": {
-      "description": "What a scenario looks for.",
+    "ClipboardCapabilitySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "clipboard",
+          "default": "clipboard",
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ClipboardCapabilitySpec",
+      "type": "object"
+    },
+    "CoverageCategory": {
+      "description": "A general QA lens applied to a discovered application surface.",
       "enum": [
         "functional",
         "data_consistency",
@@ -151,39 +170,25 @@
         "localization",
         "regression"
       ],
-      "title": "Category",
+      "title": "CoverageCategory",
       "type": "string"
     },
-    "ClipboardCapability": {
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "const": "clipboard",
-          "default": "clipboard",
-          "title": "Kind",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
+    "CoveragePriority": {
+      "enum": [
+        "P0",
+        "P1",
+        "P2"
       ],
-      "title": "ClipboardCapability",
-      "type": "object"
+      "title": "CoveragePriority",
+      "type": "string"
     },
     "CoverageSpec": {
       "additionalProperties": false,
-      "description": "One category, and which shapes of test to write for it.\n\nEight categories and nine types give up to seventy-two pairs. One model\ncall per pair is only affordable where a file says which pairs matter. A\npair nothing declares is never generated, and the report names it as\nuncovered.",
       "properties": {
         "category": {
-          "$ref": "#/$defs/Category",
-          "description": "What these scenarios look for."
+          "$ref": "#/$defs/CoverageCategory"
         },
         "types": {
-          "description": "Which shapes of test to write for this category.",
           "items": {
             "$ref": "#/$defs/ScenarioType"
           },
@@ -192,9 +197,8 @@
           "type": "array"
         },
         "priority": {
-          "$ref": "#/$defs/Priority",
-          "default": "P1",
-          "description": "Which cells a run has to finish first, if it cannot finish all."
+          "$ref": "#/$defs/CoveragePriority",
+          "default": "P1"
         }
       },
       "required": [
@@ -204,81 +208,33 @@
       "title": "CoverageSpec",
       "type": "object"
     },
-    "DeclaredValue": {
+    "DeclaredValueSpec": {
       "additionalProperties": false,
-      "description": "A declared value, whether it is sensitive, and what the app owes it.\n\nA value marked secret is replaced by its name in everything Yewo writes\ndown. Nothing else is masked, so a credential written straight into the\njourney text is not hidden.",
       "properties": {
         "value": {
-          "title": "Value",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Value"
         },
         "secret": {
           "default": false,
           "title": "Secret",
           "type": "boolean"
         },
-        "redaction": {
-          "default": "hide",
-          "description": "How much of this value an external model may receive.",
-          "enum": [
-            "hide",
-            "last4",
-            "show"
-          ],
-          "title": "Redaction",
-          "type": "string"
-        },
-        "verify_as": {
-          "default": "auto",
-          "description": "How local post-action checks may recognize this value. Auto accepts an exact value or an observed masked representation.",
-          "enum": [
-            "auto",
-            "exact",
-            "normalized",
-            "masked"
-          ],
-          "title": "Verify As",
-          "type": "string"
-        },
-        "normalizers": {
-          "description": "Transformations permitted before local value comparison.",
-          "items": {
-            "enum": [
-              "whitespace",
-              "hyphens",
-              "case",
-              "currency",
-              "grouping"
-            ],
-            "type": "string"
-          },
-          "title": "Normalizers",
-          "type": "array"
-        },
-        "visible_suffix": {
-          "default": 0,
-          "description": "Characters that may remain visible at the end of a masked value.",
-          "minimum": 0,
-          "title": "Visible Suffix",
-          "type": "integer"
-        },
-        "masked_length": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Required displayed length for a masked value. Defaults to input length.",
-          "title": "Masked Length"
-        },
         "refused": {
           "default": false,
-          "description": "True where this app refuses the value, which is a fact about the app that no reading of the value could find. A scenario about a refusal names one of these, and the declaration answers for it.",
           "title": "Refused",
           "type": "boolean"
         }
@@ -286,10 +242,10 @@
       "required": [
         "value"
       ],
-      "title": "DeclaredValue",
+      "title": "DeclaredValueSpec",
       "type": "object"
     },
-    "DeeplinkCapability": {
+    "DeepLinkCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -307,12 +263,11 @@
       "required": [
         "url"
       ],
-      "title": "DeeplinkCapability",
+      "title": "DeepLinkCapabilitySpec",
       "type": "object"
     },
-    "DeviceLockCapability": {
+    "DeviceLockCapabilitySpec": {
       "additionalProperties": false,
-      "description": "Lock and unlock as one bounded interruption.\n\nKeeping this atomic prevents the planner from trying to interact with the\noperating-system lock screen, which is outside the app under test.",
       "properties": {
         "kind": {
           "const": "device_lock",
@@ -328,16 +283,16 @@
           "type": "number"
         }
       },
-      "title": "DeviceLockCapability",
+      "title": "DeviceLockCapabilitySpec",
       "type": "object"
     },
     "DeviceSpec": {
       "additionalProperties": false,
-      "description": "The target a run drives.",
       "properties": {
         "name": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -345,7 +300,6 @@
             }
           ],
           "default": null,
-          "description": "Emulator, simulator or device name.",
           "title": "Name"
         },
         "platform": {
@@ -362,7 +316,6 @@
             }
           ],
           "default": null,
-          "description": "Which platform to run against.",
           "title": "Platform"
         },
         "headless": {
@@ -375,14 +328,45 @@
             }
           ],
           "default": null,
-          "description": "Run the emulator without a window.",
           "title": "Headless"
         }
       },
       "title": "DeviceSpec",
       "type": "object"
     },
-    "InterruptCapability": {
+    "GrounderSelectionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "protocol": {
+          "$ref": "#/$defs/GroundingProtocol"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningSetting",
+          "default": "provider_default"
+        }
+      },
+      "required": [
+        "model",
+        "protocol"
+      ],
+      "title": "GrounderSelectionSpec",
+      "type": "object"
+    },
+    "GroundingProtocol": {
+      "enum": [
+        "source_pixels",
+        "normalized",
+        "normalized_1000"
+      ],
+      "title": "GroundingProtocol",
+      "type": "string"
+    },
+    "InterruptCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -401,7 +385,6 @@
         },
         "phone": {
           "default": "555-5555",
-          "description": "Used by 'incoming_call' only.",
           "title": "Phone",
           "type": "string"
         }
@@ -409,16 +392,18 @@
       "required": [
         "type"
       ],
-      "title": "InterruptCapability",
+      "title": "InterruptCapabilitySpec",
       "type": "object"
     },
     "JourneySpec": {
       "additionalProperties": false,
-      "description": "One test: what a user does, and what must be true afterwards.",
       "properties": {
         "id": {
           "anyOf": [
             {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
               "type": "string"
             },
             {
@@ -431,6 +416,7 @@
         "name": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -441,33 +427,12 @@
           "title": "Name"
         },
         "journey": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The journey, in prose.",
-          "title": "Journey"
-        },
-        "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Another spelling of 'journey'.",
-          "title": "Description"
+          "minLength": 1,
+          "title": "Journey",
+          "type": "string"
         },
         "security_rules": {
-          "description": "Rules every scenario must respect.",
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -475,7 +440,7 @@
           "type": "array"
         },
         "checks": {
-          "description": "Plain-language product behaviour or testing concerns.",
+          "default": [],
           "items": {
             "maxLength": 4000,
             "minLength": 1,
@@ -485,46 +450,53 @@
           "type": "array"
         },
         "env": {
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/DeclaredValue"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "integer"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              }
-            ]
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeclaredValueSpec"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
           },
-          "description": "Values for this test, over the workflow's.",
+          "propertyNames": {
+            "maxLength": 100,
+            "minLength": 1
+          },
           "title": "Env",
           "type": "object"
         },
         "preconditions": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ScenarioPreconditions"
+              "$ref": "#/$defs/ScenarioPreconditionsSpec"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "Optional app and device state applied before visible UI execution."
+          "default": null
         }
       },
+      "required": [
+        "journey"
+      ],
       "title": "JourneySpec",
       "type": "object"
     },
-    "LocaleCapability": {
+    "LocaleCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -534,14 +506,12 @@
           "type": "string"
         },
         "language": {
-          "description": "An ISO code, e.g. 'fr'.",
           "minLength": 1,
           "title": "Language",
           "type": "string"
         },
         "country": {
           "default": "",
-          "description": "An ISO code, e.g. 'FR'. May be empty.",
           "title": "Country",
           "type": "string"
         }
@@ -549,10 +519,10 @@
       "required": [
         "language"
       ],
-      "title": "LocaleCapability",
+      "title": "LocaleCapabilitySpec",
       "type": "object"
     },
-    "LocationCapability": {
+    "LocationCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -562,10 +532,14 @@
           "type": "string"
         },
         "latitude": {
+          "maximum": 90,
+          "minimum": -90,
           "title": "Latitude",
           "type": "number"
         },
         "longitude": {
+          "maximum": 180,
+          "minimum": -180,
           "title": "Longitude",
           "type": "number"
         }
@@ -574,10 +548,10 @@
         "latitude",
         "longitude"
       ],
-      "title": "LocationCapability",
+      "title": "LocationCapabilitySpec",
       "type": "object"
     },
-    "MediaInjectCapability": {
+    "MediaInjectCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -595,10 +569,156 @@
       "required": [
         "local_path"
       ],
-      "title": "MediaInjectCapability",
+      "title": "MediaInjectCapabilitySpec",
       "type": "object"
     },
-    "NetworkCapability": {
+    "ModelOverridesSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "planner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planner"
+        },
+        "auditor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auditor"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recovery"
+        },
+        "proposal_verifier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposal Verifier"
+        },
+        "outcome_verifier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome Verifier"
+        },
+        "screen_analyzer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Screen Analyzer"
+        },
+        "replay_preparer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replay Preparer"
+        },
+        "test_designer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ModelSelectionSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Test Designer"
+        }
+      },
+      "title": "ModelOverridesSpec",
+      "type": "object"
+    },
+    "ModelSelectionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/ReasoningSetting",
+          "default": "provider_default"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "ModelSelectionSpec",
+      "type": "object"
+    },
+    "NetworkCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -625,10 +745,10 @@
       "required": [
         "mode"
       ],
-      "title": "NetworkCapability",
+      "title": "NetworkCapabilitySpec",
       "type": "object"
     },
-    "OrientationCapability": {
+    "OrientationCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -649,10 +769,10 @@
       "required": [
         "orientation"
       ],
-      "title": "OrientationCapability",
+      "title": "OrientationCapabilitySpec",
       "type": "object"
     },
-    "PermissionCapability": {
+    "PermissionCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -683,18 +803,16 @@
         "permission",
         "grant"
       ],
-      "title": "PermissionCapability",
+      "title": "PermissionCapabilitySpec",
       "type": "object"
     },
     "PolicySpec": {
       "additionalProperties": false,
-      "description": "Static package-policy exceptions, keyed by stable check ID.",
       "properties": {
         "waive": {
           "additionalProperties": {
             "type": "string"
           },
-          "description": "Policy check IDs accepted for this workflow, with the reason each exception is necessary.",
           "title": "Waive",
           "type": "object"
         }
@@ -702,99 +820,101 @@
       "title": "PolicySpec",
       "type": "object"
     },
-    "Priority": {
-      "description": "Which cells a run has to finish first.\n\nA run can die part way: a device drops, a provider refuses, a person\nstops it. The order decides what it got through, so a product says which\ncells matter rather than a table in Yewo.",
+    "ReasoningSetting": {
+      "description": "How much private reasoning one role may spend before it answers.\n\nAn effort keeps reasoning and bounds it. Reasoning and the answer share one completion\nbudget, so a role left to the provider can spend the whole budget thinking and return\nnothing.",
       "enum": [
-        "P0",
-        "P1",
-        "P2"
+        "disabled",
+        "provider_default",
+        "minimal",
+        "low",
+        "medium",
+        "high"
       ],
-      "title": "Priority",
+      "title": "ReasoningSetting",
       "type": "string"
     },
-    "ScenarioPreconditions": {
-      "description": "Optional state declared for every scenario in one journey.",
+    "ScenarioPreconditionsSpec": {
+      "additionalProperties": false,
+      "description": "Application and device state requested before visible execution.",
       "properties": {
         "app_state": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SetupMode"
-            },
-            {
-              "type": "null"
-            }
+          "default": "clear_data",
+          "enum": [
+            "clear_data",
+            "restart",
+            "preserve"
           ],
-          "default": null,
-          "description": "Initial app state. Independent scenarios default to clear_data."
+          "title": "App State",
+          "type": "string"
         },
         "capabilities": {
-          "description": "Device states to apply and confirm before visible UI execution.",
+          "default": [],
           "items": {
             "discriminator": {
               "mapping": {
-                "accessibility": "#/$defs/AccessibilityCapability",
-                "app_state": "#/$defs/AppStateCapability",
-                "battery": "#/$defs/BatteryCapability",
-                "biometric": "#/$defs/BiometricCapability",
-                "clipboard": "#/$defs/ClipboardCapability",
-                "deeplink": "#/$defs/DeeplinkCapability",
-                "device_lock": "#/$defs/DeviceLockCapability",
-                "interrupt": "#/$defs/InterruptCapability",
-                "locale": "#/$defs/LocaleCapability",
-                "location": "#/$defs/LocationCapability",
-                "media_inject": "#/$defs/MediaInjectCapability",
-                "network": "#/$defs/NetworkCapability",
-                "orientation": "#/$defs/OrientationCapability",
-                "permission": "#/$defs/PermissionCapability",
-                "timezone": "#/$defs/TimezoneCapability"
+                "accessibility": "#/$defs/AccessibilityCapabilitySpec",
+                "app_state": "#/$defs/AppStateCapabilitySpec",
+                "battery": "#/$defs/BatteryCapabilitySpec",
+                "biometric": "#/$defs/BiometricCapabilitySpec",
+                "clipboard": "#/$defs/ClipboardCapabilitySpec",
+                "deeplink": "#/$defs/DeepLinkCapabilitySpec",
+                "device_lock": "#/$defs/DeviceLockCapabilitySpec",
+                "interrupt": "#/$defs/InterruptCapabilitySpec",
+                "locale": "#/$defs/LocaleCapabilitySpec",
+                "location": "#/$defs/LocationCapabilitySpec",
+                "media_inject": "#/$defs/MediaInjectCapabilitySpec",
+                "network": "#/$defs/NetworkCapabilitySpec",
+                "orientation": "#/$defs/OrientationCapabilitySpec",
+                "permission": "#/$defs/PermissionCapabilitySpec",
+                "timezone": "#/$defs/TimezoneCapabilitySpec"
               },
               "propertyName": "kind"
             },
             "oneOf": [
               {
-                "$ref": "#/$defs/LocationCapability"
+                "$ref": "#/$defs/LocationCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/NetworkCapability"
+                "$ref": "#/$defs/NetworkCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/BatteryCapability"
+                "$ref": "#/$defs/BatteryCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/TimezoneCapability"
+                "$ref": "#/$defs/TimezoneCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/LocaleCapability"
+                "$ref": "#/$defs/LocaleCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/PermissionCapability"
+                "$ref": "#/$defs/PermissionCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/InterruptCapability"
+                "$ref": "#/$defs/InterruptCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/BiometricCapability"
+                "$ref": "#/$defs/BiometricCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/ClipboardCapability"
+                "$ref": "#/$defs/ClipboardCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/DeeplinkCapability"
+                "$ref": "#/$defs/DeepLinkCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/AppStateCapability"
+                "$ref": "#/$defs/AppStateCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/OrientationCapability"
+                "$ref": "#/$defs/OrientationCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/DeviceLockCapability"
+                "$ref": "#/$defs/DeviceLockCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/MediaInjectCapability"
+                "$ref": "#/$defs/MediaInjectCapabilitySpec"
               },
               {
-                "$ref": "#/$defs/AccessibilityCapability"
+                "$ref": "#/$defs/AccessibilityCapabilitySpec"
               }
             ]
           },
@@ -802,11 +922,11 @@
           "type": "array"
         }
       },
-      "title": "ScenarioPreconditions",
+      "title": "ScenarioPreconditionsSpec",
       "type": "object"
     },
     "ScenarioType": {
-      "description": "What shape a scenario takes.",
+      "description": "The variation strategy used within one testing category.",
       "enum": [
         "happy_path",
         "negative",
@@ -821,23 +941,11 @@
       "title": "ScenarioType",
       "type": "string"
     },
-    "SetupMode": {
-      "description": "The state a scenario needs before its first step.\n\nRequired state is part of what a test is. Stated in a prompt instead, it\nis an assumption, and a prompt enforces nothing.",
-      "enum": [
-        "clear_data",
-        "relaunch",
-        "preserve"
-      ],
-      "title": "SetupMode",
-      "type": "string"
-    },
     "TargetSpec": {
       "additionalProperties": false,
-      "description": "One explicitly named member of a sequential target matrix.",
       "properties": {
         "id": {
-          "description": "Stable target name used in reports and artifact paths.",
-          "maxLength": 64,
+          "maxLength": 100,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
           "title": "Id",
@@ -852,7 +960,6 @@
           "type": "string"
         },
         "device": {
-          "description": "Emulator, simulator, or device name.",
           "minLength": 1,
           "title": "Device",
           "type": "string"
@@ -860,6 +967,7 @@
         "app": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -867,21 +975,7 @@
             }
           ],
           "default": null,
-          "description": "Target-specific app binary. Falls back to the workflow app.",
           "title": "App"
-        },
-        "app_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Another spelling of the target-specific app.",
-          "title": "App Path"
         },
         "headless": {
           "anyOf": [
@@ -893,7 +987,6 @@
             }
           ],
           "default": null,
-          "description": "Run this target's emulator without a window.",
           "title": "Headless"
         }
       },
@@ -905,7 +998,7 @@
       "title": "TargetSpec",
       "type": "object"
     },
-    "TimezoneCapability": {
+    "TimezoneCapabilitySpec": {
       "additionalProperties": false,
       "properties": {
         "kind": {
@@ -915,7 +1008,6 @@
           "type": "string"
         },
         "timezone": {
-          "description": "An IANA name, e.g. 'America/New_York'.",
           "minLength": 1,
           "title": "Timezone",
           "type": "string"
@@ -924,12 +1016,11 @@
       "required": [
         "timezone"
       ],
-      "title": "TimezoneCapability",
+      "title": "TimezoneCapabilitySpec",
       "type": "object"
     },
     "WorkflowSpec": {
       "additionalProperties": false,
-      "description": "One environment, its target or targets, and the tests to run there.",
       "properties": {
         "device": {
           "anyOf": [
@@ -944,21 +1035,7 @@
             }
           ],
           "default": null,
-          "description": "The target, as a name or a block.",
           "title": "Device"
-        },
-        "emulator": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Another spelling of 'device'.",
-          "title": "Emulator"
         },
         "platform": {
           "anyOf": [
@@ -991,6 +1068,7 @@
         "app": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -998,25 +1076,12 @@
             }
           ],
           "default": null,
-          "description": "App binary, relative to this file.",
           "title": "App"
-        },
-        "app_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Another spelling of 'app'.",
-          "title": "App Path"
         },
         "model": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -1026,49 +1091,27 @@
           "default": null,
           "title": "Model"
         },
-        "perception_model": {
+        "models": {
           "anyOf": [
             {
-              "pattern": "^hf://[^/@\\s]+/[^@\\s]+@[0-9a-f]{40}$",
-              "type": "string"
+              "$ref": "#/$defs/ModelOverridesSpec"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "Pinned Hugging Face detector package.",
-          "title": "Perception Model"
+          "default": null
         },
-        "fast_model": {
+        "grounder": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/GrounderSelectionSpec"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "description": "Cheaper model for per-step planning.",
-          "title": "Fast Model"
-        },
-        "grounding": {
-          "anyOf": [
-            {
-              "enum": [
-                "marks",
-                "describe"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "How the planner names a target. Marks selects a detected element. describe places a target from its visible description.",
-          "title": "Grounding"
+          "default": null
         },
         "max_steps": {
           "anyOf": [
@@ -1115,6 +1158,7 @@
         "output_dir": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -1123,6 +1167,19 @@
           ],
           "default": null,
           "title": "Output Dir"
+        },
+        "memory_root": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory Root"
         },
         "record": {
           "anyOf": [
@@ -1134,21 +1191,7 @@
             }
           ],
           "default": null,
-          "description": "Record the screen during the run.",
           "title": "Record"
-        },
-        "record_session": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Another spelling of 'record'.",
-          "title": "Record Session"
         },
         "durable_replay": {
           "anyOf": [
@@ -1160,41 +1203,33 @@
             }
           ],
           "default": null,
-          "description": "Re-walk a path a passing run saved, instead of planning it again. Unlike 'replay', which reuses a path inside one run, this one outlives the run. On by default. Each run audits its own screens. Drift returns only the affected action to the planner.",
           "title": "Durable Replay"
         },
-        "allow_secret_exposure": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Allow declared secrets in model input and unredacted screen recordings. Off by default. Stored reports and default recordings stay protected.",
-          "title": "Allow Secret Exposure"
-        },
         "env": {
-          "additionalProperties": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/DeclaredValue"
-              },
-              {
-                "type": "string"
-              },
-              {
-                "type": "integer"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "boolean"
-              }
-            ]
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeclaredValueSpec"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            }
+          },
+          "propertyNames": {
+            "maxLength": 100,
+            "minLength": 1
           },
           "title": "Env",
           "type": "object"
@@ -1203,15 +1238,21 @@
           "anyOf": [
             {
               "items": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                 "type": "string"
               },
               "type": "array"
             },
             {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
               "type": "string"
             }
           ],
-          "description": "Names in 'env' to treat as sensitive.",
+          "default": [],
           "title": "Secrets"
         },
         "journeys": {
@@ -1232,6 +1273,7 @@
         "journey": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -1244,6 +1286,9 @@
         "id": {
           "anyOf": [
             {
+              "maxLength": 100,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
               "type": "string"
             },
             {
@@ -1256,6 +1301,7 @@
         "name": {
           "anyOf": [
             {
+              "minLength": 1,
               "type": "string"
             },
             {
@@ -1265,19 +1311,8 @@
           "default": null,
           "title": "Name"
         },
-        "description": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Description"
-        },
         "security_rules": {
+          "default": [],
           "items": {
             "type": "string"
           },
@@ -1285,7 +1320,7 @@
           "type": "array"
         },
         "checks": {
-          "description": "Plain-language product behaviour or testing concerns.",
+          "default": [],
           "items": {
             "maxLength": 4000,
             "minLength": 1,
@@ -1312,27 +1347,39 @@
         "actors": {
           "anyOf": [
             {
-              "additionalProperties": {
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/DeclaredValue"
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "boolean"
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "patternProperties": {
+                    "^[A-Za-z_][A-Za-z0-9_]*$": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/DeclaredValueSpec"
+                        },
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
                     }
-                  ]
-                },
-                "type": "object"
+                  },
+                  "propertyNames": {
+                    "maxLength": 100,
+                    "minLength": 1
+                  },
+                  "type": "object"
+                }
+              },
+              "propertyNames": {
+                "maxLength": 100,
+                "minLength": 1
               },
               "type": "object"
             },
@@ -1341,7 +1388,6 @@
             }
           ],
           "default": null,
-          "description": "Named personas or role contexts for role scenarios. Each holds app-specific values under names you choose.",
           "title": "Actors"
         },
         "policy": {
@@ -1358,7 +1404,7 @@
         "preconditions": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ScenarioPreconditions"
+              "$ref": "#/$defs/ScenarioPreconditionsSpec"
             },
             {
               "type": "null"
@@ -1372,7 +1418,6 @@
               "items": {
                 "$ref": "#/$defs/TargetSpec"
               },
-              "minItems": 1,
               "type": "array"
             },
             {
@@ -1380,7 +1425,6 @@
             }
           ],
           "default": null,
-          "description": "Sequential targets that each receive the same locked journeys.",
           "title": "Targets"
         }
       },
@@ -1389,7 +1433,6 @@
     }
   },
   "additionalProperties": false,
-  "description": "A yewo.yaml: settings for every workflow, and the workflows.",
   "properties": {
     "device": {
       "anyOf": [
@@ -1404,21 +1447,7 @@
         }
       ],
       "default": null,
-      "description": "The target, as a name or a block.",
       "title": "Device"
-    },
-    "emulator": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Another spelling of 'device'.",
-      "title": "Emulator"
     },
     "platform": {
       "anyOf": [
@@ -1451,6 +1480,7 @@
     "app": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -1458,25 +1488,12 @@
         }
       ],
       "default": null,
-      "description": "App binary, relative to this file.",
       "title": "App"
-    },
-    "app_path": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Another spelling of 'app'.",
-      "title": "App Path"
     },
     "model": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -1486,49 +1503,27 @@
       "default": null,
       "title": "Model"
     },
-    "perception_model": {
+    "models": {
       "anyOf": [
         {
-          "pattern": "^hf://[^/@\\s]+/[^@\\s]+@[0-9a-f]{40}$",
-          "type": "string"
+          "$ref": "#/$defs/ModelOverridesSpec"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "description": "Pinned Hugging Face detector package.",
-      "title": "Perception Model"
+      "default": null
     },
-    "fast_model": {
+    "grounder": {
       "anyOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/GrounderSelectionSpec"
         },
         {
           "type": "null"
         }
       ],
-      "default": null,
-      "description": "Cheaper model for per-step planning.",
-      "title": "Fast Model"
-    },
-    "grounding": {
-      "anyOf": [
-        {
-          "enum": [
-            "marks",
-            "describe"
-          ],
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "How the planner names a target. Marks selects a detected element. describe places a target from its visible description.",
-      "title": "Grounding"
+      "default": null
     },
     "max_steps": {
       "anyOf": [
@@ -1575,6 +1570,7 @@
     "output_dir": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -1583,6 +1579,19 @@
       ],
       "default": null,
       "title": "Output Dir"
+    },
+    "memory_root": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Memory Root"
     },
     "record": {
       "anyOf": [
@@ -1594,21 +1603,7 @@
         }
       ],
       "default": null,
-      "description": "Record the screen during the run.",
       "title": "Record"
-    },
-    "record_session": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Another spelling of 'record'.",
-      "title": "Record Session"
     },
     "durable_replay": {
       "anyOf": [
@@ -1620,41 +1615,33 @@
         }
       ],
       "default": null,
-      "description": "Re-walk a path a passing run saved, instead of planning it again. Unlike 'replay', which reuses a path inside one run, this one outlives the run. On by default. Each run audits its own screens. Drift returns only the affected action to the planner.",
       "title": "Durable Replay"
     },
-    "allow_secret_exposure": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Allow declared secrets in model input and unredacted screen recordings. Off by default. Stored reports and default recordings stay protected.",
-      "title": "Allow Secret Exposure"
-    },
     "env": {
-      "additionalProperties": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/DeclaredValue"
-          },
-          {
-            "type": "string"
-          },
-          {
-            "type": "integer"
-          },
-          {
-            "type": "number"
-          },
-          {
-            "type": "boolean"
-          }
-        ]
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeclaredValueSpec"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "propertyNames": {
+        "maxLength": 100,
+        "minLength": 1
       },
       "title": "Env",
       "type": "object"
@@ -1663,21 +1650,34 @@
       "anyOf": [
         {
           "items": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
             "type": "string"
           },
           "type": "array"
         },
         {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       ],
+      "default": [],
       "title": "Secrets"
     },
     "workflows": {
       "anyOf": [
         {
-          "additionalProperties": {
-            "$ref": "#/$defs/WorkflowSpec"
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9._-]*$": {
+              "$ref": "#/$defs/WorkflowSpec"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 100,
+            "minLength": 1
           },
           "type": "object"
         },
@@ -1686,7 +1686,6 @@
         }
       ],
       "default": null,
-      "description": "Named workflows. Each owns an app and its tests.",
       "title": "Workflows"
     },
     "journeys": {
@@ -1707,6 +1706,7 @@
     "journey": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -1719,6 +1719,9 @@
     "id": {
       "anyOf": [
         {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
           "type": "string"
         },
         {
@@ -1731,6 +1734,7 @@
     "name": {
       "anyOf": [
         {
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -1740,19 +1744,8 @@
       "default": null,
       "title": "Name"
     },
-    "description": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Description"
-    },
     "security_rules": {
+      "default": [],
       "items": {
         "type": "string"
       },
@@ -1760,7 +1753,7 @@
       "type": "array"
     },
     "checks": {
-      "description": "Plain-language product behaviour or testing concerns.",
+      "default": [],
       "items": {
         "maxLength": 4000,
         "minLength": 1,
@@ -1787,27 +1780,39 @@
     "actors": {
       "anyOf": [
         {
-          "additionalProperties": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/DeclaredValue"
-                },
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "boolean"
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "patternProperties": {
+                "^[A-Za-z_][A-Za-z0-9_]*$": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/DeclaredValueSpec"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
                 }
-              ]
-            },
-            "type": "object"
+              },
+              "propertyNames": {
+                "maxLength": 100,
+                "minLength": 1
+              },
+              "type": "object"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 100,
+            "minLength": 1
           },
           "type": "object"
         },
@@ -1816,7 +1821,6 @@
         }
       ],
       "default": null,
-      "description": "Named personas or role contexts for role scenarios. Each holds app-specific values under names you choose.",
       "title": "Actors"
     },
     "policy": {
@@ -1833,7 +1837,7 @@
     "preconditions": {
       "anyOf": [
         {
-          "$ref": "#/$defs/ScenarioPreconditions"
+          "$ref": "#/$defs/ScenarioPreconditionsSpec"
         },
         {
           "type": "null"
@@ -1847,7 +1851,6 @@
           "items": {
             "$ref": "#/$defs/TargetSpec"
           },
-          "minItems": 1,
           "type": "array"
         },
         {
@@ -1855,10 +1858,9 @@
         }
       ],
       "default": null,
-      "description": "Sequential targets inherited by each workflow unless overridden.",
       "title": "Targets"
     }
   },
-  "title": "Yewo configuration",
+  "title": "YewoFileSpec",
   "type": "object"
 }

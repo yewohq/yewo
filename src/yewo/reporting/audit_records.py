@@ -8,7 +8,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yewo.artifacts import RecordIdentifier
-from yewo.reporting.limits import REPORT_REASON_MAX_LENGTH, REPORT_TEXT_MAX_LENGTH
+from yewo.reporting.limits import REPORT_TEXT_MAX_LENGTH
 
 
 class ScenarioAuditVerdict(StrEnum):
@@ -63,8 +63,8 @@ class AuditFindingRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     finding_id: RecordIdentifier
-    claim: str = Field(min_length=1, max_length=REPORT_REASON_MAX_LENGTH)
-    reason: str = Field(min_length=1, max_length=REPORT_REASON_MAX_LENGTH)
+    claim: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
     verification_kind: AuditFindingVerificationKind
     regions: tuple[AuditFindingRegionRecord, ...] = Field(min_length=1, max_length=20)
 
@@ -78,7 +78,7 @@ class AuditObligationRecord(BaseModel):
     description: str = Field(min_length=1, max_length=REPORT_TEXT_MAX_LENGTH)
     status: AuditObligationStatus
     evidence_ids: tuple[RecordIdentifier, ...] = ()
-    reason: str = Field(min_length=1, max_length=REPORT_REASON_MAX_LENGTH)
+    reason: str = Field(min_length=1)
     findings: tuple[AuditFindingRecord, ...] = ()
 
     @model_validator(mode="after")
@@ -96,7 +96,7 @@ class ScenarioAuditRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
     verdict: ScenarioAuditVerdict
-    summary: str = Field(min_length=1, max_length=REPORT_REASON_MAX_LENGTH)
+    summary: str = Field(min_length=1)
     obligations: tuple[AuditObligationRecord, ...] = Field(min_length=1)
 
     @model_validator(mode="after")

@@ -4,8 +4,8 @@ from io import BytesIO
 
 from PIL import Image
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
-from yewo.observations import ObservationStore, RedactionProvenance, ScreenshotStore
+from yewo.artifacts import ArtifactRetention
+from yewo.observations import ObservationStore, ScreenshotStore
 from yewo.reporting import (
     AuditFindingRecord,
     AuditFindingRegionRecord,
@@ -32,18 +32,11 @@ def test_confirmed_finding_registers_its_exact_screenshot(tmp_path) -> None:
     screenshot = ScreenshotStore(
         tmp_path,
         identifier_factory=lambda: "finding_screen",
-    ).persist_redacted(
+    ).persist(
         _png(),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
-        redaction=RedactionProvenance(
-            policy_id="test-redaction",
-            region_count=0,
-            region_set_sha256="0" * 64,
-            input_sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
-        ),
     )
-    observation = build_observation(redacted_screenshot=screenshot)
+    observation = build_observation(screenshot=screenshot)
     ObservationStore(tmp_path).persist(observation)
     finding = AuditFindingRecord(
         finding_id="finding_1",

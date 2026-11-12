@@ -34,6 +34,7 @@ from yewo.agent.planning.history import (
 )
 from yewo.agent.planning.context import planning_observation_context
 from yewo.agent.planning.prompt import (
+    planner_action_catalog,
     TASK_PLANNER_FOCUS_USER_PROMPT,
     TASK_PLANNER_SYSTEM_PROMPT,
     TASK_PLANNER_USER_PROMPT,
@@ -72,13 +73,27 @@ RECOVERABLE_PLANNING_DISPOSITIONS = frozenset(
 )
 
 
+# A provider that returned no answer has said nothing about the task. Yewo already retries once
+# inside the transport, so a second empty answer still describes the provider.
+_NO_ANSWER = frozenset(
+    {
+        ModelCallDisposition.EMPTY,
+        ModelCallDisposition.MALFORMED,
+        ModelCallDisposition.PROVIDER_ERROR,
+        ModelCallDisposition.REASONING_EXHAUSTED,
+        ModelCallDisposition.TRUNCATED,
+    }
+)
+
+
 class TaskPlanningError(RuntimeError):
     """A model call did not produce one usable action proposal."""
 
-    def __init__(self, response: ModelResponse, reason: str) -> None:
+    def __init__(self, response: ModelResponse, reason: str, *, no_answer: bool = False) -> None:
         super().__init__(reason)
         self.response = response
         self.disposition = response.disposition
+        self.no_answer = no_answer
 
 
 class ActionProposalSource(Protocol):
@@ -200,9 +215,14 @@ class TaskPlanner:
             raise TaskPlanningError(
                 response,
                 response.reason or "The task-planner model call did not complete.",
+                no_answer=response.disposition in _NO_ANSWER,
             )
         if response.structured_output is None:
-            raise TaskPlanningError(response, "The task-planner response has no structured output.")
+            raise TaskPlanningError(
+                response,
+                "The task-planner response has no structured output.",
+                no_answer=True,
+            )
         try:
             decision = ActionProposalDecision.model_validate(
                 response.structured_output,
@@ -249,7 +269,7 @@ class TaskPlanner:
         }
         context = {
             "open_work": request.open_work,
-            "available_actions": sorted(action.value for action in _available_actions(request)),
+            "available_actions": planner_action_catalog(_available_actions(request)),
             "screen_facts": [planning_screen_fact_context(fact) for fact in request.screen_facts],
             "current_observation": planning_observation_context(request.observation),
             "current_screen_analysis": (
@@ -282,8 +302,7 @@ class TaskPlanner:
                 ActionProposalDecision.model_json_schema(),
             ),
             max_completion_tokens=PLANNER_MAX_COMPLETION_TOKENS,
-            sensitivity=request.observation.redacted_screenshot.sensitivity,
-            retention=request.observation.redacted_screenshot.retention,
+            retention=request.observation.screenshot.retention,
         )
 
 
@@ -313,7 +332,7 @@ def _standard_messages(
                 *trusted_history_content(request.history),
                 TextModelContent(text=task_prompt),
                 TextModelContent(text=current_prompt),
-                ImageModelContent(screenshot=request.observation.redacted_screenshot),
+                ImageModelContent(screenshot=request.observation.screenshot),
                 *(
                     (
                         TextModelContent(
@@ -368,7 +387,7 @@ def _focus_messages(
                     text="Focus decision context:\n"
                     + json.dumps(current_context, sort_keys=True, separators=(",", ":"))
                 ),
-                ImageModelContent(screenshot=request.observation.redacted_screenshot),
+                ImageModelContent(screenshot=request.observation.screenshot),
             ),
         ),
     )
@@ -379,10 +398,27 @@ def plan_or_stop(
     request: PlanningRequest,
     identifier_factory: Callable[[], str],
 ) -> tuple[ActionProposal, bool]:
-    """Convert an unusable model decision into a safe recorded terminal."""
+    """Convert an unusable model decision into a safe recorded terminal.
+
+    A planner that returned no answer leaves the step without a decision. It does not establish
+    that the task cannot progress, so the run waits and asks again rather than concluding from
+    the provider's silence. The step budget bounds how long that can continue.
+    """
     try:
         return source.plan(request), False
     except TaskPlanningError as error:
+        if error.no_answer:
+            return (
+                ActionProposal(
+                    proposal_id=identifier_factory(),
+                    source_observation_id=request.observation.observation_id,
+                    action=ActionKind.WAIT,
+                    duration_seconds=1,
+                    expected_outcome="The screen is unchanged and the planner is asked again.",
+                    reason=f"The planner returned no decision: {error}",
+                ),
+                True,
+            )
         return (
             ActionProposal(
                 proposal_id=identifier_factory(),

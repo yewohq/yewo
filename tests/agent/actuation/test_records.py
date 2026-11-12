@@ -16,8 +16,9 @@ from yewo.agent.actuation import (
     LiteralText,
     TextInput,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from agent.actuation.support import proposal
+from support import DISPATCHED_AT
 
 
 def test_proposal_round_trip_preserves_every_field() -> None:
@@ -55,7 +56,6 @@ def test_authorization_round_trip_contains_only_a_declared_value_reference() -> 
         side_effect=ACTION_DEFINITIONS[ActionKind.TYPE].side_effect,
         expected_outcome="The password field contains the declared value.",
         text=DeclaredValueReference(value_name="declared_secret"),
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
         retention=ArtifactRetention.RUN,
     )
 
@@ -80,12 +80,12 @@ def test_action_definitions_classify_runtime_handling() -> None:
 
 def test_dispatch_receipt_round_trip_has_no_outcome_fields() -> None:
     original = DispatchReceipt(
+        dispatched_at=DISPATCHED_AT,
         receipt_id="receipt-1",
         authorization_id="authorization-1",
         proposal_id="proposal-1",
         action=ActionKind.TYPE,
         disposition=DispatchDisposition.DISPATCHED,
-        sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
         retention=ArtifactRetention.RUN,
     )
 

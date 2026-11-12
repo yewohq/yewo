@@ -1,0 +1,3 @@
+# Vendored upstream text is kept byte-identical, including whitespace the linter would flag.
+src/yewo/brand/fonts/OFL.txt -whitespace
+src/yewo/brand/fonts/*.ttf binary

@@ -34,6 +34,14 @@ uv run python tools/ste_gate.py
 CI builds and installs the wheel separately. Package verification is not a
 local development gate.
 
+`yewo-schema.json` is generated from the declaration models. Rewrite it after a
+configuration contract changes, and pytest fails while it is out of date:
+
+```bash
+uv run python tools/emit_schema.py
+uv run python tools/emit_schema.py --check
+```
+
 Yewo does not contain a copy of the STE linter. Set `YEWO_STE_LINT` when the
 linter is installed at another location. CI checks out a pinned upstream
 revision and passes its path through this variable.

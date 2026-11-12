@@ -4,8 +4,10 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 import pytest
+
+from yewo.extensions import DeclaredValues
 
 from yewo.agent import (
     AgentModePolicy,
@@ -32,10 +34,14 @@ from yewo.agent.planning.planner import (
 from yewo.agent.planning.records import (
     PlanningRequest,
 )
-from yewo.devices.focus import FocusedFieldReading
-from yewo.devices.interaction import ScrollDirection
 from yewo.grounding import VisualGrounder
-from yewo.observations import Observation, ObservationService
+from yewo.observations import (
+    Observation,
+    ObservationCaptureError,
+    VisualSettlementProbe,
+    ObservationService,
+    ScreenFingerprint,
+)
 from yewo.runs.errors import RunWorkflowInterrupted
 
 from agent.actuation.support import limits, proposal
@@ -44,6 +50,7 @@ from grounding.support import (
     ExpressionGrounder,
 )
 from observations.factories import build_observation, build_screenshot
+from agent.runtime.support import RuntimeDevice
 
 
 class SequencePlanner:
@@ -80,96 +87,33 @@ class ObservationSequence:
 
     def __init__(self, observations: list[Observation]) -> None:
         self._observations = iter(observations)
+        self._current: Observation | None = None
+        self._pending_probe: Observation | None = None
         self.capture_count = 0
 
     def capture(self, *, predecessor_observation_id: str | None = None) -> Observation:
+        if self._pending_probe is not None:
+            self._current = self._pending_probe.model_copy(
+                update={"predecessor_observation_id": predecessor_observation_id}
+            )
+            self._pending_probe = None
+            return self._current
         self.capture_count += 1
-        return next(self._observations).model_copy(
+        self._current = next(self._observations).model_copy(
             update={"predecessor_observation_id": predecessor_observation_id}
         )
+        return self._current
 
+    def capture_settlement_probe(self) -> VisualSettlementProbe:
+        self.capture_count += 1
+        self._pending_probe = next(self._observations)
+        self._current = self._pending_probe
+        return VisualSettlementProbe.from_observation(self._pending_probe)
 
-class RuntimeDevice:
-    """Record dispatches and expose only secret-free post-action checks."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, tuple[Any, ...]]] = []
-        self.active_text = ""
-        self.reject = False
-
-    def _record(self, operation: str, *arguments: Any) -> None:
-        if self.reject:
-            from yewo.devices.errors import DeviceActionRejectedError
-
-            raise DeviceActionRejectedError("Configured refusal with private detail.")
-        self.calls.append((operation, arguments))
-
-    def tap(self, x: int, y: int, *, count: int = 1, interval_seconds: float = 0.1) -> None:
-        self._record("tap", x, y, count, interval_seconds)
-
-    def focus(self, x: int, y: int) -> object:
-        self._record("focus", x, y)
-        return object()
-
-    def type_focused_text(self, text: str) -> bool | None:
-        self._record("type_focused_text", text)
-        self.active_text = text
-        return True
-
-    def clear_focused_text(self) -> bool | None:
-        self._record("clear_focused_text")
-        self.active_text = ""
-        return True
-
-    def double_tap(self, x: int, y: int) -> None:
-        self._record("double_tap", x, y)
-
-    def long_press(self, x: int, y: int, duration_seconds: float) -> None:
-        self._record("long_press", x, y, duration_seconds)
-
-    def drag(
-        self,
-        start_x: int,
-        start_y: int,
-        end_x: int,
-        end_y: int,
-        *,
-        duration_seconds: float = 1,
-    ) -> None:
-        self._record("drag", start_x, start_y, end_x, end_y, duration_seconds)
-
-    def scroll(
-        self,
-        direction: ScrollDirection,
-        *,
-        left: int = 0,
-        top: int = 0,
-        right: int | None = None,
-        bottom: int | None = None,
-        distance_fraction: float = 0.6,
-    ) -> None:
-        self._record(
-            "scroll",
-            direction,
-            left,
-            top,
-            right,
-            bottom,
-            distance_fraction,
-        )
-
-    def back(self) -> None:
-        self._record("back")
-
-    def dismiss_keyboard(self) -> bool:
-        self._record("dismiss_keyboard")
-        return True
-
-    def wait(self, duration_seconds: float) -> None:
-        self._record("wait", duration_seconds)
-
-    def focused_field_reading(self) -> FocusedFieldReading:
-        return FocusedFieldReading(True, (0, 0, 100, 50), True)
+    def capture_screen_fingerprint(self) -> ScreenFingerprint:
+        if self._current is None:
+            raise ObservationCaptureError("No screen has been captured yet.")
+        return self._current.screen_fingerprint
 
 
 class NeverInterrupted:
@@ -197,7 +141,7 @@ def _observation(
     screenshot = build_screenshot(artifact_id=f"shot-{observation_id}")
     base = build_observation(
         observation_id=observation_id,
-        redacted_screenshot=screenshot,
+        screenshot=screenshot,
         application_state=application_state,
         keyboard_visible=keyboard_visible,
         captured_at=datetime(2026, 10, 30, tzinfo=timezone.utc) + timedelta(seconds=offset_seconds),
@@ -251,15 +195,21 @@ def _runtime(
     planner_decision_source: PlannerDecisionSource | None = None,
     reused_flow_id: str | None = None,
     recovery_advisor=None,
-    action_verifier=None,
+    proposal_verifier=None,
+    predicted_outcome_verifier=None,
     screen_analysis=None,
     initial_planning_requests: int = 0,
+    declared_values: DeclaredValues | None = None,
 ) -> DeviceAgent:
     return DeviceAgent(
         planner,
         grounder or DeterministicGrounder(100, 200),
         cast(ObservationService, observations),
-        ActionExecutor(device, declared_value_resolver=declared_value_resolver),
+        ActionExecutor(
+            device,
+            declared_value_resolver=declared_value_resolver,
+            declared_values=declared_values,
+        ),
         ActionOutcomeVerifier(),
         AgentStepStore(tmp_path),
         sleep=lambda unused: None,
@@ -277,7 +227,8 @@ def _runtime(
         ),
         reused_flow_id=reused_flow_id,
         recovery_advisor=recovery_advisor,
-        action_verifier=action_verifier,
+        proposal_verifier=proposal_verifier,
+        predicted_outcome_verifier=predicted_outcome_verifier,
         screen_analysis=screen_analysis,
         initial_planning_requests=initial_planning_requests,
         **({"monotonic": monotonic} if monotonic is not None else {}),
@@ -440,7 +391,7 @@ def test_interruption_after_dispatch_preserves_partial_step(tmp_path: Path) -> N
     assert isinstance(receipt, dict)
     assert receipt["disposition"] == "dispatched"
     assert stored[0]["outcome"] is None
-    assert stored[0]["settlement_observation_ids"] == ["obs_2"]
+    assert stored[0]["settlement_observation_ids"] == []
 
 
 def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Path) -> None:
@@ -453,16 +404,19 @@ def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Pat
     observations = ObservationSequence(
         [
             _observation("obs_1", "0000000000000000", keyboard_visible=True),
-            _observation("obs_2", "1111111111111111", offset_seconds=1),
-            _observation("obs_3", "1111111111111111", offset_seconds=2),
+            # Typing changes one field, not the screen, so the covers stay with it.
+            _observation("obs_2", "0000000000000001", offset_seconds=1),
+            _observation("obs_3", "0000000000000001", offset_seconds=2),
         ]
     )
+    declared_values = DeclaredValues()
     runtime = _runtime(
         tmp_path,
         planner,
         observations,
         RuntimeDevice(),
         declared_value_resolver=lambda name: secret if name == "declared_secret" else "",
+        declared_values=declared_values,
     )
 
     result = runtime.run(_task(), _mode_policy(), NeverInterrupted())
@@ -470,11 +424,21 @@ def test_declared_text_is_verified_without_entering_step_artifacts(tmp_path: Pat
     assert result.steps[0].outcome is not None
     assert ActionOutcomeSignal.TEXT_LANDED in result.steps[0].outcome.signals
     assert secret not in (tmp_path / "agent/steps.jsonl").read_text()
+    assert [value.label for value in declared_values.all()] == ["declared_secret"]
+    assert secret not in repr(declared_values.all())
 
 
-def test_device_refusal_is_a_distinct_terminal_without_settlement(tmp_path: Path) -> None:
-    planner = SequencePlanner([proposal(ActionKind.WAIT)])
-    observations = ObservationSequence([_observation("obs_1", "0000000000000000")])
+def test_a_device_rejection_is_correctable_and_keeps_its_detail_private(tmp_path: Path) -> None:
+    # The device validates one proposed action against this screen and rejects it before it
+    # changes anything. Ending the run there discarded every step already completed over a
+    # proposal the planner could simply replace.
+    planner = SequencePlanner([proposal(ActionKind.WAIT), proposal(ActionKind.CANNOT_PROGRESS)])
+    observations = ObservationSequence(
+        [
+            _observation("obs_1", "0000000000000000"),
+            _observation("obs_2", "0000000000000001", offset_seconds=1),
+        ]
+    )
     device = RuntimeDevice()
     device.reject = True
 
@@ -482,9 +446,8 @@ def test_device_refusal_is_a_distinct_terminal_without_settlement(tmp_path: Path
         _task(), _mode_policy(), NeverInterrupted()
     )
 
-    assert result.terminal_reason is AgentTerminalReason.DEVICE_REFUSED
+    assert result.terminal_reason is AgentTerminalReason.CANNOT_PROGRESS
     assert result.usage.dispatched_actions == 0
-    assert observations.capture_count == 1
     assert "private detail" not in (tmp_path / "agent/steps.jsonl").read_text()
 
 

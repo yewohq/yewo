@@ -204,8 +204,8 @@ def test_target_rejection_retains_device_reason_and_grounded_point() -> None:
     assert attempt.reason == "The grounded target did not accept focus."
     assert attempt.grounded_point is not None
     assert (attempt.grounded_point.x, attempt.grounded_point.y) == (100, 200)
-    assert attempt.screenshot_width_px == before.redacted_screenshot.width_px
-    assert attempt.screenshot_height_px == before.redacted_screenshot.height_px
+    assert attempt.screenshot_width_px == before.screenshot.width_px
+    assert attempt.screenshot_height_px == before.screenshot.height_px
 
 
 def test_unsuccessful_attempt_retention_keeps_only_the_latest_evidence() -> None:

@@ -15,6 +15,7 @@ from yewo.agent.actuation import (
     ActionRefusal,
     DeclaredValueReference,
     DispatchDisposition,
+    is_correctable_rejection,
     DispatchReceipt,
     LiteralText,
 )
@@ -25,6 +26,7 @@ from yewo.observations import Observation
 
 
 RECENT_PLANNING_HISTORY_LIMIT = 14
+PLANNING_HISTORY_ANCHOR_STEPS = 8
 EARLIER_HISTORY_SUMMARY_LIMIT = 20
 EARLIER_HISTORY_SUMMARY_CHARACTER_LIMIT = 6_000
 GROUNDING_CORRECTION_MINIMUM_DISTANCE_FRACTION = 0.02
@@ -140,10 +142,7 @@ class PlanningHistoryEntry(BaseModel):
         if self.refusal is not None and self.refusal.proposal_id != self.proposal.proposal_id:
             raise ValueError("The action refusal does not match the proposal.")
         if self.receipt is not None:
-            if self.receipt.disposition not in {
-                DispatchDisposition.TARGET_REJECTED,
-                DispatchDisposition.INPUT_REJECTED,
-            }:
+            if not is_correctable_rejection(self.receipt.disposition):
                 raise ValueError("Only a correctable dispatch rejection is planning feedback.")
             if (
                 self.receipt.proposal_id != self.proposal.proposal_id
@@ -297,14 +296,29 @@ def planning_history_context(
     return context
 
 
+def split_planning_history(
+    history: tuple[PlanningHistoryEntry, ...],
+) -> tuple[tuple[PlanningHistoryEntry, ...], tuple[PlanningHistoryEntry, ...]]:
+    """Split history into the summarised older part and the quoted recent window.
+
+    The boundary moves one anchor at a time so the quoted blocks stay byte-stable between steps,
+    which is what keeps the prompt prefix cacheable. The window therefore holds between
+    RECENT_PLANNING_HISTORY_LIMIT and one anchor more.
+    """
+    drift = len(history) - RECENT_PLANNING_HISTORY_LIMIT
+    if drift <= 0:
+        return (), history
+    start = drift // PLANNING_HISTORY_ANCHOR_STEPS * PLANNING_HISTORY_ANCHOR_STEPS
+    return history[:start], history[start:]
+
+
 def trusted_history_content(
     history: tuple[PlanningHistoryEntry, ...],
     *,
     include_text: bool = True,
 ) -> tuple[TextModelContent, ...]:
     """Summarise older evidence first, then one byte-stable block per recent step."""
-    older = history[:-RECENT_PLANNING_HISTORY_LIMIT]
-    recent = history[-RECENT_PLANNING_HISTORY_LIMIT:]
+    older, recent = split_planning_history(history)
     blocks: list[TextModelContent] = []
     if older:
         blocks.append(
@@ -407,6 +421,8 @@ def _feedback_context(entry: PlanningHistoryEntry, *, include_reason: bool) -> d
         "disposition": entry.outcome.disposition.value,
         "signals": sorted(signal.value for signal in entry.outcome.signals),
     }
+    if entry.outcome.scroll_exhausted is not None:
+        context["scroll_exhausted"] = entry.outcome.scroll_exhausted
     if include_reason and entry.outcome.disposition is not ActionOutcomeDisposition.OBSERVED:
         context["reason"] = entry.outcome.reason
     return context

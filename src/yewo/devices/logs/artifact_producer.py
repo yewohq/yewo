@@ -10,7 +10,6 @@ from yewo.devices.logs.errors import DeviceLogCaptureError, DeviceLogRollbackErr
 from yewo.devices.logs.formatting import (
     bound_text_entries,
     combine_omission,
-    redaction_policy_id,
     utf8_prefix,
 )
 from yewo.devices.logs.reader import (
@@ -27,7 +26,6 @@ from yewo.devices.logs.records import (
     DeviceLogSource,
     DeviceLogSourceReceipt,
 )
-from yewo.devices.logs.redaction import DeviceLogRedactionResult, DeviceLogTextScrubber
 from yewo.devices.logs.store import DeviceLogStore
 from yewo.devices.diagnostics import (
     ApplicationDiagnosticClassification,
@@ -53,16 +51,14 @@ class DeviceLogBatchPersistence:
 
 
 class DeviceLogArtifactProducer:
-    """Redact, bound, persist, and roll back device-log artifacts."""
+    """Bound, persist, and roll back device-log artifacts."""
 
     def __init__(
         self,
         store: DeviceLogStore,
-        scrub_text: DeviceLogTextScrubber,
         policy: DeviceLogCapturePolicy,
     ) -> None:
         self._store = store
-        self._scrub_text = scrub_text
         self._policy = policy
 
     def persist_batch(
@@ -91,7 +87,7 @@ class DeviceLogArtifactProducer:
             )
         except DeviceLogRollbackError:
             raise
-        except Exception:  # noqa: BLE001 - injected redactor and artifact boundary
+        except Exception:  # noqa: BLE001 - artifact boundary
             return DeviceLogBatchPersistence(
                 DeviceLogSourceReceipt(
                     source=source,
@@ -99,7 +95,7 @@ class DeviceLogArtifactProducer:
                     observed_item_count=batch.observed_item_count,
                     filtered_item_count=batch.filtered_item_count,
                     unparsed_item_count=batch.unparsed_item_count,
-                    reason="The device-log items could not be redacted and persisted.",
+                    reason="The device-log items could not be persisted.",
                     diagnostic_classification=(
                         ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
                         if source.is_diagnostic
@@ -255,10 +251,8 @@ class DeviceLogArtifactProducer:
         batch: DeviceLogBatch,
     ) -> tuple[tuple[DeviceLogArtifactReference, ...], int, DeviceLogOmission]:
         entries = tuple(item for item in batch.items if isinstance(item, DeviceLogTextEntry))
-        redacted = tuple(self._redact(item.text) for item in entries)
-        policy_id = redaction_policy_id(redacted)
         content, retained_count, omission = bound_text_entries(
-            redacted,
+            tuple(item.text for item in entries),
             self._policy.maximum_drain_bytes,
         )
         if batch.may_have_omitted_earlier_items:
@@ -274,9 +268,6 @@ class DeviceLogArtifactProducer:
             entry_count=retained_count,
             kind=DeviceLogArtifactKind.TEXT_STREAM,
             source_name=None,
-            redaction_policy_id=policy_id,
-            source_redaction_count=sum(item.redaction_count for item in redacted[-retained_count:]),
-            sensitivity=self._policy.sensitivity,
             retention=self._policy.retention,
         )
         return (artifact,), retained_count, omission
@@ -297,8 +288,7 @@ class DeviceLogArtifactProducer:
         omission = DeviceLogOmission.NONE
         try:
             for report in reversed(reports):
-                redacted = self._redact(report.text)
-                content = redacted.text.encode("utf-8", errors="backslashreplace")
+                content = report.text.encode("utf-8", errors="backslashreplace")
                 remaining_bytes = self._policy.maximum_drain_bytes - retained_bytes
                 if remaining_bytes <= 0:
                     omission = combine_omission(omission, DeviceLogOmission.EARLIER)
@@ -325,9 +315,6 @@ class DeviceLogArtifactProducer:
                         occurred_at=report.occurred_at,
                         platform_reason=report.platform_reason,
                         platform_code=report.platform_code,
-                        redaction_policy_id=redacted.policy_id,
-                        source_redaction_count=redacted.redaction_count,
-                        sensitivity=self._policy.sensitivity,
                         retention=self._policy.retention,
                     )
                 )
@@ -339,12 +326,6 @@ class DeviceLogArtifactProducer:
         if len(artifacts) < len(reports):
             omission = combine_omission(omission, DeviceLogOmission.EARLIER)
         return tuple(artifacts), len(artifacts), omission
-
-    def _redact(self, text: str) -> DeviceLogRedactionResult:
-        result = self._scrub_text(text)
-        if not isinstance(result, DeviceLogRedactionResult):
-            raise DeviceLogCaptureError("The device-log scrubber returned an invalid result.")
-        return result
 
 
 def _diagnostic_hints(batch: DeviceLogBatch, application_id: str) -> tuple[str, ...]:

@@ -1,7 +1,6 @@
 """Independent discovery goal-verification tests."""
 
 from datetime import datetime, timezone
-from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
@@ -17,13 +16,15 @@ from yewo.agent.actuation import (
     ActionOutcomeSignal,
 )
 from yewo.agent.planning.goal_verifier import (
+    GoalEvidenceConflict,
     GoalVerificationAssessment,
     GoalVerificationActionEvidence,
     GoalVerificationMilestone,
     ModelGoalVerifier,
+    format_goal_evidence_conflicts,
 )
 from yewo.agent.planning.goal_evidence import AdaptiveGoalEvidencePacker
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import (
     ImageModelContent,
     ModelCallDisposition,
@@ -35,7 +36,7 @@ from yewo.models import (
     ModelImageConstraints,
     TextModelContent,
 )
-from yewo.observations import RedactionProvenance, ScreenshotStore
+from yewo.observations import ScreenshotStore
 
 from observations.factories import build_observation
 from observations.factories import build_screenshot
@@ -69,7 +70,7 @@ class StubAuditModel:
                 ModelCallRecord(
                     request_id=request.request_id,
                     profile_id=request.profile_id,
-                    role=ModelRole.AUDITOR,
+                    role=request.role,
                     requested_provider="offline",
                     requested_model="deterministic-auditor",
                     attempt_number=1,
@@ -78,7 +79,6 @@ class StubAuditModel:
                     usage=ModelCallUsage(),
                 ),
             ),
-            sensitivity=request.sensitivity,
             retention=request.retention,
         )
 
@@ -118,7 +118,7 @@ def test_model_goal_verifier_uses_a_separate_auditor_call() -> None:
     assert verification.model_request_id == "request_1"
     assert verification.model_call_count == 1
     assert model.request is not None
-    assert model.request.role is ModelRole.AUDITOR
+    assert model.request.role is ModelRole.GOAL_VERIFIER
 
 
 def test_model_goal_verifier_preserves_objective_only_discovery() -> None:
@@ -183,7 +183,65 @@ def test_objective_only_discovery_accepts_transition_evidence() -> None:
 def test_auditor_response_contract_excludes_runtime_owned_fields() -> None:
     properties = GoalVerificationAssessment.model_json_schema()["properties"]
 
-    assert set(properties) == {"satisfied", "reason", "observed_app_state"}
+    assert set(properties) == {
+        "satisfied",
+        "reason",
+        "observed_app_state",
+        "evidence_conflicts",
+    }
+
+
+def test_goal_verification_rejects_success_with_conflicting_evidence() -> None:
+    with pytest.raises(ValueError, match="Contradictory goal evidence"):
+        GoalVerificationAssessment(
+            satisfied=True,
+            reason="The final screen shows a total.",
+            evidence_conflicts=(
+                GoalEvidenceConflict(
+                    subject="amount charged",
+                    earlier_observation="Payment submission showed 26.00.",
+                    later_observation="Order confirmation showed 31.00.",
+                    reason="The same transaction reports two charged amounts.",
+                ),
+            ),
+        )
+
+
+def test_model_goal_verifier_preserves_evidence_conflicts() -> None:
+    observation = build_observation(observation_id="observation_final")
+    model = StubAuditModel(
+        GoalVerificationAssessment(
+            satisfied=False,
+            reason="The charged amount is contradictory.",
+            evidence_conflicts=(
+                GoalEvidenceConflict(
+                    subject="amount charged",
+                    earlier_observation="Payment submission showed 26.00.",
+                    later_observation="Order confirmation showed 31.00.",
+                    reason="The same transaction reports two charged amounts.",
+                ),
+            ),
+        ).model_dump(mode="json")
+    )
+
+    verification = ModelGoalVerifier(
+        model,
+        "auditor-primary",
+        identifier_factory=iter(("verification_1", "request_1")).__next__,
+    ).verify(
+        _objective().objective_id,
+        _objective().statement,
+        _objective().completion_conditions,
+        observation,
+    )
+
+    assert not verification.satisfied
+    assert verification.evidence_conflicts[0].subject == "amount charged"
+    assert format_goal_evidence_conflicts(verification.evidence_conflicts) == (
+        "Discovery found 1 material evidence conflict(s). amount charged: "
+        "Payment submission showed 26.00. Conflicting evidence: "
+        "Order confirmation showed 31.00. The same transaction reports two charged amounts."
+    )
 
 
 def test_model_goal_verifier_fails_closed_when_the_call_fails() -> None:
@@ -209,15 +267,15 @@ def test_model_goal_verifier_fails_closed_when_the_call_fails() -> None:
 def test_model_goal_verifier_audits_bounded_milestones_and_final_image() -> None:
     final_observation = build_observation(
         observation_id="observation_final",
-        redacted_screenshot=build_screenshot(artifact_id="shot_final"),
+        screenshot=build_screenshot(artifact_id="shot_final"),
     )
     milestone_observation = build_observation(
         observation_id="observation_milestone",
-        redacted_screenshot=build_screenshot(artifact_id="shot_milestone"),
+        screenshot=build_screenshot(artifact_id="shot_milestone"),
     )
     source_observation = build_observation(
         observation_id="observation_source",
-        redacted_screenshot=build_screenshot(artifact_id="shot_source"),
+        screenshot=build_screenshot(artifact_id="shot_source"),
     )
     output = GoalVerificationAssessment(
         satisfied=True,
@@ -284,12 +342,6 @@ def test_four_milestones_are_packed_into_one_auditor_image(tmp_path: Path) -> No
         tmp_path,
         identifier_factory=iter(f"shot_{index}" for index in range(9)).__next__,
     )
-    redaction = RedactionProvenance(
-        policy_id="test_redaction",
-        region_count=0,
-        region_set_sha256=sha256(b"none").hexdigest(),
-        input_sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
-    )
 
     def observation(index: int):
         output = BytesIO()
@@ -297,15 +349,13 @@ def test_four_milestones_are_packed_into_one_auditor_image(tmp_path: Path) -> No
             output,
             format="PNG",
         )
-        screenshot = store.persist_redacted(
+        screenshot = store.persist(
             output.getvalue(),
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
-            redaction=redaction,
         )
         return build_observation(
             observation_id=f"observation_{index}",
-            redacted_screenshot=screenshot,
+            screenshot=screenshot,
         )
 
     observations = tuple(observation(index) for index in range(9))

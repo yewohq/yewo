@@ -8,7 +8,6 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from yewo.models import ModelReasoningMode
 from yewo.project_config.capabilities import ScenarioPreconditionsSpec
 
 
@@ -34,35 +33,7 @@ class TargetSpec(StrictRecord):
     platform: Literal["android", "ios"]
     device: str = Field(min_length=1)
     app: str | None = Field(default=None, min_length=1)
-    app_path: str | None = Field(default=None, min_length=1)
     headless: bool | None = None
-
-    @model_validator(mode="after")
-    def _validate_app_alias(self) -> Self:
-        if self.app is not None and self.app_path is not None:
-            raise ValueError("Use app or app_path, not both.")
-        return self
-
-
-class ValueRedaction(StrEnum):
-    HIDE = "hide"
-    LAST4 = "last4"
-    SHOW = "show"
-
-
-class ValueVerificationMode(StrEnum):
-    AUTO = "auto"
-    EXACT = "exact"
-    NORMALIZED = "normalized"
-    MASKED = "masked"
-
-
-class ValueNormalizer(StrEnum):
-    WHITESPACE = "whitespace"
-    HYPHENS = "hyphens"
-    CASE = "case"
-    CURRENCY = "currency"
-    GROUPING = "grouping"
 
 
 ScalarValue = str | int | float | bool
@@ -72,27 +43,6 @@ class DeclaredValueSpec(StrictRecord):
     value: ScalarValue = Field(repr=False)
     secret: bool = False
     refused: bool = False
-    redaction: ValueRedaction = ValueRedaction.HIDE
-    verify_as: ValueVerificationMode = ValueVerificationMode.AUTO
-    normalizers: tuple[ValueNormalizer, ...] = ()
-    visible_suffix: int = Field(default=0, ge=0)
-    masked_length: int | None = Field(default=None, ge=1)
-
-    @model_validator(mode="after")
-    def _validate_verification_options(self) -> Self:
-        if self.verify_as is ValueVerificationMode.EXACT and (
-            self.normalizers or self.visible_suffix or self.masked_length is not None
-        ):
-            raise ValueError("Exact verification does not accept comparison options.")
-        if self.verify_as is ValueVerificationMode.NORMALIZED and not self.normalizers:
-            raise ValueError("Normalized verification requires at least one normalizer.")
-        if self.verify_as not in {ValueVerificationMode.AUTO, ValueVerificationMode.MASKED} and (
-            self.visible_suffix or self.masked_length is not None
-        ):
-            raise ValueError("Masking options require auto or masked verification.")
-        if not self.secret and self.redaction is not ValueRedaction.HIDE:
-            raise ValueError("Redaction options require a secret value.")
-        return self
 
 
 EnvironmentValue = DeclaredValueSpec | ScalarValue
@@ -164,14 +114,31 @@ class GroundingProtocol(StrEnum):
     NORMALIZED_1000 = "normalized_1000"
 
 
+class ReasoningSetting(StrEnum):
+    """How much private reasoning one role may spend before it answers.
+
+    An effort keeps reasoning and bounds it. Reasoning and the answer share one completion
+    budget, so a role left to the provider can spend the whole budget thinking and return
+    nothing.
+    """
+
+    DISABLED = "disabled"
+    PROVIDER_DEFAULT = "provider_default"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 class GrounderSelectionSpec(StrictRecord):
     model: str = Field(min_length=1)
     protocol: GroundingProtocol
+    reasoning: ReasoningSetting = ReasoningSetting.PROVIDER_DEFAULT
 
 
 class ModelSelectionSpec(StrictRecord):
     model: str = Field(min_length=1)
-    reasoning: ModelReasoningMode = ModelReasoningMode.PROVIDER_DEFAULT
+    reasoning: ReasoningSetting = ReasoningSetting.PROVIDER_DEFAULT
 
 
 ModelSelection = str | ModelSelectionSpec
@@ -181,7 +148,8 @@ class ModelOverridesSpec(StrictRecord):
     planner: ModelSelection | None = None
     auditor: ModelSelection | None = None
     recovery: ModelSelection | None = None
-    action_verifier: ModelSelection | None = None
+    proposal_verifier: ModelSelection | None = None
+    outcome_verifier: ModelSelection | None = None
     screen_analyzer: ModelSelection | None = None
     replay_preparer: ModelSelection | None = None
     test_designer: ModelSelection | None = None
@@ -189,11 +157,9 @@ class ModelOverridesSpec(StrictRecord):
 
 class SettingsSpec(StrictRecord):
     device: DeviceSpec | str | None = None
-    emulator: str | None = Field(default=None, min_length=1)
     platform: Literal["android", "ios"] | None = None
     headless: bool | None = None
     app: str | None = Field(default=None, min_length=1)
-    app_path: str | None = Field(default=None, min_length=1)
     model: str | None = Field(default=None, min_length=1)
     models: ModelOverridesSpec | None = None
     grounder: GrounderSelectionSpec | None = None
@@ -203,37 +169,17 @@ class SettingsSpec(StrictRecord):
     output_dir: str | None = Field(default=None, min_length=1)
     memory_root: str | None = Field(default=None, min_length=1)
     record: bool | None = None
-    record_session: bool | None = None
     durable_replay: bool | None = None
-    allow_secret_exposure: bool | None = None
-
-    @model_validator(mode="after")
-    def _validate_aliases(self) -> Self:
-        for primary, alias in (
-            ("device", "emulator"),
-            ("app", "app_path"),
-            ("record", "record_session"),
-        ):
-            if getattr(self, primary) is not None and getattr(self, alias) is not None:
-                raise ValueError(f"Use {primary} or {alias}, not both.")
-        return self
 
 
 class JourneySpec(StrictRecord):
     id: Identifier | None = None
     name: str | None = Field(default=None, min_length=1)
-    journey: str | None = Field(default=None, min_length=1)
-    description: str | None = Field(default=None, min_length=1)
+    journey: str = Field(min_length=1)
     security_rules: tuple[str, ...] = ()
     checks: tuple[UserCheck, ...] = ()
     env: dict[ValueName, EnvironmentValue] = Field(default_factory=dict)
     preconditions: ScenarioPreconditionsSpec | None = None
-
-    @model_validator(mode="after")
-    def _validate_description_alias(self) -> Self:
-        if (self.journey is None) == (self.description is None):
-            raise ValueError("Use exactly one of journey or description.")
-        return self
 
 
 class WorkflowSpec(SettingsSpec):
@@ -243,7 +189,6 @@ class WorkflowSpec(SettingsSpec):
     journey: str | None = Field(default=None, min_length=1)
     id: Identifier | None = None
     name: str | None = Field(default=None, min_length=1)
-    description: str | None = Field(default=None, min_length=1)
     security_rules: tuple[str, ...] = ()
     checks: tuple[UserCheck, ...] = ()
     coverage: tuple[CoverageSpec, ...] | None = None
@@ -254,10 +199,8 @@ class WorkflowSpec(SettingsSpec):
 
     @model_validator(mode="after")
     def _validate_journeys(self) -> Self:
-        if self.journey is not None and self.description is not None:
-            raise ValueError("Use exactly one of journey or description.")
         has_list = self.journeys is not None
-        has_inline = self.journey is not None or self.description is not None
+        has_inline = self.journey is not None
         if has_list == has_inline:
             raise ValueError("Use journeys or one inline journey.")
         if self.journeys is not None and not self.journeys:
@@ -274,7 +217,6 @@ class YewoFileSpec(SettingsSpec):
     journey: str | None = Field(default=None, min_length=1)
     id: Identifier | None = None
     name: str | None = Field(default=None, min_length=1)
-    description: str | None = Field(default=None, min_length=1)
     security_rules: tuple[str, ...] = ()
     checks: tuple[UserCheck, ...] = ()
     coverage: tuple[CoverageSpec, ...] | None = None
@@ -285,11 +227,9 @@ class YewoFileSpec(SettingsSpec):
 
     @model_validator(mode="after")
     def _validate_structure(self) -> Self:
-        if self.journey is not None and self.description is not None:
-            raise ValueError("Use exactly one of journey or description.")
         has_workflows = self.workflows is not None
         has_journeys = self.journeys is not None
-        has_inline = self.journey is not None or self.description is not None
+        has_inline = self.journey is not None
         if sum((has_workflows, has_journeys, has_inline)) > 1:
             raise ValueError("Use workflows, journeys, or one inline journey.")
         if self.workflows is not None and not self.workflows:
@@ -313,11 +253,6 @@ class ResolvedValue(StrictRecord):
     value: str = Field(repr=False)
     secret: bool = False
     refused: bool = False
-    redaction: ValueRedaction = ValueRedaction.HIDE
-    verify_as: ValueVerificationMode = ValueVerificationMode.AUTO
-    normalizers: tuple[ValueNormalizer, ...] = ()
-    visible_suffix: int = 0
-    masked_length: int | None = None
 
 
 class CoverageCell(StrictRecord):
@@ -346,7 +281,6 @@ class ResolvedSettings(StrictRecord):
     memory_root: Path | None = None
     record: bool | None = None
     durable_replay: bool | None = None
-    allow_secret_exposure: bool | None = None
 
 
 class ResolvedJourney(StrictRecord):

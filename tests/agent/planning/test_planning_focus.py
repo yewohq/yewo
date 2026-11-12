@@ -62,8 +62,8 @@ def test_focus_planning_uses_an_isolated_current_state_request() -> None:
         "outcome": "no_observable_change",
         "target": "the record row",
     }
-    assert "done" in focus_context["available_actions"]
-    assert "cannot_progress" in focus_context["available_actions"]
+    offered = {entry["action"] for entry in focus_context["available_actions"]}
+    assert {"done", "cannot_progress"} <= offered
 
 
 def test_focus_request_carries_the_evidence_its_rules_depend_on() -> None:

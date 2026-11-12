@@ -12,14 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from yewo.artifacts.records import (
     RelativeArtifactPath,
     ArtifactRetention,
-    ArtifactSensitivity,
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
     Sha256Digest,
     validate_record_identifier,
 )
-from yewo.observations.records import RedactionRegion
 
 
 class ScreenRecordingBoundaryState(StrEnum):
@@ -58,44 +56,6 @@ class ScreenRecordingCaptureMethod(StrEnum):
 
     DRIVER_RESPONSE = "driver_response"
     REMOTE_FILE = "remote_file"
-
-
-class ScreenRecordingRedactionState(StrEnum):
-    """Whether retained video pixels were transformed for safety."""
-
-    RAW = "raw"
-    REDACTED = "redacted"
-
-
-class ScreenRecordingMask(BaseModel):
-    """One sensitive region that remains covered for the rest of a segment."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    region: RedactionRegion
-    source_width_px: int = Field(gt=0)
-    source_height_px: int = Field(gt=0)
-    starts_at_seconds: float = Field(ge=0)
-    ends_at_seconds: float | None = Field(default=None, ge=0)
-
-    @model_validator(mode="after")
-    def _validate_region_bounds(self) -> Self:
-        if self.region.right > self.source_width_px or self.region.bottom > self.source_height_px:
-            raise ValueError("A recording mask region is outside its source frame.")
-        if self.ends_at_seconds is not None and self.ends_at_seconds < self.starts_at_seconds:
-            raise ValueError("A recording mask cannot end before it starts.")
-        return self
-
-
-class ScreenRecordingRedactionProvenance(BaseModel):
-    """Policy evidence for pixels produced by recording redaction."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    policy_id: RecordIdentifier
-    mask_count: int = Field(gt=0)
-    mask_set_sha256: Sha256Digest
-    input_sensitivity: ArtifactSensitivity
 
 
 def validate_recording_checkpoint(
@@ -169,9 +129,6 @@ class ScreenRecordingArtifactReference(BaseModel):
     maximum_pull_seconds: float = Field(gt=0)
     reached_effective_limit: bool
     capture_method: ScreenRecordingCaptureMethod
-    redaction_state: ScreenRecordingRedactionState
-    redaction: ScreenRecordingRedactionProvenance | None = None
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
 
     @field_validator("path")
@@ -186,17 +143,6 @@ class ScreenRecordingArtifactReference(BaseModel):
         validate_recording_checkpoint(self.checkpoint_kind, self.checkpoint_id)
         if self.effective_maximum_seconds > self.requested_maximum_seconds:
             raise ValueError("An effective recording limit cannot exceed its request.")
-        if self.redaction_state is ScreenRecordingRedactionState.RAW:
-            if self.redaction is not None:
-                raise ValueError("A raw recording cannot have redaction provenance.")
-            if self.sensitivity is ArtifactSensitivity.DECLARED_SENSITIVE:
-                raise ValueError("Declared-sensitive recording input cannot remain raw.")
-        elif self.redaction is None:
-            raise ValueError("A redacted recording must have redaction provenance.")
-        elif self.sensitivity is not self.redaction.input_sensitivity:
-            raise ValueError(
-                "A redacted recording must retain its input sensitivity classification."
-            )
         return self
 
 

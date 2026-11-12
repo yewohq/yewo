@@ -123,9 +123,6 @@ def _is_telemetry_enabled() -> bool:
     configured_preference = os.environ.get("YEWO_TELEMETRY", "").strip().lower()
     if configured_preference in _DISABLED_PREFERENCES:
         return False
-    # The test suite must not reach the network.
-    if "PYTEST_CURRENT_TEST" in os.environ:
-        return False
     if configured_preference in _ENABLED_PREFERENCES:
         return True
     return not _is_source_checkout()

@@ -188,7 +188,7 @@ def _milestone_evidence_reason(
         if observation is None:
             return "A current-run milestone observation is unavailable."
         if (
-            observation.redacted_screenshot.artifact_id != milestone.screenshot_artifact_id
+            observation.screenshot.artifact_id != milestone.screenshot_artifact_id
             or observation.screen_fingerprint != milestone.screen_fingerprint
         ):
             return "A current-run milestone does not match its persisted observation."

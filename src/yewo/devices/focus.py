@@ -198,7 +198,10 @@ class FocusService:
     def focused_field(self) -> TextElement:
         """Return the active editable field without changing focus."""
         active_element = _active_element(self._driver)
-        if active_element is not None and _boolean_attribute(active_element.get_attribute("focused")) is True:
+        if (
+            active_element is not None
+            and _boolean_attribute(active_element.get_attribute("focused")) is True
+        ):
             return active_element
         focused = _focused_elements(self._driver)
         if focused:

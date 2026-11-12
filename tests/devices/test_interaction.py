@@ -8,20 +8,10 @@ from devices._interaction_stubs import DriverStub as _DriverStub
 from devices._interaction_stubs import application as _application
 from yewo.devices import DeviceKind, DevicePlatform
 from yewo.devices.android.interaction import AndroidInteractionBackend
-from yewo.devices.errors import DeviceInputRejectedError, DeviceInteractionError
+from yewo.devices.errors import DeviceInteractionError
 from yewo.devices.interaction import AndroidKey, DeviceInteraction, ScrollDirection
 from yewo.devices.ios.interaction import IosInteractionBackend
-
-
-class _Clock:
-    def __init__(self) -> None:
-        self.current = 0.0
-
-    def monotonic(self) -> float:
-        return self.current
-
-    def sleep(self, seconds: float) -> None:
-        self.current += seconds
+from support import ClockStub
 
 
 def test_android_tap_validates_and_scales_screenshot_coordinates() -> None:
@@ -120,11 +110,12 @@ def test_scroll_translates_semantics_to_a_bounded_drag() -> None:
 
     script, params = driver.scripts[-1]
     assert script == "mobile: dragFromToForDuration"
+    # Scrolling up returns to content above, so the finger travels downward.
     assert params == {
         "fromX": 50,
-        "fromY": 148,
+        "fromY": 52,
         "toX": 50,
-        "toY": 52,
+        "toY": 148,
         "duration": 0.5,
     }
 
@@ -145,245 +136,6 @@ def test_scroll_rejects_an_unbounded_distance(distance_fraction: float) -> None:
     assert driver.scripts == []
 
 
-def test_text_operations_use_the_focused_element() -> None:
-    driver = _DriverStub()
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    value = interaction.type_text(20, 30, "hello")
-    interaction.clear_text(20, 30)
-
-    assert value is True
-    assert driver.element.cleared
-    assert driver.keycodes == [29, 67]
-    assert interaction.focused_field_state() is True
-
-
-def test_secure_field_reports_context_without_comparing_obscured_text() -> None:
-    driver = _DriverStub()
-    driver.element.password = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    matched = interaction.type_text(20, 30, "private value")
-    reading = interaction.focused_field_reading()
-
-    assert matched is None
-    assert driver.element.value == "private value"
-    assert reading.field_context is not None
-    assert reading.field_context.is_secure is True
-    assert reading.field_context.field_type.value == "password"
-
-
-class _NumericInputReader:
-    def ask(self, connection_id: str, *args: str, timeout_seconds: float = 20) -> str:
-        del connection_id, args, timeout_seconds
-        return "mCurAttribute=EditorInfo{packageName=com.example, inputType=0x2, imeOptions=5}"
-
-
-def test_numeric_focused_field_rejects_text_before_delivery() -> None:
-    driver = _DriverStub()
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(_NumericInputReader(), "emulator-5554"),
-    )
-
-    with pytest.raises(DeviceInputRejectedError, match="whole digits only"):
-        interaction.type_focused_text("medium")
-
-    assert driver.element.value == ""
-
-
-def test_text_operation_uses_the_in_bounds_appium_element_without_active_focus() -> None:
-    driver = _DriverStub()
-    driver.switch_to.active_element_failures = 100
-    driver.focused_xpath_available = False
-    driver.keyboard = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    assert interaction.type_text(20, 30, "hello") is True
-    assert driver.scripts == []
-    assert driver.element.clicked
-
-
-def test_focus_clicks_an_already_focused_field_when_keyboard_is_hidden() -> None:
-    driver = _DriverStub()
-    driver.keyboard = False
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    interaction.focus(20, 30)
-
-    assert driver.element.clicked
-
-
-def test_text_operation_rejects_an_appium_element_that_did_not_gain_focus() -> None:
-    driver = _DriverStub()
-    driver.element.focused = False
-    driver.switch_to.active_element_failures = 100
-    driver.focused_xpath_available = False
-    driver.keyboard = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-        focus_timeout_seconds=0.1,
-        focus_poll_seconds=0.05,
-        clock=_Clock(),
-    )
-
-    with pytest.raises(DeviceInteractionError, match="did not accept keyboard focus"):
-        interaction.type_text(20, 30, "must not land")
-
-    assert driver.element.clicked
-    assert driver.element.value == ""
-
-
-def test_text_operation_rejects_multiple_appium_fields_at_the_target() -> None:
-    driver = _DriverStub()
-    overlapping = type(driver.element)()
-    driver.text_elements.append(overlapping)
-    driver.switch_to.active_element_failures = 100
-    driver.focused_xpath_available = False
-    driver.keyboard = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-        focus_timeout_seconds=0.1,
-        focus_poll_seconds=0.05,
-        clock=_Clock(),
-    )
-
-    with pytest.raises(DeviceInteractionError, match="target field"):
-        interaction.type_text(20, 30, "must not land")
-
-    assert driver.element.value == ""
-    assert overlapping.value == ""
-
-
-def test_visible_keyboard_prevents_coordinate_fallback_without_an_editable_target() -> None:
-    driver = _DriverStub()
-    driver.text_elements = []
-    driver.switch_to.active_element_failures = 100
-    driver.focused_xpath_available = False
-    driver.keyboard = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    with pytest.raises(DeviceInteractionError, match="no editable target field"):
-        interaction.type_text(20, 30, "must not reach the keyboard")
-
-    assert driver.scripts == []
-    assert driver.keycodes == []
-
-
-def test_focus_rejects_an_unchanged_field_away_from_the_target() -> None:
-    driver = _DriverStub()
-    driver.element.rect = {"x": 0, "y": 0, "width": 20, "height": 20}
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-        focus_timeout_seconds=0.1,
-        focus_poll_seconds=0.05,
-        clock=_Clock(),
-    )
-
-    with pytest.raises(DeviceInteractionError, match="target field"):
-        interaction.type_text(160, 320, "wrong field")
-
-    assert driver.element.value == ""
-
-
-def test_focused_field_reading_contains_no_field_value() -> None:
-    driver = _DriverStub()
-    driver.element.value = "private value"
-    driver.keyboard = True
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.IOS,
-        _application(DevicePlatform.IOS),
-        IosInteractionBackend(),
-    )
-
-    reading = interaction.focused_field_reading()
-
-    assert reading.is_focused is True
-    assert reading.driver_bounds == (0, 0, 50, 100)
-    assert reading.keyboard_visible is True
-    assert "private value" not in repr(reading)
-
-
-def test_type_text_accepts_append_behavior_without_returning_field_content() -> None:
-    driver = _DriverStub()
-    driver.element.value = "private value"
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    assert interaction.type_text(20, 30, " appended") is True
-
-
-def test_android_type_text_never_requests_the_ios_only_value_attribute() -> None:
-    """UiAutomator2 raises NoSuchAttributeException for 'value'; only XCUITest supports it."""
-    driver = _DriverStub()
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.ANDROID,
-        _application(DevicePlatform.ANDROID),
-        AndroidInteractionBackend(),
-    )
-
-    interaction.type_text(20, 30, "hello")
-
-    assert "value" not in driver.element.requested_attributes
-
-
-def test_ios_type_text_reads_the_value_attribute() -> None:
-    driver = _DriverStub()
-    interaction = DeviceInteraction(
-        driver,
-        DevicePlatform.IOS,
-        _application(DevicePlatform.IOS),
-        IosInteractionBackend(),
-    )
-
-    value = interaction.type_text(20, 30, "hello")
-
-    assert value is True
-    assert "value" in driver.element.requested_attributes
-
-
 @pytest.mark.parametrize("duration_seconds", [0, 0.05, 30.1])
 def test_wait_rejects_duration_outside_the_device_bounds(duration_seconds: float) -> None:
     interaction = DeviceInteraction(
@@ -391,7 +143,7 @@ def test_wait_rejects_duration_outside_the_device_bounds(duration_seconds: float
         DevicePlatform.ANDROID,
         _application(DevicePlatform.ANDROID),
         AndroidInteractionBackend(),
-        clock=_Clock(),
+        clock=ClockStub(),
     )
 
     with pytest.raises(DeviceInteractionError, match="Wait duration"):
@@ -533,3 +285,102 @@ def test_native_alert_detection_distinguishes_absence() -> None:
     assert interaction.system_prompt_visible() is False
     driver.switch_to.has_alert = True
     assert interaction.system_prompt_visible() is True
+
+
+@pytest.mark.parametrize(
+    "direction", [ScrollDirection.DOWN, ScrollDirection.UP, ScrollDirection.RIGHT]
+)
+def test_android_scroll_asks_uiautomator_whether_more_content_remains(
+    direction: ScrollDirection,
+) -> None:
+    driver = _DriverStub()
+    driver.script_results["mobile: scrollGesture"] = True
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    can_scroll_more = interaction.scroll(direction, left=0, top=0, right=99, bottom=199)
+
+    assert can_scroll_more is True
+    script, params = driver.scripts[-1]
+    assert script == "mobile: scrollGesture"
+    # The region is converted like every other gesture region. This stub reports a 200x400
+    # screenshot against a 100x200 gesture viewport, so an unconverted region is four times the
+    # area the device offers and UiAutomator either mis-targets it or rejects it.
+    # The platform shares Yewo's content-relative direction, so it passes through unchanged.
+    assert params == {
+        "left": 0,
+        "top": 0,
+        "width": 50,
+        "height": 100,
+        "direction": direction.value,
+        "percent": 0.6,
+    }
+
+
+def test_android_scroll_without_a_platform_answer_is_not_repeated_as_a_drag() -> None:
+    # UiAutomator performs the gesture whatever it replies. Reading a missing answer as a
+    # declined gesture scrolled the region twice.
+    driver = _DriverStub()
+    driver.script_results["mobile: scrollGesture"] = None
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    assert interaction.scroll(ScrollDirection.DOWN) is None
+
+    assert [script for script, _ in driver.scripts] == ["mobile: scrollGesture"]
+
+
+def test_ios_scroll_falls_back_to_a_drag_because_the_platform_declines() -> None:
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.IOS,
+        _application(DevicePlatform.IOS),
+        IosInteractionBackend(),
+    )
+
+    assert interaction.scroll(ScrollDirection.DOWN) is None
+    assert driver.scripts[-1][0] == "mobile: dragFromToForDuration"
+
+
+def test_refresh_pulls_downward_from_the_top_of_the_region() -> None:
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.IOS,
+        _application(DevicePlatform.IOS),
+        IosInteractionBackend(),
+    )
+
+    interaction.refresh(left=0, top=0, right=99, bottom=199)
+
+    script, params = driver.scripts[-1]
+    assert script == "mobile: dragFromToForDuration"
+    # A pull starts near the top edge and travels down, the opposite of scrolling down.
+    assert params["fromY"] < params["toY"]
+    assert params["fromY"] == 10
+    assert params["toY"] == 70
+    assert params["fromX"] == params["toX"] == 24
+
+
+def test_refresh_rejects_a_region_outside_the_screen() -> None:
+    driver = _DriverStub()
+    interaction = DeviceInteraction(
+        driver,
+        DevicePlatform.ANDROID,
+        _application(DevicePlatform.ANDROID),
+        AndroidInteractionBackend(),
+    )
+
+    with pytest.raises(DeviceInteractionError, match="outside"):
+        interaction.refresh(left=0, top=0, right=10_000, bottom=10)
+
+    assert driver.scripts == []

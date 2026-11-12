@@ -275,14 +275,7 @@ def _canonical_scenario(
     expected_outcomes = tuple(
         outcome for obligation in scenario.obligations for outcome in obligation.expected_outcomes
     )
-    coverage_cell_id = next(
-        (
-            item.coverage_cell_id
-            for item in scenario.obligations
-            if item.coverage_cell_id is not None
-        ),
-        (f"{scenario.obligations[0].category.value}.{scenario.obligations[0].strategy.value}.0"),
-    )
+    coverage_cell_id = scenario.obligations[0].coverage_cell_id
     return CanonicalScenarioRecord(
         scenario_id=scenario.scenario_id,
         journey_id=scenario.journey_id,

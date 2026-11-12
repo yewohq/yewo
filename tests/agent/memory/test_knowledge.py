@@ -208,7 +208,7 @@ def test_store_update_applies_delta_under_one_lock(tmp_path: Path) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, source_root)
+    store.save(memory)
     transition = memory.transitions[0]
     timing = TransitionTimingKnowledge(
         transition_id=transition.transition_id,
@@ -224,7 +224,6 @@ def test_store_update_applies_delta_under_one_lock(tmp_path: Path) -> None:
 
     persisted = store.update(
         compatibility,
-        source_root,
         lambda current: apply_memory_delta(current, delta),
     )
     loaded = store.load(compatibility)
@@ -279,7 +278,7 @@ def test_capture_records_only_observed_settled_transition_timing(tmp_path: Path)
 
     assert captured.timing[0].transition_id == memory.transitions[0].transition_id
     assert captured.timing[0].samples[0].duration_ms == 1_000
-    assert captured.timing[0].samples[0].measurement == "source_to_settled_v1"
+    assert captured.timing[0].samples[0].measurement == "dispatch_to_settled_v1"
     assert unavailable.timing == ()
 
 

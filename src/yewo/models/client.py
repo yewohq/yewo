@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from yewo.models.artifacts import ModelArtifactStore, ModelImageReader, ModelResponseEvidence
 from yewo.models.attribution import build_model_attribution
 from yewo.models.errors import ModelInputError
-from yewo.models.message_encoding import ModelMessageEncoder
+from yewo.models.message_encoding import ModelImagePayloadCache, ModelMessageEncoder
 from yewo.models.narration import narrate_model_request, narrate_model_response, trace_model_call
 from yewo.models.narration import trace_model_clock_gap, trace_model_retry_wait
 from yewo.models._litellm_response import (
@@ -75,7 +75,6 @@ class LiteLLMModelClient:
         profiles: ModelProfileRegistry,
         artifacts: ModelArtifactStore,
         images: ModelImageReader,
-        scrub_text: Callable[[str], str],
         *,
         completion: CompletionCall = litellm.completion,
         calculate_cost: CostCalculator = completion_cost,
@@ -90,7 +89,7 @@ class LiteLLMModelClient:
         self._profiles = profiles
         self._artifacts = artifacts
         self._images = images
-        self._scrub_text = scrub_text
+        self._image_payloads = ModelImagePayloadCache()
         self._completion = completion
         self._calculate_cost = calculate_cost
         self._wait = wait
@@ -115,7 +114,7 @@ class LiteLLMModelClient:
         response_format = self._response_format(profile, request)
         calls: list[ModelCallRecord] = []
         corrections: tuple[ModelMessage, ...] = ()
-        message_encoder = ModelMessageEncoder(self._images, profile)
+        message_encoder = ModelMessageEncoder(self._images, profile, self._image_payloads)
         validation_attempts = (
             profile.retry.max_validation_attempts if response_model is not None else 1
         )
@@ -234,14 +233,18 @@ class LiteLLMModelClient:
                     and normalized_completion.disposition in _RETRYABLE_RESPONSE_DISPOSITIONS
                     and validation_attempt < validation_attempts
                 )
-                if normalized_completion.disposition is ModelCallDisposition.REASONING_EXHAUSTED and (
-                    reasoning_recovery_used or not request.retry_reasoning_exhaustion
+                if (
+                    normalized_completion.disposition is ModelCallDisposition.REASONING_EXHAUSTED
+                    and (reasoning_recovery_used or not request.retry_reasoning_exhaustion)
                 ):
                     retryable_response = False
                 if retryable_response:
-                    if normalized_completion.disposition is ModelCallDisposition.REASONING_EXHAUSTED:
+                    if (
+                        normalized_completion.disposition
+                        is ModelCallDisposition.REASONING_EXHAUSTED
+                    ):
                         reasoning_recovery_used = True
-                    corrections = correction_messages(normalized_completion, self._scrub_input_text)
+                    corrections = correction_messages(normalized_completion)
                     break
                 return self._response(
                     request,
@@ -308,16 +311,7 @@ class LiteLLMModelClient:
     ) -> TextModelContent | ImageModelContent:
         if isinstance(content, ImageModelContent):
             return content
-        return TextModelContent(text=self._scrub_input_text(content.text))
-
-    def _scrub_input_text(self, text: str) -> str:
-        try:
-            scrubbed = self._scrub_text(text)
-        except Exception as error:  # noqa: BLE001 - injected security boundary
-            raise ModelInputError("Could not scrub model input text.") from error
-        if not isinstance(scrubbed, str) or not scrubbed:
-            raise ModelInputError("The model input scrubber returned an invalid value.")
-        return scrubbed
+        return content
 
     @staticmethod
     def _attempt_messages(
@@ -407,8 +401,9 @@ class LiteLLMModelClient:
             "top_p": profile.generation.top_p,
             "seed": profile.generation.seed,
         }
+        reasoning_effort = request.reasoning_effort or profile.generation.reasoning_effort
         if profile.provider != "openrouter":
-            optional_generation_settings["reasoning_effort"] = request.reasoning_effort
+            optional_generation_settings["reasoning_effort"] = reasoning_effort
         for field_name, value in optional_generation_settings.items():
             if value is not None:
                 arguments[field_name] = value
@@ -428,16 +423,15 @@ class LiteLLMModelClient:
         if cache_points:
             arguments["cache_control_injection_points"] = cache_points
         disabled = (
-            profile.generation.reasoning is ModelReasoningMode.DISABLED
-            and request.reasoning_effort is None
+            profile.generation.reasoning is ModelReasoningMode.DISABLED and reasoning_effort is None
         )
         if disabled and profile.provider != "openrouter":
             arguments["thinking"] = {"type": "disabled"}
         router_options: dict[str, object] = {}
         if disabled and profile.provider == "openrouter":
             router_options["reasoning"] = {"enabled": False}
-        elif request.reasoning_effort is not None and profile.provider == "openrouter":
-            router_options["reasoning"] = {"effort": request.reasoning_effort.value}
+        elif reasoning_effort is not None and profile.provider == "openrouter":
+            router_options["reasoning"] = {"effort": reasoning_effort.value}
         if profile.router_response_healing:
             router_options["plugins"] = [{"id": "response-healing"}]
         if profile.router_cache_affinity and self._cache_affinity is not None:
@@ -478,7 +472,6 @@ class LiteLLMModelClient:
             structured_output=structured_output,
             reason=reason,
             calls=calls,
-            sensitivity=request.sensitivity,
             retention=request.retention,
         )
         narrate_model_response(request, response)

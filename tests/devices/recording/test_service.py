@@ -1,6 +1,6 @@
 """Tests for checkpointed screen-recording ownership."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from datetime import datetime, timezone
 from itertools import count
 import json
@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from yewo.applications import ApplicationDescriptor
-from yewo.artifacts import ArtifactSensitivity
 from yewo.devices import (
     DeviceDescriptor,
     DeviceKind,
@@ -21,20 +20,14 @@ from yewo.devices.recording import (
     ScreenRecordingCaptureMethod,
     ScreenRecordingCheckpointKind,
     ScreenRecordingError,
-    ScreenRecordingMask,
     ScreenRecordingPolicy,
-    ScreenRecordingRedactionProvenance,
-    ScreenRecordingRedactionResult,
-    ScreenRecordingRedactor,
     ScreenRecordingRemoteCleanupState,
     ScreenRecordingRollbackError,
     ScreenRecordingSegmentState,
     ScreenRecordingService,
     ScreenRecordingStore,
     ScreenRecordingVideoMetadata,
-    recording_mask_set_digest,
 )
-from yewo.observations import RedactionRegion
 from .support import (
     RecorderStub as _RecorderStub,
     RemoteRecorderStub as _RemoteRecorderStub,
@@ -45,35 +38,6 @@ CAPTURE_TIME = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
 SCENARIO_VIDEO = b"\x00\x00\x00\x18ftypmp42scenario"
 FINAL_VIDEO = b"\x00\x00\x00\x18ftypmp42final"
 REDACTED_VIDEO = b"\x00\x00\x00\x18ftypmp42redacted"
-
-
-class _RedactorStub:
-    def __init__(self, error: ScreenRecordingError | None = None) -> None:
-        self.error = error
-        self.masks: tuple[ScreenRecordingMask, ...] = ()
-        self.mask_batches: list[tuple[ScreenRecordingMask, ...]] = []
-
-    def redact(
-        self,
-        source: Path,
-        destination: Path,
-        masks: Sequence[ScreenRecordingMask],
-    ) -> ScreenRecordingRedactionResult:
-        assert source.read_bytes() in {SCENARIO_VIDEO, FINAL_VIDEO}
-        self.masks = tuple(masks)
-        self.mask_batches.append(self.masks)
-        if self.error is not None:
-            raise self.error
-        destination.write_bytes(REDACTED_VIDEO)
-        return ScreenRecordingRedactionResult(
-            ScreenRecordingVideoMetadata(16, 9, 30.0, 1.0),
-            ScreenRecordingRedactionProvenance(
-                policy_id="recording-region-mask",
-                mask_count=len(self.masks),
-                mask_set_sha256=recording_mask_set_digest(self.masks),
-                input_sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
-            ),
-        )
 
 
 def _device() -> DeviceDescriptor:
@@ -102,9 +66,8 @@ def _service(
     store: ScreenRecordingStore | None = None,
     policy: ScreenRecordingPolicy | None = None,
     identifier_factory: Callable[[], str] | None = None,
-    redactor: ScreenRecordingRedactor | None = None,
-    initial_masks: Sequence[ScreenRecordingMask] = (),
     monotonic_factory: Callable[[], float] = lambda: 0.0,
+    metadata_reader: Callable[[Path], ScreenRecordingVideoMetadata] | None = None,
 ) -> ScreenRecordingService:
     identifiers = (f"record_{value}" for value in count(1))
     artifacts = (f"artifact_{value}" for value in count(1))
@@ -114,9 +77,8 @@ def _service(
         _application(),
         store or ScreenRecordingStore(root, identifier_factory=artifacts.__next__),
         policy=policy,
-        redactor=redactor,
-        initial_masks=initial_masks,
-        metadata_reader=lambda path: ScreenRecordingVideoMetadata(16, 9, 30.0, 1.0),
+        metadata_reader=metadata_reader
+        or (lambda path: ScreenRecordingVideoMetadata(16, 9, 30.0, 1.0)),
         identifier_factory=identifier_factory or identifiers.__next__,
         time_factory=lambda: CAPTURE_TIME,
         monotonic_factory=monotonic_factory,
@@ -236,105 +198,16 @@ def test_disabled_recording_never_calls_the_recorder(tmp_path: Path) -> None:
     assert recorder.stop_count == 0
 
 
-def test_time_bound_redaction_publishes_only_processed_video(tmp_path: Path) -> None:
-    recorder = _RecorderStub((SCENARIO_VIDEO,))
-    redactor = _RedactorStub()
-    monotonic_values = iter((10.0, 12.5, 20.0))
-    service = _service(
-        recorder,
-        tmp_path,
-        redactor=redactor,
-        monotonic_factory=monotonic_values.__next__,
-    )
-    boundary = service.begin()
-    service.add_redaction_region(
-        RedactionRegion(left=2, top=3, right=20, bottom=30),
-        80,
-        40,
-    )
-
-    receipt = service.checkpoint(
-        boundary,
-        ScreenRecordingCheckpointKind.SCENARIO,
-        "scenario_1",
-    )
-
-    assert redactor.masks[0].starts_at_seconds == 2.5
-    assert receipt.artifact is not None
-    assert receipt.artifact.redaction is not None
-    assert receipt.artifact.redaction.mask_count == 1
-    assert receipt.artifact.sensitivity is ArtifactSensitivity.DECLARED_SENSITIVE
-    assert (tmp_path / receipt.artifact.path).read_bytes() == REDACTED_VIDEO
-
-
-def test_initial_mask_covers_the_first_recording_segment(tmp_path: Path) -> None:
-    recorder = _RecorderStub((FINAL_VIDEO,))
-    redactor = _RedactorStub()
-    mask = ScreenRecordingMask(
-        region=RedactionRegion(left=1, top=2, right=8, bottom=9),
-        source_width_px=16,
-        source_height_px=10,
-        starts_at_seconds=0,
-    )
-    service = _service(
-        recorder,
-        tmp_path,
-        redactor=redactor,
-        initial_masks=(mask,),
-    )
-
-    receipt = service.finish(service.begin())
-
-    assert receipt.artifact is not None
-    assert redactor.masks == (mask,)
-
-
-def test_declared_sensitive_segment_without_masks_fails_closed(tmp_path: Path) -> None:
-    recorder = _RecorderStub((SCENARIO_VIDEO,))
-    service = _service(
-        recorder,
-        tmp_path,
-        policy=ScreenRecordingPolicy(sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE),
-    )
-    boundary = service.begin()
-
-    receipt = service.finish(boundary)
-
-    assert receipt.state is ScreenRecordingSegmentState.FAILED
-    assert receipt.artifact is None
-    assert tuple(tmp_path.rglob("*.mp4")) == ()
-
-
-def test_redaction_failure_never_publishes_raw_video(tmp_path: Path) -> None:
-    recorder = _RecorderStub((SCENARIO_VIDEO,))
-    redactor = _RedactorStub(ScreenRecordingError("redaction failed"))
-    service = _service(recorder, tmp_path, redactor=redactor)
-    boundary = service.begin()
-    service.add_redaction_region(
-        RedactionRegion(left=0, top=0, right=10, bottom=10),
-        10,
-        10,
-    )
-
-    receipt = service.finish(boundary)
-
-    assert receipt.state is ScreenRecordingSegmentState.FAILED
-    assert receipt.artifact is None
-    assert tuple(tmp_path.rglob("*.mp4")) == ()
-
-
 def test_processing_failure_restarts_only_after_the_recorder_is_safe(
     tmp_path: Path,
 ) -> None:
     recorder = _RecorderStub((SCENARIO_VIDEO, FINAL_VIDEO))
-    redactor = _RedactorStub(ScreenRecordingError("redaction failed"))
-    service = _service(recorder, tmp_path, redactor=redactor)
+
+    def _failing_metadata(path: Path) -> ScreenRecordingVideoMetadata:
+        raise ScreenRecordingError("metadata unreadable")
+
+    service = _service(recorder, tmp_path, metadata_reader=_failing_metadata)
     boundary = service.begin()
-    service.add_redaction_region(
-        RedactionRegion(left=0, top=0, right=10, bottom=10),
-        10,
-        10,
-    )
 
     receipt = service.checkpoint(
         boundary,
@@ -345,68 +218,6 @@ def test_processing_failure_restarts_only_after_the_recorder_is_safe(
     assert receipt.state is ScreenRecordingSegmentState.FAILED
     assert receipt.continuation_started is True
     assert recorder.start_limits == [1_800, 1_800]
-
-
-def test_masks_continue_at_zero_after_a_checkpoint(tmp_path: Path) -> None:
-    recorder = _RecorderStub((SCENARIO_VIDEO, FINAL_VIDEO))
-    redactor = _RedactorStub()
-    service = _service(recorder, tmp_path, redactor=redactor)
-    boundary = service.begin()
-    service.add_redaction_region(
-        RedactionRegion(left=0, top=0, right=10, bottom=10),
-        10,
-        10,
-    )
-
-    service.checkpoint(
-        boundary,
-        ScreenRecordingCheckpointKind.SCENARIO,
-        "scenario_1",
-    )
-    service.finish(boundary)
-
-    assert len(redactor.mask_batches) == 2
-    assert redactor.mask_batches[1][0].starts_at_seconds == 0.0
-
-
-def test_caller_can_clear_masks_before_the_next_segment(tmp_path: Path) -> None:
-    recorder = _RecorderStub((SCENARIO_VIDEO, FINAL_VIDEO))
-    redactor = _RedactorStub()
-    service = _service(recorder, tmp_path, redactor=redactor)
-    boundary = service.begin()
-    service.add_redaction_region(
-        RedactionRegion(left=0, top=0, right=10, bottom=10),
-        10,
-        10,
-    )
-    service.clear_redaction_regions()
-    service.checkpoint(
-        boundary,
-        ScreenRecordingCheckpointKind.SCENARIO,
-        "scenario_1",
-    )
-
-    final = service.finish(boundary)
-
-    assert final.artifact is not None
-    assert final.artifact.redaction is None
-    assert len(redactor.mask_batches) == 1
-
-
-def test_mask_registration_requires_an_active_segment(tmp_path: Path) -> None:
-    service = _service(
-        _RecorderStub(),
-        tmp_path,
-        policy=ScreenRecordingPolicy(enabled=False),
-    )
-    service.begin()
-
-    with pytest.raises(ScreenRecordingError, match="active"):
-        service.add_redaction_region(
-            RedactionRegion(left=0, top=0, right=10, bottom=10),
-            10,
-            10,
-        )
 
 
 def test_stop_failure_is_recorded_without_unsafe_restart(tmp_path: Path) -> None:

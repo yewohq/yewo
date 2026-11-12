@@ -12,7 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from yewo.artifacts.records import (
     RelativeArtifactPath,
     ArtifactRetention,
-    ArtifactSensitivity,
     EvidenceApplicationIdentity,
     EvidenceDeviceIdentity,
     RecordIdentifier,
@@ -123,12 +122,6 @@ class DeviceLogArtifactReference(BaseModel):
     path: RelativeArtifactPath
     byte_count: int = Field(gt=0)
     entry_count: int = Field(gt=0)
-    redaction_policy_id: str = Field(pattern=_POLICY_ID_PATTERN)
-    source_redaction_count: int = Field(
-        ge=0,
-        description="Redactions applied before byte bounding the retained source items.",
-    )
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
 
     @field_validator("source_name")

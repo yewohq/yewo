@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from hashlib import sha256
 from io import BytesIO
 from math import ceil
 from pathlib import Path
@@ -12,10 +11,8 @@ from typing import Protocol
 
 from PIL import Image, ImageDraw
 
-from yewo.artifacts import ArtifactSensitivity
 from yewo.models import ModelImageConstraints, ModelInputError
 from yewo.observations import (
-    RedactionProvenance,
     ScreenshotReference,
     ScreenshotStore,
 )
@@ -161,12 +158,9 @@ class AdaptiveGoalEvidencePacker:
                 *self._pack_batch(sources[:midpoint]),
                 *self._pack_batch(sources[midpoint:]),
             )
-        redaction = _combined_redaction(source_references)
-        screenshot = self._store.persist_redacted(
+        screenshot = self._store.persist(
             png,
-            sensitivity=redaction.input_sensitivity,
             retention=source_references[0].retention,
-            redaction=redaction,
         )
         return (
             GoalEvidenceImage(
@@ -253,8 +247,6 @@ def _render_panel(
     references: list[ScreenshotReference] = []
     for index, source in enumerate(sources):
         reference = source.screenshot
-        if reference.redaction is None:
-            raise ModelInputError("Goal evidence panels require redacted screenshots.")
         references.append(reference)
         with Image.open(BytesIO(store.load(reference))) as opened:
             image = opened.convert("RGB")
@@ -282,25 +274,3 @@ def _render_panel(
     output = BytesIO()
     panel.save(output, format="PNG", optimize=True)
     return output.getvalue(), tuple(references)
-
-
-def _combined_redaction(
-    sources: tuple[ScreenshotReference, ...],
-) -> RedactionProvenance:
-    provenances = tuple(source.redaction for source in sources)
-    if any(item is None for item in provenances):
-        raise ModelInputError("Goal evidence panels require redacted screenshots.")
-    sensitivity = (
-        ArtifactSensitivity.DECLARED_SENSITIVE
-        if any(source.sensitivity is ArtifactSensitivity.DECLARED_SENSITIVE for source in sources)
-        else ArtifactSensitivity.DEVICE_CONTENT
-    )
-    digest_input = "|".join(
-        item.region_set_sha256 for item in provenances if item is not None
-    ).encode()
-    return RedactionProvenance(
-        policy_id="goal_evidence_panel_v1",
-        region_count=sum(item.region_count for item in provenances if item is not None),
-        region_set_sha256=sha256(digest_input).hexdigest(),
-        input_sensitivity=sensitivity,
-    )

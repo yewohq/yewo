@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models.artifacts import ModelArtifactPolicy, ModelArtifactStore, ModelImageReader
 from yewo.models.client import LiteLLMModelClient
 from yewo.models.profiles import ModelProfileRegistry
@@ -63,14 +63,11 @@ def build_test_client(
         ModelArtifactStore(
             tmp_path,
             ModelArtifactPolicy(
-                sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
                 retention=ArtifactRetention.RUN,
             ),
-            lambda text: text,
             identifier_factory=lambda: next(identifiers),
         ),
         ModelImageReader(tmp_path),
-        lambda text: text,
         completion=completion,
         calculate_cost=lambda _: None,
         credential_check=lambda _: (),

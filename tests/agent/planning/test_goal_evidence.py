@@ -1,6 +1,5 @@
 """Adaptive visual packaging for final goal verification."""
 
-from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 
@@ -11,9 +10,9 @@ from yewo.agent.planning.goal_evidence import (
     AdaptiveGoalEvidencePacker,
     GoalEvidenceSource,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import ModelImageConstraints, ModelInputError
-from yewo.observations import RedactionProvenance, ScreenshotStore
+from yewo.observations import ScreenshotStore
 
 
 def _sources(
@@ -24,21 +23,13 @@ def _sources(
 ) -> tuple[GoalEvidenceSource, ...]:
     identifiers = iter(f"shot_{index}" for index in range(count))
     store = ScreenshotStore(tmp_path, identifier_factory=identifiers.__next__)
-    redaction = RedactionProvenance(
-        policy_id="test_redaction",
-        region_count=0,
-        region_set_sha256=sha256(b"none").hexdigest(),
-        input_sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
-    )
     sources = []
     for index in range(count):
         output = BytesIO()
         Image.new("RGB", size, color=(index * 17 % 255, 40, 80)).save(output, format="PNG")
-        screenshot = store.persist_redacted(
+        screenshot = store.persist(
             output.getvalue(),
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
-            redaction=redaction,
         )
         sources.append(
             GoalEvidenceSource(

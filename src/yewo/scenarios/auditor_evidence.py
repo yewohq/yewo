@@ -316,7 +316,7 @@ def _build_visual_episodes(
         if observation is None:
             continue
         labels = (_visual_frame_label(sequence_number, frame, observation.keyboard_visible),)
-        existing_source = screenshot_source_by_sha.get(observation.redacted_screenshot.sha256)
+        existing_source = screenshot_source_by_sha.get(observation.screenshot.sha256)
         if existing_source is not None:
             replacement = GoalEvidenceSource(
                 observation_id=existing_source.observation_id,
@@ -326,7 +326,7 @@ def _build_visual_episodes(
                     dict.fromkeys((*existing_source.related_observation_ids, frame.observation_id))
                 ),
             )
-            screenshot_source_by_sha[observation.redacted_screenshot.sha256] = replacement
+            screenshot_source_by_sha[observation.screenshot.sha256] = replacement
             for _unused_key, _unused_label, sources in grouped:
                 for index, source in enumerate(sources):
                     if source.observation_id == existing_source.observation_id:
@@ -335,9 +335,9 @@ def _build_visual_episodes(
         source = GoalEvidenceSource(
             observation_id=frame.observation_id,
             labels=labels,
-            screenshot=observation.redacted_screenshot,
+            screenshot=observation.screenshot,
         )
-        screenshot_source_by_sha[observation.redacted_screenshot.sha256] = source
+        screenshot_source_by_sha[observation.screenshot.sha256] = source
         if not grouped or grouped[-1][0] != frame.episode_key:
             grouped.append((frame.episode_key, frame.episode_label, []))
         grouped[-1][2].append(source)
@@ -403,7 +403,9 @@ def _required_observation_labels(
         latest_step = max(candidates, key=lambda item: item.step_index)
         observation_id = latest_step.settled_observation_id or latest_step.source_observation_id
         existing_labels = labels_by_observation.get(observation_id, ())
-        labels_by_observation[observation_id] = tuple(dict.fromkeys((*existing_labels, surface.summary)))
+        labels_by_observation[observation_id] = tuple(
+            dict.fromkeys((*existing_labels, surface.summary))
+        )
     if include_following_observation and relevant_indexes:
         following = min(
             (
@@ -440,7 +442,7 @@ def _load_evidence_images(
         GoalEvidenceSource(
             observation_id=observation_id,
             labels=labels,
-            screenshot=by_id[observation_id].redacted_screenshot,
+            screenshot=by_id[observation_id].screenshot,
         )
         for observation_id, labels in labels_by_observation.items()
         if observation_id in by_id

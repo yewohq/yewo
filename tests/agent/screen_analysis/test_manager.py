@@ -18,7 +18,7 @@ from yewo.agent.screen_analysis import (
     ScreenSemanticRole,
     ScreenVisualKind,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.observations import Observation
 
 
@@ -31,7 +31,7 @@ class _ToggleAnalyzer:
         return CurrentScreenAnalysis(
             analysis_id="analysis-1",
             observation_id=observation.observation_id,
-            screenshot_sha256=observation.redacted_screenshot.sha256,
+            screenshot_sha256=observation.screenshot.sha256,
             presentation=observation.presentation_key,
             screen_summary="Visible settings screen.",
             elements=(
@@ -44,7 +44,6 @@ class _ToggleAnalyzer:
                     ),
                     state="checked",
                     confidence=ScreenElementConfidence.HIGH,
-                    evidence="A switch is visible.",
                 ),
             ),
         )
@@ -84,7 +83,6 @@ def test_reused_structure_does_not_invent_toggle_state() -> None:
         disposition=ActionOutcomeDisposition.OBSERVED,
         signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
         reason="The screen changed.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 

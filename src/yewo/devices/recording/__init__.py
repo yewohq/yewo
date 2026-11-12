@@ -11,13 +11,9 @@ from yewo.devices.recording.errors import (
 )
 from yewo.devices.recording.lease import ScreenRecordingLease
 from yewo.devices.recording.policy import ScreenRecordingPolicy
-from yewo.devices.recording.redaction import (
-    FfmpegScreenRecordingRedactor,
-    ScreenRecordingRedactionResult,
-    ScreenRecordingRedactor,
+from yewo.devices.recording.video import (
     ScreenRecordingVideoMetadata,
     read_screen_recording_metadata,
-    recording_mask_set_digest,
 )
 from yewo.devices.recording.records import (
     ScreenRecordingArtifactReference,
@@ -26,9 +22,6 @@ from yewo.devices.recording.records import (
     ScreenRecordingCaptureMethod,
     ScreenRecordingCheckpointKind,
     ScreenRecordingCheckpointReceipt,
-    ScreenRecordingMask,
-    ScreenRecordingRedactionProvenance,
-    ScreenRecordingRedactionState,
     ScreenRecordingRemoteCleanupState,
     ScreenRecordingRemoteCleanupReceipt,
     ScreenRecordingSegmentState,
@@ -40,7 +33,6 @@ from yewo.devices.recording.store import ScreenRecordingStore
 
 __all__ = [
     "AppiumScreenRecorder",
-    "FfmpegScreenRecordingRedactor",
     "ScreenRecorder",
     "ScreenRecordingArtifactReference",
     "ScreenRecordingBoundary",
@@ -51,12 +43,7 @@ __all__ = [
     "ScreenRecordingCheckpointReceipt",
     "ScreenRecordingError",
     "ScreenRecordingLease",
-    "ScreenRecordingMask",
     "ScreenRecordingPolicy",
-    "ScreenRecordingRedactionState",
-    "ScreenRecordingRedactionProvenance",
-    "ScreenRecordingRedactionResult",
-    "ScreenRecordingRedactor",
     "ScreenRecordingVideoMetadata",
     "ScreenRecordingRollbackError",
     "ScreenRecordingRemoteCleanupState",
@@ -67,5 +54,4 @@ __all__ = [
     "ScreenRecordingStore",
     "validate_recording_checkpoint",
     "read_screen_recording_metadata",
-    "recording_mask_set_digest",
 ]

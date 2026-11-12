@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from yewo.agent.actuation import ActionProposalDecision
-from yewo.agent.actuation.verifier import ActionReadinessDecision
+from yewo.agent.actuation.proposal_verifier import ActionReadinessDecision
 from yewo.agent.planning.goal_verifier import GoalVerificationAssessment
 from yewo.agent.recovery.advisor import RecoveryDecision
 from yewo.agent.replay.procedure.objective_matching import ObjectiveMatchOutput

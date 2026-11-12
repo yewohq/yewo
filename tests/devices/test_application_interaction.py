@@ -11,20 +11,10 @@ from yewo.devices import DevicePlatform
 from yewo.devices.android.interaction import AndroidInteractionBackend
 from yewo.devices.errors import ApplicationFirstPaintError, DeviceInteractionError
 from yewo.devices.interaction import DeviceInteraction
+from support import ClockStub
 
 
-class _ClockStub:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def monotonic(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
-
-
-def _timed_interaction(driver: DriverStub, clock: _ClockStub) -> DeviceInteraction:
+def _timed_interaction(driver: DriverStub, clock: ClockStub) -> DeviceInteraction:
     return DeviceInteraction(
         driver,
         DevicePlatform.ANDROID,
@@ -38,7 +28,7 @@ def _timed_interaction(driver: DriverStub, clock: _ClockStub) -> DeviceInteracti
 
 @pytest.mark.parametrize("duration_seconds", [-0.1, 31])
 def test_wait_limits_fail_without_sleeping(duration_seconds: float) -> None:
-    clock = _ClockStub()
+    clock = ClockStub()
     interaction = _timed_interaction(DriverStub(), clock)
 
     with pytest.raises(DeviceInteractionError, match="Wait duration"):
@@ -58,7 +48,7 @@ def test_first_paint_does_not_capture_another_application() -> None:
             self.screenshot_calls += 1
             return _image_png([0, 255, 0, 255])
 
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = ScreenshotDriver()
     interaction = _timed_interaction(driver, clock)
 
@@ -90,7 +80,7 @@ def test_first_paint_waits_without_capturing_another_application() -> None:
         def get_window_size(self) -> dict[str, int]:
             return {"width": 2, "height": 2}
 
-    clock = _ClockStub()
+    clock = ClockStub()
     driver = DepartingDriver()
     interaction = _timed_interaction(driver, clock)
 
@@ -113,7 +103,7 @@ def test_first_paint_reports_blank_when_foreground_identity_is_unknown() -> None
         def get_window_size(self) -> dict[str, int]:
             return {"width": 2, "height": 2}
 
-    clock = _ClockStub()
+    clock = ClockStub()
     interaction = _timed_interaction(IdentityUnavailableDriver(), clock)
 
     with pytest.raises(ApplicationFirstPaintError, match="remained blank"):
@@ -145,7 +135,7 @@ def test_first_paint_waits_through_a_blank_frame() -> None:
         def get_window_size(self) -> dict[str, int]:
             return {"width": 2, "height": 2}
 
-    clock = _ClockStub()
+    clock = ClockStub()
     interaction = DeviceInteraction(
         PaintDriver(),
         DevicePlatform.ANDROID,

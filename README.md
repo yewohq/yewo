@@ -22,7 +22,6 @@ a separate auditor compares the saved evidence with the expected outcomes.
 - Discovers a journey before generating evidence-grounded test scenarios.
 - Checks functional, security, and supported device-level outcomes.
 - Saves screenshots, actions, model calls, usage, and verdict evidence.
-- Masks declared secrets in stored text and redacts them from saved screenshots.
 - Produces JSON, HTML, Markdown, and JUnit reports for journey tests.
 
 ## Quick start
@@ -198,7 +197,8 @@ declared values and secrets, security rules, coverage categories, actors,
 preconditions, model roles, execution budgets, and artifact settings.
 
 See the [Yewo configuration schema](yewo-schema.json) for the complete public
-configuration contract.
+configuration contract. The schema is generated from the declaration models with
+`uv run python tools/emit_schema.py`.
 
 ## Development
 

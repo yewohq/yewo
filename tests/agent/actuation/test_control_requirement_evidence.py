@@ -2,7 +2,7 @@
 
 import pytest
 
-from yewo.agent.actuation.verifier import (
+from yewo.agent.actuation.proposal_verifier import (
     ActionReadinessAssessment,
     evidence_identifies_control,
 )

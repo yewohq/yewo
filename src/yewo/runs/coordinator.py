@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from yewo.runs.failure_diagnostics import (
     error_chain,
     has_partial_evidence,
+    authored_detail,
     validation_detail,
 )
 from yewo.applications import (
@@ -26,6 +27,7 @@ from yewo.automation import (
     AppiumServerLease,
     AutomationSession,
 )
+from yewo.extensions import DeclaredValues, ExtensionRegistry, RunContext, load_extensions
 from yewo.devices import (
     DeviceInventory,
     DeviceLease,
@@ -35,9 +37,8 @@ from yewo.devices import (
     select_device,
 )
 from yewo.devices.errors import DeviceLifecycleError, DeviceSelectionError
-from yewo.devices.logs import DeviceLogTextScrubber
-from yewo.run_narration import RunNarrator, narration_scope
-from yewo.observations import RedactionRegion
+from yewo.run_narration import NarrationPersistenceError, narration_scope
+from yewo.runs.cleanup import close_automation_resources, close_extension_resources
 from yewo.runs.errors import (
     RunCoordinationError,
     RunTerminalPersistenceError,
@@ -46,7 +47,6 @@ from yewo.runs.errors import (
     RunWorkflowInterrupted,
 )
 from yewo.runs.records import (
-    RUN_TERMINAL_REASON_MAX_LENGTH,
     RunMode,
     RunRequest,
     RunStage,
@@ -104,6 +104,8 @@ class RunExecutionContext:
 
     workspace: RunWorkspace
     session: AutomationSession
+    extensions: ExtensionRegistry
+    declared_values: DeclaredValues
 
 
 @dataclass(frozen=True)
@@ -112,13 +114,12 @@ class RunPreparationContext:
 
     workspace: RunWorkspace
     application: ApplicationDescriptor
+    extensions: ExtensionRegistry
 
 
 @dataclass(frozen=True)
 class RunSessionPolicy:
     """Workflow requirements that must exist before an automation session starts."""
-
-    recording_redaction_regions: tuple[RedactionRegion, ...] = ()
 
 
 class RunWorkflow(Protocol):
@@ -159,12 +160,12 @@ class _AutomationSessionManager(Protocol):
         application,
         *,
         artifact_root: Path,
-        scrub_device_log_text: DeviceLogTextScrubber,
-        recording_redaction_regions: Sequence[RedactionRegion],
+        extensions: ExtensionRegistry,
     ) -> AutomationSession: ...
 
 
 ServerConfigFactory = Callable[[RunWorkspace], AppiumServerConfig]
+ExtensionLoader = Callable[[RunContext], ExtensionRegistry]
 
 
 _NARRATION_SOURCE = "run-coordinator"
@@ -183,10 +184,10 @@ class RunCoordinator:
         automation_sessions: _AutomationSessionManager,
         workflows: Mapping[RunMode, RunWorkflow],
         server_config_factory: ServerConfigFactory,
-        scrub_device_log_text: DeviceLogTextScrubber,
         *,
         store_factory: Callable[[Path], RunStore] = RunStore,
         time_factory: Callable[[], datetime] = _utc_now,
+        extension_loader: ExtensionLoader = load_extensions,
     ) -> None:
         self._workspace_factory = workspace_factory
         self._inventories = inventories
@@ -196,9 +197,9 @@ class RunCoordinator:
         self._automation_sessions = automation_sessions
         self._workflows = workflows
         self._server_config_factory = server_config_factory
-        self._scrub_device_log_text = scrub_device_log_text
         self._store_factory = store_factory
         self._time_factory = time_factory
+        self._extension_loader = extension_loader
 
     def run(
         self,
@@ -217,6 +218,7 @@ class RunCoordinator:
         device: DeviceLease | None = None
         server: AppiumServerLease | None = None
         session: AutomationSession | None = None
+        extensions: ExtensionRegistry | None = None
         workflow_preceding_category: RunTerminalCategory | None = None
         with narration_scope(narrator):
             narrator.record(
@@ -289,8 +291,21 @@ class RunCoordinator:
                 )
                 stage = RunStage.WORKFLOW_PREPARATION
                 self._require_continuation(signal)
+                declared_values = DeclaredValues()
+                extensions = self._extension_loader(
+                    RunContext(
+                        artifact_root=workspace.root,
+                        run_id=workspace.start.run_id,
+                        declared_values=declared_values,
+                    )
+                )
+                extensions.start_run_resources()
                 preparation = workflow.prepare(
-                    RunPreparationContext(workspace=workspace, application=application),
+                    RunPreparationContext(
+                        workspace=workspace,
+                        application=application,
+                        extensions=extensions,
+                    ),
                     signal,
                 )
                 stage = RunStage.APPIUM_STARTUP
@@ -313,10 +328,7 @@ class RunCoordinator:
                     request.application,
                     application,
                     artifact_root=workspace.root,
-                    scrub_device_log_text=self._scrub_device_log_text,
-                    recording_redaction_regions=(
-                        workflow.session_policy().recording_redaction_regions
-                    ),
+                    extensions=extensions,
                 )
                 narrator.record(_NARRATION_SOURCE, "Automation session opened.")
                 narrator.record(
@@ -332,7 +344,12 @@ class RunCoordinator:
                 self._require_continuation(signal)
                 narrator.record(_NARRATION_SOURCE, "Starting task execution...")
                 outcome = workflow.execute(
-                    RunExecutionContext(workspace=workspace, session=session),
+                    RunExecutionContext(
+                        workspace=workspace,
+                        session=session,
+                        extensions=extensions,
+                        declared_values=declared_values,
+                    ),
                     signal,
                     preparation,
                 )
@@ -382,12 +399,23 @@ class RunCoordinator:
                 narrator.trace(
                     _NARRATION_SOURCE,
                     f"{type(error).__name__} during {stage.value} "
-                    f"chain={error_chain(error)}{validation_detail(error)}",
+                    f"chain={error_chain(error)}{authored_detail(error)}{validation_detail(error)}",
                 )
 
             preceding_category = workflow_preceding_category
             narrator.record(_NARRATION_SOURCE, "Closing automation resources...")
-            cleanup_error, cleanup_interrupted = _close_resources(session, server, device, narrator)
+            cleanup_error, cleanup_interrupted = close_automation_resources(
+                session,
+                server,
+                device,
+                narrator,
+            )
+            extension_cleanup_error, extension_cleanup_interrupted = close_extension_resources(
+                extensions,
+                narrator,
+            )
+            cleanup_error = cleanup_error or extension_cleanup_error
+            cleanup_interrupted = cleanup_interrupted or extension_cleanup_interrupted
             if cleanup_error is None and not cleanup_interrupted:
                 narrator.record(_NARRATION_SOURCE, "Automation resources closed.")
             cleanup_interrupted = cleanup_interrupted or (
@@ -402,7 +430,7 @@ class RunCoordinator:
                 narrator.trace(
                     _NARRATION_SOURCE,
                     f"{type(cleanup_error).__name__} during cleanup "
-                    f"chain={error_chain(cleanup_error)}",
+                    f"chain={error_chain(cleanup_error)}{authored_detail(cleanup_error)}",
                 )
             elif cleanup_interrupted:
                 preceding_category = (
@@ -428,6 +456,22 @@ class RunCoordinator:
                 f"terminal: {terminal.category.value} at {terminal.stage.value} — {terminal.reason}",
             )
             try:
+                narrator.sync()
+                narrator.wait_for_pending_sync()
+            except NarrationPersistenceError:
+                if category is not RunTerminalCategory.INFRASTRUCTURE_FAILURE:
+                    preceding_category = category
+                category = RunTerminalCategory.INFRASTRUCTURE_FAILURE
+                stage = RunStage.CLEANUP
+                reason = "Yewo could not persist run narration."
+                terminal = self._build_terminal(
+                    workspace,
+                    category,
+                    stage,
+                    reason,
+                    preceding_category,
+                )
+            try:
                 store.persist_terminal(workspace.start, terminal)
                 narrator.trace(
                     _NARRATION_SOURCE,
@@ -435,7 +479,7 @@ class RunCoordinator:
                 )
             except RunCoordinationError as error:
                 raise RunTerminalPersistenceError(terminal) from error
-            return terminal
+        return terminal
 
     def _build_terminal(
         self,
@@ -450,7 +494,7 @@ class RunCoordinator:
                 run_id=workspace.start.run_id,
                 category=category,
                 stage=stage,
-                reason=_bounded_terminal_reason(reason),
+                reason=reason,
                 completed_at=self._time_factory(),
                 partial_evidence_available=has_partial_evidence(workspace.root),
                 preceding_category=preceding_category,
@@ -472,54 +516,5 @@ class _SetupBlock(Exception):
     pass
 
 
-def _bounded_terminal_reason(reason: str) -> str:
-    if len(reason) <= RUN_TERMINAL_REASON_MAX_LENGTH:
-        return reason
-    content_length = RUN_TERMINAL_REASON_MAX_LENGTH - 3
-    return f"{reason[:content_length].rstrip()}..."
-
-
 def _platform_query(query: DeviceQuery, platform: DevicePlatform) -> DeviceQuery:
     return query if query.platform is not None else query.model_copy(update={"platform": platform})
-
-
-def _close_resources(
-    session: AutomationSession | None,
-    server: AppiumServerLease | None,
-    device: DeviceLease | None,
-    narrator: RunNarrator,
-) -> tuple[Exception | None, bool]:
-    errors: list[Exception] = []
-    interrupted = False
-    resources = (
-        ("automation-session", session),
-        ("appium-server", server),
-        ("device", device),
-    )
-    for resource_name, resource in resources:
-        if resource is None:
-            continue
-        narrator.trace(_NARRATION_SOURCE, f"cleanup={resource_name} state=starting")
-        try:
-            resource.close()
-            narrator.trace(_NARRATION_SOURCE, f"cleanup={resource_name} state=completed")
-        except KeyboardInterrupt:
-            interrupted = True
-            narrator.trace(_NARRATION_SOURCE, f"cleanup={resource_name} state=interrupted")
-            try:
-                resource.close()
-            except KeyboardInterrupt:
-                interrupted = True
-            except Exception as error:  # noqa: BLE001 - cleanup must finish
-                errors.append(error)
-                narrator.trace(
-                    _NARRATION_SOURCE,
-                    f"cleanup={resource_name} state=failed chain={error_chain(error)}",
-                )
-        except Exception as error:  # noqa: BLE001 - cleanup must finish
-            errors.append(error)
-            narrator.trace(
-                _NARRATION_SOURCE,
-                f"cleanup={resource_name} state=failed chain={error_chain(error)}",
-            )
-    return (errors[0] if errors else None), interrupted

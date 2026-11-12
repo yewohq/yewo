@@ -18,7 +18,7 @@ from yewo.devices.diagnostics import (
     ApplicationDiagnosticClassification,
     ApplicationFailureKind,
 )
-from yewo.observations import Observation, ObservationCaptureError
+from yewo.observations import Observation, ObservationCaptureError, VisualSettlementProbe
 
 from agent.actuation.support import proposal
 from agent.runtime.test_agent import (
@@ -134,7 +134,7 @@ def test_unchanged_screen_settles_only_on_the_final_attempt(tmp_path: Path) -> N
 
     assert result.terminal_reason is AgentTerminalReason.DONE_REQUESTED
     assert observations.capture_count == 4
-    assert result.steps[0].settlement_observation_ids == ("obs_2", "obs_3", "obs_4")
+    assert result.steps[0].settlement_observation_ids == ("obs_4",)
     assert result.steps[0].settled_observation_id == "obs_4"
 
 
@@ -330,10 +330,10 @@ def test_capture_failure_with_crash_diagnostics_is_an_application_exit(
     tmp_path: Path,
 ) -> None:
     class CaptureFailureAfterDispatch(ObservationSequence):
-        def capture(self, *, predecessor_observation_id: str | None = None) -> Observation:
+        def capture_settlement_probe(self) -> VisualSettlementProbe:
             if self.capture_count > 0:
                 raise ObservationCaptureError("The application process disappeared.")
-            return super().capture(predecessor_observation_id=predecessor_observation_id)
+            return super().capture_settlement_probe()
 
     observations = CaptureFailureAfterDispatch([_observation("obs_1", "0000000000000000")])
 

@@ -17,7 +17,7 @@ from yewo.agent.planning.planner import (
     TaskPlanningError,
     _grounding_correction_error,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.grounding import PixelPoint
 
 from agent.planning.support import (
@@ -50,7 +50,6 @@ def test_planner_receives_target_point_and_accepts_one_refined_correction() -> N
             disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
             signals=frozenset(),
             reason="The screen did not visibly change.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
         grounded_target_point=GroundedTargetPoint(
@@ -108,7 +107,6 @@ def test_planner_rejects_a_correction_of_a_correction() -> None:
             disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
             signals=frozenset(),
             reason="The screen did not visibly change.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
         grounded_target_point=GroundedTargetPoint(
@@ -156,7 +154,6 @@ def _entry(
             disposition=ActionOutcomeDisposition.NO_OBSERVABLE_CHANGE,
             signals=frozenset(),
             reason="The screen did not visibly change.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
         grounded_target_point=(

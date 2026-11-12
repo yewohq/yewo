@@ -8,7 +8,10 @@ from yewo.artifacts import RecordIdentifier
 from yewo.project_config import CoverageCategory, ResolvedJourney, ScenarioType
 from yewo.project_config.capabilities import AppStateCapabilitySpec, DeviceCapabilitySpec
 from yewo.scenarios.designer import ValidatedTestDesign
-from yewo.scenarios.execution import resolve_automatic_execution_change
+from yewo.scenarios.execution import (
+    can_execute_scenario_change,
+    resolve_automatic_execution_change,
+)
 from yewo.scenarios.records import (
     ScenarioCoverageObligation,
     ScenarioDefinition,
@@ -23,6 +26,12 @@ from yewo.scenarios.generator_evidence import (
     interpreted_surface_ids,
     requirement_surface_ids,
 )
+from yewo.scenarios.generator_rules import (
+    AUTOMATIC_STRATEGY,
+    EVIDENCE_DESCRIPTIONS,
+    INVARIANT_BY_CATEGORY,
+    VARIATION_BY_EXECUTION_CHANGE,
+)
 from yewo.scenarios.registry import (
     CategoryApplicability,
     CategoryAssessment,
@@ -30,7 +39,6 @@ from yewo.scenarios.registry import (
 )
 from yewo.scenarios.taxonomy import (
     ExpectedOutcomeAuthority,
-    RequiredEvidenceOwner,
     ScenarioExecutionChange,
     ScenarioSource,
 )
@@ -38,75 +46,6 @@ from yewo.scenarios.taxonomy import (
 
 class ScenarioGenerationError(ValueError):
     """Accepted design inputs cannot produce a truthful scenario result."""
-
-
-_AUTOMATIC_STRATEGY = {
-    CoverageCategory.DATA_CONSISTENCY: ScenarioType.HAPPY_PATH,
-    CoverageCategory.STATE: ScenarioType.HAPPY_PATH,
-    CoverageCategory.INPUT: ScenarioType.EMPTY,
-    CoverageCategory.NAVIGATION: ScenarioType.HAPPY_PATH,
-    CoverageCategory.ERROR_HANDLING: ScenarioType.NEGATIVE,
-    CoverageCategory.UI_VISUAL: ScenarioType.EXPLORATORY,
-    CoverageCategory.SECURITY: ScenarioType.NEGATIVE,
-    CoverageCategory.ACCESSIBILITY: ScenarioType.HAPPY_PATH,
-    CoverageCategory.PERFORMANCE: ScenarioType.HAPPY_PATH,
-    CoverageCategory.NETWORK: ScenarioType.INTERRUPTION,
-    CoverageCategory.LIFECYCLE: ScenarioType.INTERRUPTION,
-    CoverageCategory.PERMISSION: ScenarioType.NEGATIVE,
-    CoverageCategory.COMPATIBILITY: ScenarioType.HAPPY_PATH,
-    CoverageCategory.INSTALLATION: ScenarioType.RECOVERY,
-    CoverageCategory.LOCALIZATION: ScenarioType.BOUNDARY,
-    CoverageCategory.REGRESSION: ScenarioType.HAPPY_PATH,
-}
-_VARIATION_BY_EXECUTION_CHANGE = {
-    ScenarioExecutionChange.ACCEPTED_ROUTE: "Replay the accepted discovery route.",
-    ScenarioExecutionChange.INPUT_VARIATION: "Change the selected input action or value.",
-    ScenarioExecutionChange.ENVIRONMENT_VARIATION: "Change the selected device environment.",
-    ScenarioExecutionChange.LIFECYCLE_INTERRUPTION: (
-        "Interrupt the application lifecycle and then continue."
-    ),
-    ScenarioExecutionChange.PERMISSION_DECISION: "Apply the selected native permission decision.",
-    ScenarioExecutionChange.RECOVERY_ATTEMPT: "Apply the selected recovery action.",
-    ScenarioExecutionChange.ACTOR_VARIATION: "Use the selected alternate actor.",
-    ScenarioExecutionChange.CONCURRENT_OPERATION: "Apply the selected concurrent operation.",
-    ScenarioExecutionChange.INSTALLATION_CHANGE: "Apply the selected installation change.",
-}
-_INVARIANT_BY_CATEGORY = {
-    CoverageCategory.DATA_CONSISTENCY: "Derived values must match their observed source values.",
-    CoverageCategory.STATE: "The tested action must produce an observable application state.",
-    CoverageCategory.NAVIGATION: "The tested navigation must produce an observable destination.",
-    CoverageCategory.ERROR_HANDLING: "A rejected operation must not be reported as successful.",
-    CoverageCategory.UI_VISUAL: "Required content must remain observable in the tested state.",
-    CoverageCategory.SECURITY: "Sensitive content must not become newly exposed.",
-    CoverageCategory.ACCESSIBILITY: (
-        "Required interactive content must be available to accessibility inspection."
-    ),
-    CoverageCategory.NETWORK: "A controlled network change must produce an observable outcome.",
-    CoverageCategory.LIFECYCLE: (
-        "A controlled lifecycle change must produce an observable outcome."
-    ),
-    CoverageCategory.PERMISSION: (
-        "A controlled permission decision must produce an observable outcome."
-    ),
-}
-_EVIDENCE_DESCRIPTIONS = {
-    RequiredEvidenceOwner.APPLICATION_OBSERVATION: (
-        "A settled application observation must show the expected outcome."
-    ),
-    RequiredEvidenceOwner.ACTION_OUTCOME: (
-        "The action outcome must show whether the intended effect occurred."
-    ),
-    RequiredEvidenceOwner.DEVICE_RECEIPT: (
-        "A device receipt must record the controlled device-state change."
-    ),
-    RequiredEvidenceOwner.APPLICATION_GROUND_TRUTH: (
-        "Application ground truth must show the expected value."
-    ),
-    RequiredEvidenceOwner.MEASUREMENT: "A recorded measurement must support the result.",
-    RequiredEvidenceOwner.ACCESSIBILITY_INSPECTION: (
-        "Accessibility inspection must expose the required interactive content."
-    ),
-}
 
 
 def generate_scenarios(
@@ -141,9 +80,24 @@ def generate_scenarios(
                     concern,
                     interpreted_surface_ids(design, concern.category) or assessment.surface_ids,
                 )
-                obligations_by_execution.setdefault(
-                    _execution_key(concern.execution_change, concern.scenario_type), []
-                ).append(obligation)
+                execution_key = _execution_key(
+                    concern.execution_change,
+                    concern.scenario_type,
+                )
+                if can_execute_scenario_change(execution_key[0]):
+                    obligations_by_execution.setdefault(execution_key, []).append(obligation)
+                else:
+                    gaps.append(
+                        _unsupported_execution_gap(
+                            suite,
+                            assessment,
+                            ScenarioSource.USER_REQUIREMENT,
+                            concern.scenario_type,
+                            check,
+                            execution_key[0],
+                            source_check_index=check_index,
+                        )
+                    )
             else:
                 gaps.append(
                     _gap(
@@ -163,9 +117,22 @@ def generate_scenarios(
             execution_change = resolve_automatic_execution_change(
                 design, assessment.category, scenario_type
             )
-            obligations_by_execution.setdefault(
-                _execution_key(execution_change, scenario_type), []
-            ).append(_automatic_obligation(journey, suite, assessment, scenario_type))
+            execution_key = _execution_key(execution_change, scenario_type)
+            if can_execute_scenario_change(execution_key[0]):
+                obligations_by_execution.setdefault(execution_key, []).append(
+                    _automatic_obligation(journey, suite, assessment, scenario_type)
+                )
+            else:
+                gaps.append(
+                    _unsupported_execution_gap(
+                        suite,
+                        assessment,
+                        ScenarioSource.AUTOMATIC_QA,
+                        scenario_type,
+                        f"Apply the {assessment.category.value.replace('_', ' ')} testing lens.",
+                        execution_key[0],
+                    )
+                )
         else:
             gaps.append(
                 _gap(
@@ -369,7 +336,7 @@ def _automatic_expected_statements(
     ):
         return journey.security_rules, ExpectedOutcomeAuthority.DECLARED_RULE
     if ExpectedOutcomeAuthority.DETERMINISTIC_INVARIANT in authorities:
-        return (_INVARIANT_BY_CATEGORY[assessment.category],), (
+        return (INVARIANT_BY_CATEGORY[assessment.category],), (
             ExpectedOutcomeAuthority.DETERMINISTIC_INVARIANT
         )
     if ExpectedOutcomeAuthority.ACCEPTED_BASELINE in authorities:
@@ -439,7 +406,7 @@ def _scenario_for_execution(
         scenario_type=scenario_type,
         name=f"{journey.name}: {execution_name}"[:200],
         objective=journey.objective,
-        variation=_VARIATION_BY_EXECUTION_CHANGE[execution_change],
+        variation=VARIATION_BY_EXECUTION_CHANGE[execution_change],
         route_procedure_id=procedure_id,
         setup=suite.readiness.required_setup,
         execution_capabilities=_execution_capabilities(execution_change),
@@ -477,7 +444,7 @@ def _expected_outcome(
             ScenarioEvidenceRequirement(
                 requirement_id=_derived_identifier("evidence", outcome_id, owner.value),
                 owner=owner,
-                description=_EVIDENCE_DESCRIPTIONS[owner],
+                description=EVIDENCE_DESCRIPTIONS[owner],
             )
             for owner in assessment.evidence_owners
         ),
@@ -492,6 +459,8 @@ def _gap(
     statement: str,
     *,
     source_check_index: int | None = None,
+    identity_parts: tuple[str, ...] = (),
+    reason: str | None = None,
 ) -> ScenarioGenerationGap:
     return ScenarioGenerationGap(
         gap_id=_derived_identifier(
@@ -501,6 +470,7 @@ def _gap(
             assessment.category.value,
             scenario_type.value,
             str(source_check_index),
+            *identity_parts,
         ),
         category_assessment_id=assessment.assessment_id,
         source=source,
@@ -508,7 +478,32 @@ def _gap(
         scenario_type=scenario_type,
         source_check_index=source_check_index,
         statement=statement,
-        reason=assessment.reason,
+        reason=reason or assessment.reason,
+    )
+
+
+def _unsupported_execution_gap(
+    suite: ScenarioSuite,
+    assessment: CategoryAssessment,
+    source: ScenarioSource,
+    scenario_type: ScenarioType,
+    statement: str,
+    execution_change: ScenarioExecutionChange,
+    *,
+    source_check_index: int | None = None,
+) -> ScenarioGenerationGap:
+    return _gap(
+        suite,
+        assessment,
+        source,
+        scenario_type,
+        statement,
+        source_check_index=source_check_index,
+        identity_parts=(execution_change.value,),
+        reason=(
+            f"Yewo has no concrete runtime execution specification for "
+            f"{execution_change.value.replace('_', ' ')}."
+        ),
     )
 
 
@@ -518,7 +513,7 @@ def _preferred_strategy(assessment: CategoryAssessment) -> ScenarioType:
     )
     if only_user_authority and ScenarioType.HAPPY_PATH in assessment.scenario_types:
         return ScenarioType.HAPPY_PATH
-    preferred = _AUTOMATIC_STRATEGY.get(assessment.category, ScenarioType.HAPPY_PATH)
+    preferred = AUTOMATIC_STRATEGY.get(assessment.category, ScenarioType.HAPPY_PATH)
     return (
         preferred
         if preferred in assessment.scenario_types
@@ -530,14 +525,18 @@ def _coverage_cell_id(
     journey: ResolvedJourney,
     category: CoverageCategory,
     scenario_type: ScenarioType,
-) -> str | None:
+) -> str:
+    """Name the coverage cell this obligation belongs to, deriving one where none is declared.
+
+    A report groups by this name, and an absent one grouped unrelated scenarios together.
+    """
     return next(
         (
             item.cell_id
             for item in journey.coverage
             if item.category is category and item.scenario_type is scenario_type
         ),
-        None,
+        f"{category.value}.{scenario_type.value}.0",
     )
 
 

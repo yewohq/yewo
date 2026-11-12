@@ -9,7 +9,7 @@ from yewo.agent.actuation import (
     ActionProposal,
 )
 from yewo.agent.planning.planner import PlanningHistoryEntry
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.devices.diagnostics import (
     ApplicationDiagnosticClassification,
     ApplicationFailureKind,
@@ -45,7 +45,6 @@ def test_planner_receives_concise_recovered_application_failure() -> None:
             disposition=ActionOutcomeDisposition.OBSERVED,
             signals=frozenset({ActionOutcomeSignal.APP_EXITED}),
             reason="The application crashed after Save.",
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         ),
         application_failure=ActionApplicationFailure(

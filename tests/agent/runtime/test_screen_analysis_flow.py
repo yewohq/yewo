@@ -53,7 +53,7 @@ def test_scroll_request_ignores_a_point_only_analysis_candidate() -> None:
         ScreenAnalysisGroundingCandidate(
             analysis_id="analysis-1",
             element_ref="element-1",
-            screenshot_sha256=observation.redacted_screenshot.sha256,
+            screenshot_sha256=observation.screenshot.sha256,
             region=NormalizedRegion(left=0.1, top=0.1, right=0.9, bottom=0.9),
         ),
     )

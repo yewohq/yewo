@@ -18,7 +18,6 @@ from yewo.automation.appium_server import AppiumServerLease
 from yewo.automation.driver_options import DriverOptionsBuilder
 from yewo.automation.driver_session import DriverSessionLease, DriverSessionManager
 from yewo.automation.errors import AutomationSessionError
-from yewo.automation.recording_masks import build_initial_recording_masks
 from yewo.devices.inventory import DeviceDescriptor, DeviceKind, DevicePlatform
 from yewo.devices.lifecycle import DeviceLease
 from yewo.devices.logs import (
@@ -29,7 +28,6 @@ from yewo.devices.logs import (
     DeviceLogReader,
     DeviceLogSource,
     DeviceLogStore,
-    DeviceLogTextScrubber,
     DeviceLogRollbackError,
 )
 from yewo.devices.logs.platform_reader import build_platform_device_log_reader
@@ -39,6 +37,7 @@ from yewo.devices.media import (
     MediaTransferService,
     RemoteMediaReference,
 )
+from yewo.extensions import ExtensionRegistry
 from yewo.devices.recording import (
     AppiumScreenRecorder,
     ScreenRecorder,
@@ -58,7 +57,6 @@ from yewo.devices.remote_files import (
     RemoteTemporaryFileLease,
     RemoteTemporaryFileReference,
 )
-from yewo.observations import RedactionRegion
 from yewo.resources import ResourceOwnership
 
 
@@ -204,23 +202,6 @@ class AutomationSession:
         """Close the scenario video segment and start the next segment."""
         return self.recording.checkpoint_scenario(scenario_id)
 
-    def add_recording_redaction_region(
-        self,
-        region: RedactionRegion,
-        source_width_px: int,
-        source_height_px: int,
-    ) -> None:
-        """Start a persistent mask before sensitive pixels appear."""
-        self.recording.add_redaction_region(
-            region,
-            source_width_px,
-            source_height_px,
-        )
-
-    def clear_recording_redaction_regions(self) -> None:
-        """Stop carrying recording masks into later segments."""
-        self.recording.clear_redaction_regions()
-
     def reserve_remote_temporary_file(self, name: str) -> RemoteTemporaryFileReference:
         """Reserve one exact run-owned path before writing to the device."""
         return self.remote_files.reserve(name)
@@ -365,13 +346,13 @@ class AutomationSessionManager:
         application: ApplicationDescriptor,
         *,
         artifact_root: Path,
-        scrub_device_log_text: DeviceLogTextScrubber,
         device_log_policy: DeviceLogCapturePolicy | None = None,
         recording_policy: ScreenRecordingPolicy | None = None,
         media_policy: MediaTransferPolicy | None = None,
-        recording_redaction_regions: Sequence[RedactionRegion] = (),
+        extensions: ExtensionRegistry | None = None,
     ) -> AutomationSession:
         """Open a driver and transfer the input leases into one session."""
+        registry = extensions if extensions is not None else ExtensionRegistry()
         driver: DriverSessionLease | None = None
         device_logs: DeviceLogCaptureLease | None = None
         recording: ScreenRecordingLease | None = None
@@ -432,16 +413,14 @@ class AutomationSessionManager:
             )
             installation_change = _installation_change(request, installed_before)
             device_log_service = DeviceLogCaptureService(
-                device_log_reader(
-                    driver.driver,
-                    device.descriptor,
-                    application,
+                registry.wrapped(
+                    DeviceLogReader,
+                    device_log_reader(driver.driver, device.descriptor, application),
                 ),
                 device.descriptor,
                 application,
                 log_sources,
                 self._log_store_factory(artifact_root),
-                scrub_device_log_text,
                 policy=device_log_policy,
             )
             device_logs = DeviceLogCaptureLease.open(device_log_service)
@@ -455,22 +434,16 @@ class AutomationSessionManager:
                 remote_files,
                 policy=media_policy,
             )
-            initial_recording_masks = build_initial_recording_masks(
-                driver.driver,
-                recording_redaction_regions,
-            )
             recording = ScreenRecordingLease.open(
                 ScreenRecordingService(
-                    screen_recorder(
-                        driver.driver,
-                        device.descriptor,
-                        remote_files,
+                    registry.wrapped(
+                        ScreenRecorder,
+                        screen_recorder(driver.driver, device.descriptor, remote_files),
                     ),
                     device.descriptor,
                     application,
                     self._recording_store_factory(artifact_root),
                     policy=recording_policy,
-                    initial_masks=initial_recording_masks,
                     metadata_reader=self._recording_metadata_reader,
                 )
             )

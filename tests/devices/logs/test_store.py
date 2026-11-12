@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.devices.logs import (
     DeviceLogArtifactKind,
     DeviceLogCaptureError,
@@ -27,9 +27,6 @@ def _persist(store: DeviceLogStore, *, boundary_id: str = "boundary_1"):
         entry_count=2,
         kind=DeviceLogArtifactKind.TEXT_STREAM,
         source_name=None,
-        redaction_policy_id="test-policy",
-        source_redaction_count=1,
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -41,8 +38,6 @@ def test_store_persists_one_immutable_log_segment(tmp_path: Path) -> None:
 
     assert reference.path == Path("device-logs/boundary_1/000001-drain_1-logcat-log_1.log")
     assert reference.sha256 == sha256(b"one\ntwo\n").hexdigest()
-    assert reference.redaction_policy_id == "test-policy"
-    assert reference.source_redaction_count == 1
     assert (tmp_path / reference.path).read_bytes() == b"one\ntwo\n"
 
 

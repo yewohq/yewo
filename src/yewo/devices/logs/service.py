@@ -34,7 +34,6 @@ from yewo.devices.logs.records import (
     DeviceLogSourceReceipt,
     validate_device_log_checkpoint,
 )
-from yewo.devices.logs.redaction import DeviceLogTextScrubber
 from yewo.devices.logs.store import DeviceLogStore
 from yewo.devices.diagnostics import ApplicationDiagnosticClassification
 
@@ -59,7 +58,6 @@ class DeviceLogCaptureService:
         application: ApplicationDescriptor,
         sources: Sequence[DeviceLogSource],
         store: DeviceLogStore,
-        scrub_text: DeviceLogTextScrubber,
         *,
         policy: DeviceLogCapturePolicy | None = None,
         identifier_factory: Callable[[], str] = new_record_identifier,
@@ -79,7 +77,6 @@ class DeviceLogCaptureService:
         self._store = store
         self._artifact_producer = DeviceLogArtifactProducer(
             store,
-            scrub_text,
             policy or DeviceLogCapturePolicy(),
         )
         self._identifier_factory = identifier_factory

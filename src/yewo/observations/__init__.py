@@ -11,20 +11,17 @@ from yewo.observations.records import (
     Observation,
     PresentationKey,
     PixelRegion,
-    RedactionProvenance,
-    RedactionRegion,
     ScreenRegion,
     ScreenFingerprint,
-    ScreenshotRedactionState,
     ScreenshotReference,
 )
 from yewo.observations.matching import ScreenComparisonPolicy, ScreenMatcher
-from yewo.observations.redaction import (
-    RedactionResult,
-    RegionScreenshotRedactor,
-    ScreenshotRedactor,
+from yewo.observations.service import (
+    ObservationCapturePolicy,
+    ObservationProbe,
+    ObservationService,
+    VisualSettlementProbe,
 )
-from yewo.observations.service import ObservationCapturePolicy, ObservationService
 from yewo.observations.store import ObservationStore, ScreenshotStore
 
 __all__ = [
@@ -33,22 +30,18 @@ __all__ = [
     "Observation",
     "ObservationCapturePolicy",
     "ObservationCaptureError",
+    "ObservationProbe",
     "ObservationService",
     "ObservationStore",
     "PresentationKey",
     "PixelRegion",
-    "RedactionProvenance",
-    "RedactionRegion",
-    "RedactionResult",
-    "RegionScreenshotRedactor",
     "ScreenRegion",
     "ScreenComparisonPolicy",
     "ScreenFingerprint",
     "ScreenMatcher",
-    "ScreenshotRedactor",
-    "ScreenshotRedactionState",
     "ScreenshotReference",
     "ScreenshotStore",
+    "VisualSettlementProbe",
     "build_screen_fingerprint",
     "fingerprint_distance",
 ]

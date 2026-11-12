@@ -12,7 +12,6 @@ from yewo.artifacts import (
     ARTIFACTS_DIRECTORY,
     AppendOnlyJsonlWriter,
     ArtifactRetention,
-    ArtifactSensitivity,
     ArtifactWriteError,
     new_record_identifier,
 )
@@ -24,7 +23,7 @@ from yewo.models.records import (
     ModelCallRecord,
     ModelRequest,
 )
-from yewo.observations import ScreenshotRedactionState, ScreenshotReference
+from yewo.observations import ScreenshotReference
 
 
 class ModelArtifactError(RuntimeError):
@@ -35,14 +34,13 @@ class ModelArtifactError(RuntimeError):
 class ModelArtifactPolicy:
     """Declare how one run persists model request and response content."""
 
-    sensitivity: ArtifactSensitivity
     retention: ArtifactRetention
     retain_request_bodies: bool = True
 
 
 @dataclass(frozen=True)
 class ModelResponseEvidence:
-    """Scrubbed provider response content ready for one call ledger row."""
+    """Provider response content ready for one call ledger row."""
 
     body: dict[str, object]
     body_sha256: str
@@ -50,19 +48,21 @@ class ModelResponseEvidence:
 
 
 class ModelArtifactStore:
-    """Persist scrubbed model requests and calls in append-only ledgers."""
+    """Persist model requests and calls verbatim in append-only ledgers.
+
+    A declared value reaches the model as its name. It becomes a literal only at the device
+    boundary, so a recorded request holds no secret and needs no rewriting.
+    """
 
     def __init__(
         self,
         root: Path,
         policy: ModelArtifactPolicy,
-        scrub_text: Callable[[str], str],
         *,
         identifier_factory: Callable[[], str] = new_record_identifier,
     ) -> None:
         self.root = root
         self._policy = policy
-        self._scrub_text = scrub_text
         self._identifier_factory = identifier_factory
         self._writer = AppendOnlyJsonlWriter(root)
 
@@ -74,11 +74,8 @@ class ModelArtifactStore:
         provider_arguments: dict[str, object],
     ) -> ModelArtifactReference:
         """Persist the exact prepared request without embedded image bytes."""
-        if (
-            request.sensitivity is not self._policy.sensitivity
-            or request.retention is not self._policy.retention
-        ):
-            raise ModelArtifactError("The model request does not match the artifact policy.")
+        if request.retention is not self._policy.retention:
+            raise ModelArtifactError("The model request exceeds the artifact policy.")
         request_content = {
             "messages": messages,
             "response_format": response_format,
@@ -117,17 +114,14 @@ class ModelArtifactStore:
         reason: str | None,
         provider_payload: dict[str, object] | None = None,
     ) -> ModelResponseEvidence:
-        """Prepare one scrubbed response for inclusion in its call row."""
-        scrubbed_text = self._scrub(text) if text is not None else None
-        scrubbed_reason = self._scrub(reason) if reason is not None else None
-        scrubbed_provider_payload = self._scrub_payload(provider_payload)
+        """Prepare one response for inclusion in its call row."""
         body = {
             "request_id": request_id,
             "attempt_number": attempt_number,
             "disposition": disposition.value,
-            "text": scrubbed_text,
-            "reason": scrubbed_reason,
-            "provider_payload": scrubbed_provider_payload,
+            "text": text,
+            "reason": reason,
+            "provider_payload": provider_payload,
         }
         return ModelResponseEvidence(
             body=body,
@@ -135,9 +129,9 @@ class ModelArtifactStore:
             content_sha256=_payload_digest(
                 {
                     "disposition": disposition.value,
-                    "text": scrubbed_text,
-                    "reason": scrubbed_reason,
-                    "provider_payload": scrubbed_provider_payload,
+                    "text": text,
+                    "reason": reason,
+                    "provider_payload": provider_payload,
                 }
             ),
         )
@@ -147,16 +141,13 @@ class ModelArtifactStore:
         call: ModelCallRecord,
         response: ModelResponseEvidence,
     ) -> ModelArtifactReference:
-        """Persist one provider attempt with its scrubbed response content."""
-        unsanitized_body = {
+        """Persist one provider attempt with its response content."""
+        body = {
             **call.model_dump(mode="json", exclude={"call_artifact"}),
             "response": response.body,
             "response_body_sha256": response.body_sha256,
             "response_content_sha256": response.content_sha256,
         }
-        body = self._scrub_payload(unsanitized_body)
-        if not isinstance(body, dict):
-            raise ModelArtifactError("The model call did not produce a record body.")
         return self._persist(
             ModelArtifactKind.CALL,
             body,
@@ -164,24 +155,6 @@ class ModelArtifactStore:
             content_sha256=_payload_digest(body),
             retain_body=True,
         )
-
-    def _scrub(self, text: str) -> str:
-        try:
-            scrubbed = self._scrub_text(text)
-        except Exception as error:  # noqa: BLE001 - injected security boundary
-            raise ModelArtifactError("Could not scrub model-call content.") from error
-        if not isinstance(scrubbed, str):
-            raise ModelArtifactError("The model-call scrubber returned an invalid value.")
-        return scrubbed
-
-    def _scrub_payload(self, payload: object) -> object:
-        if isinstance(payload, str):
-            return self._scrub(payload)
-        if isinstance(payload, dict):
-            return {key: self._scrub_payload(value) for key, value in payload.items()}
-        if isinstance(payload, (list, tuple)):
-            return [self._scrub_payload(value) for value in payload]
-        return payload
 
     @staticmethod
     def _message_metadata(message: dict[str, object]) -> dict[str, object]:
@@ -224,7 +197,6 @@ class ModelArtifactStore:
             "artifact_id": artifact_id,
             "kind": kind.value,
             "body_retained": retain_body,
-            "sensitivity": self._policy.sensitivity.value,
             "retention": self._policy.retention.value,
             "body_sha256": body_sha256,
             "content_sha256": content_sha256,
@@ -245,7 +217,6 @@ class ModelArtifactStore:
                 content_sha256=content_sha256,
                 path=relative_path,
                 body_retained=retain_body,
-                sensitivity=self._policy.sensitivity,
                 retention=self._policy.retention,
             )
         except (ArtifactWriteError, ValueError) as error:
@@ -254,15 +225,13 @@ class ModelArtifactStore:
 
 
 class ModelImageReader:
-    """Load a redacted screenshot after verifying its durable identity."""
+    """Load a screenshot after verifying its durable identity."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
 
     def read(self, reference: ScreenshotReference) -> bytes:
-        """Return verified redacted PNG bytes from one run workspace."""
-        if reference.redaction_state is not ScreenshotRedactionState.REDACTED:
-            raise ModelArtifactError("A model image must reference a redacted screenshot.")
+        """Return verified PNG bytes from one run workspace."""
         path = self.root / reference.path
         try:
             path.resolve().relative_to(self.root.resolve())

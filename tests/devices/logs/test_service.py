@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from yewo.artifacts import ArtifactSensitivity
 from yewo.devices import DevicePlatform
 from yewo.devices.logs import (
     ApplicationDiagnosticReport,
@@ -17,7 +16,6 @@ from yewo.devices.logs import (
     DeviceLogCheckpointKind,
     DeviceLogDrainState,
     DeviceLogOmission,
-    DeviceLogRedactionResult,
     DeviceLogRollbackError,
     DeviceLogSource,
     DeviceLogStore,
@@ -36,11 +34,6 @@ from .support import (
 )
 
 
-def _raise_redaction_error(text: str) -> DeviceLogRedactionResult:
-    del text
-    raise RuntimeError("secret")
-
-
 def test_startup_entries_are_retained_as_an_ordered_start_receipt(
     tmp_path: Path,
 ) -> None:
@@ -55,9 +48,7 @@ def test_startup_entries_are_retained_as_an_ordered_start_receipt(
     assert receipt.drain_index == 0
     assert receipt.checkpoint_kind is DeviceLogCheckpointKind.SESSION_START
     artifact = receipt.sources[0].artifacts[0]
-    assert artifact.redaction_policy_id == "test-policy-v1"
-    assert artifact.source_redaction_count == 1
-    assert (tmp_path / artifact.path).read_text() == "launch [redacted]\n"
+    assert (tmp_path / artifact.path).read_text() == "launch SECRET\n"
     assert reader.acknowledged_batches == [startup]
 
 
@@ -172,27 +163,6 @@ def test_tiny_bound_does_not_create_synthetic_log_content(tmp_path: Path) -> Non
     assert reader.acknowledged_batches[-1] is batch
 
 
-def test_truncated_artifact_counts_source_redactions_before_bounding(
-    tmp_path: Path,
-) -> None:
-    reader = _ReaderStub(
-        {"logcat": _text_batch()},
-        {"logcat": (_text_batch("SECRET trailing"),)},
-    )
-    service = _service(
-        reader,
-        tmp_path,
-        policy=DeviceLogCapturePolicy(maximum_drain_bytes=5),
-    )
-    boundary = service.begin().boundary
-
-    receipt = service.drain(boundary, DeviceLogCheckpointKind.ACTION, "action_1")
-
-    artifact = receipt.sources[0].artifacts[0]
-    assert artifact.source_redaction_count == 1
-    assert (tmp_path / artifact.path).read_bytes() == b"[red\n"
-
-
 def test_reader_completeness_metadata_marks_earlier_omission(tmp_path: Path) -> None:
     reader = _ReaderStub(
         {"logcat": _text_batch()},
@@ -204,24 +174,6 @@ def test_reader_completeness_metadata_marks_earlier_omission(tmp_path: Path) -> 
     receipt = service.drain(boundary, DeviceLogCheckpointKind.ACTION, "action_1")
 
     assert receipt.sources[0].omission is DeviceLogOmission.EARLIER
-
-
-def test_redactor_failure_records_consumed_but_unretained_items(tmp_path: Path) -> None:
-    action_batch = _text_batch("entry")
-    reader = _ReaderStub(
-        {"logcat": _text_batch()},
-        {"logcat": (action_batch,)},
-    )
-    service = _service(reader, tmp_path, scrubber=_raise_redaction_error)
-    boundary = service.begin().boundary
-
-    receipt = service.drain(boundary, DeviceLogCheckpointKind.ACTION, "action_1")
-
-    source_receipt = receipt.sources[0]
-    assert source_receipt.state is DeviceLogDrainState.FAILED
-    assert source_receipt.observed_item_count == 1
-    assert source_receipt.retained_item_count == 0
-    assert action_batch not in reader.acknowledged_batches
 
 
 class _FailReceiptStore(DeviceLogStore):
@@ -476,22 +428,3 @@ def test_diagnostic_baseline_failure_is_yewo_infrastructure_failure(
         receipt.sources[0].diagnostic_classification
         is ApplicationDiagnosticClassification.YEWO_INFRASTRUCTURE_FAILURE
     )
-
-
-def test_policy_can_classify_log_artifacts_as_declared_sensitive(
-    tmp_path: Path,
-) -> None:
-    reader = _ReaderStub(
-        {"logcat": _text_batch()},
-        {"logcat": (_text_batch("entry"),)},
-    )
-    service = _service(
-        reader,
-        tmp_path,
-        policy=DeviceLogCapturePolicy(sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE),
-    )
-    boundary = service.begin().boundary
-
-    receipt = service.drain(boundary, DeviceLogCheckpointKind.ACTION, "action_1")
-
-    assert receipt.sources[0].artifacts[0].sensitivity is (ArtifactSensitivity.DECLARED_SENSITIVE)

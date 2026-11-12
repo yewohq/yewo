@@ -170,7 +170,7 @@ def _group_states(
         states[state_id] = EvidenceState(
             state_id=state_id,
             representative_observation_id=representative.observation_id,
-            representative_screenshot=representative.redacted_screenshot,
+            representative_screenshot=representative.screenshot,
             observation_ids=tuple(item.observation_id for item in members),
             presentations=tuple(item.presentation_key for item in members),
             visual_signature=visual_signature,
@@ -221,7 +221,7 @@ def _build_step(
         and target_result is not None
         and isinstance(target_result.location, GroundedPoint)
     ):
-        screenshot = source.redacted_screenshot
+        screenshot = source.screenshot
         try:
             png = screenshot_loader(screenshot)
         except observation_records.ObservationCaptureError:

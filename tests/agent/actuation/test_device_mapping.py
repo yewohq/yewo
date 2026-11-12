@@ -14,7 +14,7 @@ from yewo.agent.actuation import (
     LiteralText,
     ScrollDistance,
 )
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.devices import DevicePlatform
 from yewo.devices.android.interaction import AndroidInteractionBackend
 from yewo.devices.interaction import DeviceInteraction, ScrollDirection
@@ -33,7 +33,6 @@ def authorized(action: ActionKind, identifier: str, **updates: object) -> Author
         "source": ActionSource.PLANNER,
         "side_effect": ACTION_DEFINITIONS[action].side_effect,
         "expected_outcome": "The expected visible change occurs.",
-        "sensitivity": ArtifactSensitivity.DEVICE_CONTENT,
         "retention": ArtifactRetention.RUN,
     }
     values.update(updates)
@@ -51,7 +50,8 @@ def authorized(action: ActionKind, identifier: str, **updates: object) -> Author
                 "mobile: doubleClickGesture",
                 "mobile: longClickGesture",
                 "mobile: dragGesture",
-                "mobile: dragGesture",
+                # UiAutomator performs the scroll itself, so the drag fallback does not run.
+                "mobile: scrollGesture",
             ],
         ),
         (

@@ -72,7 +72,6 @@ class StubPlannerModel:
                     usage=ModelCallUsage(),
                 ),
             ),
-            sensitivity=request.sensitivity,
             retention=request.retention,
         )
 

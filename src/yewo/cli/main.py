@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from importlib.metadata import version
+from pathlib import Path
 import sys
 
 from dotenv import find_dotenv, load_dotenv
 
+from yewo.cli.extension_notice import RunDeclarations, failure_notice, missing_notice
+from yewo.extensions import DeclaredValues, RunContext, load_extensions
 from yewo.agent import (
     YewoAgent,
     YewoRunConfiguration,
@@ -17,7 +20,6 @@ from yewo.cli import doctor as doctor_command
 from yewo.cli import run as run_command
 from yewo.cli import setup as setup_command
 from yewo.cli import test as test_command
-from yewo.devices.logs import DeclaredValueDeviceLogScrubber
 from yewo.models import ModelInputError, build_model_selections, validate_model_credentials
 from yewo.project_config import YewoProjectCompileError, YewoProjectError
 from yewo.reporting import CanonicalRunRecordWriteError, ReportBundleWriteError
@@ -80,10 +82,6 @@ def _run_yewo(configuration: YewoRunConfiguration) -> int:
             "is_memory_enabled": configuration.memory_root is not None,
         },
     )
-    scrubber = DeclaredValueDeviceLogScrubber(())
-
-    def scrub_text(text: str) -> str:
-        return scrubber(text).text
 
     workflow = YewoAgent(
         configuration.task,
@@ -93,16 +91,15 @@ def _run_yewo(configuration: YewoRunConfiguration) -> int:
         configuration.planner_profile_id,
         configuration.auditor_profile_id,
         configuration.recovery_profile_id,
-        configuration.action_verifier_profile_id,
+        configuration.proposal_verifier_profile_id,
+        configuration.outcome_verifier_profile_id,
         configuration.replay_preparation_profile_id,
-        scrub_text,
         screen_analyzer_profile_id=configuration.screen_analyzer_profile_id,
         memory_root=configuration.memory_root,
-        redaction_regions=configuration.redaction_regions,
     )
+    _announce_missing_extensions(())
     coordinator = build_default_run_coordinator(
         {RunMode.NORMAL: workflow},
-        scrubber,
     )
     terminal = coordinator.run(configuration.run)
     record_event(
@@ -121,29 +118,33 @@ def _run_yewo(configuration: YewoRunConfiguration) -> int:
     return 0 if terminal.category is RunTerminalCategory.COMPLETED else 1
 
 
+def _announce_missing_extensions(secret_labels: tuple[str, ...]) -> None:
+    """Say what this install will not do with what the caller declared."""
+    registry = load_extensions(
+        RunContext(artifact_root=Path("."), run_id="", declared_values=DeclaredValues())
+    )
+    for notice in (
+        failure_notice(registry),
+        missing_notice(registry, RunDeclarations(secret_labels=secret_labels)),
+    ):
+        if notice is not None:
+            print(notice, file=sys.stderr)
+
+
 def _run_yewo_tests(configurations: tuple[YewoTestConfiguration, ...]) -> int:
     """Run each selected journey-target pair in its own coordinator session."""
     all_completed = True
     for configuration in configurations:
-        sensitive_values = tuple(
-            dict.fromkeys(
-                value.value
-                for value in configuration.journey.declared_values.values()
-                if value.secret and value.value
-            )
+        _announce_missing_extensions(
+            tuple(
+                str(name)
+                for name, value in configuration.journey.declared_values.items()
+                if value.secret
+            ),
         )
-        scrubber = DeclaredValueDeviceLogScrubber(sensitive_values)
-
-        def scrub_text(
-            text: str,
-            selected_scrubber: DeclaredValueDeviceLogScrubber = scrubber,
-        ) -> str:
-            return selected_scrubber(text).text
-
-        workflow = ScenarioTestWorkflow(configuration, scrub_text)
+        workflow = ScenarioTestWorkflow(configuration)
         coordinator = build_default_run_coordinator(
             {RunMode.SCENARIO: workflow},
-            scrubber,
         )
         record_event(
             TelemetryEvent.RUN_STARTED,

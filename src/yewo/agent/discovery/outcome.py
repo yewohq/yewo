@@ -7,7 +7,7 @@ from yewo.agent.discovery.records import DiscoveryResult
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.memory.records import MemoryCompatibility
 from yewo.agent.memory.runtime_writeback import write_back_discovery_knowledge
-from yewo.agent.memory.store import AppMemoryStore
+from yewo.agent.memory.store import AppMemoryStore, load_discovery_memory
 from yewo.agent.replay.procedure.store import CompiledProcedureStore
 from yewo.agent.replay.procedure.records import ProcedureReplayTerminal
 from yewo.agent.replay.reconciliation.compilation import compile_completed_discovery_run
@@ -49,7 +49,7 @@ def persist_discovery_outcome_and_compile(
         return outcome
     try:
         memory = (
-            memory_store.load(compatibility)
+            load_discovery_memory(memory_store, compatibility)
             if memory_store is not None and compatibility is not None
             else None
         )

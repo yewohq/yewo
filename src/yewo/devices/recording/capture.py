@@ -16,7 +16,7 @@ class ScreenRecordingStart:
     requested_maximum_seconds: int
     effective_maximum_seconds: int
     maximum_stop_seconds: float = 10.0
-    maximum_pull_seconds: float = 120.0
+    maximum_pull_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         if self.requested_maximum_seconds < 1:

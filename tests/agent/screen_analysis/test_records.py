@@ -32,7 +32,7 @@ def _analysis(**updates: object) -> CurrentScreenAnalysis:
     values: dict[str, object] = {
         "analysis_id": "analysis-1",
         "observation_id": observation.observation_id,
-        "screenshot_sha256": observation.redacted_screenshot.sha256,
+        "screenshot_sha256": observation.screenshot.sha256,
         "presentation": observation.presentation_key,
         "screen_summary": "Visible application form.",
         "elements": (
@@ -42,7 +42,6 @@ def _analysis(**updates: object) -> CurrentScreenAnalysis:
                 kind=_kind(ScreenVisualKind.INPUT_SURFACE, ScreenSemanticRole.TEXT_FIELD),
                 state="empty",
                 confidence=ScreenElementConfidence.HIGH,
-                evidence="An underlined input is visible.",
                 visual_cues=("below Section heading", "above Secondary field"),
             ),
             ScreenElement(
@@ -50,7 +49,6 @@ def _analysis(**updates: object) -> CurrentScreenAnalysis:
                 name="Section heading",
                 kind=_kind(ScreenVisualKind.TEXT, ScreenSemanticRole.LABEL),
                 confidence=ScreenElementConfidence.MEDIUM,
-                evidence="Visible text has no input affordance.",
             ),
         ),
     }
@@ -93,7 +91,7 @@ def test_visual_cues_and_grounding_expression_are_bounded() -> None:
     assert len(expression) == 1_000
 
 
-def test_compact_context_derives_affordance_and_omits_evidence_prose() -> None:
+def test_compact_context_derives_affordance_without_analyzer_prose() -> None:
     context = screen_analysis_context(_analysis())
 
     assert context["analysis_id"] == "analysis-1"
@@ -107,7 +105,6 @@ def test_compact_context_derives_affordance_and_omits_evidence_prose() -> None:
     }
     assert primary_field["affordance"] == "interactive"
     assert section_heading["affordance"] == "non_interactive"
-    assert "evidence" not in primary_field
     assert "matches_proposal_target" not in primary_field
 
 
@@ -154,7 +151,6 @@ def test_the_shared_inventory_carries_no_coordinates() -> None:
                 kind=_kind(ScreenVisualKind.INPUT_SURFACE, ScreenSemanticRole.TEXT_FIELD),
                 state="10",
                 confidence=ScreenElementConfidence.HIGH,
-                evidence="An underlined field holds a number.",
             ),
         ),
     )
@@ -185,7 +181,6 @@ def _element(
         "name": "Destination",
         "kind": _kind(visual, semantic),
         "confidence": ScreenElementConfidence.MEDIUM,
-        "evidence": "Dark text on a white drawer surface.",
     }
     values.update(updates)
     return ScreenElement.model_validate(values)

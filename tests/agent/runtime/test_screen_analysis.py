@@ -43,7 +43,7 @@ class _Analyzer:
         return CurrentScreenAnalysis(
             analysis_id=f"analysis-{self.calls}",
             observation_id=observation.observation_id,
-            screenshot_sha256=observation.redacted_screenshot.sha256,
+            screenshot_sha256=observation.screenshot.sha256,
             presentation=observation.presentation_key,
             screen_summary="Visible application screen.",
             elements=(),

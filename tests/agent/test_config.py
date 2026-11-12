@@ -82,9 +82,16 @@ def _configuration() -> dict[str, object]:
                 },
                 {
                     **profile,
-                    "profile_id": "action-verifier-primary",
-                    "role": "action_verifier",
-                    "model": "openrouter/configured/action-verifier",
+                    "profile_id": "proposal-verifier-primary",
+                    "role": "proposal_verifier",
+                    "model": "openrouter/configured/proposal-verifier",
+                },
+                {
+                    **profile,
+                    "profile_id": "outcome-verifier-primary",
+                    "role": "outcome_verifier",
+                    "model": "openrouter/configured/outcome-verifier",
+                    "images": {**profile["images"], "max_images": 2},
                 },
                 {
                     **profile,
@@ -118,7 +125,8 @@ def _configuration() -> dict[str, object]:
         "planner_profile_id": "planner-primary",
         "auditor_profile_id": "auditor-primary",
         "recovery_profile_id": "recovery-primary",
-        "action_verifier_profile_id": "action-verifier-primary",
+        "proposal_verifier_profile_id": "proposal-verifier-primary",
+        "outcome_verifier_profile_id": "outcome-verifier-primary",
         "screen_analyzer_profile_id": "screen-analyzer-primary",
         "replay_preparation_profile_id": "reconciler-primary",
         "test_designer_profile_id": "test-designer-primary",
@@ -130,7 +138,7 @@ def test_validates_explicit_profiles_without_a_default_model() -> None:
 
     assert configuration.planner_profile_id == "planner-primary"
     assert configuration.recovery_profile_id == "recovery-primary"
-    assert configuration.action_verifier_profile_id == "action-verifier-primary"
+    assert configuration.proposal_verifier_profile_id == "proposal-verifier-primary"
     assert configuration.screen_analyzer_profile_id == "screen-analyzer-primary"
     assert configuration.replay_preparation_profile_id == "reconciler-primary"
     assert configuration.test_designer_profile_id == "test-designer-primary"
@@ -139,7 +147,8 @@ def test_validates_explicit_profiles_without_a_default_model() -> None:
         "openrouter/configured/grounder",
         "openrouter/configured/auditor",
         "openrouter/configured/recovery",
-        "openrouter/configured/action-verifier",
+        "openrouter/configured/proposal-verifier",
+        "openrouter/configured/outcome-verifier",
         "openrouter/configured/screen-analyzer",
         "openrouter/configured/reconciler",
         "openrouter/configured/test-designer",

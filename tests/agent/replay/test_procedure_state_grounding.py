@@ -112,7 +112,7 @@ def test_keyboard_repair_reuses_a_locally_validated_compiled_coordinate() -> Non
     assert target_grounding is not None
     point = target_grounding.result.location
     assert isinstance(point, GroundedPoint)
-    screenshot = _observations()[0].redacted_screenshot
+    screenshot = _observations()[0].screenshot
     png = _target_screen(
         screenshot.width_px,
         screenshot.height_px,
@@ -155,7 +155,7 @@ def test_keyboard_repair_reuses_a_locally_validated_compiled_coordinate() -> Non
     live_request = stored_grounding.request.model_copy(
         update={
             "grounding_id": "repair_grounding",
-            "screenshot": wrong.redacted_screenshot,
+            "screenshot": wrong.screenshot,
             "source_presentation": wrong.presentation_key,
         }
     )
@@ -244,7 +244,7 @@ def test_procedure_grounder_reuses_authorized_nonidentical_pixels() -> None:
     assert isinstance(procedure, ReplayProcedure)
     source = CompiledProcedureActionSource(procedure, evidence)
     recorded = _observations()[0]
-    live_screenshot = recorded.redacted_screenshot.model_copy(
+    live_screenshot = recorded.screenshot.model_copy(
         update={
             "artifact_id": "live_screenshot",
             "sha256": "1" * 64,
@@ -261,7 +261,7 @@ def test_procedure_grounder_reuses_authorized_nonidentical_pixels() -> None:
     live = recorded.model_copy(
         update={
             "observation_id": "live_observation",
-            "redacted_screenshot": live_screenshot,
+            "screenshot": live_screenshot,
             "screen_fingerprint": live_fingerprint,
         }
     )

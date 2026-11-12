@@ -72,6 +72,20 @@ def trace(message: str) -> None:
         narrator.trace(_SOURCE, message)
 
 
+def sync_narration() -> None:
+    """Request durable narration through the background writer."""
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.sync()
+
+
+def require_narration_sync() -> None:
+    """Require the preceding action's narration before another dispatch."""
+    narrator = current_narrator()
+    if narrator is not None:
+        narrator.wait_for_pending_sync()
+
+
 def narrate_proposal(
     step_index: int,
     proposal: ActionProposal,
@@ -253,7 +267,7 @@ def narrate_observation(observation: Observation, *, label: str) -> None:
         f"keyboard={observation.keyboard_visible if observation.keyboard_visible is not None else 'unknown'} "
         f"fingerprint={observation.screen_fingerprint.value} "
         f"masked_pixels_sha256={observation.screen_fingerprint.masked_pixels_sha256} "
-        f"screenshot={observation.redacted_screenshot.path}"
+        f"screenshot={observation.screenshot.path}"
     )
 
 

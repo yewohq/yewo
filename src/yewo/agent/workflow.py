@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING
@@ -22,13 +22,14 @@ from yewo.agent.runtime.records import (
     AgentTask,
     AgentTerminalReason,
     agent_terminal_category,
+    requires_goal_verification,
 )
 from yewo.agent.runtime.verification import goal_verification_budget_reason
 from yewo.grounding import GroundingProfile
 from yewo.models import (
     ModelProfileRegistry,
 )
-from yewo.observations import ObservationStore, RedactionRegion
+from yewo.observations import ObservationStore
 from yewo.runs import (
     InterruptionSignal,
     RunExecutionContext,
@@ -55,15 +56,14 @@ class YewoAgent:
         planner_profile_id: str,
         auditor_profile_id: str,
         recovery_profile_id: str,
-        action_verifier_profile_id: str,
+        proposal_verifier_profile_id: str,
+        outcome_verifier_profile_id: str,
         replay_preparation_profile_id: str,
-        scrub_text: Callable[[str], str],
         *,
         screen_analyzer_profile_id: str | None = None,
         memory_root: Path | None = None,
         memory_store: AppMemoryStore | None = None,
         procedure_store: CompiledProcedureStore | None = None,
-        redaction_regions: Sequence[RedactionRegion] = (),
         declared_value_resolver: Callable[[str], str] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -76,10 +76,10 @@ class YewoAgent:
         self._planner_profile_id = planner_profile_id
         self._auditor_profile_id = auditor_profile_id
         self._recovery_profile_id = recovery_profile_id
-        self._action_verifier_profile_id = action_verifier_profile_id
+        self._proposal_verifier_profile_id = proposal_verifier_profile_id
+        self._outcome_verifier_profile_id = outcome_verifier_profile_id
         self._replay_preparation_profile_id = replay_preparation_profile_id
         self._screen_analyzer_profile_id = screen_analyzer_profile_id
-        self._scrub_text = scrub_text
         if memory_root is not None and memory_store is not None:
             raise ValueError("Configure a Yewo memory root or memory store, not both.")
         self._memory_store = (
@@ -91,13 +91,12 @@ class YewoAgent:
         )
         self._memory_root = memory_root
         self._procedure_store = procedure_store
-        self._redaction_regions = tuple(redaction_regions)
         self._declared_value_resolver = declared_value_resolver
         self._monotonic = monotonic
 
     def session_policy(self) -> RunSessionPolicy:
         """Apply the same declared regions to recordings before session startup."""
-        return RunSessionPolicy(recording_redaction_regions=self._redaction_regions)
+        return RunSessionPolicy()
 
     def prepare(
         self,
@@ -127,8 +126,8 @@ class YewoAgent:
             context.workspace.root,
             context.workspace.start.run_id,
             self._model_profiles,
-            self._scrub_text,
-            bool(self._redaction_regions),
+            self._task.declared_value_names,
+            context.extensions,
         )
         result = build_device_agent(
             context,
@@ -136,12 +135,12 @@ class YewoAgent:
             self._grounding_profile,
             self._planner_profile_id,
             recovery_profile_id=self._recovery_profile_id,
-            action_verifier_profile_id=self._action_verifier_profile_id,
+            proposal_verifier_profile_id=self._proposal_verifier_profile_id,
+            outcome_verifier_profile_id=self._outcome_verifier_profile_id,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
-            redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
         ).run(self._task, self._mode_policy, interruption)
-        if result.terminal_reason is AgentTerminalReason.DONE_REQUESTED:
+        if requires_goal_verification(result.terminal_reason):
             objective_id = derived_memory_identifier("objective", self._task.objective)
             observation = ObservationStore(context.workspace.root).load_selected(
                 {result.final_observation_id}
@@ -178,12 +177,12 @@ class YewoAgent:
                 satisfied=verification.satisfied,
                 reason=verification.reason,
             )
-            return RunWorkflowOutcome(
-                RunTerminalCategory.COMPLETED
-                if verification.satisfied
-                else RunTerminalCategory.INCOMPLETE,
-                verification.reason,
-            )
+            if verification.satisfied:
+                return RunWorkflowOutcome(RunTerminalCategory.COMPLETED, verification.reason)
+            if result.terminal_reason is AgentTerminalReason.DONE_REQUESTED:
+                return RunWorkflowOutcome(RunTerminalCategory.INCOMPLETE, verification.reason)
+            # The agent's own account of what stopped it says more than "conditions unmet".
+            return RunWorkflowOutcome(RunTerminalCategory.INCOMPLETE, result.reason)
         return RunWorkflowOutcome(
             agent_terminal_category(result.terminal_reason),
             result.reason,
@@ -200,12 +199,11 @@ class YewoAgent:
             self._planner_profile_id,
             self._auditor_profile_id,
             self._recovery_profile_id,
-            self._action_verifier_profile_id,
+            self._proposal_verifier_profile_id,
+            self._outcome_verifier_profile_id,
             self._replay_preparation_profile_id,
             self._memory_root,
-            self._scrub_text,
             screen_analyzer_profile_id=self._screen_analyzer_profile_id,
-            redaction_regions=self._redaction_regions,
             declared_value_resolver=self._declared_value_resolver,
             memory_store=self._memory_store,
             procedure_store=self._procedure_store,

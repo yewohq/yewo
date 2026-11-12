@@ -11,7 +11,6 @@ from yewo.devices.recording.records import (
     ScreenRecordingCheckpointReceipt,
 )
 from yewo.devices.recording.service import ScreenRecordingService
-from yewo.observations.records import RedactionRegion
 from yewo.run_narration import current_narrator
 
 
@@ -57,27 +56,6 @@ class ScreenRecordingLease:
         self._receipts.append(receipt)
         _narrate_receipt(receipt)
         return receipt
-
-    def add_redaction_region(
-        self,
-        region: RedactionRegion,
-        source_width_px: int,
-        source_height_px: int,
-    ) -> None:
-        """Start a persistent mask before sensitive pixels appear."""
-        if self._closed:
-            raise ScreenRecordingError("A closed recording lease cannot add a redaction region.")
-        self._service.add_redaction_region(
-            region,
-            source_width_px,
-            source_height_px,
-        )
-
-    def clear_redaction_regions(self) -> None:
-        """Stop carrying the current masks into later segments."""
-        if self._closed:
-            raise ScreenRecordingError("A closed recording lease cannot clear redaction regions.")
-        self._service.clear_redaction_regions()
 
     def close(self) -> None:
         """Close the final segment and release the recording interval."""

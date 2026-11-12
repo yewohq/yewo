@@ -26,12 +26,15 @@ from yewo.agent.actuation.outcomes import (
     TextDeliveryStatus,
 )
 from yewo.agent.actuation.action_catalog import ActionKind
+from yewo.observations import PixelRegion
+from yewo.extensions import DeclaredValues
 from yewo.agent.actuation.records import (
     AuthorizedAction,
     DeclaredValueReference,
     DispatchDisposition,
     DispatchReceipt,
     LiteralText,
+    TextInput,
     ScrollDistance,
 )
 
@@ -70,6 +73,15 @@ class ActionDevice(Protocol):
         right: int | None = None,
         bottom: int | None = None,
         distance_fraction: float = 0.6,
+    ) -> bool | None: ...
+
+    def refresh(
+        self,
+        *,
+        left: int = 0,
+        top: int = 0,
+        right: int | None = None,
+        bottom: int | None = None,
     ) -> None: ...
 
     def back(self) -> None: ...
@@ -101,13 +113,16 @@ class ActionExecutor:
         identifier_factory: Callable[[], str] = new_record_identifier,
         declared_value_resolver: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        declared_values: DeclaredValues | None = None,
     ) -> None:
         self._device = device
         self._identifier_factory = identifier_factory
         self._declared_value_resolver = declared_value_resolver
+        self._declared_values = declared_values
         self._clock = clock
         self._consumed_authorizations: set[str] = set()
         self._text_delivery_by_authorization: dict[str, TextDeliveryEvidence] = {}
+        self._scroll_exhausted_by_authorization: dict[str, bool] = {}
 
     def dispatch(self, action: AuthorizedAction) -> DispatchReceipt:
         if not isinstance(action, AuthorizedAction):
@@ -126,7 +141,6 @@ class ActionExecutor:
                 disposition=DispatchDisposition.TARGET_REJECTED,
                 dispatched_at=self._clock(),
                 reason=str(error),
-                sensitivity=action.sensitivity,
                 retention=action.retention,
             )
         except DeviceInputRejectedError as error:
@@ -138,7 +152,6 @@ class ActionExecutor:
                 disposition=DispatchDisposition.INPUT_REJECTED,
                 dispatched_at=self._clock(),
                 reason=str(error),
-                sensitivity=action.sensitivity,
                 retention=action.retention,
             )
         except DeviceActionRejectedError:
@@ -150,7 +163,6 @@ class ActionExecutor:
                 disposition=DispatchDisposition.DEVICE_REFUSED,
                 dispatched_at=self._clock(),
                 reason="The device rejected the authorized action.",
-                sensitivity=action.sensitivity,
                 retention=action.retention,
             )
         if text_delivery is not None:
@@ -162,7 +174,6 @@ class ActionExecutor:
             action=action.action,
             disposition=DispatchDisposition.DISPATCHED,
             dispatched_at=self._clock(),
-            sensitivity=action.sensitivity,
             retention=action.retention,
         )
 
@@ -178,6 +189,10 @@ class ActionExecutor:
             action.authorization_id,
             _unavailable_text_delivery(),
         )
+
+    def scroll_exhausted(self, action: AuthorizedAction) -> bool | None:
+        """Return whether the platform reported the scrolled surface as exhausted."""
+        return self._scroll_exhausted_by_authorization.pop(action.authorization_id, None)
 
     def discard_text_delivery(self, action: AuthorizedAction) -> None:
         """Discard a pending comparison value when post-action evidence is unavailable."""
@@ -197,8 +212,10 @@ class ActionExecutor:
         elif action.action is ActionKind.TYPE and action.text is not None:
             if target is not None:
                 self._device.focus(target.x, target.y)
+            reading = self._device.focused_field_reading()
+            self._record_declared_value(action.text)
             expected_text = self._resolve_text(action.text)
-            context = self._device.focused_field_reading().field_context
+            context = reading.field_context
             is_text_match = self._device.type_focused_text(expected_text)
             return _delivery_evidence(is_text_match, context)
         elif action.action is ActionKind.CLEAR:
@@ -230,16 +247,22 @@ class ActionExecutor:
             and action.direction is not None
             and action.distance is not None
         ):
-            region = action.region
-            # Grounded regions are half-open. Device coordinates use inclusive edges.
-            self._device.scroll(
+            left, top, right, bottom = _device_edges(action.region)
+            can_scroll_more = self._device.scroll(
                 action.direction,
-                left=region.left if region else 0,
-                top=region.top if region else 0,
-                right=region.right - 1 if region else None,
-                bottom=region.bottom - 1 if region else None,
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
                 distance_fraction=_SCROLL_FRACTIONS[action.distance],
             )
+            if can_scroll_more is not None:
+                self._scroll_exhausted_by_authorization[
+                    action.authorization_id
+                ] = not can_scroll_more
+        elif action.action is ActionKind.REFRESH:
+            left, top, right, bottom = _device_edges(action.region)
+            self._device.refresh(left=left, top=top, right=right, bottom=bottom)
         elif action.action is ActionKind.BACK:
             self._device.back()
         elif action.action is ActionKind.DISMISS_KEYBOARD:
@@ -252,6 +275,16 @@ class ActionExecutor:
             )
         return None
 
+    def _record_declared_value(self, text: TextInput) -> None:
+        """Record that a declared value is about to reach the device."""
+        if self._declared_values is None or not isinstance(text, DeclaredValueReference):
+            return
+        if self._declared_value_resolver is None:
+            return
+        resolved = self._declared_value_resolver(text.value_name)
+        if isinstance(resolved, str) and resolved:
+            self._declared_values.add(text.value_name, resolved)
+
     def _resolve_text(self, text: LiteralText | DeclaredValueReference) -> str:
         if isinstance(text, LiteralText):
             return text.value
@@ -261,6 +294,19 @@ class ActionExecutor:
         if not isinstance(value, str) or not value:
             raise DeviceActionRejectedError("The declared value resolver returned no text.")
         return value
+
+
+def _device_edges(
+    region: PixelRegion | None,
+) -> tuple[int, int, int | None, int | None]:
+    """Convert one grounded region to the inclusive edges a device gesture expects.
+
+    A grounded region is half-open and a device gesture names inclusive edges. One owner, because
+    two gestures took the same region and each converted it for itself.
+    """
+    if region is None:
+        return 0, 0, None, None
+    return region.left, region.top, region.right - 1, region.bottom - 1
 
 
 def _delivery_evidence(
@@ -300,7 +346,9 @@ def _matched_delivery_evidence(
         )
     return TextDeliveryEvidence(
         status=TextDeliveryStatus.MATCHED if is_text_match else TextDeliveryStatus.NOT_LANDED,
-        reason=(TextDeliveryReason.VALUE_MATCHED if is_text_match else TextDeliveryReason.VALUE_MISMATCH),
+        reason=(
+            TextDeliveryReason.VALUE_MATCHED if is_text_match else TextDeliveryReason.VALUE_MISMATCH
+        ),
         is_secure=context.is_secure,
         field_type=context.field_type,
         context_source=context.source,

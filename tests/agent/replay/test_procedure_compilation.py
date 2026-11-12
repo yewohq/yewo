@@ -39,7 +39,7 @@ from yewo.agent.memory.knowledge import (
     KnowledgeRule,
 )
 from yewo.agent.memory.records import MemoryCompatibility
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import (
     ModelArtifactKind,
     ModelArtifactReference,
@@ -87,7 +87,6 @@ class MeasuredReconciler(StubPlannerModel):
                     content_sha256="c" * 64,
                     path=Path("models/calls.jsonl"),
                     body_retained=True,
-                    sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
                     retention=ArtifactRetention.RUN,
                 ),
             }

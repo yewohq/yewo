@@ -25,11 +25,6 @@ from yewo.devices.logs.reader import (
     DeviceLogTextEntry,
 )
 from yewo.devices.logs.router import RoutedDeviceLogReader
-from yewo.devices.logs.redaction import (
-    DeclaredValueDeviceLogScrubber,
-    DeviceLogRedactionResult,
-    DeviceLogTextScrubber,
-)
 from yewo.devices.logs.service import DeviceLogCaptureService
 from yewo.devices.logs.store import DeviceLogStore
 
@@ -52,14 +47,11 @@ __all__ = [
     "DeviceLogDrainState",
     "DeviceLogOmission",
     "DeviceLogReader",
-    "DeviceLogRedactionResult",
     "DeviceLogRollbackError",
     "DeviceLogSource",
     "DeviceLogSourceReceipt",
     "DeviceLogStore",
     "DeviceLogTextEntry",
-    "DeviceLogTextScrubber",
-    "DeclaredValueDeviceLogScrubber",
     "RoutedDeviceLogReader",
     "validate_device_log_checkpoint",
 ]

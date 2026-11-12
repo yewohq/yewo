@@ -32,6 +32,7 @@ VISUAL_CUES_GUIDANCE = (
 MAXIMUM_SCREEN_ELEMENT_NAME_LENGTH = 200
 MAXIMUM_SCREEN_ELEMENT_STATE_LENGTH = 200
 MAXIMUM_SCREEN_ELEMENT_VISUAL_CUE_LENGTH = 200
+MAXIMUM_SCREEN_ROLE_ALTERNATIVES = 10
 
 
 def _truncate_visual_cue(value: object) -> object:
@@ -102,7 +103,9 @@ class ScreenElement(BaseModel):
     )
     options: tuple[str, ...] = Field(default=(), max_length=100)
     confidence: ScreenElementConfidence
-    role_alternatives: tuple[ScreenSemanticRole, ...] = Field(default=(), max_length=10)
+    role_alternatives: tuple[ScreenSemanticRole, ...] = Field(
+        default=(), max_length=MAXIMUM_SCREEN_ROLE_ALTERNATIVES
+    )
     workflow_role: ScreenWorkflowRole | None = Field(
         default=None,
         description=(
@@ -113,7 +116,6 @@ class ScreenElement(BaseModel):
     input_surface_key: str | None = Field(default=None, min_length=1, max_length=100)
     parent_ref: RecordIdentifier | None = None
     position_in_parent: int | None = Field(default=None, ge=1)
-    evidence: str = Field(min_length=1, max_length=1_000)
     visual_cues: tuple[ScreenVisualCue, ...] = Field(
         default=(), max_length=20, description=VISUAL_CUES_GUIDANCE
     )
@@ -192,7 +194,7 @@ class CurrentScreenAnalysis(BaseModel):
         """Return whether this analysis describes the exact supplied observation."""
         return (
             self.observation_id == observation.observation_id
-            and self.screenshot_sha256 == observation.redacted_screenshot.sha256
+            and self.screenshot_sha256 == observation.screenshot.sha256
             and self.presentation == observation.presentation_key
         )
 

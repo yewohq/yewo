@@ -20,6 +20,7 @@ docs/*
 !docs/testing.md
 !docs/development.md
 test_models/
+.yewo/
 # macOS
 .DS_Store
 
@@ -41,10 +42,7 @@ eval/apps/ios/*.app/
 eval/integrations/android_world/.venv/
 eval/integrations/android_world/vendor/
 
-# Legacy local replay caches and temporary files used while replacing a path.
-**/.yewo/replay/
-**/.yewo/replay-key
-**/.yewo/paths/**/*.part
-**/.yewo/knowledge/
+# Local archived experiments and live-run output.
 old/
 live_runs/
+eval/local_apps/

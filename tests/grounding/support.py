@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.grounding import (
     GroundedPoint,
     GroundingCoordinateConvention,
@@ -66,7 +66,6 @@ def build_call_artifact(artifact_id: str = "call-artifact-1") -> ModelArtifactRe
         content_sha256="d" * 64,
         path=Path("models/calls.jsonl"),
         body_retained=True,
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 
@@ -139,7 +138,6 @@ class StubModelClient:
                     disposition=self.disposition,
                 ),
             ),
-            sensitivity=request.sensitivity,
             retention=request.retention,
         )
 

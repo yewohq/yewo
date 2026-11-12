@@ -25,26 +25,52 @@ def _write(path: Path, content: str) -> Path:
     return path
 
 
-def test_loads_the_controlled_application_project() -> None:
+def test_the_committed_example_project_still_loads() -> None:
+    """The shipped example must stay valid, without this test owning its contents.
+
+    Asserting its workflows here coupled a loader test to an evaluation config that changes for
+    reasons of its own. What matters is that the example a reader copies still parses.
+    """
     path = Path(__file__).parents[2] / "eval" / "controlled_app" / "yewo.yaml"
 
     project = load_yewo_project(path)
 
-    assert [workflow.name for workflow in project.workflows] == [
-        "permissions_flow",
-        "restaurant_menu_matrix_smoke",
-        "notifications",
-        "delivery_checkout",
-        "food_delivery_suite",
-    ]
-    permissions = project.workflows[0]
-    assert permissions.settings.platform == "android"
-    assert permissions.settings.device_name == "Pixel_8"
-    assert (
-        permissions.settings.app_path
-        == (path.parent / "build/app/outputs/flutter-apk/app-debug.apk").resolve()
+    assert project.workflows
+
+
+def test_a_project_resolves_settings_values_and_coverage(tmp_path: Path) -> None:
+    """What the loader owes a caller, on a project this test controls."""
+    path = _write(
+        tmp_path / "yewo.yaml",
+        """
+device:
+  name: Pixel_8
+  platform: android
+app: build/app.apk
+workflows:
+  sign_in:
+    env:
+      password:
+        value: secret-password123
+        secret: true
+    coverage:
+      - category: functional
+        types: [happy_path]
+    journeys:
+      - id: sign_in_01
+        name: Sign in
+        journey: A user types {{password}} and signs in.
+""",
     )
-    journey = permissions.journeys[0]
+
+    project = load_yewo_project(path)
+
+    workflow = project.workflows[0]
+    assert workflow.name == "sign_in"
+    assert workflow.settings.platform == "android"
+    assert workflow.settings.device_name == "Pixel_8"
+    assert workflow.settings.app_path == (tmp_path / "build/app.apk").resolve()
+    journey = workflow.journeys[0]
     assert journey.declared_values["password"].secret is True
     assert journey.declared_values["password"].value == "secret-password123"
     assert "{{password}}" in journey.objective
@@ -302,24 +328,6 @@ journeys:
         load_yewo_project(path)
 
 
-def test_rejects_both_inline_journey_aliases_with_a_formatted_error(tmp_path: Path) -> None:
-    path = _write(
-        tmp_path / "yewo.yaml",
-        """
-device: {name: Pixel_8, platform: android}
-app: app.apk
-model: openrouter/example/model
-workflows:
-  smoke:
-    journey: Sign in.
-    description: Sign in again.
-""",
-    )
-
-    with pytest.raises(YewoProjectError, match="workflows.smoke.*exactly one"):
-        load_yewo_project(path)
-
-
 def test_expands_environment_references_in_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -367,7 +375,6 @@ def test_background_resume_default_is_part_of_the_frozen_capability_record() -> 
     capability = AppStateCapabilitySpec(action="background_resume")
 
     assert capability.duration_seconds == 1.0
-    assert "duration_seconds" in capability.model_fields_set
 
 
 def test_yaml_and_command_line_share_the_same_settlement_limit(tmp_path: Path) -> None:

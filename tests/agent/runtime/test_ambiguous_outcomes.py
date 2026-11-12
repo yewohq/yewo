@@ -9,7 +9,7 @@ from yewo.agent.actuation import (
 )
 from yewo.observations import ScreenComparisonPolicy
 from yewo.agent.runtime.no_progress import ActionNoProgressTracker
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 
 from agent.actuation.support import proposal
 from agent.runtime.test_agent import _observation
@@ -26,7 +26,6 @@ def _ambiguous_focus(screen) -> ActionOutcome:
         disposition=ActionOutcomeDisposition.AMBIGUOUS,
         signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
         reason="The intended target effect was not established.",
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )
 

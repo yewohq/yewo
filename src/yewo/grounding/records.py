@@ -13,7 +13,6 @@ from yewo.observations import (
     PixelRegion,
     PresentationKey,
     ScreenRegion,
-    ScreenshotRedactionState,
     ScreenshotReference,
 )
 from yewo.observations.records import validate_screen_regions
@@ -203,7 +202,7 @@ GroundedLocation = Annotated[
 
 
 class GroundingRequest(BaseModel):
-    """Resolve one referring expression on one exact redacted screenshot."""
+    """Resolve one referring expression on one exact screenshot."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
@@ -219,8 +218,6 @@ class GroundingRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_request(self) -> Self:
-        if self.screenshot.redaction_state is not ScreenshotRedactionState.REDACTED:
-            raise ValueError("A grounding request must use a redacted screenshot.")
         if (
             self.screen_analysis_candidate is not None
             and self.screen_analysis_candidate.screenshot_sha256 != self.screenshot.sha256

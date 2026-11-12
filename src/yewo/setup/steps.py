@@ -129,7 +129,11 @@ def _project_plan(
             platforms = _platforms(context.requested_platform, None)
             return platforms, existing_config_path.parent, _fail("yewo.yaml", str(error))
         platforms = _platforms(context.requested_platform, project.settings.platform)
-        return platforms, existing_config_path.parent, _ok("yewo.yaml", f"using {existing_config_path}")
+        return (
+            platforms,
+            existing_config_path.parent,
+            _ok("yewo.yaml", f"using {existing_config_path}"),
+        )
 
     platforms = _platforms(context.requested_platform, None)
     target = context.root / "yewo.yaml"

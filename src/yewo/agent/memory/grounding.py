@@ -63,7 +63,7 @@ class AcceptedGrounding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     location: GroundedLocation
-    source_observation_id: RecordIdentifier | None = None
+    source_observation_id: RecordIdentifier
     source_masked_pixels_sha256: Sha256Digest
     source_system_region_mask_sha256: Sha256Digest | None = None
     resolution: GroundingResolution
@@ -161,9 +161,7 @@ class AppMemoryGrounder:
                 ):
                     continue
                 found_target_evidence = True
-                source_observation_id = (
-                    grounding.source_observation_id or transition.source_observation_id
-                )
+                source_observation_id = grounding.source_observation_id
                 source_variant = self._variants_by_id[source_observation_id]
                 assessment = self._assessments_by_key.get(
                     (transition.transition_id, GroundingRole(role), source_observation_id)
@@ -367,9 +365,7 @@ def validate_transition_groundings(
         for grounding in (transition.target_grounding, transition.destination_grounding):
             if grounding is None:
                 continue
-            grounding_observation_id = (
-                grounding.source_observation_id or transition.source_observation_id
-            )
+            grounding_observation_id = grounding.source_observation_id
             grounding_variant = source_variants.get(grounding_observation_id)
             if grounding_variant is None:
                 raise ValueError("Cached grounding must reference a source-screen observation.")

@@ -12,7 +12,6 @@ from yewo.agent.discovery.records import DiscoveryObjective
 from yewo.agent.replay.procedure.store import StoredProcedureBundle
 from yewo.artifacts import (
     ArtifactRetention,
-    ArtifactSensitivity,
     RecordIdentifier,
     new_record_identifier,
 )
@@ -213,7 +212,7 @@ def _model_request(
     return ModelRequest(
         request_id=request_id,
         profile_id=profile_id,
-        role=ModelRole.REPLAY_PREPARER,
+        role=ModelRole.OBJECTIVE_MATCHER,
         messages=(
             ModelMessage(
                 role=ModelMessageRole.SYSTEM,
@@ -233,6 +232,5 @@ def _model_request(
             "objective-matching-v1",
             ObjectiveMatchOutput.model_json_schema(),
         ),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
     )

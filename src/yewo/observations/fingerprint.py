@@ -17,7 +17,7 @@ def build_screen_fingerprint(
     png: bytes,
     system_regions: tuple[ScreenRegion, ...] | None,
     *,
-    source_artifact_id: str,
+    source_artifact_id: str | None,
 ) -> ScreenFingerprint:
     """Fingerprint the screenshot after masking known platform-owned pixels."""
     try:

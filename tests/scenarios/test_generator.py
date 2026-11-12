@@ -206,7 +206,7 @@ def test_baseline_outcomes_keep_their_exact_discovery_surfaces() -> None:
         assert outcome.required_surface_ids == expected
 
 
-def test_categories_with_the_same_execution_change_share_one_scenario() -> None:
+def test_unsupported_execution_change_produces_truthful_generation_gaps() -> None:
     check = "The saved item must remain visible after the operation finishes."
     journey = _journey().model_copy(update={"checks": (check,)})
     suite = _bridge()
@@ -239,13 +239,16 @@ def test_categories_with_the_same_execution_change_share_one_scenario() -> None:
 
     result = generate_scenarios(journey, suite, design, registry)
 
-    input_scenario = next(
-        item
+    assert not any(
+        item.execution_change is ScenarioExecutionChange.INPUT_VARIATION
         for item in result.suite.scenarios
-        if item.execution_change is ScenarioExecutionChange.INPUT_VARIATION
-        and item.scenario_type is ScenarioType.NEGATIVE
     )
-    assert {item.category for item in input_scenario.obligations} == {
+    input_gaps = tuple(
+        item
+        for item in result.gaps
+        if item.scenario_type is ScenarioType.NEGATIVE and "input variation" in item.reason
+    )
+    assert {item.category for item in input_gaps} == {
         CoverageCategory.ERROR_HANDLING,
         CoverageCategory.SECURITY,
     }
@@ -256,6 +259,40 @@ def test_categories_with_the_same_execution_change_share_one_scenario() -> None:
         for scenario in result.suite.scenarios
         for obligation in scenario.obligations
     )
+
+
+def test_distinct_unsupported_execution_changes_have_distinct_gap_ids() -> None:
+    check = "The app reports a rejected operation without changing saved data."
+    journey = _journey().model_copy(update={"checks": (check,)})
+    suite = _bridge()
+    first = _design(
+        suite,
+        check,
+        category=CoverageCategory.ERROR_HANDLING,
+        scenario_type=ScenarioType.NEGATIVE,
+        execution_change=ScenarioExecutionChange.INPUT_VARIATION,
+    ).concerns[0]
+    second = first.model_copy(
+        update={
+            "concern_id": "concern_2",
+            "execution_change": ScenarioExecutionChange.ENVIRONMENT_VARIATION,
+        }
+    )
+    design = _design(suite, check, category=CoverageCategory.ERROR_HANDLING).model_copy(
+        update={"concerns": (first, second)}
+    )
+    registry = evaluate_testing_categories(journey, suite, concerns=design.concerns)
+
+    result = generate_scenarios(journey, suite, design, registry)
+
+    matching = tuple(
+        gap
+        for gap in result.gaps
+        if gap.category is CoverageCategory.ERROR_HANDLING
+        and gap.scenario_type is ScenarioType.NEGATIVE
+    )
+    assert len(matching) == 2
+    assert len({gap.gap_id for gap in matching}) == 2
 
 
 def test_user_scenario_uses_the_model_interpreted_surface_subset() -> None:

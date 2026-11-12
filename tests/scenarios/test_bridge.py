@@ -27,7 +27,7 @@ from yewo.agent.memory.records import (
     MemoryCompatibility,
     ObservationVariant,
 )
-from yewo.agent.planning.goal_verifier import GoalVerification
+from yewo.agent.planning.goal_verifier import GoalEvidenceConflict, GoalVerification
 from yewo.agent.replay.reconciliation.compiler import compile_replay_procedure
 from yewo.agent.replay.reconciliation.records import ReplayProcedure
 from yewo.project_config import (
@@ -83,7 +83,6 @@ def _memory(*, knowledge: AppKnowledge | None = None) -> AppMemory:
                     observation_id=state.representative_observation_id,
                     source_run_id=evidence.run.run_id,
                     presentation=state.representative_presentation,
-                    screenshot=state.representative_screenshot,
                 ),
             ),
         )
@@ -94,6 +93,7 @@ def _memory(*, knowledge: AppKnowledge | None = None) -> AppMemory:
         compatibility=MemoryCompatibility(application=evidence.run.application),
         source_run_ids=(evidence.run.run_id,),
         screens=screens,
+        unsuccessful_attempts=(),
         app_knowledge=knowledge or AppKnowledge(),
         updated_at=datetime(2026, 11, 6, tzinfo=timezone.utc),
     )
@@ -249,6 +249,38 @@ def test_incomplete_discovery_returns_unready_without_surfaces() -> None:
     assert not suite.readiness.independently_auditable
     assert suite.surfaces == ()
     assert "discovery budget ended" in suite.readiness.reason.lower()
+
+
+def test_goal_evidence_conflict_blocks_scenario_handoff_with_details() -> None:
+    procedure = _procedure()
+    result = _result(procedure)
+    verification = result.verification
+    assert verification is not None
+    conflicted = result.model_copy(
+        update={
+            "verification": verification.model_copy(
+                update={
+                    "satisfied": False,
+                    "reason": "The required fact is contradictory.",
+                    "evidence_conflicts": (
+                        GoalEvidenceConflict(
+                            subject="required fact",
+                            earlier_observation="The earlier state showed A.",
+                            later_observation="The later state showed B.",
+                            reason="Both values describe the same workflow instance.",
+                        ),
+                    ),
+                }
+            )
+        }
+    )
+
+    suite = _bridge(procedure=procedure, result=conflicted)
+
+    assert not suite.readiness.executable
+    assert "Discovery found 1 material evidence conflict" in suite.readiness.reason
+    assert "The earlier state showed A" in suite.readiness.reason
+    assert suite.surfaces == ()
 
 
 def test_named_but_unavailable_discovery_artifacts_return_unready() -> None:

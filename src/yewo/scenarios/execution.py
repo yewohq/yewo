@@ -5,6 +5,19 @@ from yewo.scenarios.designer import ValidatedTestDesign
 from yewo.scenarios.taxonomy import ScenarioExecutionChange
 
 
+EXECUTABLE_SCENARIO_CHANGES = frozenset(
+    {
+        ScenarioExecutionChange.ACCEPTED_ROUTE,
+        ScenarioExecutionChange.LIFECYCLE_INTERRUPTION,
+    }
+)
+
+
+def can_execute_scenario_change(change: ScenarioExecutionChange) -> bool:
+    """Return whether runtime owns concrete mechanics for this change."""
+    return change in EXECUTABLE_SCENARIO_CHANGES
+
+
 def resolve_automatic_execution_change(
     design: ValidatedTestDesign,
     category: CoverageCategory,

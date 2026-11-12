@@ -6,7 +6,8 @@ import pytest
 
 from yewo.artifacts import ARTIFACTS_DIRECTORY
 from yewo.devices import ResourceOwnership
-from yewo.observations import RedactionRegion
+from yewo.extensions import ExtensionRegistry
+from yewo.run_narration import NarrationPersistenceError, RunNarrator
 from yewo.runs import (
     RunStage,
     RunStart,
@@ -84,32 +85,61 @@ def test_success_runs_only_the_selected_workflow_and_closes_owned_resources(
     assert "terminal_artifact=run/terminal.json" in trace
 
 
-def test_long_workflow_reason_is_bounded_without_losing_its_terminal(tmp_path: Path) -> None:
+def test_long_workflow_reason_is_kept(tmp_path: Path) -> None:
+    """A model writes this reason, so its length says nothing about the run.
+
+    Bounding it here truncated the account of a terminal the run had already decided, and a
+    reason long enough to exceed the old bound failed the write outright.
+    """
     events: list[str] = []
+    reason = ("reason " * 300).strip()
     workflow = WorkflowStub(
         events,
-        outcome=RunWorkflowOutcome(RunTerminalCategory.INCOMPLETE, "reason " * 300),
+        outcome=RunWorkflowOutcome(RunTerminalCategory.INCOMPLETE, reason),
     )
 
     terminal = build_coordinator(events, workflow).run(run_request(tmp_path))
 
     assert terminal.category is RunTerminalCategory.INCOMPLETE
     assert terminal.stage is RunStage.EXECUTION
-    assert len(terminal.reason) == 1024
-    assert terminal.reason.endswith("...")
+    assert terminal.reason == reason
     assert (tmp_path / "runs/run_1/run/terminal.json").is_file()
 
 
 def test_session_policy_is_applied_before_workflow_execution(tmp_path: Path) -> None:
     events: list[str] = []
-    region = RedactionRegion(left=1, top=2, right=3, bottom=4)
-    workflow = WorkflowStub(events, recording_redaction_regions=(region,))
+    workflow = WorkflowStub(events)
 
     build_coordinator(events, workflow).run(run_request(tmp_path))
 
-    assert events.index("session.redaction:1") < events.index("session.open")
     assert events.index("workflow.prepare") < events.index("session.open")
     assert events.index("session.open") < events.index("workflow.execute")
+
+
+def test_extension_resources_overlap_startup_and_close_after_consumers(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    registry = ExtensionRegistry()
+
+    class Resource:
+        def start(self) -> None:
+            events.append("extension.start")
+
+        def close(self) -> None:
+            events.append("extension.close")
+
+    registry.add_run_resource(Resource())
+
+    build_coordinator(
+        events,
+        WorkflowStub(events),
+        extension_loader=lambda context: registry,
+    ).run(run_request(tmp_path))
+
+    assert events.index("extension.start") < events.index("workflow.prepare")
+    assert events.index("extension.start") < events.index("appium.acquire")
+    assert events.index("device.close") < events.index("extension.close")
 
 
 def test_selection_failure_is_a_setup_block_without_opening_resources(tmp_path: Path) -> None:
@@ -273,6 +303,36 @@ def test_terminal_write_failure_preserves_the_computed_terminal(tmp_path: Path) 
         coordinator.run(run_request(tmp_path))
 
     assert captured.value.terminal.category is RunTerminalCategory.COMPLETED
+
+
+def test_narration_failure_becomes_an_infrastructure_terminal(tmp_path: Path) -> None:
+    class FailingNarrator(RunNarrator):
+        def record(self, source: str, message: str) -> None:
+            del source, message
+
+        def trace(self, source: str, message: str) -> None:
+            del source, message
+
+        def sync(self) -> int | None:
+            return None
+
+        def wait_for_pending_sync(self) -> None:
+            raise NarrationPersistenceError("writer failed")
+
+        def close(self) -> None:
+            return
+
+    events: list[str] = []
+    terminal = build_coordinator(
+        events,
+        WorkflowStub(events),
+        narrator_factory=FailingNarrator,
+    ).run(run_request(tmp_path))
+
+    assert terminal.category is RunTerminalCategory.INFRASTRUCTURE_FAILURE
+    assert terminal.stage is RunStage.CLEANUP
+    assert terminal.reason == "Yewo could not persist run narration."
+    assert terminal.preceding_category is RunTerminalCategory.COMPLETED
 
 
 def test_external_resources_are_closed_without_releasing_them(tmp_path: Path) -> None:

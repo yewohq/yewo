@@ -62,6 +62,7 @@ from yewo.agent.replay.reconciliation.records import (
 from agent.discovery.support import agent_result, observation
 from agent.replay.test_procedure_budget import _procedure as compiled_procedure_fixture
 from models.support import build_model_profile
+from yewo.extensions import ExtensionRegistry
 
 
 class StubAgent:
@@ -84,8 +85,7 @@ class StubMemoryStore:
         del compatibility
         return self.existing
 
-    def save(self, memory, source_run_root):
-        del source_run_root
+    def save(self, memory):
         self.saved = memory
         return memory
 
@@ -155,6 +155,7 @@ def _context(tmp_path: Path) -> RunExecutionContext:
     return cast(
         RunExecutionContext,
         SimpleNamespace(
+            extensions=ExtensionRegistry(),
             workspace=SimpleNamespace(
                 root=tmp_path / "run",
                 start=SimpleNamespace(
@@ -211,10 +212,10 @@ def _workflow(
         "planner-primary",
         "auditor-primary",
         "recovery-primary",
-        "action-verifier-primary",
+        "proposal-verifier-primary",
+        "outcome-verifier-primary",
         "reconciler-primary",
         tmp_path / "memory",
-        lambda text: text,
         memory_store=cast(AppMemoryStore, memory_store),
         procedure_store=(
             procedure_store
@@ -404,7 +405,9 @@ def test_workflow_preserves_each_non_success_terminal(
         offset_seconds=1,
     )
     agent = StubAgent(agent_result(before, after, terminal=terminal))
-    workflow = _workflow(tmp_path, StubMemoryStore())
+    # The verifier does not overturn these: a terminal the final screen contradicts is covered by
+    # its own test below.
+    workflow = _workflow(tmp_path, StubMemoryStore(), StubGoalVerifier(False))
     monkeypatch.setattr(
         "yewo.agent.discovery.workflow.build_model_client",
         lambda *args, **kwargs: cast(ModelClient, object()),
@@ -426,3 +429,42 @@ def test_workflow_preserves_each_non_success_terminal(
 
     assert outcome.category is expected_category
     assert (tmp_path / "run/agent/discovery/result.json").is_file()
+
+
+def test_discovery_overturns_giving_up_on_a_finished_objective(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Discovery verified only DONE_REQUESTED, so a run that gave up was believed without any read
+    # of the screen it gave up on. Discovery runs first in yewo test, so that was the gate that
+    # mattered.
+    before = observation("obs_1", "0000000000000000")
+    after = observation(
+        "obs_2",
+        "1111111111111111",
+        predecessor_observation_id=before.observation_id,
+        offset_seconds=1,
+    )
+    agent = StubAgent(agent_result(before, after, terminal=AgentTerminalReason.CANNOT_PROGRESS))
+    verifier = StubGoalVerifier(True)
+    workflow = _workflow(tmp_path, StubMemoryStore(), verifier)
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.build_model_client",
+        lambda *args, **kwargs: cast(ModelClient, object()),
+    )
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.build_device_agent",
+        lambda *args, **kwargs: agent,
+    )
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.compile_completed_discovery",
+        lambda *args, **kwargs: _stub_compilation(),
+    )
+    monkeypatch.setattr(
+        "yewo.agent.discovery.workflow.ObservationStore.load_selected",
+        lambda unused, observation_ids: (before, after),
+    )
+
+    outcome = workflow.execute(_context(tmp_path), NeverInterrupted())
+
+    assert outcome.category is RunTerminalCategory.COMPLETED

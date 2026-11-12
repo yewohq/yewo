@@ -289,7 +289,7 @@ class CurrentScreenAnalysisManager:
             update={
                 "analysis_id": self._identifier_factory(),
                 "observation_id": observation.observation_id,
-                "screenshot_sha256": observation.redacted_screenshot.sha256,
+                "screenshot_sha256": observation.screenshot.sha256,
                 "presentation": observation.presentation_key,
             }
         )

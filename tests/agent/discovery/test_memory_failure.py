@@ -21,8 +21,8 @@ from agent.discovery.test_workflow import (
 
 
 class FailingMemoryStore(StubMemoryStore):
-    def save(self, memory, source_run_root):
-        del memory, source_run_root
+    def save(self, memory):
+        del memory
         raise AppMemoryStoreError("The test memory write failed.")
 
 

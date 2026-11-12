@@ -19,7 +19,7 @@ from yewo.agent import (
 )
 from yewo.agent.memory.store import load_discovery_memory
 from yewo.agent.actuation import ActionKind, ActionOutcomeSignal
-from yewo.artifacts import APP_MEMORY_SCHEMA_VERSION, ArtifactRetention
+from yewo.artifacts import APP_MEMORY_SCHEMA_VERSION
 from yewo.grounding import PixelPoint
 from yewo.agent.discovery import (
     AppMemoryBuilder,
@@ -66,13 +66,13 @@ def _memory(source_root: Path) -> tuple[MemoryCompatibility, AppMemory]:
 
 
 def _write_screenshot(source_root, source, png, screenshot_sha256):
-    screenshot = source.redacted_screenshot.model_copy(update={"sha256": screenshot_sha256})
+    screenshot = source.screenshot.model_copy(update={"sha256": screenshot_sha256})
     path = source_root / screenshot.path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(png)
     return source.model_copy(
         update={
-            "redacted_screenshot": screenshot,
+            "screenshot": screenshot,
             "screen_fingerprint": source.screen_fingerprint.model_copy(
                 update={"source_artifact_id": screenshot.artifact_id}
             ),
@@ -90,7 +90,7 @@ def _stored_application_root(store: AppMemoryStore) -> Path:
     return next((store.root / "applications").iterdir())
 
 
-def test_store_promotes_redacted_screenshots_and_loads_verified_memory(
+def test_snapshot_round_trips(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "run"
@@ -98,18 +98,11 @@ def test_store_promotes_redacted_screenshots_and_loads_verified_memory(
     store = AppMemoryStore(tmp_path / "shared")
 
     with narration_scope(RunNarrator(tmp_path)):
-        persisted = store.save(memory, source_root)
+        persisted = store.save(memory)
         loaded = store.load(compatibility)
 
     assert loaded == persisted
-    assert {
-        variant.screenshot.retention for screen in persisted.screens for variant in screen.variants
-    } == {ArtifactRetention.PERSISTENT}
-    assert all(
-        variant.screenshot.path.parts[0] == "screenshots"
-        for screen in persisted.screens
-        for variant in screen.variants
-    )
+    assert not (_stored_application_root(store) / "screenshots").exists()
     assert (_stored_application_root(store) / "memory.json").is_file()
     envelope = json.loads((_stored_application_root(store) / "memory.json").read_text())
     assert envelope["schema_version"] == APP_MEMORY_SCHEMA_VERSION
@@ -138,7 +131,7 @@ def test_store_rejects_a_changed_snapshot_digest(tmp_path: Path) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, source_root)
+    store.save(memory)
     path = _stored_application_root(store) / "memory.json"
     envelope = json.loads(path.read_text())
     envelope["memory_sha256"] = "0" * 64
@@ -154,7 +147,7 @@ def test_store_rejects_an_unsupported_schema_with_a_rebuild_instruction(
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, source_root)
+    store.save(memory)
     path = _stored_application_root(store) / "memory.json"
     envelope = json.loads(path.read_text())
     envelope["schema_version"] = "unsupported"
@@ -171,13 +164,37 @@ def test_store_rejects_an_unsupported_schema_with_a_rebuild_instruction(
         store.load(compatibility)
 
 
+def test_a_snapshot_from_an_older_schema_is_replaced_rather_than_failing_the_run(
+    tmp_path: Path,
+) -> None:
+    # Discovery ignores an unreadable snapshot and rebuilds, then save() re-read the same file to
+    # run its stale-source-run guard and raised. The rebuild could never reach the disk, so a
+    # schema bump failed every later run until someone deleted the directory by hand.
+    source_root = tmp_path / "run"
+    compatibility, memory = _memory(source_root)
+    store = AppMemoryStore(tmp_path / "shared")
+    with narration_scope(RunNarrator(tmp_path)):
+        store.save(memory)
+    snapshot = _stored_application_root(store) / "memory.json"
+    envelope = json.loads(snapshot.read_text())
+    envelope["schema_version"] = APP_MEMORY_SCHEMA_VERSION - 1
+    snapshot.write_text(json.dumps(envelope))
+
+    with narration_scope(RunNarrator(tmp_path)):
+        replaced = store.save(memory)
+        loaded = store.load(compatibility)
+
+    assert loaded == replaced
+    assert json.loads(snapshot.read_text())["schema_version"] == APP_MEMORY_SCHEMA_VERSION
+
+
 def test_discovery_ignores_unsupported_memory_schema_before_validating_changed_fields(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, source_root)
+    store.save(memory)
     path = _stored_application_root(store) / "memory.json"
     envelope = json.loads(path.read_text())
     envelope["schema_version"] = APP_MEMORY_SCHEMA_VERSION + 1
@@ -197,11 +214,11 @@ def test_discovery_ignores_unsupported_memory_schema_before_validating_changed_f
     assert load_discovery_memory(store, compatibility) is None
 
 
-def test_store_loads_a_digest_created_before_optional_memory_fields(tmp_path: Path) -> None:
+def test_store_rejects_memory_missing_a_current_required_field(tmp_path: Path) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, source_root)
+    store.save(memory)
     path = _stored_application_root(store) / "memory.json"
     envelope = json.loads(path.read_text())
     legacy_memory = envelope["memory"]
@@ -215,10 +232,8 @@ def test_store_loads_a_digest_created_before_optional_memory_fields(tmp_path: Pa
     envelope["memory_sha256"] = sha256(content).hexdigest()
     path.write_text(json.dumps(envelope))
 
-    loaded = store.load(compatibility)
-
-    assert loaded is not None
-    assert loaded.unsuccessful_attempts == ()
+    with pytest.raises(AppMemoryStoreError, match="invalid"):
+        store.load(compatibility)
 
 
 def test_store_sorts_outcome_signals_before_hashing_memory(tmp_path: Path) -> None:
@@ -237,7 +252,7 @@ def test_store_sorts_outcome_signals_before_hashing_memory(tmp_path: Path) -> No
     memory = memory.model_copy(update={"transitions": (transition,)})
     store = AppMemoryStore(tmp_path / "shared")
 
-    store.save(memory, source_root)
+    store.save(memory)
     envelope = json.loads((_stored_application_root(store) / "memory.json").read_text())
 
     assert envelope["memory"]["transitions"][0]["outcome_signals"] == [
@@ -272,7 +287,7 @@ def test_store_invalidates_legacy_target_rejection_evidence_on_load(tmp_path: Pa
     memory = AppMemory.model_validate({**memory.model_dump(), "unsuccessful_attempts": (attempt,)})
     store = AppMemoryStore(tmp_path / "shared")
 
-    persisted = store.save(memory, source_root)
+    persisted = store.save(memory)
     loaded = store.load(compatibility)
 
     assert persisted.unsuccessful_attempts == ()
@@ -280,40 +295,30 @@ def test_store_invalidates_legacy_target_rejection_evidence_on_load(tmp_path: Pa
     assert loaded.unsuccessful_attempts == ()
 
 
-def test_store_rejects_a_changed_persistent_screenshot(tmp_path: Path) -> None:
-    source_root = tmp_path / "run"
-    compatibility, memory = _memory(source_root)
-    store = AppMemoryStore(tmp_path / "shared")
-    persisted = store.save(memory, source_root)
-    screenshot = persisted.screens[0].variants[0].screenshot
-    (_stored_application_root(store) / screenshot.path).write_bytes(b"changed")
-
-    with pytest.raises(AppMemoryStoreError, match="digest"):
-        store.load(compatibility)
-
-
 def test_store_rejects_a_stale_memory_replacement(tmp_path: Path) -> None:
     source_root = tmp_path / "run"
     compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    persisted = store.save(memory, source_root)
+    persisted = store.save(memory)
     stale = persisted.model_copy(update={"source_run_ids": ("run_2",)})
 
     with pytest.raises(AppMemoryStoreError, match="stale source runs"):
-        store.save(stale, source_root)
+        store.save(stale)
 
 
-def test_store_removes_screenshots_no_longer_referenced_by_the_snapshot(
-    tmp_path: Path,
-) -> None:
+def test_save_writes_no_screenshot(tmp_path: Path) -> None:
+    """Recognition compares fingerprints, so a retained image has no reader.
+
+    Copying one made a run-scoped screenshot permanent, which outlived the retention the run
+    captured it under.
+    """
     source_root = tmp_path / "run"
-    unused_compatibility, memory = _memory(source_root)
+    _compatibility, memory = _memory(source_root)
     store = AppMemoryStore(tmp_path / "shared")
-    persisted = store.save(memory, source_root)
+
+    with narration_scope(RunNarrator(tmp_path)):
+        store.save(memory)
+
     application_root = _stored_application_root(store)
-    orphan = application_root / "screenshots/orphan.png"
-    orphan.write_bytes(b"obsolete")
-
-    store.save(persisted, source_root)
-
-    assert not orphan.exists()
+    assert not (application_root / "screenshots").exists()
+    assert list(application_root.rglob("*.png")) == []

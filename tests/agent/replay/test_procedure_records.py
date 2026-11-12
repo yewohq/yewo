@@ -19,7 +19,7 @@ def test_evidence_state_representative_must_belong_to_the_state() -> None:
         EvidenceState(
             state_id="state-1",
             representative_observation_id="observation-missing",
-            representative_screenshot=observations()[0].redacted_screenshot,
+            representative_screenshot=observations()[0].screenshot,
             observation_ids=("observation-1",),
             presentations=(presentation,),
         )

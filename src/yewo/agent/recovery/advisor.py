@@ -19,7 +19,7 @@ from yewo.agent.planning.records import (
     planning_progress_context,
 )
 from yewo.agent.planning.history import (
-    RECENT_PLANNING_HISTORY_LIMIT,
+    split_planning_history,
     planning_history_context,
     planning_history_summary,
 )
@@ -161,8 +161,7 @@ class ModelRecoveryAdvisor:
             raise ValueError("A recovery assessment requires application-failure evidence.")
         pre_failure_observation = planning_request.observation
         progress_context = planning_request.progress_context
-        earlier_history = planning_request.history[:-RECENT_PLANNING_HISTORY_LIMIT]
-        recent_history = planning_request.history[-RECENT_PLANNING_HISTORY_LIMIT:]
+        earlier_history, recent_history = split_planning_history(planning_request.history)
         context = {
             "objective": planning_request.objective,
             "known_facts": planning_request.known_facts,
@@ -206,9 +205,9 @@ class ModelRecoveryAdvisor:
                             + json.dumps(context, sort_keys=True, separators=(",", ":"))
                             + "\nPre-failure screenshot:"
                         ),
-                        ImageModelContent(screenshot=pre_failure_observation.redacted_screenshot),
+                        ImageModelContent(screenshot=pre_failure_observation.screenshot),
                         TextModelContent(text="Fresh post-relaunch screenshot:"),
-                        ImageModelContent(screenshot=recovery_observation.redacted_screenshot),
+                        ImageModelContent(screenshot=recovery_observation.screenshot),
                     ),
                 ),
             ),
@@ -216,8 +215,7 @@ class ModelRecoveryAdvisor:
                 "recovery-decision-v1",
                 RecoveryDecision.model_json_schema(),
             ),
-            sensitivity=recovery_observation.redacted_screenshot.sensitivity,
-            retention=recovery_observation.redacted_screenshot.retention,
+            retention=recovery_observation.screenshot.retention,
         )
 
 
@@ -254,7 +252,7 @@ def _progress_context(context: TaskProgressContext | None) -> dict[str, object] 
 def _failed_step_context(step: AgentStep) -> dict[str, object]:
     literal = step.proposal.text.value if isinstance(step.proposal.text, LiteralText) else None
     proposal = step.proposal.model_dump(mode="json", exclude={"text"})
-    proposal = _redact_literal_from_fields(
+    proposal = _withhold_literal_from_fields(
         proposal,
         literal,
         ("target_expression", "destination_expression", "expected_outcome", "reason"),
@@ -265,21 +263,21 @@ def _failed_step_context(step: AgentStep) -> dict[str, object]:
     authorization = None
     if step.authorization is not None:
         authorization = step.authorization.model_dump(mode="json", exclude={"text"})
-        authorization = _redact_literal_from_fields(authorization, literal, ("expected_outcome",))
+        authorization = _withhold_literal_from_fields(authorization, literal, ("expected_outcome",))
         if step.authorization.text is not None:
             assert authorization is not None
             authorization["text_source"] = step.authorization.text.source
-    receipt = _redact_literal_from_fields(
+    receipt = _withhold_literal_from_fields(
         step.receipt.model_dump(mode="json") if step.receipt else None,
         literal,
         ("reason",),
     )
-    outcome = _redact_literal_from_fields(
+    outcome = _withhold_literal_from_fields(
         step.outcome.model_dump(mode="json") if step.outcome else None,
         literal,
         ("reason",),
     )
-    application_failure = _redact_literal_from_fields(
+    application_failure = _withhold_literal_from_fields(
         step.application_failure.model_dump(mode="json") if step.application_failure else None,
         literal,
         ("summary",),
@@ -304,20 +302,23 @@ def _failed_step_context(step: AgentStep) -> dict[str, object]:
     return context
 
 
-def _redact_literal_from_fields(
+def _withhold_literal_from_fields(
     context: dict[str, object] | None,
     literal: str | None,
     field_names: tuple[str, ...],
 ) -> dict[str, object] | None:
-    """Redact literal text only from named prose fields, never identifiers or numbers."""
+    """Keep a typed literal out of named prose fields, never identifiers or numbers.
+
+    The prompt is composed here, so the value is never put in rather than taken out again.
+    """
     if context is None or literal is None:
         return context
-    redacted = dict(context)
+    withheld = dict(context)
     for field_name in field_names:
-        value = redacted.get(field_name)
+        value = withheld.get(field_name)
         if isinstance(value, str):
-            redacted[field_name] = value.replace(literal, "[typed value]")
-    return redacted
+            withheld[field_name] = value.replace(literal, "[typed value]")
+    return withheld
 
 
 def _grounding_context(
@@ -343,7 +344,7 @@ def _grounding_context(
         "reason": evidence.result.reason,
         "resolution": evidence.result.resolution.model_dump(mode="json"),
     }
-    return _redact_literal_from_fields(
+    return _withhold_literal_from_fields(
         context,
         literal,
         ("expression", "reason"),

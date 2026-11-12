@@ -3,6 +3,8 @@
 from yewo.agent import AgentTask, AgentTerminalReason
 from yewo.agent.actuation import ActionKind
 from yewo.agent.replay import (
+    ReplayProcedure,
+    compile_replay_procedure,
     CompilerCheck,
     CompilerRefusal,
     EvidenceDocument,
@@ -98,7 +100,7 @@ def evidence() -> EvidenceDocument:
     save_analysis = CurrentScreenAnalysis(
         analysis_id="analysis-save",
         observation_id=observed[3].observation_id,
-        screenshot_sha256=observed[3].redacted_screenshot.sha256,
+        screenshot_sha256=observed[3].screenshot.sha256,
         presentation=observed[3].presentation_key,
         screen_summary="Visible form with save control.",
         elements=(
@@ -111,7 +113,6 @@ def evidence() -> EvidenceDocument:
                 ),
                 confidence=ScreenElementConfidence.HIGH,
                 workflow_role=ScreenWorkflowRole.ADVANCE_STAGE,
-                evidence="A primary action control is visible.",
             ),
         ),
     )
@@ -148,3 +149,10 @@ def response(
 def checks(refusal: CompilerRefusal) -> set[CompilerCheck]:
     """Return the checks reported by one compiler refusal."""
     return {reason.check for reason in refusal.reasons}
+
+
+def procedure() -> ReplayProcedure:
+    """Compile the shared evidence into one replay procedure."""
+    compiled = compile_replay_procedure(evidence(), response())
+    assert isinstance(compiled, ReplayProcedure)
+    return compiled

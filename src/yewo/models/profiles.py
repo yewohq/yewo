@@ -15,7 +15,7 @@ from litellm.utils import validate_environment
 
 from yewo.artifacts import RecordIdentifier
 from yewo.models.errors import ModelInputError
-from yewo.models.records import ModelMessageRole, ModelRole
+from yewo.models.records import ModelMessageRole, ModelReasoningEffort, ModelRole
 
 
 MINIMUM_COMPLETION_TOKENS = 8_192
@@ -76,7 +76,17 @@ class ModelGenerationSettings(BaseModel):
     top_p: float | None = Field(default=None, gt=0, le=1)
     max_completion_tokens: int = Field(ge=MINIMUM_COMPLETION_TOKENS)
     reasoning: ModelReasoningMode = ModelReasoningMode.PROVIDER_DEFAULT
+    # How hard a role that keeps reasoning may think before answering. Left unset, the provider
+    # decides, and a provider that reasons without a bound can spend a whole completion budget
+    # before the answer starts.
+    reasoning_effort: ModelReasoningEffort | None = None
     seed: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_reasoning(self) -> Self:
+        if self.reasoning is ModelReasoningMode.DISABLED and self.reasoning_effort is not None:
+            raise ValueError("A role with reasoning disabled cannot also name an effort.")
+        return self
 
 
 class ModelRetryPolicy(BaseModel):
@@ -100,10 +110,17 @@ class ModelRetryPolicy(BaseModel):
 
 
 _MINIMUM_ROLE_IMAGES = {
+    ModelRole.OUTCOME_VERIFIER: 2,
     ModelRole.RECOVERY_ADVISOR: 2,
     ModelRole.SCREEN_ANALYZER: 1,
     ModelRole.TASK_PLANNER: 2,
     ModelRole.TEST_DESIGNER: 2,
+}
+_PROFILE_ROLE_COMPATIBILITY = {
+    ModelRole.AUDITOR: frozenset({ModelRole.GOAL_VERIFIER, ModelRole.SCENARIO_AUDITOR}),
+    ModelRole.REPLAY_PREPARER: frozenset(
+        {ModelRole.OBJECTIVE_MATCHER, ModelRole.REPLAY_RECONCILER}
+    ),
 }
 _CREDENTIAL_ENVIRONMENT_LOCK = Lock()
 
@@ -122,6 +139,9 @@ class ModelImageConstraints(BaseModel):
     max_image_bytes: int = Field(gt=0)
     max_width_px: int = Field(gt=0)
     max_height_px: int = Field(gt=0)
+    # Providers bill submitted pixels but work at their own lower resolution. Leave unset for a
+    # role that reads coordinates back out of the image it was sent.
+    max_long_edge_px: int | None = Field(default=None, gt=0)
 
 
 class ModelProfile(BaseModel):
@@ -153,9 +173,14 @@ class ModelProfile(BaseModel):
 
     @model_validator(mode="after")
     def _validate_role_image_capacity(self) -> Self:
-        required = _MINIMUM_ROLE_IMAGES.get(self.role)
-        if required is not None and self.images.max_images < required:
-            raise ValueError(f"A {self.role.value} profile must accept at least {required} images.")
+        served_roles = {
+            self.role,
+            *_PROFILE_ROLE_COMPATIBILITY.get(self.role, frozenset()),
+        }
+        for role in served_roles:
+            required = _MINIMUM_ROLE_IMAGES.get(role)
+            if required is not None and self.images.max_images < required:
+                raise ValueError(f"A {role.value} profile must accept at least {required} images.")
         return self
 
 
@@ -179,7 +204,8 @@ class ModelProfileRegistry(BaseModel):
         if not matching:
             raise LookupError(f"The model profile is not configured: {profile_id}")
         profile = matching[0]
-        if profile.role is not role:
+        compatible_roles = _PROFILE_ROLE_COMPATIBILITY.get(profile.role, frozenset())
+        if profile.role is not role and role not in compatible_roles:
             raise LookupError(f"The model profile {profile_id} cannot serve the {role.value} role.")
         return profile
 

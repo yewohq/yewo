@@ -10,7 +10,7 @@ from yewo.agent.discovery import DiscoveryObjective, DiscoveryRequest
 from yewo.agent.discovery.conclusion import load_discovery_result
 from yewo.agent.discovery.workflow import DiscoveryWorkflow
 from yewo.agent.memory.records import AppMemory, build_memory_compatibility
-from yewo.agent.memory.store import AppMemoryStore
+from yewo.agent.memory.store import AppMemoryStore, load_discovery_memory
 from yewo.agent.runtime.records import AgentResult, AgentTask
 from yewo.agent.replay.procedure.execution import execute_compiled_procedure
 from yewo.agent.replay.procedure.records import ProcedureReplaySetup, ProcedureResetMethod
@@ -78,12 +78,10 @@ class ScenarioTestWorkflow:
     def __init__(
         self,
         configuration: YewoTestConfiguration,
-        scrub_text: Callable[[str], str],
     ) -> None:
         self._configuration = configuration
-        self._scrub_text = scrub_text
         self._value_resolver = _declared_value_resolver(configuration)
-        self._discovery = _discovery_workflow(configuration, scrub_text, self._value_resolver)
+        self._discovery = _discovery_workflow(configuration, self._value_resolver)
         self.generation: ScenarioGenerationResult | None = None
         self.executions: tuple[ScenarioCoordinationResult, ...] = ()
         self.audits: dict[str, ScenarioAuditRecord] = {}
@@ -115,7 +113,7 @@ class ScenarioTestWorkflow:
             context.workspace.start.request.application,
         )
         memory_store = AppMemoryStore(self._configuration.memory_root)
-        memory = memory_store.load(compatibility)
+        memory = load_discovery_memory(memory_store, compatibility)
         procedure_store = CompiledProcedureStore(self._configuration.memory_root)
         bundle = procedure_store.load(
             compatibility,
@@ -144,8 +142,8 @@ class ScenarioTestWorkflow:
             context.workspace.root,
             context.workspace.start.run_id,
             self._configuration.model_profiles,
-            self._scrub_text,
-            bool(self._configuration.redaction_regions),
+            tuple(self._configuration.journey.declared_values),
+            context.extensions,
         )
         try:
             design = TestDesignerService(
@@ -234,14 +232,16 @@ class ScenarioTestWorkflow:
                 narrator=context.workspace.narrator,
             ),
             session=context.session,
+            extensions=context.extensions,
+            declared_values=context.declared_values,
         )
         procedure_store.stage_screenshots(bundle, child_root)
         scenario_model_client = build_model_client(
             child_root,
             context.workspace.start.run_id,
             self._configuration.model_profiles,
-            self._scrub_text,
-            bool(self._configuration.redaction_regions),
+            tuple(self._configuration.journey.declared_values),
+            context.extensions,
         )
         budget_bank = ScenarioBudgetBank(self._configuration.scenario_mode_policy)
         coordinator = ScenarioCoordinator(
@@ -381,11 +381,11 @@ class _CompiledRouteExecutor:
             planner_profile_id=self._configuration.planner_profile_id,
             recovery_profile_id=self._configuration.recovery_profile_id,
             auditor_profile_id=self._configuration.auditor_profile_id,
-            action_verifier_profile_id=self._configuration.action_verifier_profile_id,
+            proposal_verifier_profile_id=self._configuration.proposal_verifier_profile_id,
+            outcome_verifier_profile_id=self._configuration.outcome_verifier_profile_id,
             screen_analyzer_profile_id=self._configuration.screen_analyzer_profile_id,
             auditor_image_constraints=auditor_profile.images,
             memory=self._memory,
-            redaction_regions=self._configuration.redaction_regions,
             declared_value_resolver=self._value_resolver,
         )
         self._budget_bank.record(
@@ -423,9 +423,9 @@ class _BudgetedScenarioTaskExecutor:
             self._budget_bank.require_policy(),
             self._interruption,
             recovery_profile_id=self._configuration.recovery_profile_id,
-            action_verifier_profile_id=self._configuration.action_verifier_profile_id,
+            proposal_verifier_profile_id=self._configuration.proposal_verifier_profile_id,
+            outcome_verifier_profile_id=self._configuration.outcome_verifier_profile_id,
             screen_analyzer_profile_id=self._configuration.screen_analyzer_profile_id,
-            redaction_regions=self._configuration.redaction_regions,
             declared_value_resolver=self._value_resolver,
             planning_memory=self._memory,
             grounding_memory=self._memory,
@@ -435,7 +435,6 @@ class _BudgetedScenarioTaskExecutor:
 
 def _discovery_workflow(
     configuration: YewoTestConfiguration,
-    scrub_text: Callable[[str], str],
     value_resolver: Callable[[str], str],
 ) -> DiscoveryWorkflow:
     journey = configuration.journey
@@ -457,12 +456,11 @@ def _discovery_workflow(
         configuration.planner_profile_id,
         configuration.auditor_profile_id,
         configuration.recovery_profile_id,
-        configuration.action_verifier_profile_id,
+        configuration.proposal_verifier_profile_id,
+        configuration.outcome_verifier_profile_id,
         configuration.replay_preparation_profile_id,
         configuration.memory_root,
-        scrub_text,
         screen_analyzer_profile_id=configuration.screen_analyzer_profile_id,
-        redaction_regions=configuration.redaction_regions,
         declared_value_resolver=value_resolver,
         require_reusable_evidence=True,
     )

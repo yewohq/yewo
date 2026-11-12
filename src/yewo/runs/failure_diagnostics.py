@@ -7,24 +7,51 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from yewo.artifacts import ARTIFACTS_DIRECTORY
+from yewo.extensions import ExtensionDiagnosticError
 from yewo.host import LOCK_FILE_SUFFIX
 
 
 _MAXIMUM_CHAINED_ERRORS = 5
 
 
+def _chained_errors(error: BaseException) -> list[BaseException]:
+    """Walk one bounded cause chain, so every renderer below reads the same errors."""
+    chain: list[BaseException] = []
+    current: BaseException | None = error
+    while current is not None and len(chain) < _MAXIMUM_CHAINED_ERRORS:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def error_chain(error: BaseException) -> str:
     """Render the chained error type names without their messages."""
-    names: list[str] = []
-    current: BaseException | None = error
-    while current is not None and len(names) < _MAXIMUM_CHAINED_ERRORS:
-        names.append(type(current).__name__)
-        current = current.__cause__ or current.__context__
-    return "<-".join(names)
+    return "<-".join(type(item).__name__ for item in _chained_errors(error))
+
+
+def authored_detail(error: BaseException) -> str:
+    """Render the messages Yewo wrote itself, skipping any a dependency produced.
+
+    A type name alone does not identify a failure. Yewo raises one error class from many places
+    for different reasons, so the trace names a class without naming the check that refused the
+    run. A Yewo message describes the broken expectation and at most names configuration. A
+    message from outside Yewo may quote whatever the failing call handled. Callers decide where
+    this is safe. A few Yewo messages do carry run detail, so device selection reports its class
+    alone and uses its own refusal text instead.
+    """
+    messages = [
+        message
+        for item in _chained_errors(error)
+        if (type(item).__module__.startswith("yewo.") or isinstance(item, ExtensionDiagnosticError))
+        and (message := str(item).strip())
+    ]
+    if not messages:
+        return ""
+    return f" said={' <- '.join(dict.fromkeys(messages))}"
 
 
 def validation_detail(error: BaseException) -> str:
-    """Render validation failures without copying validated inputs into the trace."""
+    """Render validation failures without copying the checked inputs into the trace."""
     if not isinstance(error, ValidationError):
         return ""
     failures = (

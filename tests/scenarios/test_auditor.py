@@ -5,11 +5,10 @@ from threading import Barrier
 
 from PIL import Image
 
-from yewo.artifacts import ArtifactRetention, ArtifactSensitivity
+from yewo.artifacts import ArtifactRetention
 from yewo.models import ModelImageConstraints, ModelRole
 from yewo.observations import (
     ObservationStore,
-    RedactionProvenance,
     ScreenshotStore,
 )
 from yewo.project_config import CoverageCategory
@@ -69,21 +68,14 @@ def _selected_consistency_scenario():
 def _persist_final_observation(root) -> None:
     output = BytesIO()
     Image.new("RGB", (200, 400), "white").save(output, format="PNG")
-    reference = ScreenshotStore(root).persist_redacted(
+    reference = ScreenshotStore(root).persist(
         output.getvalue(),
-        sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
         retention=ArtifactRetention.RUN,
-        redaction=RedactionProvenance(
-            policy_id="test-redaction",
-            region_count=0,
-            region_set_sha256="a" * 64,
-            input_sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
-        ),
     )
     final = observations()[-1]
     final = final.model_copy(
         update={
-            "redacted_screenshot": reference,
+            "screenshot": reference,
             "screen_fingerprint": final.screen_fingerprint.model_copy(
                 update={"source_artifact_id": reference.artifact_id}
             ),
@@ -132,7 +124,7 @@ def test_completed_scenario_receives_an_independent_model_verdict(tmp_path) -> N
 
     assert audit.verdict is ScenarioAuditVerdict.PASSED
     assert {item.status for item in audit.obligations} == {AuditObligationStatus.SATISFIED}
-    assert model.requests[0].role is ModelRole.AUDITOR
+    assert model.requests[0].role is ModelRole.SCENARIO_AUDITOR
     assert model.requests[0].response_contract is not None
     assert model.requests[0].response_contract.name == "scenario-audit-v1"
     assert auditor.model_call_count == 1
@@ -371,7 +363,7 @@ def test_oversized_obligation_is_unverified_instead_of_auditor_error(
             auditor_evidence.GoalEvidenceSource(
                 observation_id=f"observation_{index}",
                 labels=("Current-run evidence.",),
-                screenshot=observation.redacted_screenshot,
+                screenshot=observation.screenshot,
             )
             for index in range(11)
         ),
@@ -462,7 +454,7 @@ def test_visual_batches_run_in_parallel_and_one_render_error_fails(
             auditor_evidence.GoalEvidenceSource(
                 observation_id=f"visual_observation_{index}",
                 labels=(f"Visual surface {index}.",),
-                screenshot=observation.redacted_screenshot,
+                screenshot=observation.screenshot,
             )
             for index in range(11)
         ),

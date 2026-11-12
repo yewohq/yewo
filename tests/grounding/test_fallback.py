@@ -44,7 +44,6 @@ class SequencedModelClient:
                     disposition=disposition,
                 ),
             ),
-            sensitivity=request.sensitivity,
             retention=request.retention,
         )
         self.model_responses.append(response)

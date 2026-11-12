@@ -33,6 +33,7 @@ from yewo.runs import (
     RunExecutionContext,
     RunTerminalCategory,
 )
+from yewo.extensions import ExtensionRegistry
 
 
 class StubAgent:
@@ -112,9 +113,9 @@ def _workflow(
         "planner-primary",
         "auditor-primary",
         "recovery-primary",
-        "action-verifier-primary",
+        "proposal-verifier-primary",
+        "outcome-verifier-primary",
         "reconciler-primary",
-        lambda text: text,
         memory_store=cast(AppMemoryStore, memory_store) if memory_store else None,
         declared_value_resolver=declared_value_resolver,
     )
@@ -124,6 +125,7 @@ def _context(root: Path = Path("run-root")) -> RunExecutionContext:
     return cast(
         RunExecutionContext,
         SimpleNamespace(
+            extensions=ExtensionRegistry(),
             session=SimpleNamespace(application=object()),
             workspace=SimpleNamespace(
                 root=root,
@@ -332,3 +334,124 @@ def test_declared_value_task_enters_discovery_by_name_without_exposing_value(
     assert "actual-secret-value" not in request.model_dump_json()
     resolver = cast(object, captured["resolver"])
     assert callable(resolver)
+
+
+def test_a_task_declaring_values_raises_the_run_artifact_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ceiling is chosen once per run, before any screen is captured, so a workflow that
+    # forgets to hand over its declared values rejects the first masked screenshot mid-journey.
+    recorded: dict[str, object] = {}
+
+    def record(*arguments: object, **unused: object) -> ModelClient:
+        recorded["names"] = arguments[3]
+        return cast(ModelClient, object())
+
+    monkeypatch.setattr(
+        "yewo.agent.workflow.build_device_agent",
+        lambda *args, **kwargs: StubAgent(AgentTerminalReason.APPLICATION_INACTIVE),
+    )
+    monkeypatch.setattr("yewo.agent.workflow.build_model_client", record)
+    task = AgentTask(
+        objective="Sign in with the declared password.",
+        completion_conditions=("The account is signed in.",),
+        declared_value_names=("password",),
+    )
+
+    _workflow(task=task, declared_value_resolver=lambda unused: "hunter2").execute(
+        _context(), NeverInterrupted()
+    )
+
+    assert cast(tuple[str, ...], recorded["names"]) == ("password",)
+
+
+def test_a_run_with_an_outcome_verifier_profile_builds_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The verifier is only useful if the workflow hands its profile to composition; a profile
+    # that never reaches build_device_agent leaves the check silently absent for the whole run.
+    recorded: dict[str, object] = {}
+
+    def record(*args: object, **kwargs: object) -> object:
+        recorded.update(kwargs)
+        return StubAgent(AgentTerminalReason.APPLICATION_INACTIVE)
+
+    monkeypatch.setattr("yewo.agent.workflow.build_device_agent", record)
+    monkeypatch.setattr(
+        "yewo.agent.workflow.build_model_client",
+        lambda *args, **kwargs: cast(ModelClient, object()),
+    )
+
+    _workflow().execute(_context(), NeverInterrupted())
+
+    assert recorded["outcome_verifier_profile_id"] == "outcome-verifier-primary"
+
+
+def _verifying_workflow(monkeypatch: pytest.MonkeyPatch, terminal, satisfied: bool):
+    """Run one workflow to a terminal and record what the verifier was asked."""
+    asked: list[str] = []
+
+    class RecordingVerifier:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        def verify(self, objective_id, objective, conditions, observation, **kwargs):
+            del objective, conditions, kwargs
+            asked.append(observation.observation_id)
+            return GoalVerification(
+                verification_id="verification-1",
+                objective_id=objective_id,
+                final_observation_id=observation.observation_id,
+                satisfied=satisfied,
+                reason="The screen shows the record.",
+            )
+
+    monkeypatch.setattr(
+        "yewo.agent.workflow.build_device_agent", lambda *a, **k: StubAgent(terminal)
+    )
+    monkeypatch.setattr(
+        "yewo.agent.workflow.build_model_client", lambda *a, **k: cast(ModelClient, object())
+    )
+    monkeypatch.setattr("yewo.agent.workflow.ModelGoalVerifier", RecordingVerifier)
+    monkeypatch.setattr(
+        "yewo.agent.workflow.ObservationStore.load_selected",
+        lambda unused, observation_ids: (SimpleNamespace(observation_id="observation-1"),),
+    )
+    return asked
+
+
+def test_giving_up_is_checked_against_the_screen_it_gave_up_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Verifying only success left a claim of failure as the planner's word against nothing.
+    asked = _verifying_workflow(monkeypatch, AgentTerminalReason.CANNOT_PROGRESS, satisfied=False)
+
+    with narration_scope(RunNarrator(tmp_path)):
+        outcome = _workflow().execute(_context(tmp_path), NeverInterrupted())
+
+    assert asked == ["observation-1"]
+    assert outcome.category is RunTerminalCategory.INCOMPLETE
+    assert (tmp_path / "agent/goal-verification.json").is_file()
+
+
+def test_a_run_that_gave_up_on_a_finished_task_is_overturned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _verifying_workflow(monkeypatch, AgentTerminalReason.CANNOT_PROGRESS, satisfied=True)
+
+    with narration_scope(RunNarrator(tmp_path)):
+        outcome = _workflow().execute(_context(tmp_path), NeverInterrupted())
+
+    assert outcome.category is RunTerminalCategory.COMPLETED
+
+
+def test_an_unverified_terminal_is_still_recorded_without_a_verifier_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked = _verifying_workflow(monkeypatch, AgentTerminalReason.DEVICE_REFUSED, satisfied=True)
+
+    with narration_scope(RunNarrator(tmp_path)):
+        outcome = _workflow().execute(_context(tmp_path), NeverInterrupted())
+
+    assert asked == []
+    assert outcome.category is RunTerminalCategory.INCOMPLETE

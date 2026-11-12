@@ -32,7 +32,7 @@ def test_completed_procedure_auditor_receives_transition_evidence(
         procedure_index=2,
         source_step=3,
         observation_id=live_observation.observation_id,
-        screenshot_artifact_id=live_observation.redacted_screenshot.artifact_id,
+        screenshot_artifact_id=live_observation.screenshot.artifact_id,
         screen_fingerprint=live_observation.screen_fingerprint,
     )
     received_milestones = ()

@@ -20,6 +20,7 @@ from yewo.agent.memory.runtime_writeback import (
     MemoryWritebackReport,
     write_back_discovery_knowledge,
 )
+from yewo.artifacts.schema_versions import APP_MEMORY_SCHEMA_VERSION
 from yewo.agent.memory.store import AppMemoryStore, AppMemoryStoreError
 from yewo.agent.replay.procedure.records import ProcedureReplayResult, ProcedureReplayTerminal
 from yewo.artifacts import EvidenceApplicationIdentity
@@ -103,7 +104,7 @@ def _with_procedure_replay(
 def test_terminal_writeback_applies_timing_and_persists_report(tmp_path: Path) -> None:
     compatibility, memory = _memory(tmp_path)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, tmp_path)
+    store.save(memory)
     result = _run_evidence(tmp_path)
 
     report = write_back_discovery_knowledge(
@@ -127,10 +128,36 @@ def test_terminal_writeback_applies_timing_and_persists_report(tmp_path: Path) -
     assert persisted == report
 
 
+def test_writeback_skips_a_snapshot_from_an_older_schema_instead_of_failing_the_run(
+    tmp_path: Path,
+) -> None:
+    # This raised out of write-back and the coordinator classified the whole run an
+    # infrastructure failure, discarding 75 steps of completed discovery evidence because a
+    # derived cache could not be read.
+    compatibility, memory = _memory(tmp_path)
+    store = AppMemoryStore(tmp_path / "shared")
+    store.save(memory)
+    snapshot = next((store.root / "applications").iterdir()) / "memory.json"
+    envelope = json.loads(snapshot.read_text())
+    envelope["schema_version"] = APP_MEMORY_SCHEMA_VERSION - 1
+    snapshot.write_text(json.dumps(envelope))
+
+    report = write_back_discovery_knowledge(
+        tmp_path,
+        "run_2",
+        _run_evidence(tmp_path),
+        store,
+        compatibility,
+        clock=lambda: _NOW,
+    )
+
+    assert report.disposition is MemoryWritebackDisposition.SKIPPED
+
+
 def test_duplicate_terminal_writeback_reports_skipped(tmp_path: Path) -> None:
     compatibility, memory = _memory(tmp_path)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, tmp_path)
+    store.save(memory)
     result = _run_evidence(tmp_path)
 
     first = write_back_discovery_knowledge(
@@ -159,7 +186,7 @@ def test_duplicate_terminal_writeback_reports_skipped(tmp_path: Path) -> None:
 def test_duplicate_writeback_does_not_persist_new_replay_graph(tmp_path: Path) -> None:
     compatibility, memory = _memory(tmp_path)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, tmp_path)
+    store.save(memory)
     result = _run_evidence(tmp_path)
     first_result = _with_procedure_replay(
         result,
@@ -225,7 +252,7 @@ def test_writeback_failure_is_reported_without_raising(
 ) -> None:
     compatibility, memory = _memory(tmp_path)
     store = AppMemoryStore(tmp_path / "shared")
-    store.save(memory, tmp_path)
+    store.save(memory)
     result = _run_evidence(tmp_path)
 
     def fail_update(*args, **kwargs):

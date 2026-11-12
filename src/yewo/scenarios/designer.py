@@ -20,7 +20,6 @@ from yewo.agent.actuation import DeclaredValueReference
 from yewo.agent.replay.reconciliation.records import EvidenceDocument, ReplayProcedure
 from yewo.artifacts import (
     ArtifactRetention,
-    ArtifactSensitivity,
     RecordIdentifier,
     new_record_identifier,
 )
@@ -197,7 +196,6 @@ class TestDesignerService:
                 "test-designer-output-v1",
                 TestDesignerOutput.model_json_schema(),
             ),
-            sensitivity=ArtifactSensitivity.DEVICE_CONTENT,
             retention=ArtifactRetention.RUN,
         )
         response = self._model_client.complete(
@@ -308,8 +306,7 @@ def _validate_output_evidence(
         if not set(interpretation.surface_refs).issubset(known_surface_refs):
             raise ValueError("TestDesigner cannot reference an unknown test surface.")
         if interpretation.category is CoverageCategory.PERMISSION and any(
-            context.surfaces_by_ref[surface_ref].kind
-            is not ScenarioSurfaceKind.SYSTEM_INTERACTION
+            context.surfaces_by_ref[surface_ref].kind is not ScenarioSurfaceKind.SYSTEM_INTERACTION
             for surface_ref in interpretation.surface_refs
         ):
             raise ValueError("Permission testing requires only native system-interaction surfaces.")

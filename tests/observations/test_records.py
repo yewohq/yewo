@@ -5,14 +5,11 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from yewo.artifacts import ArtifactSensitivity
 from yewo.devices import SystemRegionKind
 from yewo.observations import (
     Observation,
-    RedactionProvenance,
     ScreenFingerprint,
     ScreenRegion,
-    ScreenshotRedactionState,
     ScreenshotReference,
 )
 from observations.factories import build_observation, build_screenshot
@@ -42,26 +39,6 @@ def test_screenshot_reference_rejects_unsafe_paths() -> None:
                 "path": "/tmp/screenshot.png",
             }
         )
-
-
-def test_observation_requires_truthful_redaction_labels() -> None:
-    with pytest.raises(ValidationError, match="raw screenshot reference"):
-        build_observation(
-            raw_screenshot=build_screenshot(redaction_state=ScreenshotRedactionState.REDACTED)
-        )
-
-
-def test_redacted_reference_retains_its_input_sensitivity() -> None:
-    payload = build_screenshot().model_dump()
-    payload["redaction"] = RedactionProvenance(
-        policy_id="region-mask",
-        region_count=1,
-        region_set_sha256="d" * 64,
-        input_sensitivity=ArtifactSensitivity.DECLARED_SENSITIVE,
-    )
-
-    with pytest.raises(ValidationError, match="input sensitivity"):
-        ScreenshotReference.model_validate(payload)
 
 
 def test_observation_distinguishes_unknown_and_empty_system_regions() -> None:
