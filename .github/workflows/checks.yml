@@ -96,10 +96,23 @@ jobs:
         with:
           packages: "platform-tools build-tools;34.0.0"
       - name: Install Appium
-        run: npm install --global appium
+        run: |
+          npm install --global appium
+          appium driver install uiautomator2
       - name: Install Yewo
         run: uv sync --group dev
+      # No project, app build, or model credentials exist here, so doctor reports
+      # blocking gaps and exits non-zero by design. Assert on what it resolved.
       - name: Report the resolved toolchain
-        run: uv run yewo doctor --platform android
+        run: |
+          $report = uv run yewo doctor --platform android 2>&1 | Out-String
+          Write-Output $report
+          if ($report -notmatch 'OK\s+adb:') {
+            throw 'Doctor did not resolve adb on Windows.'
+          }
+          if ($report -notmatch 'OK\s+driver: uiautomator2') {
+            throw 'Doctor did not resolve the uiautomator2 driver on Windows.'
+          }
+          exit 0
       - name: Preview project setup without changing anything
         run: uv run yewo setup --dry-run --platform android

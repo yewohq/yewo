@@ -9,13 +9,20 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from multiprocessing import get_context
-from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 import os
 from pathlib import Path
+import sys
 from threading import Condition, Lock, Thread
 import time
 from typing import Literal, TextIO
+
+# Pipe() returns PipeConnection on Windows and Connection on POSIX. They share no
+# public base class, so one alias must stand for both.
+if sys.platform == "win32":
+    from multiprocessing.connection import PipeConnection as PipeEndpoint
+else:
+    from multiprocessing.connection import Connection as PipeEndpoint
 
 from yewo.artifacts import RUNTIME_DIRECTORY
 
@@ -76,7 +83,7 @@ class RunNarrator:
         self._outbound: deque[_WriterMessage] = deque()
         self._queued_bounded_lines = 0
         self._overflowed_lines = 0
-        self._connection: Connection | None = None
+        self._connection: PipeEndpoint | None = None
         self._writer: BaseProcess | None = None
         self._feeder: Thread | None = None
         self._closed = False
@@ -230,7 +237,7 @@ class RunNarrator:
         )
         self._overflowed_lines = 0
 
-    def _ensure_writer(self, *, allow_closed: bool) -> Connection | None:
+    def _ensure_writer(self, *, allow_closed: bool) -> PipeEndpoint | None:
         with self._state_lock:
             if self._closed and not allow_closed:
                 return None
@@ -259,7 +266,7 @@ class RunNarrator:
             feeder.start()
             return parent_connection
 
-    def _feed_writer(self, connection: Connection) -> None:
+    def _feed_writer(self, connection: PipeEndpoint) -> None:
         while True:
             with self._outbound_condition:
                 while not self._outbound:
@@ -351,7 +358,7 @@ class RunNarrator:
                 self._write_failure = failure
 
 
-def _write_narration(connection: Connection) -> None:
+def _write_narration(connection: PipeEndpoint) -> None:
     streams: dict[str, TextIO] = {}
     failure: str | None = None
     try:

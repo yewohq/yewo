@@ -130,15 +130,14 @@ Return refuse only for a supported basis, and set refusal_basis to it:
   restarts_completed_work_item to the exact completed item.
 - reopened_stage: the proposal would reopen an accepted workflow stage without newer evidence
   invalidating its completion. Return no unresolved controls and no restarted work item.
-- unexplored_route: done or cannot_progress would end discovery while supplied current-run
-  history, route attempts, screen evidence, or compatible accepted map transitions still identify
-  a distinct goal-relevant entry route that has not been exercised in this run or shown currently
-  equivalent to an exercised route. Set
-  unexplored_route to one concise description grounded in the supplied evidence. A successful
+- unexplored_route: done or cannot_progress would end discovery while supplied evidence still
+  identifies a distinct goal-relevant entry route this run did not exercise. That evidence is
+  current-run history, route attempts, screen evidence, or compatible accepted map transitions.
+  Set unexplored_route to one concise description grounded in the supplied evidence. A successful
   route does not make another entry route irrelevant. When trusted evidence already establishes
   the objective or an exact supplied objective-related work item, copy that work item into
-  completed_work_items even though this refusal keeps discovery running. Objective completion and
-  remaining route exploration are compatible progress states; do not erase the completion merely
+  completed_work_items. This refusal keeps discovery running. Objective completion and
+  remaining route exploration are compatible progress states. Do not remove the completion merely
   because another route remains. Do not use this basis for unrelated controls, cosmetic duplicates,
   or a route already shown ineffective, prohibited, unsafe, or equivalent.
 

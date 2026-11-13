@@ -31,8 +31,8 @@ def exclusive_file_lock(
     if timeout_seconds <= 0:
         raise ValueError("The file-lock timeout must be greater than zero.")
     flags = os.O_RDWR | os.O_CREAT
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    # Only POSIX defines O_NOFOLLOW. Windows has no equivalent, so the flag drops to 0.
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(lock_path, flags, LOCK_FILE_MODE)
     try:
         _acquire_descriptor_lock(descriptor, timeout_seconds)

@@ -126,8 +126,8 @@ def _append_unique_line(
     identity: str,
 ) -> None:
     flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    # Only POSIX defines O_NOFOLLOW. Windows has no equivalent, so the flag drops to 0.
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(destination, flags, LOCK_FILE_MODE)
     try:
         stream = os.fdopen(descriptor, "r+b")
