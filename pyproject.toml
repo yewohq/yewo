@@ -1,12 +1,28 @@
 [project]
 name = "yewo"
-version = "0.1.0"
-description = "AI-driven mobile (Android and iOS) end-to-end testing agent"
+version = "0.2.0"
+description = "AI-driven mobile (Android and iOS) end-to-end QA testing agent"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-keywords = ["testing", "e2e", "mobile", "android", "ios", "appium", "llm", "agent"]
+keywords = [
+    "testing",
+    "test-automation",
+    "e2e",
+    "end-to-end-testing",
+    "ui-testing",
+    "qa",
+    "mobile",
+    "mobile-testing",
+    "android",
+    "ios",
+    "appium",
+    "ai",
+    "ai-agent",
+    "llm",
+    "agent",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -21,7 +37,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
-    "numpy>=1.24.0",
     "pillow>=10.1.0",
     "imagehash>=4.3.1",
     "imageio-ffmpeg>=0.6.0",
@@ -31,24 +46,6 @@ dependencies = [
 Homepage = "https://tryyewo.dev"
 Repository = "https://github.com/yewohq/yewo"
 Issues = "https://github.com/yewohq/yewo/issues"
-
-[project.optional-dependencies]
-# Pulls torch (127MB on macOS arm64, 555MB on linux x86_64), so it is kept
-# out of the base install and fetched on demand. See yewo.utils.vision_deps.
-vision = [
-    "ultralytics>=8.0.0",
-    "huggingface-hub>=0.16.0",
-    "rapidocr==3.10.0",
-    "onnxruntime==1.31.1",
-]
-# Retains the legacy engine only for explicit comparison tools.
-perception-eval = [
-    "easyocr>=1.6.0",
-]
-# The decision model is reached through its own SDK. See yewo.utils.jev_deps.
-jev = [
-    "typesafe-sdk>=0.7.5",
-]
 
 [project.scripts]
 yewo = "yewo.cli.main:main"
@@ -70,6 +67,7 @@ include = [
 
 [dependency-groups]
 dev = [
+    "numpy>=1.24.0",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.17.1",

@@ -2,10 +2,40 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [release]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.declared.outputs.version }}
+      release: ${{ steps.declared.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The declared version has no tag yet
+        id: declared
+        run: |
+          version=$(python -c "import pathlib,tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "v$version is already tagged, so this push releases nothing"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version has no tag, so this push releases it"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   verify:
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,14 +52,6 @@ jobs:
           path: .tools/asd-ste100
       - name: Install development dependencies
         run: uv sync --group dev
-      - name: The tag matches the version
-        run: |
-          tagged="${GITHUB_REF_NAME#v}"
-          declared=$(uv run python -c "import pathlib,tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
-          test "$tagged" = "$declared" || {
-            echo "tag $tagged does not match pyproject $declared"
-            exit 1
-          }
       - name: Enforce the 550-line file limit
         run: uv run python tools/quality_gate.py
       - name: Enforce Ruff correctness rules
@@ -55,7 +77,7 @@ jobs:
           .package-venv/bin/yewo --help
 
   publish:
-    needs: verify
+    needs: [gate, verify]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -65,3 +87,19 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv build
       - run: uv publish --trusted-publishing always
+
+  tag:
+    needs: [gate, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      # The tag records what reached PyPI. It is written after a successful
+      # publish, so a failed release leaves no tag and the same push can retry.
+      - name: Tag the published version
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "v$VERSION"

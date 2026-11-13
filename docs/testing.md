@@ -34,8 +34,8 @@ workflows:
 Run every workflow or select one by name:
 
 ```bash
-yewo test yewo.yaml
-yewo test yewo.yaml --workflow account
+yewo test
+yewo test --workflow account
 ```
 
 The command-line flags, `YEWO_*` environment variables, the nearest
@@ -92,46 +92,6 @@ Yewo generates one scenario per coverage cell. A journey with no coverage gets
 one P0 functional happy-path cell. Each cell has a stable identity such as
 `security.negative.0`, so it can be compared between runs.
 
-Generate and review the suite without starting a device:
-
-```bash
-yewo lock yewo.yaml
-```
-
-This writes `yewo.lock` beside the journey file. Commit both files, then use the
-reviewed suite in CI:
-
-```bash
-yewo test yewo.yaml --locked
-```
-
-A locked run refuses a missing or stale lock instead of silently generating a
-different suite. Use `yewo lock yewo.yaml --all` when you deliberately want to
-regenerate every cell.
-
-`yewo lock` generates from app knowledge that was already verified and stored
-beside the journey file. It starts no device, so it cannot discover an app it
-has never seen. When no compatible knowledge exists it reports the missing
-evidence per cell and writes no scenario for it. Run `yewo test` first for an
-unknown app, because only that command can run bounded discovery.
-
-## Evaluate discovery from a cold start
-
-`--cold` starts from the journey file and the app only. It redirects app
-knowledge and run artifacts under `<output-dir>/cold/`, turns saved-path reuse
-off, and records the empty starting set in `run.json` under
-`inputs.cold_start`. It refuses to start when a reviewed lock sits beside the
-journey file, when that knowledge root already holds an artifact, when the
-output root has been used, or when the same command asks for `--locked`,
-`--replay`, or `--reuse-app`.
-
-```bash
-yewo test yewo.yaml --cold
-```
-
-The refusals exist because a warm run and a cold run write the same kind of
-report. Use this to evaluate discovery, not in CI, where `--locked` is correct.
-
 ## Test the same journey on several targets
 
 A workflow can declare a sequential target matrix:
@@ -153,12 +113,13 @@ workflows:
         journey: Let a guest complete checkout.
 ```
 
-Matrix runs require the locked suite so each target receives the same scenario:
+Every declared target runs by default. Select targets by ID with a
+comma-separated list:
 
 ```bash
-yewo lock yewo.yaml
-yewo test yewo.yaml --locked
-yewo test yewo.yaml --locked --target ios_simulator
+yewo test
+yewo test --target ios_simulator
+yewo test --target android_emulator,ios_simulator
 ```
 
 Targets run one at a time. Each journey and target pair gets its own run ID,
@@ -218,8 +179,8 @@ Appium command duration is not an application first-frame measurement.
 
 ## Reports and run records
 
-Yewo writes each run under `assets/yewo/<run-id>/` unless `output_dir` or
-`--output-dir` selects another output root. Every run has one `run.json`;
+Yewo writes each run under `assets/yewo/<run-id>/` unless `output_dir` in
+`yewo.yaml` selects another output root. Every run has one `run.json`;
 Markdown, HTML, and JUnit outputs are views over that record. Reports are
 checkpointed during a run so an interruption still leaves the evidence reached
 so far.
@@ -248,11 +209,13 @@ An incomplete run is not converted into an app failure.
 
 ```bash
 yewo test --help
-yewo test yewo.yaml --headless
-yewo test yewo.yaml --no-record
-yewo test yewo.yaml --output-dir path/to/results
-yewo --log-level DEBUG test yewo.yaml
+yewo test --workflow account,checkout
+yewo test --target android_emulator,ios_simulator
 ```
+
+`yewo test` selects work; it does not configure a run. `headless`, `record`,
+and `output_dir` are declared in `yewo.yaml`, either at the top level or on one
+workflow, device, or target.
 
 See [`yewo-schema.json`](../yewo-schema.json) for the complete configuration
 shape. Maintained applications and journeys for exercising Yewo live under

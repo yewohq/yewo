@@ -14,122 +14,29 @@ from yewo.agent.actuation.proposal_verifier import (
 )
 from yewo.agent.actuation import (
     ActionKind,
-    ActionOutcome,
-    ActionOutcomeDisposition,
-    ActionOutcomeSignal,
-    ActionProposal,
     ActionRefusalCode,
 )
 from yewo.agent.planning.records import (
     PlanningFocusCause,
     PlanningFocusContext,
-    PlanningRequest,
     ProgressRouteAttempt,
     TaskProgressContext,
 )
-from yewo.agent.planning.history import PlanningHistoryEntry, planning_screen_reference
-from yewo.artifacts import ArtifactRetention
 from yewo.models import MINIMUM_COMPLETION_TOKENS, ModelRole, TextModelContent
-from yewo.agent.screen_analysis import (
-    CurrentScreenAnalysis,
-    ScreenElement,
-    ScreenElementConfidence,
-    ScreenElementKind,
-    ScreenSemanticRole,
-    ScreenVisualKind,
-)
 
-from agent.discovery.support import observation
+from agent.actuation.proposal_verifier_support import (
+    discovery_request,
+    form_screen_analysis,
+    save_proposal,
+)
 from agent.planning.support import StubPlannerModel
 
 
-def _proposal() -> ActionProposal:
-    return ActionProposal(
-        proposal_id="proposal_1",
-        source_observation_id="obs_1",
-        action=ActionKind.TAP,
-        target_expression="the visible Save button",
-        expected_outcome="The editor saves and closes.",
-        reason="Save the current editor.",
-    )
-
-
-def _request() -> PlanningRequest:
-    source = observation("dropdown_closed", "1111111111111111")
-    destination = observation("dropdown_open", "2222222222222222")
-    dropdown_proposal = ActionProposal(
-        proposal_id="dropdown_proposal",
-        source_observation_id=source.observation_id,
-        action=ActionKind.TAP,
-        target_expression="the Category dropdown",
-        expected_outcome="The available record types become visible.",
-        reason="Inspect the dropdown choices.",
-    )
-    dropdown_outcome = ActionOutcome(
-        outcome_id="dropdown_outcome",
-        authorization_id="dropdown_authorization",
-        receipt_id="dropdown_receipt",
-        action=ActionKind.TAP,
-        source_observation_id=source.observation_id,
-        settled_observation_id=destination.observation_id,
-        disposition=ActionOutcomeDisposition.OBSERVED,
-        signals=frozenset({ActionOutcomeSignal.PIXELS_CHANGED}),
-        reason="The dropdown opened.",
-        retention=ArtifactRetention.RUN,
-    )
-    return PlanningRequest(
-        observation=observation("obs_1", "1111111111111111"),
-        objective="Discover how to create a record.",
-        open_work=("Cover every relevant visible field.",),
-        completion_conditions=("The saved record can be reopened.",),
-        available_actions=frozenset({ActionKind.TAP}),
-        history=(
-            PlanningHistoryEntry(
-                proposal=dropdown_proposal,
-                source_screen=planning_screen_reference(source),
-                destination_screen=planning_screen_reference(destination),
-                outcome=dropdown_outcome,
-            ),
-        ),
-    )
-
-
-def _analysis(request: PlanningRequest) -> CurrentScreenAnalysis:
-    observed = request.observation
-    return CurrentScreenAnalysis(
-        analysis_id="analysis-1",
-        observation_id=observed.observation_id,
-        screenshot_sha256=observed.screenshot.sha256,
-        presentation=observed.presentation_key,
-        screen_summary="Visible workflow form.",
-        elements=(
-            ScreenElement(
-                element_ref="section-heading",
-                name="Section heading",
-                kind=ScreenElementKind(
-                    visual=ScreenVisualKind.TEXT,
-                    semantic=ScreenSemanticRole.LABEL,
-                ),
-                confidence=ScreenElementConfidence.HIGH,
-            ),
-            ScreenElement(
-                element_ref="primary-field",
-                name="Primary field",
-                kind=ScreenElementKind(
-                    visual=ScreenVisualKind.INPUT_SURFACE,
-                    semantic=ScreenSemanticRole.TEXT_FIELD,
-                ),
-                confidence=ScreenElementConfidence.HIGH,
-            ),
-        ),
-    )
-
-
 def test_proposal_verifier_uses_dedicated_profile_and_refuses_unresolved_work() -> None:
-    request = _request().model_copy(
+    request = discovery_request().model_copy(
         update={"open_work": ("Complete Primary field before saving.",)}
     )
-    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    request = request.model_copy(update={"current_screen_analysis": form_screen_analysis(request)})
     model = StubPlannerModel(
         {
             "disposition": "refuse",
@@ -154,7 +61,7 @@ def test_proposal_verifier_uses_dedicated_profile_and_refuses_unresolved_work() 
         identifier_factory=lambda: next(identifiers),
     )
 
-    assessment = verifier.verify(request, _proposal())
+    assessment = verifier.verify(request, save_proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.REFUSE
     assert assessment.refusal() is not None
@@ -187,7 +94,7 @@ def test_proposal_verifier_receives_the_planners_exact_no_progress_constraints()
         unresolved_work=("Cover every relevant visible field.",),
         prohibited_interaction_intents=("tap|ref:save-control||||",),
     )
-    request = _request().model_copy(update={"planning_focus": focus})
+    request = discovery_request().model_copy(update={"planning_focus": focus})
     model = StubPlannerModel(
         {
             "disposition": "allow",
@@ -204,7 +111,7 @@ def test_proposal_verifier_receives_the_planners_exact_no_progress_constraints()
         model,
         "proposal-verifier-primary",
         identifier_factory=identifiers.__next__,
-    ).verify(request, _proposal())
+    ).verify(request, save_proposal())
 
     current = model.requests[0].messages[2].content[-2]
     assert isinstance(current, TextModelContent)
@@ -239,7 +146,7 @@ def test_proposal_verifier_fails_closed_on_invalid_allow_response() -> None:
         identifier_factory=lambda: next(identifiers),
     )
 
-    assessment = verifier.verify(_request(), _proposal())
+    assessment = verifier.verify(discovery_request(), save_proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
     assert assessment.unresolved_controls == ()
@@ -266,15 +173,15 @@ def test_proposal_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> 
             "restarts_completed_work_item": None,
         }
     )
-    request = _request()
-    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    request = discovery_request()
+    request = request.model_copy(update={"current_screen_analysis": form_screen_analysis(request)})
     identifiers = iter(("verification_1", "request_1"))
 
     assessment = ModelProposalVerifier(
         model,
         "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
-    ).verify(request, _proposal())
+    ).verify(request, save_proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
     validation_context = model.validation_contexts[0]
@@ -306,8 +213,8 @@ def test_proposal_verifier_uses_analysis_and_rejects_a_label_as_unresolved() -> 
 
 
 def test_proposal_verifier_rejects_control_agnostic_requirement_claim() -> None:
-    request = _request()
-    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    request = discovery_request()
+    request = request.model_copy(update={"current_screen_analysis": form_screen_analysis(request)})
     model = StubPlannerModel(
         {
             "disposition": "refuse",
@@ -331,14 +238,14 @@ def test_proposal_verifier_rejects_control_agnostic_requirement_claim() -> None:
         model,
         "proposal-verifier-primary",
         identifier_factory=identifiers.__next__,
-    ).verify(request, _proposal())
+    ).verify(request, save_proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.UNAVAILABLE
 
 
 def test_proposal_verifier_accepts_input_contract_as_a_producible_requirement_basis() -> None:
-    request = _request().model_copy(update={"declared_value_names": ("primary_field",)})
-    request = request.model_copy(update={"current_screen_analysis": _analysis(request)})
+    request = discovery_request().model_copy(update={"declared_value_names": ("primary_field",)})
+    request = request.model_copy(update={"current_screen_analysis": form_screen_analysis(request)})
     model = StubPlannerModel(
         {
             "disposition": "refuse",
@@ -362,7 +269,7 @@ def test_proposal_verifier_accepts_input_contract_as_a_producible_requirement_ba
         model,
         "proposal-verifier-primary",
         identifier_factory=identifiers.__next__,
-    ).verify(request, _proposal())
+    ).verify(request, save_proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.REFUSE
     assert assessment.unresolved_controls[0].required_by.value == "input_contract"
@@ -379,7 +286,7 @@ def test_proposal_verifier_accepts_input_contract_as_a_producible_requirement_ba
 def test_proposal_verifier_refuses_a_route_that_restarts_completed_work() -> None:
     create = "Create and save one reusable record."
     reopen = "Return to the saved record and establish that it can be repeated or updated."
-    request = _request().model_copy(
+    request = discovery_request().model_copy(
         update={
             "open_work": (reopen,),
             "progress_context": TaskProgressContext(
@@ -399,7 +306,9 @@ def test_proposal_verifier_refuses_a_route_that_restarts_completed_work() -> Non
             ),
         }
     )
-    candidate = _proposal().model_copy(update={"target_expression": "the visible create control"})
+    candidate = save_proposal().model_copy(
+        update={"target_expression": "the visible create control"}
+    )
     model = StubPlannerModel(
         {
             "disposition": "refuse",
@@ -502,7 +411,7 @@ def test_unexplored_route_refusal_reports_discovery_incomplete() -> None:
 def test_proposal_verifier_does_not_treat_recovery_guidance_as_task_work() -> None:
     work_item = "Create and save one reusable record."
     recovery_step = "Refill fields lost after the application crash."
-    request = _request().model_copy(
+    request = discovery_request().model_copy(
         update={
             "open_work": (work_item,),
             "progress_context": TaskProgressContext(remaining_work=(recovery_step,)),
@@ -525,7 +434,7 @@ def test_proposal_verifier_does_not_treat_recovery_guidance_as_task_work() -> No
         identifier_factory=lambda: next(identifiers),
     )
 
-    verifier.verify(request, _proposal())
+    verifier.verify(request, save_proposal())
 
     validation_context = model.validation_contexts[0]
     assert validation_context is not None

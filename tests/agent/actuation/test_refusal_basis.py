@@ -14,7 +14,7 @@ from yewo.agent.actuation import (
     ActionRefusalCode,
 )
 
-from agent.actuation.test_proposal_verifier import _proposal, _request
+from agent.actuation.proposal_verifier_support import discovery_request, save_proposal
 from agent.planning.support import StubPlannerModel
 
 
@@ -64,7 +64,7 @@ def test_proposal_verifier_accepts_a_basis_that_needs_no_control_evidence(
         model,
         "proposal-verifier-primary",
         identifier_factory=lambda: next(identifiers),
-    ).verify(_request(), _proposal())
+    ).verify(discovery_request(), save_proposal())
 
     assert assessment.disposition is ActionReadinessDisposition.REFUSE
     refusal = assessment.refusal()
